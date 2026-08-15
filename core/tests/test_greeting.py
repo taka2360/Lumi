@@ -13,7 +13,8 @@ import pytest
 
 from lumi import greeting as greeting_module
 from lumi.greeting import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED, Greeter
-from lumi.providers.tts.aivisspeech import SpeechAudio, TtsError
+from lumi.providers.tts.aivisspeech import TtsError
+from lumi.providers.tts.base import SpeechAudio
 from lumi.providers.tts.viseme import Viseme, VisemeSpan, VisemeTimeline
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.state import EngineRuntime, TtsSetup, TtsSetupState

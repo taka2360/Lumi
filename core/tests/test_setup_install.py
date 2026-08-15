@@ -17,6 +17,7 @@ from typing import ClassVar
 import httpx
 import pytest
 
+from lumi.providers.llm import ollama
 from lumi.providers.tts import aivisspeech
 from lumi.setup import install as install_module
 from lumi.setup.engines import (
@@ -271,6 +272,7 @@ class TestNetworkOptional:
     ALLOWED_HTTP: ClassVar[dict[str, str]] = {
         "setup/install.py": "エンジンの取得。ユーザーが選んだときだけ呼ばれる",
         "providers/tts/aivisspeech.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
+        "providers/llm/ollama.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
     }
 
     def test_http_is_confined_to_known_modules(self) -> None:
@@ -295,6 +297,17 @@ class TestNetworkOptional:
         assert urls, "URL の組み立て方が変わった。このテストを見直すこと"
         assert all(url.startswith("http://{HOST}:") for url in urls), urls
         assert aivisspeech.HOST == "127.0.0.1"
+
+    def test_the_llm_client_only_talks_to_localhost(self) -> None:
+        """**会話の内容を外に出さない。** リモート推論は別 Provider として足す（ADR-023）。"""
+        module = Path(ollama.__file__)
+        urls = re.findall(r"https?://[^\"']*", module.read_text(encoding="utf-8"))
+        assert urls, "URL の組み立て方が変わった。このテストを見直すこと"
+        assert all(
+            url.startswith(("http://{HOST}:", "https://github.com", "https://ollama.com"))
+            for url in urls
+        ), urls
+        assert ollama.HOST == "127.0.0.1"
 
     def test_the_installer_is_only_reachable_through_the_coordinator(self) -> None:
         root = Path(__file__).resolve().parent.parent / "lumi"

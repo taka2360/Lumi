@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import shutil
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -52,6 +53,20 @@ KNOWN_ENGINES: tuple[KnownEngine, ...] = (
             ("LOCALAPPDATA", r"Programs\VOICEVOX\vv-engine\run.exe"),
             ("ProgramFiles", r"VOICEVOX\vv-engine\run.exe"),
         ),
+    ),
+)
+
+
+#: Ollama。**Lumi は取得もインストールもしない。検出だけ**（ADR-023）。
+#: TTS エンジンと違い `KNOWN_ENGINES` には入れない — 取得の対象ではないため、
+#: 同じ列挙に混ぜると「取得できるもの」として扱う経路が生まれる。
+OLLAMA: KnownEngine = KnownEngine(
+    name="ollama",
+    display_name="Ollama",
+    port=11434,
+    candidates=(
+        ("LOCALAPPDATA", r"Programs\Ollama\ollama.exe"),
+        ("ProgramFiles", r"Ollama\ollama.exe"),
     ),
 )
 
@@ -142,3 +157,35 @@ async def detect_engines(env: Mapping[str, str]) -> list[DetectedEngine]:
         )
 
     return found
+
+
+def find_on_path(command: str, env: Mapping[str, str]) -> Path | None:
+    """`PATH` から実行体を探す。**環境変数を引数で受け取る**（純粋関数として試験できる）。
+
+    ユーザーが自分で入れる前提のもの（Ollama）は、決まった場所ではなく
+    `PATH` に居ることが多い。決め打ちのパスだけを見ると「入っているのに無い」と言うことになる。
+    """
+    found = shutil.which(command, path=env.get("PATH"))
+    return Path(found) if found else None
+
+
+async def detect_ollama(env: Mapping[str, str]) -> DetectedEngine | None:
+    """Ollama を探す。**外部通信しない**（ローカルのパスと 127.0.0.1 だけ）。
+
+    見つからなければ `None`。これが setup.md §2b の `not_configured` になる。
+    **「入っていない」と「起動していない」を、ここで区別する**
+    （Provider は HTTP しか見えないので区別できない）。
+    """
+    executable = next(
+        (path for path in candidate_executables(OLLAMA, env) if path.is_file()), None
+    ) or find_on_path("ollama", env)
+    running = await is_port_open(OLLAMA.port)
+    if executable is None and not running:
+        return None
+    return DetectedEngine(
+        name=OLLAMA.name,
+        display_name=OLLAMA.display_name,
+        port=OLLAMA.port,
+        executable=executable,
+        running=running,
+    )

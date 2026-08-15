@@ -88,11 +88,12 @@ class Greeter:
 
         # **再生開始と同時に口を動かし始める。** 時刻は Stage 側の時計で進む
         # （60Hz で送ると Stage が詰まったときに口が固まる）。
-        await self._server.notify(
-            Role.STAGE,
-            METHOD_SPEECH_STARTED,
-            {"text": GREETING, **audio.timeline.to_payload()},
-        )
+        payload: dict[str, object] = {"text": GREETING}
+        if audio.timeline is not None:
+            payload.update(audio.timeline.to_payload())
+        # **タイムラインが無ければビセームを送らない**（口は閉じたまま）。
+        # でたらめな時間で動かすより動かさない → docs/interfaces/renderer.md
+        await self._server.notify(Role.STAGE, METHOD_SPEECH_STARTED, payload)
         try:
             await play_wav(audio.wav)
         except PlaybackError as error:

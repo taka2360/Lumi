@@ -11,6 +11,10 @@ dependencies = [
     "sqlite-vec>=0.1.9",
     "httpx>=0.28.1",
     "sounddevice>=0.5.5",
+    # Phase 1。音声は 16kHz mono float32 の配列として扱う（VAD / STT の共通表現）
+    "numpy>=2.1",
+    # Phase 1。STT。**CTranslate2 / int8。torch には依存しない**（R1）
+    "faster-whisper>=1.1",
 ]
 
 # torch に依存しない（インストーラサイズ R1）。
@@ -53,7 +57,7 @@ files = ["lumi", "tests"]
 
 # 型スタブを持たない外部ライブラリ。**個別に列挙する**（全体を無視しない）。
 [[tool.mypy.overrides]]
-module = ["sqlite_vec.*", "sounddevice.*"]
+module = ["sqlite_vec.*", "sounddevice.*", "faster_whisper.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

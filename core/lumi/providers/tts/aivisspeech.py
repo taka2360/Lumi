@@ -11,14 +11,14 @@ Phase 0 では `TTSProvider` protocol をまだ作らない（Phase 1）。
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from lumi import logging as lumi_logging
 from lumi.audio.wav import WavError, decode_wav
-from lumi.providers.tts.viseme import VisemeTimeline, build_timeline
+from lumi.providers.tts.base import SpeechAudio
+from lumi.providers.tts.viseme import build_timeline
 
 log = lumi_logging.get_logger(__name__)
 
@@ -36,14 +36,6 @@ class TtsError(RuntimeError):
         super().__init__(f"{reason}: {detail}" if detail else reason)
         self.reason = reason
         self.detail = detail
-
-
-@dataclass(frozen=True, slots=True)
-class SpeechAudio:
-    """合成結果。WAV のバイト列と、口のタイムライン。"""
-
-    wav: bytes
-    timeline: VisemeTimeline
 
 
 class AivisSpeechClient:

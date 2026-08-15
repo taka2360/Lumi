@@ -106,6 +106,20 @@ AIRI は `isToolRelatedError()` で10パターンの正規表現によるラン�
 
 思考タグ（`<think>` 等）の内容は音声化しない。AIRI の `response-categoriser` と同じ問題意識。
 
+**`TextDelta` と `ReasoningDelta` を別の型にする。** 同じ型で「これは思考です」フラグを付けると、
+後段（文分割 → TTS）が必ずどこかで取り違える。
+
+### 宛先は 127.0.0.1 に固定する〔Phase 1 実装時に確定〕
+
+**`OllamaProvider` はホストを設定可能にしない。** 可能にすると
+「Lumi が任意のサーバに会話内容を送る機能」になる（`aivisspeech.py` と同じ理由）。
+
+[ADR-023](../decisions/ADR-023-llm-runtime-and-model-acquisition.md) の
+「検出できないケースは設定で指定させる」で足りるのは**ポートまで**。
+リモートの推論サーバを使いたい場合は、ホストを可変にするのではなく
+**別の `LLMProvider` を足す**（クラウド LLM と同じ枠組み）。
+そうすれば「外部へ送っている」ことが Provider の選択として画面に出る。
+
 ---
 
 ## STTProvider
@@ -143,16 +157,27 @@ class Transcription:
 ## TTSProvider
 
 ```python
+@dataclass(frozen=True)
+class SpeechAudio:
+    wav: bytes
+    timeline: VisemeTimeline | None   # None = 口を動かさない
+
+
 class TTSProvider(Provider, Protocol):
     async def synthesize(
         self,
         text: str,
         voice: VoiceConfig,
         cancel_token: CancelToken,
-    ) -> AudioBuffer: ...
+    ) -> SpeechAudio: ...
 
-    def supported_languages(self) -> set[str]: ...
+    def supported_languages(self) -> frozenset[str]: ...
 ```
+
+> **音声だけを返す契約にできない。**〔Phase 1 実装時に確定〕
+> **リップシンクのタイムラインは合成の「あと」にしか作れない**（AivisSpeech は `audio_query` で
+> 音素長を返さない → [renderer.md](renderer.md)）。音声と口のタイムラインは同時に決まるので、
+> 1つの結果として返す。`timeline` が `None` なら**ビセームを送らない**（口は閉じたまま）。
 
 ### 実装候補
 
@@ -237,10 +262,17 @@ class VisionProvider(Provider, Protocol):
 
 ```python
 class ProviderRegistry:
-    def register(self, provider: Provider) -> None: ...
-    def get(self, kind: ProviderKind) -> Provider:
-        """設定で選択されている Provider を返す。未 load なら load する。"""
+    def register(self, provider: Provider, *, select: bool = True) -> None: ...
+
+    async def get(self, kind: ProviderKind) -> Provider:
+        """設定で選択されている Provider を返す。**未 load なら load する**（だから async）"""
+
+    def peek(self, kind: ProviderKind) -> Provider:
+        """**load せずに**取り出す。状態表示と `attribution()` に使う"""
+
     def available(self, kind: ProviderKind) -> list[ProviderInfo]: ...
+    def attributions(self) -> list[Attribution]:
+        """クレジット画面へ。**選択されているものだけ**"""
 ```
 
 ### 障害時
