@@ -83,10 +83,62 @@ installed  ×  failed    → 入っているのに起動できない = **壊れ�
 **汎用の設定ストアにしない。** 設定の保存形式は未確定（[../roadmap.md](../roadmap.md) 未確定事項 #9 / Phase 1）であり、
 ここで先に決めると Phase 1 で作り直しになる。持つのは真偽値1つ。
 
-### UI の置き場所
+### UI の置き場所（TTS）
 
 **Phase 0 では `stage` ウィンドウの中のパネルとして出す**（独立ウィンドウにしない）。
 理由と当たり判定の扱い → [ui.md](ui.md)「初回セットアップ UI は `stage` ウィンドウの中に置く」
+
+---
+
+## 2b. LLM / STT のセットアップ状態〔Phase 1。決定 → [ADR-023](../decisions/ADR-023-llm-runtime-and-model-acquisition.md)〕
+
+**§1 の4原則は3つとも同じ。取得方法だけが違う。**
+
+| | LLM（Ollama） | STT（faster-whisper モデル） | TTS（AivisSpeech） |
+|---|---|---|---|
+| Lumi が取得するか | **しない**（検出のみ） | **する**（同意に基づく） | **する**（同意に基づく） |
+| 理由 | インストーラが可逆でない。他社ソフトの導入判断を代行しない | サイズが R1 に直撃する（数百 MB〜） | [ADR-019](../decisions/ADR-019-tts-engine-distribution.md) |
+| 未導入のとき | 「LLM 未セットアップ」＋ 公式サイトの案内 | 「STT 未セットアップ」＋ 取得の提案 | 「TTS 未セットアップ」 |
+
+**Silero VAD（ONNX）は配布物に同梱するので、セットアップ状態を持たない。**
+barge-in は中核機能であり、「取得するまで遮れない」状態を作らない。
+
+### 導入の状態（LLM）
+
+**プロセスの状態と混ぜない**（§2 の規則をそのまま適用する）。
+
+| 導入の状態 | 意味 | ユーザーに求める行動 |
+|---|---|---|
+| `unknown` | まだ調べていない | — |
+| `not_configured` | **Ollama が見つからない** | 公式サイトからインストールしてもらう |
+| `detected` | Ollama が見つかった | — |
+| `model_missing` | **Ollama はあるが、設定されたモデルが無い** | `ollama pull <model>` を案内する |
+
+| プロセスの状態 | 意味 |
+|---|---|
+| `stopped` | 127.0.0.1 の API が応答しない |
+| `ready` | 応答する。**推論できる** |
+| `failed` | 応答するが異常（バージョン不整合など） |
+
+> **「入っているのに動かない」を1つの enum で潰さない。** `detected × stopped`（入っているが起動していない）と
+> `not_configured`（そもそも入っていない）では、ユーザーに求める行動がまったく違う。
+> ここで嘘の案内をすると、ユーザーは Lumi ではなく自分の環境を疑い始める。
+
+### 導入の状態（STT）
+
+TTS と**同型**（`not_configured` → `installing` → `installed` / `failed`）。
+取得は §3〜§5 の経路をそのまま使う（ピン留め + サイズ + SHA-256 + 原子的なインストール + ロールバック）。
+
+**ライブラリ既定の自動ダウンロードは無効にする。** `faster-whisper` / `huggingface_hub` は
+モデルが無ければ黙って取りに行くため、原則1（ユーザーが選ぶまで外部通信しない）が
+**ライブラリの都合で迂回される**。キャッシュに無ければ明示的に失敗させる。
+
+### 起動フェーズへの反映
+
+Phase 0 の `boot` は TTS だけを見ていた。**Phase 1 では LLM / STT / TTS の3つから導出する。**
+導出は引き続き決定論的な純粋関数（[ui.md](ui.md)「起動フェーズ」）。
+
+**「喋れるが聞けない」「聞けるが喋れない」は、いずれも正常な状態として表現できること。**
 
 ---
 
@@ -191,8 +243,14 @@ Python の 7z ライブラリ（py7zr 等）は **LGPL であり、Core = MIT �
 | AivisSpeech | `%LOCALAPPDATA%\Programs\AivisSpeech\AivisSpeech-Engine\run.exe`, `C:\Program Files\AivisSpeech\AivisSpeech-Engine\run.exe` | 10101 |
 | VOICEVOX | `%LOCALAPPDATA%\Programs\VOICEVOX\vv-engine\run.exe`, `C:\Program Files\VOICEVOX\vv-engine\run.exe` | 50021 |
 | Lumi が入れたもの | `%LOCALAPPDATA%\Lumi\engines\aivisspeech-<version>\...\run.exe` | 10101 |
+| **Ollama**〔Phase 1〕 | `%LOCALAPPDATA%\Programs\Ollama\ollama.exe`, `C:\Program Files\Ollama\ollama.exe`, および `PATH` | 11434 |
 
 すでに起動しているエンジンがあれば、それを使う（二重に起動しない）。
+
+> **Ollama のプロセスは Lumi が起動も停止もしない**（[ADR-023](../decisions/ADR-023-llm-runtime-and-model-acquisition.md)）。
+> [core.md](core.md) §6 の「すでに動いているエンジンには触らない」を、**常にそちら側**に倒す。
+> 検出できないケース（カスタムポート・リモートホスト・独自ビルド）は**設定で明示的に指定させる**。
+> 検出を賢くして当てにいかない — 外すと「なぜか動かない」になる。
 
 ---
 
@@ -246,3 +304,8 @@ sqlite-vec / FTS5 / PortAudio / TLS 証明書を、**実際に読み込んで**�
 | 11 | 状態が `failed` のとき、`not_configured` と区別して表示される |
 | 12 | **固めた実行体で `--self-check` が全項目成功する**（sqlite-vec / FTS5 / PortAudio / TLS） |
 | 13 | **配布物に ASIO 版の PortAudio が入っていない**（`lumi-core.spec` がビルド時に落とす） |
+| 14 | **Ollama 未導入で Lumi が起動し、`not_configured` が表示される**〔Phase 1〕 |
+| 15 | **Ollama はあるがモデルが無いとき、`model_missing` になる**（`not_configured` と区別される）〔Phase 1〕 |
+| 16 | **Ollama を Lumi が起動も停止もしない**（プロセス生成の経路が存在しない。静的検査）〔Phase 1〕 |
+| 17 | **STT モデルが無いとき、ライブラリが勝手にダウンロードせず明示的に失敗する**〔Phase 1〕 |
+| 18 | **Silero VAD が配布物に含まれ、オフラインで barge-in が成立する**〔Phase 1〕 |

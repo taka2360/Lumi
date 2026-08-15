@@ -47,13 +47,16 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 ### やること
 - [x] Tauri 2 で透過ウィンドウ・常時最前面・クリックスルー 〔2026-08-15。透過の目視確認は残〕
 - [x] **ホバー検知**（Rust 側で Win32 カーソル監視の自前実装。Tauri には Electron の `forward:true` 相当が無い）〔判定は Shell 側の純粋関数。[measurements/phase0.md](measurements/phase0.md)〕
-- [ ] VRM を Stage に表示し、アイドルモーションでループ 〔**プレースホルダで貫通済み**。VRM ローダーの統合点は実装済みで、`.vrm` を置けば読む。既定同梱モデルは未定（[licensing.md](licensing.md) §7 未確認 #5）〕
+- [x] VRM を Stage に表示し、アイドルモーションでループ 〔ローダーの統合点は実装済みで、`.vrm` を置けば読む。
+  **既定同梱モデルを決定**〔2026-08-16。再配布 OK / 改変 OK / クレジット不要 / VRM 0.0 → [licensing.md](licensing.md) §4.5〕。
+  **モデルファイルを `content/` に置く作業は残る**（リポジトリにはコミットしない）〕
 - [x] Python Core を **Tauri サイドカーとして起動・監視・終了** 〔Job Object でゾンビを残さない〕
 - [x] WS 接続（token 認証）、ハートビート、片方が落ちた時の復帰
 - [x] **`os.*` の schema 検証 + allowlist を Shell 側に最小実装**（[B3](contracts/security-boundaries.md) の骨格）
-- [ ] **初回セットアップ**〔ADR-019 / 設計は [architecture/setup.md](architecture/setup.md)〕
+- [x] **初回セットアップ**〔ADR-019 / 設計は [architecture/setup.md](architecture/setup.md)〕
   - [x] TTS エンジンを取得する / しない の選択を**同等に**提示する（既定で取得しない）
-  - [x] 公式配布元からの取得 → **検証**（URL・サイズ・SHA-256）→ セットアップ 〔実ネットワークでの取得は未実施〕
+  - [x] 公式配布元からの取得 → **検証**（URL・サイズ・SHA-256）→ セットアップ
+    〔2026-08-15 実ネットワークで取得を確認。216.5 MB / 8.4 秒、SHA-256 一致 → [measurements/phase0.md](measurements/phase0.md)〕
   - [x] 失敗時のロールバック（**部分的にインストールされた状態を残さない**）
   - [x] 取得しない場合も Lumi が起動し、**「TTS 未セットアップ」が明示される**
   - [x] ユーザーが別途インストール済みの AivisSpeech / VOICEVOX を検出する
@@ -84,6 +87,11 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 インストーラを作って**別マシン**で起動し、**初回セットアップを通した上で**、キャラクターが立って一言喋る。
 **TTS の取得を拒否しても Lumi は起動する**（喋らないが、壊れていない状態として明示される）。
 
+> **達成**〔2026-08-16〕。別マシンでインストーラから導入し、キャラクターが立って一言喋るところまで確認した
+> → [measurements/phase0.md](measurements/phase0.md)「別マシンでの検証」。
+> **ただし検証手順 15〜18（取得の経路）は別マシンでは未確認**であり、Phase 1 に持ち越す。
+> Phase 1 では同じ経路に LLM / STT のセットアップが乗る（[ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)）ため、まとめて回す。
+
 > 初回セットアップの実装が Phase 0 を圧迫する場合は、**完了条件を「TTS は完全手動インストール前提」に緩め、取得フローを Phase 1 に送る**（[ADR-019](decisions/ADR-019-tts-engine-distribution.md) Alternative B への退避）。
 > **ただしクレジット表示は落とさない。** 配布物ができた時点で義務が発生し、後から遡って直せないため。
 
@@ -105,9 +113,13 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 13. ~~**サイドカーから sqlite-vec がロードできるか確認**~~ 〔2026-08-15 完了。別マシンでは `lumi-core.exe --self-check` を回す〕
 14. ~~**インストーラに AivisSpeech / VOICEVOX のバイナリが含まれていないことを確認**~~ 〔2026-08-15 完了。92 ファイルを列挙して確認〕
 15. **初回セットアップで「取得しない」を選び、Lumi が起動して「TTS 未セットアップ」が表示されることを確認**
+    〔2026-08-15 **開発機で確認**。別マシンでは未確認 → Phase 1〕
 16. **ネットワークを遮断した状態で取得を試み、明示的に失敗し、部分的な残骸が残らないことを確認**
+    〔単体テストのみ。**実ネットワークでの断線試験はどちらのマシンでも未実施** → Phase 1〕
 17. **ユーザーが選択するまで外部へのネットワークアクセスが発生しないことを確認**（パケットキャプチャ / Network-optional 原則）
+    〔2026-08-15 **静的検査 + 経路で確認**（CI に入れた）。パケットキャプチャは未実施 → Phase 1〕
 18. **クレジット画面にエンジン名・音源名・ライセンス全文が表示されることを確認**
+    〔2026-08-15 **開発機で確認**。別マシンでは未確認 → Phase 1〕
 
 ### ここで失敗したら
 Shell 選定（Tauri → Electron）とパッケージング方針を見直す。`PlatformShell` 抽象があるので Stage 側の実装は流用できる。
@@ -136,9 +148,21 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
 - [ ] **Permission Kernel の骨格**（L0 ツールのみ登録。`decide()` は本番と同じ関数。Kernel実行契約と Scope 正規化も本番と同じ経路）
 - [ ] **Provenance の型と伝播**（L0 しか無くても型を後入れしない）
   - [ ] `block_trust` / `history_trust` / `session_trust`（sticky）の3スコープ
-- [ ] Provider interface（`load` / `unload` / `resource_hint` を含む）
+- [ ] Provider interface（`load` / `unload` / `resource_hint` / **`attribution`** を含む）
+- [ ] **推論スタックのセットアップ**〔[ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) / [architecture/setup.md](architecture/setup.md) §2b〕
+  - [ ] **Ollama の検出**（取得もインストールもしない）と「LLM 未セットアップ」/ `model_missing` の提示
+  - [ ] **STT モデルの取得**（ピン留め + SHA-256 + ロールバック）。**ライブラリの自動ダウンロードを無効化する**
+  - [ ] **Silero VAD を配布物に同梱**（LICENSE 本文の確認が前提 → [licensing.md](licensing.md) §7 未確認 #9）
+  - [ ] 起動フェーズ（`boot`）を **LLM / STT / TTS の3つから導出**する。「喋れるが聞けない」を正常な状態として出す
 - [ ] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）
 - [ ] Inspector 最小版（Activity ツリー / レイテンシ内訳）
+
+### Phase 0 からの持ち越し
+
+- [ ] **検証手順 15〜18 を別マシンで通す**（取得の経路。**LLM / STT のセットアップが同じ経路に乗った後**にまとめて回す）
+- [ ] **ネットワーク断線の実試験**（単体テストでは `.tmp-*` が残らないことを確認済み。実断線は未実施）
+- [ ] **既定同梱 VRM モデル（光莉 / 作者: あわ）を `content/` に置き、配布物に含める経路を通す**（リポジトリにはコミットしない → [licensing.md](licensing.md) §4.5）
+- [ ] release ビルドでのカーソル監視 CPU 実測（debug では 1コア 2.8%）
 
 ### Stretch（詰まったら落とす）
 - [ ] 表情変化（`<|ACT|>` マーカー → ExpressionIntent → VRM ブレンドシェイプ）
@@ -367,14 +391,14 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 1 | ~~🔴 AivisSpeech / VOICEVOX の音声ライブラリ利用規約~~ | **✓ 解消**〔2026-08-15〕→ [licensing.md](licensing.md), [ADR-019](decisions/ADR-019-tts-engine-distribution.md) |
 | 1b | **AivisSpeech の LICENSE 本文・依存ライブラリ・同梱モデルのライセンス**（同梱を再検討する場合に必要） | Phase 0（取得実装時）→ [licensing.md](licensing.md) §7 |
 | 2 | ~~Python サイドカーのパッケージング（PyInstaller vs uv 同梱）~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-021](decisions/ADR-021-sidecar-packaging.md)。**PyInstaller の onedir** |
-| 3 | Ollama を同梱するかユーザーに別途インストールさせるか（**[ADR-019](decisions/ADR-019-tts-engine-distribution.md) と同じ論法を適用予定**） | Phase 0-1 |
+| ~~3~~ | ~~Ollama を同梱するかユーザーに別途インストールさせるか~~ | **✓ 解消**〔2026-08-16〕→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)。**Ollama は検出のみ**（取得もしない）/ Silero VAD は同梱 / STT モデルは同意に基づく実行時取得 |
 | 4 | ~~入出力が別デバイスのときの duplex stream の扱い~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-020](decisions/ADR-020-split-audio-streams.md)。**duplex を使わない**（別ストリーム + Core が持つ reference） |
-| 5 | LLM モデル選定（Qwen3系 / Gemma3系）— 日本語会話品質と Tool Calling 品質 | Phase 1（実測） |
+| 5 | LLM モデル選定（Qwen3系 / Gemma3系）— 日本語会話品質と Tool Calling 品質。**利用条件の記録も同時に**（[licensing.md](licensing.md) §7 未確認 #11） | Phase 1（実測） |
 | 6 | 🔴 **プライバシーとデータ保存の方針**（`contracts/privacy.md` を書く） | **Phase 2 着手前** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
 | 8 | **DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる） | Phase 3 着手前 |
 | 9 | 設定の保存形式とスキーマ | Phase 1（必要になった時点） |
-| 10 | **`Activity.priority` の数値体系と `interruptible_by` を集合にする必要性** | Phase 1（Arbiter 実装時） |
+| ~~10~~ | ~~**`Activity.priority` の数値体系と `interruptible_by` を集合にする必要性**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-024](decisions/ADR-024-activity-priority.md)。**`interruptible_at: int` の単一閾値**（`>=` で判定）。値は [architecture/agent.md](architecture/agent.md) §1 |
 | 11 | キャラクター人格の記述形式（独自 vs 既存カード互換） | Phase 1 後半 |
 | 12 | Canonicalizer / BindVerifier の具体的アルゴリズム | Phase 4a |
 | 13 | 🔴 **Invariant 8 の実装方式**（全画面キャプチャ / 座標指定の入力注入） | **Phase 4c 着手前** |
