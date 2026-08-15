@@ -13,8 +13,9 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isTauri } from "../platform/tauri";
 import { type CoreMessage, helloMessage, parseCoreMessage, resultMessage } from "./protocol";
 
-const CMD_CORE_ENDPOINT = "shell_core_endpoint";
-const EVENT_CORE_ENDPOINT = "shell:core:endpoint";
+/** 対応する Shell 側の定数は `shell/src-tauri/src/core_endpoint.rs`。**正は `wire.json`**（ADR-022）。 */
+export const CMD_CORE_ENDPOINT = "shell_core_endpoint";
+export const EVENT_CORE_ENDPOINT = "shell:core:endpoint";
 
 /** 再接続の待ち時間。Core の再起動を待てる程度に短く。 */
 const RECONNECT_DELAY_MS = 500;

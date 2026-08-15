@@ -33,7 +33,16 @@ class DriftEstimate:
     samples: int
 
     def ms_per_minute(self) -> float:
-        return abs(self.ppm) * 60 / 1e3
+        return drift_ms(self.ppm, 60.0)
+
+
+def drift_ms(ppm: float, seconds: float) -> float:
+    """`ppm` のずれが `seconds` 秒で何 ms たまるか。**符号は捨てる**（大きさだけを見る）。
+
+    ppm → ms の換算を**ここ1箇所に置く**。呼び出し側で書き下すと、
+    相対ドリフト（`relative_ppm` の戻り値）と絶対ドリフトで式が分かれて必ずずれる。
+    """
+    return abs(ppm) * seconds / 1e3
 
 
 def estimate_drift(samples: Sequence[tuple[float, float]]) -> DriftEstimate | None:

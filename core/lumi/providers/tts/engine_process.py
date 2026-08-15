@@ -52,11 +52,6 @@ class EngineProcess:
         self._client = AivisSpeechClient(port)
         self._process: asyncio.subprocess.Process | None = None
 
-    @property
-    def owned(self) -> bool:
-        """Lumi が起動したものか。**止めてよいかの判定はこれだけで決まる。**"""
-        return self._process is not None
-
     async def ensure_running(self) -> EngineRuntime:
         """起動していなければ起動し、応答するまで待つ。
 
@@ -112,7 +107,12 @@ class EngineProcess:
         return EngineRuntime.FAILED
 
     async def stop(self) -> None:
-        """**Lumi が起動したものだけ止める。**"""
+        """**Lumi が起動したものだけ止める。**
+
+        判定は `self._process` の有無だけで決まる。`ensure_running` が
+        「すでに動いていた」経路を通ったときは `None` のままなので、
+        **ユーザー自身が起動したエンジンはここに到達しない。**
+        """
         process = self._process
         if process is None:
             return

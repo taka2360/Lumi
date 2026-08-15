@@ -10,10 +10,16 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import type { Disposable, HitRect, HoverState, PlatformShell } from "./PlatformShell";
 
-/** Shell の `shell.*` allowlist に登録されているコマンド名。 */
-const CMD_SET_HIT_REGION = "shell_hit_region_set";
-const CMD_DRAG_START = "shell_window_drag_start";
-const CMD_SCALE = "shell_window_scale";
+/**
+ * Shell の `shell.*` allowlist に登録されているコマンド名。
+ *
+ * **正は `docs/contracts/wire.json`**（→ ADR-022）。ただし Shell 側の実体は
+ * `#[tauri::command]` が付いた**関数名**なので、突き合わせは Stage の片側だけである
+ * （Shell で関名を変えてもテストは落ちない → docs/contracts/wire.md §4）。
+ */
+export const CMD_SET_HIT_REGION = "shell_hit_region_set";
+export const CMD_DRAG_START = "shell_window_drag_start";
+export const CMD_SCALE = "shell_window_scale";
 
 /**
  * ホバー状態の通知イベント名。
@@ -22,7 +28,7 @@ const CMD_SCALE = "shell_window_scale";
  * （英数字と `-` `/` `:` `_` のみ）。`.` を `:` に置き換えたものが線上の名前。
  * 対応する Shell 側の定数は `shell/src-tauri/src/hover.rs`。
  */
-const EVENT_HOVER_STATE = "shell:hover:state";
+export const EVENT_HOVER_STATE = "shell:hover:state";
 
 export function createTauriPlatformShell(): PlatformShell {
   return {

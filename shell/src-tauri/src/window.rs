@@ -25,8 +25,13 @@ pub enum WindowKind {
     Settings,
 }
 
-#[allow(dead_code)]
 impl WindowKind {
+    /// 全種別。**label との対応をここ1箇所から導く**ので、
+    /// 種別を足したときに `from_label` を直し忘れることがない。
+    /// 並びと値の正は `docs/contracts/wire.json`（→ ADR-022）。
+    pub const ALL: [WindowKind; 4] =
+        [WindowKind::Stage, WindowKind::Credits, WindowKind::Permission, WindowKind::Settings];
+
     pub const fn label(self) -> &'static str {
         match self {
             WindowKind::Stage => "stage",
@@ -46,18 +51,19 @@ impl WindowKind {
     /// 理由は2つ。(a) AIRI から借りる運用知見「自分自身を deny リストに入れる」、
     /// (b) 新しいウィンドウ種別を足したときに**既定で保護される**（fail-closed）。
     /// 保護しない窓を作りたくなったら、そのときに明示的に例外を書く。
+    ///
+    /// 呼び出し側は `os_command::validate` の `os.input.*` / `os.capture.*` 分岐
+    /// （Phase 4c）。それまではテストからしか呼ばれないので、未使用の警告だけ抑える。
+    /// **impl 全体ではなくここだけに付ける**（他が死んだときに気づけなくなる）。
+    #[allow(dead_code)]
     pub const fn is_protected(self) -> bool {
         true
     }
 
+    /// **`label()` の逆写像を手で書かない。** 2つの match を並べると、
+    /// 種別を足したときに片方だけ直して、その窓が `os.*` から見えなくなる。
     pub fn from_label(label: &str) -> Option<Self> {
-        match label {
-            "stage" => Some(WindowKind::Stage),
-            "credits" => Some(WindowKind::Credits),
-            "permission" => Some(WindowKind::Permission),
-            "settings" => Some(WindowKind::Settings),
-            _ => None,
-        }
+        Self::ALL.into_iter().find(|kind| kind.label() == label)
     }
 }
 
@@ -526,9 +532,7 @@ mod tests {
 
     #[test]
     fn every_lumi_window_is_protected() {
-        for kind in
-            [WindowKind::Stage, WindowKind::Credits, WindowKind::Permission, WindowKind::Settings]
-        {
+        for kind in WindowKind::ALL {
             assert!(kind.is_protected(), "{} が保護対象から漏れている", kind.label());
         }
         assert_eq!(WindowKind::from_label("permission"), Some(WindowKind::Permission));

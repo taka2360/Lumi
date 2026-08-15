@@ -17,7 +17,23 @@ import { parseTimeline } from "../character/lipsync";
 import { connectToCore } from "./connection";
 import { type SetupPrompt, toTtsSnapshot, useStageStore } from "./store";
 
-type Answer = "install" | "skip";
+/**
+ * Core が投げてくる `stage.*` の method 名。**正は `docs/contracts/wire.json`**（→ ADR-022）。
+ *
+ * Core 側の対応する定数は `setup/coordinator.py` の `METHOD_STATE` / `METHOD_PROMPT` と
+ * `greeting.py` の `METHOD_SPEECH_*`。ハンドラのキーに直接書くと、
+ * **綴りを間違えても「知らない method」として静かに捨てられる**（`unhandled_method`）。
+ */
+export const METHOD_SETUP_STATE = "stage.setup.state";
+export const METHOD_SETUP_PROMPT = "stage.setup.prompt";
+export const METHOD_SPEECH_STARTED = "stage.speech.started";
+export const METHOD_SPEECH_ENDED = "stage.speech.ended";
+
+/** 取得するかの答え。Core は `CHOICE_INSTALL` とだけ比較する（それ以外は「しない」）。 */
+export const CHOICE_INSTALL = "install";
+export const CHOICE_SKIP = "skip";
+
+type Answer = typeof CHOICE_INSTALL | typeof CHOICE_SKIP;
 
 /** 尋ねられている間だけ入る「答えを返す関数」。UI のボタンがこれを呼ぶ。 */
 let pendingAnswer: ((answer: Answer) => void) | null = null;
@@ -37,8 +53,8 @@ export function useCoreConnection(): void {
     const connection = connectToCore({
       onConnectedChange: (connected) => store.setConnected(connected),
       notifications: {
-        "stage.setup.state": (payload) => store.setTts(toTtsSnapshot(payload)),
-        "stage.speech.started": (payload) => {
+        [METHOD_SETUP_STATE]: (payload) => store.setTts(toTtsSnapshot(payload)),
+        [METHOD_SPEECH_STARTED]: (payload) => {
           const timeline = parseTimeline(payload);
           if (!timeline) {
             // 読めないタイムラインで口を動かさない。**音は Core が鳴らしている。**
@@ -51,10 +67,10 @@ export function useCoreConnection(): void {
             startedAtMs: performance.now(),
           });
         },
-        "stage.speech.ended": () => store.setSpeech(null),
+        [METHOD_SPEECH_ENDED]: () => store.setSpeech(null),
       },
       commands: {
-        "stage.setup.prompt": (payload) => {
+        [METHOD_SETUP_PROMPT]: (payload) => {
           const prompt: SetupPrompt = {
             retry: payload.retry === true,
             reason: typeof payload.reason === "string" ? payload.reason : null,

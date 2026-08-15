@@ -11,6 +11,7 @@ Phase 0 では `TTSProvider` protocol をまだ作らない（Phase 1）。
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 import httpx
@@ -37,14 +38,12 @@ class TtsError(RuntimeError):
         self.detail = detail
 
 
+@dataclass(frozen=True, slots=True)
 class SpeechAudio:
     """合成結果。WAV のバイト列と、口のタイムライン。"""
 
-    __slots__ = ("timeline", "wav")
-
-    def __init__(self, wav: bytes, timeline: VisemeTimeline) -> None:
-        self.wav = wav
-        self.timeline = timeline
+    wav: bytes
+    timeline: VisemeTimeline
 
 
 class AivisSpeechClient:
