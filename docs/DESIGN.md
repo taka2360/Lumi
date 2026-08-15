@@ -20,6 +20,10 @@
 > 3. **音声デバイスの選択方針を確定した**（OS の既定デバイス / WASAPI / デバイス既定レート / **開通は最初のフレームの到着で判定**）→ [architecture/audio.md](architecture/audio.md) §8
 > 4. **TTS エンジンプロセスの所有者を Core にした。** Lumi が起動したものだけ Lumi が止める → [architecture/core.md](architecture/core.md) §6
 > 5. **使用中モデルのライセンス全文は、モデル自身の manifest が持っている**ことが分かった（licensing.md 未確認 #2 が解消）→ [licensing.md](licensing.md) §4.4
+> 6. **Python サイドカーを PyInstaller の onedir で固め、`resources` として同梱する**ことを決めた。
+>    onefile は**強制終了のたびに `%TEMP%` へ 21 MB の残骸を残す** → [ADR-021](decisions/ADR-021-sidecar-packaging.md)。roadmap 未確定事項 #2 が解消
+> 7. **サードパーティ通知を依存グラフから生成するようにした**（284 件）。
+>    **GPL / AGPL / 非 OSS を見つけたらビルドを失敗させる** → [licensing.md](licensing.md) §6
 
 > **rev.6 の変更点**（Phase 0 の 🔴 ブロッカー解消）
 > 1. **音声ライブラリ・TTS エンジンの利用規約を調査し、[licensing.md](licensing.md) に記録した。** roadmap 未確定事項 #1 が解消 → §10

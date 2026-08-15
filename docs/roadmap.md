@@ -61,7 +61,8 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
   - [x] エンジン名・音源のクレジット例・ライセンス全文・禁止事項をユーザーが読める
   - [x] Phase 0 では Stage 側に静的に作る。`Provider.attribution()` との接続は Phase 1
   - [x] **Core が落ちていても読める**（クレジット画面は Core に接続しない）
-  - [ ] **推移的依存を含む OSS 通知の生成**〔何が実際に配布物へ入るかが決まってから = インストーラ作成時〕
+  - [x] **推移的依存を含む OSS 通知の生成**〔2026-08-15。`scripts/generate-oss-notice.mjs` が3つの依存グラフから生成（284 件）。
+    **GPL / AGPL を見つけたらビルドを失敗させる** → [licensing.md](licensing.md) §6〕
 - [x] ハードコードされた「こんにちは」を AivisSpeech で発話 → リップシンク
   〔エンジンの起動・停止は Core が持つ（[architecture/core.md](architecture/core.md) §6）。
   リップシンクの方式は実測を経て確定（[interfaces/renderer.md](interfaces/renderer.md)）〕
@@ -70,8 +71,10 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 - [x] **入出力が別デバイスのときの動作を実測** 〔2026-08-15。**別デバイスでも開ける。同一デバイスでも開けないことがある。**
   分離ストリームのドリフトは測定分解能以下 → [measurements/phase0.md](measurements/phase0.md)〕
 - [x] `PlatformShell` インターフェースを定義（Electron 退避路の確保）〔Stage に露出するのは OS 特権を含まない部分集合。[interfaces/shell.md](interfaces/shell.md)〕
-- [ ] **VRAM / RAM / インストーラサイズを実測して記録**（Phase 5 の設計根拠になる）→ [measurements/phase0.md](measurements/phase0.md)
-- [ ] **サイドカー同梱状態で sqlite-vec（SQLite ローダブル拡張）がロードできることを確認**（Phase 2 で気づくと記憶機能ごと止まる）〔**uv 環境では確認済み**。同梱サイドカーでの確認が残り〕
+- [x] **VRAM / RAM / インストーラサイズを実測して記録** 〔2026-08-15。**インストーラ 13.1 MB / Lumi 本体 497 MB / VRAM 55 MiB**。
+  R1 解消 → [measurements/phase0.md](measurements/phase0.md)〕
+- [x] **サイドカー同梱状態で sqlite-vec（SQLite ローダブル拡張）がロードできることを確認** 〔2026-08-15。`lumi-core.exe --self-check`〕
+- [x] **Python サイドカーのパッケージング**〔PyInstaller の onedir。onefile は強制終了で %TEMP% に残骸を残す → [ADR-021](decisions/ADR-021-sidecar-packaging.md)〕
 
 ### 完了条件
 インストーラを作って**別マシン**で起動し、**初回セットアップを通した上で**、キャラクターが立って一言喋る。
@@ -81,22 +84,22 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 > **ただしクレジット表示は落とさない。** 配布物ができた時点で義務が発生し、後から遡って直せないため。
 
 ### 検証手順
-1. `pnpm tauri build` で Windows インストーラが生成され、**サイズを記録**（R1判定）
+1. ~~`pnpm tauri build` で Windows インストーラが生成され、**サイズを記録**（R1判定）~~ 〔2026-08-15 完了。`pnpm build` で **13.1 MB**〕
 2. クリーンな別マシン（または VM）にインストールして起動
 3. キャラクターが透過背景で最前面に立ち、**背後のウィンドウが操作できる**
 4. キャラクターの上にカーソルを乗せると**ホバーが検知される**（R2判定）
-5. タスクマネージャで Shell と Python Core の**両プロセスの RAM 使用量を記録**
+5. ~~タスクマネージャで Shell と Python Core の**両プロセスの RAM 使用量を記録**~~ 〔2026-08-15 完了。Shell 37 MB / Core 50 MB〕
 6. 「こんにちは」を発話し、**口が動く**
 7. Core プロセスを強制終了 → Shell が検知して再起動する
 8. Shell を終了 → Core も確実に終了する（ゾンビプロセスが残らない）
 9. **未知の `os.*` コマンドを Shell に送ると拒否され、ログに残る**（B3 骨格の確認）
-10. **アイドル時の VRAM / RAM 実測値を記録**
+10. ~~**アイドル時の VRAM / RAM 実測値を記録**~~ 〔2026-08-15 完了。VRAM 55 MiB〕
 11. ~~音声ライブラリ利用規約を確認し、記録~~ 〔2026-08-15 完了 → [licensing.md](licensing.md)〕
 12. ~~マイクとスピーカーが別デバイスの構成で duplex stream が開けるか確認~~
     〔2026-08-15 完了。**duplex を使わない**方針に変更 → [ADR-020](decisions/ADR-020-split-audio-streams.md)。
     別マシンでは `uv run python -m lumi.audio.probe` を回して**入出力が開通することだけ**確認する〕
-13. **サイドカーから sqlite-vec がロードできるか確認**
-14. **インストーラに AivisSpeech / VOICEVOX のバイナリが含まれていないことを確認**（[licensing.md](licensing.md) テスト1）
+13. ~~**サイドカーから sqlite-vec がロードできるか確認**~~ 〔2026-08-15 完了。別マシンでは `lumi-core.exe --self-check` を回す〕
+14. ~~**インストーラに AivisSpeech / VOICEVOX のバイナリが含まれていないことを確認**~~ 〔2026-08-15 完了。92 ファイルを列挙して確認〕
 15. **初回セットアップで「取得しない」を選び、Lumi が起動して「TTS 未セットアップ」が表示されることを確認**
 16. **ネットワークを遮断した状態で取得を試み、明示的に失敗し、部分的な残骸が残らないことを確認**
 17. **ユーザーが選択するまで外部へのネットワークアクセスが発生しないことを確認**（パケットキャプチャ / Network-optional 原則）
@@ -359,7 +362,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 |---|---|---|
 | 1 | ~~🔴 AivisSpeech / VOICEVOX の音声ライブラリ利用規約~~ | **✓ 解消**〔2026-08-15〕→ [licensing.md](licensing.md), [ADR-019](decisions/ADR-019-tts-engine-distribution.md) |
 | 1b | **AivisSpeech の LICENSE 本文・依存ライブラリ・同梱モデルのライセンス**（同梱を再検討する場合に必要） | Phase 0（取得実装時）→ [licensing.md](licensing.md) §7 |
-| 2 | Python サイドカーのパッケージング（PyInstaller vs uv 同梱） | Phase 0（実測） |
+| 2 | ~~Python サイドカーのパッケージング（PyInstaller vs uv 同梱）~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-021](decisions/ADR-021-sidecar-packaging.md)。**PyInstaller の onedir** |
 | 3 | Ollama を同梱するかユーザーに別途インストールさせるか（**[ADR-019](decisions/ADR-019-tts-engine-distribution.md) と同じ論法を適用予定**） | Phase 0-1 |
 | 4 | ~~入出力が別デバイスのときの duplex stream の扱い~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-020](decisions/ADR-020-split-audio-streams.md)。**duplex を使わない**（別ストリーム + Core が持つ reference） |
 | 5 | LLM モデル選定（Qwen3系 / Gemma3系）— 日本語会話品質と Tool Calling 品質 | Phase 1（実測） |

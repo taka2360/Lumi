@@ -7,6 +7,7 @@ Phase 0 の実装対象は 1〜5（WS listen と token 認証）まで。
 from __future__ import annotations
 
 import asyncio
+import io
 import os
 import signal
 import sys
@@ -102,7 +103,30 @@ async def _run() -> int:
     return 0
 
 
+def _force_utf8_stdio() -> None:
+    """**標準出力を UTF-8 に固定する。**
+
+    固めた実行体（PyInstaller）を日本語 Windows で動かすと、stdout の既定が
+    cp932 になる。Core のログは日本語を含み、**Shell はそれを stdout から読む契約**なので、
+    cp932 に無い文字が1つ入った瞬間に `UnicodeEncodeError` で Core が落ちる（2026-08-15 実測）。
+
+    開発中（uv run）は UTF-8 なので気づけない。**配布物だけで壊れる類のバグ。**
+    `errors="replace"` にしているのは、**ログの1行が読めないことより Core が死ぬ方が悪い**ため。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if isinstance(stream, io.TextIOWrapper):
+            stream.reconfigure(encoding="utf-8", errors="replace")
+
+
 def main() -> int:
+    _force_utf8_stdio()
+    if "--self-check" in sys.argv[1:]:
+        # **配布物がその PC で動くかを確かめる経路**（docs/architecture/setup.md）。
+        # WS も何も立てない。ここで import するのは、通常起動を重くしないため。
+        from lumi.selfcheck import run
+
+        return run()
+
     lumi_logging.configure(level=os.environ.get("LUMI_LOG_LEVEL", "INFO"))
     try:
         return asyncio.run(_run())

@@ -15,6 +15,7 @@ import acmlText from "./licenses/acml-1.0.txt?raw";
 import gplText from "./licenses/gpl-3.0.txt?raw";
 import lgplText from "./licenses/lgpl-3.0.txt?raw";
 import mitText from "./licenses/mit-lumi.txt?raw";
+import generated from "./third-party.generated.json" with { type: "json" };
 
 export type LicenseId = "mit-lumi" | "lgpl-3.0" | "gpl-3.0" | "acml-1.0";
 
@@ -228,6 +229,22 @@ export const LICENSES: readonly LicenseDocument[] = [
   },
 ];
 
+export type Ecosystem = {
+  readonly name: string;
+  readonly packages: readonly Dependency[];
+};
+
+/**
+ * **推移的依存を含む完全な一覧。** `scripts/generate-oss-notice.mjs` が3つの依存グラフから生成する。
+ *
+ * 手で書かない。手で書いた一覧は必ず古くなり、**欠けたことに誰も気づけない**。
+ * 上の BUNDLED は「読む人が知りたい主要な依存」であり、こちらは「義務としての網羅」。
+ */
+export const THIRD_PARTY = generated as {
+  readonly total: number;
+  readonly ecosystems: readonly Ecosystem[];
+};
+
 /**
  * 画面の見出しに使う節。**docs/licensing.md §6 の表と1対1**。
  * 節が消えていないことを content.test.ts が検査する。
@@ -238,6 +255,7 @@ export const SECTIONS = [
   "external",
   "voice",
   "prohibitions",
+  "third-party",
   "licenses",
 ] as const;
 

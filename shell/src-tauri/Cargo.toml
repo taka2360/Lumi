@@ -27,6 +27,16 @@ futures-util = "0.3.34"
 rand = "0.9.5"
 windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_System_Threading"] }
 
+[profile.release]
+# 効果は限定的（実測でコード部分が 1 MB 程度縮む）。**MSVC はデバッグ情報を .pdb に出す**ので、
+# `strip` で exe が劇的に小さくなるわけではない。インストーラサイズを支配していたのは
+# フロントエンドに紛れ込んだアセットの方だった → docs/measurements/phase0.md
+# `panic = "abort"` は入れない。Shell は「拒否」を担うので、
+# **落ちるにしても巻き戻して落ちる**方がよい（unwind を殺すと Drop も走らない）。
+strip = "symbols"
+lto = true
+codegen-units = 1
+
 [lints.clippy]
 # Shell は「拒否」だけを持つ。panic で落ちると拒否できなくなるため、
 # unwrap / expect は原則書かない（起動シーケンスの初期化のみ例外）。

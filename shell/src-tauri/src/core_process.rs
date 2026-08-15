@@ -38,8 +38,15 @@ pub struct CoreLaunchSpec {
     pub args: Vec<String>,
 }
 
-/// 配布物に同梱されたサイドカーの実行体名（Tauri の `externalBin` が配置する名前）。
+/// 配布物に同梱されたサイドカーの実行体名。
 const SIDECAR_NAME: &str = "lumi-core.exe";
+
+/// サイドカーを探す場所（実行体のあるディレクトリからの相対）。**順に見る。**
+///
+/// `core/` は Tauri の `resources` が配置する場所。PyInstaller の onedir 出力は
+/// 実行体と 80 個以上の依存ファイルの組なので、**Shell の隣に撒かずにディレクトリごと置く**
+/// （→ docs/decisions/ADR-021-sidecar-packaging.md）。
+const SIDECAR_DIRS: &[&str] = &["core", "."];
 
 /// 子プロセスの終了を確認する間隔。`wait` は可変参照を要求し、
 /// 終了時に kill するための保持と両立しないので、短い間隔で `try_wait` する。
@@ -69,10 +76,14 @@ pub fn resolve_launch_spec(
     })
 }
 
-/// 同梱サイドカーの場所（実行体と同じディレクトリ）。存在しなければ `None`。
+/// 同梱サイドカーを探す。存在しなければ `None`（= 開発経路にフォールバックする）。
 pub fn find_sidecar(exe_dir: &Path) -> Option<PathBuf> {
-    let candidate = exe_dir.join(SIDECAR_NAME);
-    candidate.is_file().then_some(candidate)
+    sidecar_candidates(exe_dir).into_iter().find(|path| path.is_file())
+}
+
+/// 探す順に並べた候補。**純粋関数**（ファイルシステムに触らない）。
+pub fn sidecar_candidates(exe_dir: &Path) -> Vec<PathBuf> {
+    SIDECAR_DIRS.iter().map(|dir| exe_dir.join(dir).join(SIDECAR_NAME)).collect()
 }
 
 /// stdout の 1 行から listen ポートを取り出す。**純粋関数**。
@@ -259,6 +270,16 @@ mod tests {
         let spec = resolve_launch_spec(Some(Path::new("C:/app/lumi-core.exe")), None).unwrap();
         assert_eq!(spec.program, PathBuf::from("C:/app/lumi-core.exe"));
         assert!(spec.args.is_empty());
+    }
+
+    #[test]
+    fn looks_in_the_resources_directory_first() {
+        // 配布物では `core/` に入る（Tauri の resources）。
+        // 実行体の隣も見るのは、手で置いた場合と将来の externalBin のため。
+        let candidates = sidecar_candidates(Path::new("C:/app"));
+        assert_eq!(candidates.first().unwrap(), Path::new("C:/app/core/lumi-core.exe"));
+        assert_eq!(candidates.len(), 2);
+        assert!(candidates.iter().any(|p| p == Path::new("C:/app/./lumi-core.exe")));
     }
 
     #[test]
