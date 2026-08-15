@@ -1,0 +1,232 @@
+# Core Architecture
+
+> Core の定義、プロセス構成、通信の namespace、依存関係。
+
+親: [DESIGN.md](../DESIGN.md) / 関連: [../contracts/authority-matrix.md](../contracts/authority-matrix.md)
+
+---
+
+## 1. Core の定義
+
+> **Core は権威を持つが、能力の実装を持たない。**
+
+「Core を小さくする」という表現は誤解を招く。Core は最終的にコード量としては大きくなる。正しい定義は上記である。
+
+```
+Core が持つもの（権威）              Core が持たないもの（能力）
+──────────────────────              ──────────────────────────
+Decision     何をすべきか            Browser
+State        今どうなっているか       Computer / Input injection
+Policy       何が許されるか           Filesystem
+Scheduling   いつやるか              Game
+Coordination 誰がやるか              Sensor
+Memory       何を覚えているか         Vision model
+```
+
+### 分類の判定基準
+
+> **「これを外しても Lumi は Lumi か？」**
+
+| コンポーネント | 外したら | 分類 |
+|---|---|---|
+| ブラウザ操作 | Lumi のまま | Extension |
+| 記憶 | Lumi ではない | Core |
+| Attention Arbiter | Lumi ではない | Core |
+| Minecraft を遊ぶ能力 | Lumi のまま | Extension |
+| Permission Kernel | Lumi ではない（危険な別物になる） | Core |
+| VRM 描画 | Lumi ではない（ただし Live2D でもよい） | Core が抽象を持ち、実装は Renderer |
+| Drive System | Lumi ではない（ただのチャットボットになる） | Core |
+
+---
+
+## 2. プロセス構成
+
+```
+┌──────────────────────── Lumi Shell (Tauri 2 / Rust) ─────────────────────────┐
+│  透過/最前面/クリックスルー/ヒットテスト・トレイ・ホットキー                     │
+│  スクリーンキャプチャ・入力インジェクション・Coreサイドカーの起動と生存監視       │
+│  os.* 要求の認証・schema検証・allowlist検査（B3）                              │
+│   ┌────────── Stage WebView (React + TS + Zustand) ──────────┐               │
+│   │  VRM描画・表情/モーション/リップシンク・吹き出し            │ ← Tauri IPC   │
+│   │  Widgetホスト + Widget Broker・設定UI・権限プロンプト      │   shell.*     │
+│   └──────────────────────────────────────────────────────────┘               │
+└──────────────────────────────────────────────────────────────────────────────┘
+        │ os.* (WS)                                    │ stage.* (WS)
+        ▼                                              ▼
+┌────────────────────── Lumi Core (Python / asyncio) ──────────────────────────┐
+│  Attention Arbiter / Reactive Loop / Deliberative Loop                        │
+│  Memory / World State / Internal State / Permission Kernel                    │
+│  Tool Registry / Event Bus / Audio I/O / Extension Host / Provider Registry   │
+└────────────┬──────────────────────────────────────────────────────────────────┘
+             │ ext.* (WS / stdio)
+   ┌─────────┼─────────┬──────────────┐
+   ▼                   ▼              ▼
+ Sensor Ext      Browser Ext     GameAgent Ext ...
+
+ 外部エンジン（別プロセス / 所有しない）: Ollama │ AivisSpeech / VOICEVOX
+```
+
+### なぜ Core が単一の Python プロセスなのか
+
+| 選択肢 | 評価 |
+|---|---|
+| **Python 単一プロセス** ✓ | VAD / STT / Embedding / TTS クライアントの生態系が Python に集中。プロセス間で音声を運ぶ必要がない |
+| Rust Core | 生態系が薄い。faster-whisper / Silero / ONNX の Python バインディングを再実装することになる |
+| TypeScript Core | AIRI の選択。ブラウザ生態系との親和性は高いが、音声処理を worklet/worker で組む必要があり barge-in の critical path が長くなる |
+| Python を複数プロセスに分割 | 音声・記憶・Agent を分けると IPC が増え、barge-in のレイテンシが読めなくなる |
+
+→ [ADR-002](../decisions/ADR-002-python-core-as-hub.md)
+
+### Core がハブである
+
+**Shell も Stage も Extension も Core のクライアント。**
+
+AIRI は eventa IPC（Electron main↔renderer）と WebSocket（server-runtime）の2系統が絡み合っており、「この通信はどっち経由か」が追いにくい。Lumi は Core をハブに固定する。
+
+---
+
+## 3. 通信の namespace
+
+| namespace | 経路 | 内容 | 例 |
+|---|---|---|---|
+| `shell.*` | Tauri IPC (Shell ↔ Stage) | ウィンドウ自身の見た目と入力。**1ms 以下であるべきもの** | `shell.window.set_clickthrough`, `shell.window.drag_start`, `shell.hover.state` |
+| `stage.*` | WS (Core → Stage) | Lumi の表現と状態 | `stage.character.speak`, `stage.character.expression`, `stage.widget.open`, `stage.bubble.show` |
+| `os.*` | WS (Core → Shell) | OS 特権操作の依頼 | `os.capture.screenshot`, `os.input.click`, `os.window.create` |
+| `ext.*` | WS/stdio (Core ↔ Extension) | Tool 呼び出し、Sensor push | `ext.tool.invoke`, `ext.sensor.push` |
+
+### 規則
+
+> **`shell.*` は絶対に AI の判断を運ばない。**
+> **`stage.*` は絶対に OS 特権を要求しない。**
+
+この2つを守れば経路の混乱は起きない。
+
+### なぜ Stage が2経路を持つのか
+
+Stage は Shell（Tauri IPC）と Core（WS）の両方と話す。これは意図的である。
+
+- ウィンドウのドラッグやクリックスルー切替は**フレーム単位の応答性**が要る。Python を往復させられない
+- キャラクターの発話や表情は**Lumi の判断**であり、Core が決める
+
+namespace を分けることで、「どちらの経路を使うべきか」が名前から自明になる。
+
+---
+
+## 4. 依存関係
+
+```
+Stage ──→ Core ←── Shell
+              ↑
+         Extension
+
+Core 内部:
+  AttentionArbiter ──→ (ReactiveLoop | DeliberativeLoop)
+  Reactive/Deliberative ──→ Memory, World, Internal, ProviderRegistry, ToolRegistry
+  ToolRegistry ──→ PermissionKernel ──→ (Canonicalizer, Policy, GrantStore, AuditLog)
+  すべて ──→ EventBus（発行のみ）
+```
+
+### 逆向きの依存を作らない
+
+| 禁止 | 理由 |
+|---|---|
+| `PermissionKernel` → `Tool` | Kernel が個別ツールを知ると、ツール追加のたびに Kernel が変わる |
+| `Memory` → `Agent` | 記憶はエージェントの都合を知らない。検索クエリを受け取るだけ |
+| `EventBus` → 何か | Bus は誰も知らない。誰でも publish/subscribe できる |
+| `World` → `Sensor` | Core は Sensor の実装を知らない。Signal を受け取るだけ |
+| `Core` → `Shell` の具体実装 | `PlatformShell` interface 越しにのみ話す |
+
+### モジュール構成
+
+```
+core/lumi/
+├── kernel/          arbiter, activity, job, command, event, hooks,
+│                    cancellation, inference_lease, recovery, scheduler
+├── agent/           reactive, deliberative, drives, prompt assembly
+├── memory/          working, episodic, semantic, reflection, retrieval, decay, provenance
+├── world/           facets, snapshot, projection
+├── internal/        mood, fatigue, drives state
+├── permission/      policy, canonicalization, bind_verifier, result_verifier,
+│                    grants, audit
+├── tools/           registry, descriptors,
+│                    builtin/        fs, computer, memory, character（Class A）
+├── providers/       llm/ stt/ tts/ embedding/ vision/
+├── audio/           capture, vad, playback, echo_guard
+├── extensions/      host, manifest, protocol
+├── storage/         sqlite, migrations, vector store
+└── transport/       ws server, protocol schema
+```
+
+**`kernel/` が他のどのモジュールにも依存しないこと**を静的検査で保証する。kernel は型と調停だけを持ち、具体的な能力を知らない。
+
+---
+
+## 5. Shell と Stage の責務
+
+**責務表・Tauri 2 固有の課題・AIRI から借りる運用知見は [ui.md](ui.md) が唯一の定義場所。**
+
+Core から見た要点だけ:
+
+| | 一行で |
+|---|---|
+| **Shell** | OS 特権プリミティブのみ。判断を持たない（Invariant 8 の拒否を除く）。`os.*` の検証層を持つ（B3） |
+| **Stage** | 表現のみ。ビジネスロジックを持たない。**ロジックは Core にのみ存在する** |
+
+判定基準: **Stage のストアから読める値は、すべて Core が `stage.*` で配信したものであるべき。** Stage が自分で計算して状態を作っていたら、それはロジックが漏れている。
+
+→ [ui.md](ui.md), [ADR-001](../decisions/ADR-001-desktop-shell-tauri.md), [../interfaces/shell.md](../interfaces/shell.md)
+
+---
+
+## 6. 外部エンジン
+
+Lumi が**所有しない**プロセス。
+
+| エンジン | 用途 | 起動 |
+|---|---|---|
+| Ollama | LLM | ユーザーが別途インストール（同梱可否は未確定事項 #3。[ADR-019](../decisions/ADR-019-tts-engine-distribution.md) と同じ論法を適用予定） |
+| AivisSpeech | TTS | **配布物に含めない。** 初回セットアップでユーザーの明示的な選択に基づき公式配布元から取得 |
+| VOICEVOX | TTS（代替） | **配布物に含めない**（規約が無断再配布を禁止）。ユーザーが別途インストールしたものを検出 |
+
+配布方針の全体 → [../licensing.md](../licensing.md) / 決定 → [ADR-019](../decisions/ADR-019-tts-engine-distribution.md)
+
+### 扱い
+
+- 127.0.0.1 bind（外部からアクセスできない）
+- **出力は必ず `untrusted`**（[../contracts/provenance.md](../contracts/provenance.md)）
+- 起動していない場合は明示的なエラーにする。黙って劣化しない
+- **セットアップされていない場合と、起動に失敗した場合を区別する。** 前者は「まだ導入されていない」、後者は「壊れている」であり、ユーザーに要求する行動が違う
+- `Provider` interface 越しにのみアクセスする（差し替え可能性の担保）
+
+---
+
+## 7. 起動シーケンス
+
+```
+1. Shell 起動
+2. WS token を生成
+3. Python Core をサイドカーとして起動（token を環境変数で渡す）
+4. Core が 127.0.0.1 で WS listen
+5. Shell が WS 接続 → token 認証
+6. Core が storage を open、マイグレーション適用
+7. Core が Provider を登録（load はまだしない）
+8. Core が Extension manifest を読み、有効なものをロード
+9. Core が Attention Arbiter を初期化し、idle Activity を running で生成
+10. Core が ready を Shell に通知
+11. Shell が Stage ウィンドウを作成
+12. Stage が WS 接続 → token 認証
+13. Core が Stage に初期状態を配信（character, world 投影）
+14. Core が Audio I/O を開始（VAD 待機）
+```
+
+### 障害時
+
+| 障害 | 対応 |
+|---|---|
+| Core が落ちた | Shell が検知して再起動。Crash Recovery が走る（Phase 4a） |
+| Shell が落ちた | Core も終了（サイドカーとして親に紐づく）。ゾンビを残さない |
+| Stage が落ちた | Shell が再作成。Core は動き続ける |
+| Extension が落ちた | Core が検知して該当 capability を無効化。Lumi は動き続ける |
+| 外部エンジンが落ちた | Provider がエラーを返す。ユーザーに明示的に伝える |
+
+**Phase 0 の検証項目**: Core 強制終了 → 再起動、Shell 終了 → Core も終了（ゾンビなし）。
