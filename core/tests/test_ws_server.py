@@ -16,15 +16,15 @@ from lumi.transport.server import (
     CLOSE_UNAUTHORIZED,
     NotConnectedError,
     WsServer,
-    token_from_env,
+    tokens_from_env,
 )
 
-TOKEN = "test-token"
+TOKENS = {Role.SHELL: "shell-token", Role.STAGE: "stage-token"}
 
 
 @pytest.fixture
 async def server() -> AsyncIterator[WsServer]:
-    ws_server = WsServer(TOKEN)
+    ws_server = WsServer(TOKENS)
     await ws_server.start()
     try:
         yield ws_server
@@ -33,8 +33,10 @@ async def server() -> AsyncIterator[WsServer]:
 
 
 async def open_client(
-    server: WsServer, *, role: str = "shell", token: str = TOKEN
+    server: WsServer, *, role: str = "shell", token: str | None = None
 ) -> ClientConnection:
+    if token is None:
+        token = TOKENS.get(Role(role), "") if role in {r.value for r in Role} else ""
     client = await connect(f"ws://127.0.0.1:{server.port}")
     await client.send(
         json.dumps({"v": PROTOCOL_VERSION, "kind": "hello", "role": role, "token": token})
@@ -155,14 +157,56 @@ class TestReconnect:
 
 
 class TestToken:
-    def test_uses_env_token(self) -> None:
-        assert token_from_env({"LUMI_WS_TOKEN": "from-env"}) == ("from-env", False)
+    def test_uses_env_tokens(self) -> None:
+        tokens, generated = tokens_from_env(
+            {"LUMI_WS_TOKEN_SHELL": "a", "LUMI_WS_TOKEN_STAGE": "b"}
+        )
+        assert tokens == {Role.SHELL: "a", Role.STAGE: "b"}
+        assert not generated
 
     def test_generates_when_missing(self) -> None:
-        token, generated = token_from_env({})
+        tokens, generated = tokens_from_env({})
         assert generated
-        assert len(token) >= 32
+        assert all(len(value) >= 32 for value in tokens.values())
 
     def test_refuses_empty_token(self) -> None:
         with pytest.raises(ValueError, match="token"):
-            WsServer("")
+            WsServer({Role.SHELL: "a", Role.STAGE: ""})
+
+
+class TestRoleTokenIsolation:
+    """乗っ取られた Stage が shell として接続できないこと（B2 / B3）。"""
+
+    async def test_stage_token_cannot_authenticate_as_shell(self, server: WsServer) -> None:
+        client = await open_client(server, role="shell", token=TOKENS[Role.STAGE])
+        with pytest.raises(ConnectionClosed):
+            await client.recv()
+        assert client.close_code == CLOSE_UNAUTHORIZED
+
+    async def test_shell_token_cannot_authenticate_as_stage(self, server: WsServer) -> None:
+        client = await open_client(server, role="stage", token=TOKENS[Role.SHELL])
+        with pytest.raises(ConnectionClosed):
+            await client.recv()
+        assert client.close_code == CLOSE_UNAUTHORIZED
+
+
+class TestNotify:
+    async def test_delivers_without_a_result(self, server: WsServer) -> None:
+        client = await open_client(server, role="stage")
+        await client.recv()  # welcome
+        await wait_until_connected(server, Role.STAGE)
+
+        await server.notify(Role.STAGE, "stage.setup.state", {"state": "not_configured"})
+        message = json.loads(await client.recv())
+        assert message["kind"] == "notify"
+        assert message["method"] == "stage.setup.state"
+        assert message["payload"] == {"state": "not_configured"}
+        await client.close()
+
+    async def test_dropped_silently_when_nobody_listens(self, server: WsServer) -> None:
+        """通知が届かないことは失敗ではない。**Core の進行を止めない。**"""
+        await server.notify(Role.STAGE, "stage.setup.state", {})
+
+    async def test_still_refuses_namespace_violations(self, server: WsServer) -> None:
+        with pytest.raises(ValueError, match="namespace"):
+            await server.notify(Role.STAGE, "os.input.click", {})

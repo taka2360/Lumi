@@ -521,6 +521,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [extension.md](architecture/extension.md) | Provider / Capability の2機構、信頼レベル、Hook |
 | [audio.md](architecture/audio.md) | barge-in critical path、EchoGuard、SLO |
 | [ui.md](architecture/ui.md) | Shell、Stage、Widget Broker、Character |
+| [setup.md](architecture/setup.md) | 初回セットアップ、外部エンジンの取得・検証・ロールバック・検出 |
 | [recovery.md](architecture/recovery.md) | Crash Recovery、冪等性、イベント語彙 |
 
 ### interfaces/ — コンポーネント間の契約
@@ -595,3 +596,4 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Phase 分割と完了条件・未確定事項・リスク一覧 | [roadmap.md](roadmap.md) |
 | **外部コンポーネントのライセンス・配布物の構成・クレジット義務・ACML 特例への対応** | [licensing.md](licensing.md) |
 | **実測値**（インストーラサイズ / RAM / VRAM / レイテンシ / CPU） | `measurements/phase<N>.md` |
+| **外部エンジンの取得元のピン留め・検証方法・インストール先・TTS セットアップ状態** | [architecture/setup.md](architecture/setup.md) |

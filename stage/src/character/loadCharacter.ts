@@ -22,12 +22,12 @@ export async function loadCharacter(url: string = DEFAULT_VRM_URL): Promise<Load
     if (!probe.ok) {
       return {
         model: createPlaceholder(),
-        fallbackReason: `VRM が見つからない (${probe.status}): ${url}`,
+        fallbackReason: `VRM が見つかりません (${probe.status}): ${url}`,
       };
     }
     return { model: await loadVrm(url), fallbackReason: null };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    return { model: createPlaceholder(), fallbackReason: `VRM を読めない: ${reason}` };
+    return { model: createPlaceholder(), fallbackReason: `VRM を読み込めません: ${reason}` };
   }
 }

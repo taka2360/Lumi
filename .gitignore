@@ -21,6 +21,8 @@ voicevox/
 # --- Content Pack の実体（キャラクター・音声・モーション） ---
 # content/ の構造とサンプル設定は追跡するが、実体アセットは追跡しない。
 *.vrm
+# Stage が読むキャラクター実体（ローカルに置くだけ。拡張子を変えて無効化することがある）
+stage/public/character.*
 *.moc3
 *.model3.json
 *.cmo3

@@ -5,8 +5,11 @@
 
 ## 認証
 
-`token` は Shell がサイドカー起動時に生成し、**環境変数**で Core に渡す
+token は Shell がサイドカー起動時に生成し、**環境変数**で Core に渡す
 （コマンドラインに載せない → docs/interfaces/shell.md）。Core は 127.0.0.1 にだけ bind する。
+
+**token は role ごとに別のものを使う。** 共有すると、乗っ取られた Stage が `role: "shell"` を
+名乗って `os.*` の command を横取りできる。Shell が両方を生成し、Stage には Stage 用だけを渡す。
 
 ## この層が保証しないこと
 
@@ -18,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
 
 from websockets.asyncio.server import Server, ServerConnection, serve
@@ -30,6 +33,7 @@ from lumi.transport.protocol import (
     PING_INTERVAL_S,
     PING_TIMEOUT_S,
     Command,
+    Notify,
     ProtocolError,
     Result,
     Role,
@@ -95,16 +99,19 @@ class WsServer:
 
     def __init__(
         self,
-        token: str,
+        tokens: Mapping[Role, str],
         *,
         host: str = "127.0.0.1",
         port: int = 0,
         on_connect: ConnectHook | None = None,
         on_disconnect: ConnectHook | None = None,
     ) -> None:
-        if not token:
-            raise ValueError("token が空。認証なしで listen しない（fail-closed）")
-        self._token = token
+        # role ごとに token を分ける。**共有すると、乗っ取られた Stage が shell として
+        # 接続して os.* を横取りできる**（docs/contracts/security-boundaries.md B2/B3）。
+        missing = [role.value for role in Role if not tokens.get(role)]
+        if missing:
+            raise ValueError(f"token が空: {missing}。認証なしで listen しない（fail-closed）")
+        self._tokens = dict(tokens)
         self._host = host
         self._requested_port = port
         self._on_connect = on_connect
@@ -176,6 +183,24 @@ class WsServer:
         finally:
             connection.resolve(Result(corr_id=command.id, ok=False, payload={}, error="cleanup"))
 
+    async def notify(self, role: Role, method: str, payload: dict[str, Any] | None = None) -> None:
+        """結果を待たずに送る。**相手が繋がっていなくても例外にしない。**
+
+        通知は「届けば嬉しいもの」であって、届かないことが失敗ではない。
+        `invoke` と違い、ここで止まると UI の更新が Core の進行を止めてしまう。
+        """
+        if not method_matches_role(method, role):
+            raise ValueError(f"{role.value} に {method} は送れない（namespace 違反）")
+
+        connection = self._connections.get(role)
+        if connection is None:
+            log.debug("transport.notify.dropped", role=role.value, method=method)
+            return
+        try:
+            await connection.ws.send(Notify(method=method, payload=payload or {}).to_json())
+        except ConnectionClosed:
+            log.debug("transport.notify.closed", role=role.value, method=method)
+
     async def _handle(self, ws: ServerConnection) -> None:
         role = await self._authenticate(ws)
         if role is None:
@@ -227,8 +252,8 @@ class WsServer:
             await ws.close(code=CLOSE_PROTOCOL_ERROR, reason="invalid hello")
             return None
 
-        # 比較はタイミング攻撃を避ける形で行う。
-        if not secrets.compare_digest(hello.token, self._token):
+        # 比較はタイミング攻撃を避ける形で行う。**名乗った role の token とだけ**照合する。
+        if not secrets.compare_digest(hello.token, self._tokens[hello.role]):
             log.warning("transport.auth.rejected", role=hello.role.value)
             await ws.close(code=CLOSE_UNAUTHORIZED, reason="invalid token")
             return None
@@ -260,13 +285,25 @@ class WsServer:
                 )
 
 
-def token_from_env(env: dict[str, str]) -> tuple[str, bool]:
-    """環境変数から token を取り出す。無ければ生成する。
+#: role ごとの token を渡す環境変数。**コマンドラインには載せない**。
+TOKEN_ENV_BY_ROLE: dict[Role, str] = {
+    Role.SHELL: "LUMI_WS_TOKEN_SHELL",
+    Role.STAGE: "LUMI_WS_TOKEN_STAGE",
+}
+
+
+def tokens_from_env(env: Mapping[str, str]) -> tuple[dict[Role, str], bool]:
+    """環境変数から role ごとの token を取り出す。欠けていれば生成する。
 
     戻り値の 2 番目は「生成したか」。**生成した場合は開発時のみ**であり、
     Shell から起動された本番経路では必ず環境変数で渡ってくる。
     """
-    token = env.get("LUMI_WS_TOKEN", "")
-    if token:
-        return token, False
-    return secrets.token_urlsafe(32), True
+    tokens: dict[Role, str] = {}
+    generated = False
+    for role, name in TOKEN_ENV_BY_ROLE.items():
+        value = env.get(name, "")
+        if not value:
+            value = secrets.token_urlsafe(32)
+            generated = True
+        tokens[role] = value
+    return tokens, generated

@@ -3,6 +3,7 @@
 //! 設計 → docs/architecture/ui.md, docs/interfaces/shell.md,
 //! docs/contracts/security-boundaries.md の B3
 
+mod core_endpoint;
 mod core_process;
 mod hover;
 mod job_object;
@@ -15,7 +16,8 @@ use std::path::PathBuf;
 use rand::RngCore as _;
 use tauri::{AppHandle, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
-use crate::core_process::{find_sidecar, resolve_launch_spec, CoreSupervisor};
+use crate::core_endpoint::{shell_core_endpoint, spawn_endpoint_notifier, CoreEndpointState};
+use crate::core_process::{find_sidecar, resolve_launch_spec, CoreSupervisor, CoreTokens};
 use crate::hover::{shell_hit_region_set, spawn_cursor_watcher, HitRegionStore};
 use crate::window::{compute_stage_window_options, StageConfig, WindowSpec};
 
@@ -76,17 +78,21 @@ fn dev_core_project_dir() -> Option<PathBuf> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    let token = generate_token();
+    // **role ごとに別の token を作る。** Stage には Stage 用しか渡さない
+    // （docs/contracts/security-boundaries.md B2 / B3）。
+    let shell_token = generate_token();
+    let stage_token = generate_token();
     let (supervisor, port_rx) = CoreSupervisor::new();
 
     let setup_supervisor = supervisor.clone();
-    let setup_token = token.clone();
+    let setup_shell_token = shell_token.clone();
 
     let app = tauri::Builder::default()
         .manage(HitRegionStore::default())
+        .manage(CoreEndpointState::new(port_rx.clone(), stage_token.clone()))
         // `shell.*` の allowlist（B1）。ここに載っていないものは Stage から呼べない。
         // **AI の判断を運ぶコマンドをここに足さない。**
-        .invoke_handler(tauri::generate_handler![shell_hit_region_set])
+        .invoke_handler(tauri::generate_handler![shell_hit_region_set, shell_core_endpoint])
         .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -106,10 +112,19 @@ pub fn run() {
                 .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
                 .and_then(|dir| find_sidecar(&dir));
 
+            spawn_endpoint_notifier(app.handle().clone(), port_rx.clone());
+
             match resolve_launch_spec(sidecar.as_deref(), dev_core_project_dir().as_deref()) {
                 Some(launch) => {
-                    setup_supervisor.start(launch, setup_token.clone());
-                    ws_client::start(app.handle().clone(), setup_token.clone(), port_rx.clone());
+                    setup_supervisor.start(
+                        launch,
+                        CoreTokens { shell: setup_shell_token.clone(), stage: stage_token.clone() },
+                    );
+                    ws_client::start(
+                        app.handle().clone(),
+                        setup_shell_token.clone(),
+                        port_rx.clone(),
+                    );
                 }
                 // **黙って劣化しない。** Core が無いなら、無いと言う。
                 None => log::error!("core.not_found 起動できる Core が見つからない"),
