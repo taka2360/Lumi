@@ -1,0 +1,304 @@
+# Interface: Provider（LLM / STT / TTS / Embedding / Vision）
+
+> Core 内実行。`trust_level: official` 必須。差し替え可能性がライセンスリスクの緩和策でもある。
+
+親: [DESIGN.md](../DESIGN.md) / 関連: [../architecture/extension.md](../architecture/extension.md), [ADR-008](../decisions/ADR-008-provider-abstraction.md)
+
+---
+
+## 共通の基底
+
+```python
+class Provider(Protocol):
+    id: str
+    kind: ProviderKind           # llm | stt | tts | embedding | vision
+
+    async def load(self) -> None: ...
+    async def unload(self) -> None: ...
+    def resource_hint(self) -> ResourceHint: ...
+    def is_loaded(self) -> bool: ...
+    def attribution(self) -> Attribution: ...
+
+
+@dataclass(frozen=True)
+class ResourceHint:
+    device_pref: DevicePref      # gpu_required | gpu_preferred | cpu_only | external_process
+    vram_estimate_mb: int        # 0 = GPU を使わない
+    load_time_estimate_ms: int
+    unload_policy: UnloadPolicy  # pinned | lru | on_demand
+
+
+@dataclass(frozen=True)
+class Attribution:
+    """クレジット表示に必要な情報。Core はこれを解釈せず、そのまま Stage に渡す。"""
+    display_name: str            # 例: "VOICEVOX"
+    credit_text: str             # 規約が要求する表記。例: "VOICEVOX:ずんだもん"
+    license_name: str            # 例: "LGPL-3.0"
+    license_url: str | None      # ライセンス全文の入手先
+    homepage_url: str | None
+```
+
+### `load` / `unload` / `resource_hint` を Phase 1 で入れる理由
+
+Phase 1 には Vision が無いので `ModelResourceManager` は不要（Phase 5 に Deferred）。
+
+しかし**後から Provider にライフサイクルを追加すると全 Provider の書き換えになる**。窓口だけ先に確保しておけば、Phase 5 は Manager を上に被せるだけで済む。
+
+Phase 1 の `load()` は「起動時に一度呼ぶ」だけでよい。
+
+### `attribution()` を Phase 1 で入れる理由
+
+**同じ理由**（後から Provider にメソッドを追加すると全 Provider の書き換えになる）に加えて、もう一つある。
+
+**クレジット文字列を Core にハードコードすると、Provider を差し替えた瞬間にクレジットが嘘になる。** 「差し替え可能性がライセンスリスクの緩和策である」という主張は、差し替えたときに表示も追随して初めて成立する。
+
+クレジット表示は Phase 0 で必要になる（配布物ができるため）。**Phase 0 の時点では Provider がまだ無いので、Stage 側のクレジット画面を先に作り、Phase 1 で `attribution()` を繋ぎ込む。** → [../licensing.md](../licensing.md) §6, [ADR-019](../decisions/ADR-019-tts-engine-distribution.md)
+
+---
+
+## LLMProvider
+
+```python
+class LLMProvider(Provider, Protocol):
+    async def stream(
+        self,
+        messages: list[Message],
+        tools: list[ToolDescriptor] | None,
+        options: LLMOptions,
+        cancel_token: CancelToken,
+    ) -> AsyncIterator[LLMEvent]: ...
+
+
+LLMEvent = (
+    TextDelta        # {"text": str}
+  | ReasoningDelta   # {"text": str}       思考。TTS に流さない
+  | ToolCall         # {"id", "name", "arguments"}
+  | Finish           # {"reason", "usage"}
+  | Error
+)
+```
+
+### 実装候補
+
+| Provider | 状態 |
+|---|---|
+| `OllamaProvider` | **Phase 1 で実装** |
+| `OpenAICompatProvider` | Phase 4 以降。LM Studio / vLLM も兼ねる |
+| `AnthropicProvider` | 将来 |
+| `GeminiProvider` | 将来 |
+| `OpenRouterProvider` | 将来 |
+
+**最初から全 Provider を実装しない。** Ollama を優先する。
+
+### Tool Calling の品質差への対処
+
+ローカル 8B の Tool Calling、特に日本語は品質が不安定（R6）。
+
+| 対処 | 内容 |
+|---|---|
+| 制約デコーディング | JSON Schema に沿った生成を強制（Ollama の grammar / structured output） |
+| **タスク別モデル** | 会話用と計画用で別モデルを使えるようにする |
+| フォールバック | Tool Calling 非対応を検知したら、プロンプトベースの疑似 tool call に降格 |
+
+AIRI は `isToolRelatedError()` で10パターンの正規表現によるランタイム検知と自動デグレードを実装している。この**考え方**は借用する（実装は独自）。
+
+### `reasoning` を TTS に流さない
+
+思考タグ（`<think>` 等）の内容は音声化しない。AIRI の `response-categoriser` と同じ問題意識。
+
+---
+
+## STTProvider
+
+```python
+class STTProvider(Provider, Protocol):
+    async def transcribe(
+        self,
+        audio: AudioBuffer,          # 16kHz mono float32
+        language: str | None,
+        cancel_token: CancelToken,
+    ) -> Transcription: ...
+
+
+@dataclass(frozen=True)
+class Transcription:
+    text: str
+    language: str
+    confidence: float | None
+    segments: list[Segment] | None
+```
+
+### 実装候補
+
+| Provider | 状態 |
+|---|---|
+| `FasterWhisperProvider` | **Phase 1 で実装**（CTranslate2, int8。**torch 非依存**） |
+| `WhisperCppProvider` | 代替 |
+| （クラウド系） | 将来。`Network-optional` の枠組みで扱う |
+
+**torch 非依存が重要。** インストーラサイズ（R1）に直結する。
+
+---
+
+## TTSProvider
+
+```python
+class TTSProvider(Provider, Protocol):
+    async def synthesize(
+        self,
+        text: str,
+        voice: VoiceConfig,
+        cancel_token: CancelToken,
+    ) -> AudioBuffer: ...
+
+    def supported_languages(self) -> set[str]: ...
+```
+
+### 実装候補
+
+| Provider | 言語 | 配置 | VRAM |
+|---|---|---|---|
+| `AivisSpeechProvider` | 日本語 | **別プロセス・CPU（HTTP）** | **0** |
+| `VoicevoxProvider` | 日本語 | **別プロセス・CPU（HTTP）** | **0** |
+| `KokoroProvider` | 英語ほか | Core内 or 別プロセス | 小 |
+
+### なぜ別プロセス CPU が重要か
+
+**LLM に VRAM を全振りできる。** RTX 4070 の実効 10.8GB のうち 6.5GB を LLM が使うため、TTS が GPU を取ると Vision が載らなくなる。
+
+Style-Bert-VITS2（日本語品質は最上位クラス）を選ばなかった主因はここ。GPU 4GB を占有する。
+
+### ライセンス上の意味
+
+AivisSpeech / VOICEVOX Engine は LGPL-3.0 系。**HTTP 越しの別プロセスであることが、Core（MIT）のライセンス境界を保つ前提になっている。**
+
+ただし **「別プロセス通信だからライセンス上の影響がない」と断定はしない。**
+
+**`TTSProvider` 抽象があること自体がリスク緩和策である。** 問題が判明したら差し替えればよい。
+
+### 配布方針と音声ライブラリの規約
+
+**調査結果と配布方針の唯一の定義場所は [../licensing.md](../licensing.md)。**〔2026-08-15 調査済み〕
+
+要点のみ:
+
+- **エンジン本体を配布物に含めない。** ユーザーの明示的な選択に基づく実行時取得 → [ADR-019](../decisions/ADR-019-tts-engine-distribution.md)
+- **VOICEVOX は同梱不可**（ソフトウェア利用規約が無断再配布を明示的に禁止）
+- **クレジット表記が必須**（VOICEVOX 系）。`attribution()` がその窓口
+- **ACML の特例条項が Lumi に直接適用される**（LLM が任意テキストを生成して TTS に流す構成）。開発元に「現実的な範囲で努力する」義務がある → [../licensing.md](../licensing.md) §5
+
+---
+
+## EmbeddingProvider
+
+```python
+class EmbeddingProvider(Provider, Protocol):
+    async def embed(self, texts: list[str]) -> list[Vector]: ...
+    def dimension(self) -> int: ...
+    def model_id(self) -> str: ...
+```
+
+### 実装候補〔Provisional。Phase 2 で日本語検索品質を実測〕
+
+| Provider | 備考 |
+|---|---|
+| `RuriProvider` | 日本語特化 |
+| `BgeM3Provider` | 多言語 |
+
+**ONNX / CPU 実行。** VRAM を使わない。
+
+### `model_id` と `dimension` が必要な理由
+
+**埋め込みモデルを変えると、既存のベクトルが無効になる。**
+
+`memories` テーブルに `embedding_model_id` を持たせ、モデル変更時に再埋め込みが必要なことを検出する。AIRI の telegram-bot が 1536/1024/768 の3次元を並列カラムで持っているのは同じ問題への対処だが、Lumi は単一次元 + 再埋め込みで対応する（デスクトップ単一ユーザーなら再計算コストが許容できるため）。
+
+---
+
+## VisionProvider〔Phase 5〕
+
+```python
+class VisionProvider(Provider, Protocol):
+    async def observe(
+        self,
+        image: Image,
+        question: str,
+        cancel_token: CancelToken,
+    ) -> Observation: ...
+```
+
+- 結果は必ず `ProvenanceClass = UNTRUSTED`
+- `resource_hint().unload_policy = ON_DEMAND`（使用後アンロード）
+- screenshot hash によるキャッシュは Provider ではなく Tool 層で行う
+
+---
+
+## Provider Registry
+
+```python
+class ProviderRegistry:
+    def register(self, provider: Provider) -> None: ...
+    def get(self, kind: ProviderKind) -> Provider:
+        """設定で選択されている Provider を返す。未 load なら load する。"""
+    def available(self, kind: ProviderKind) -> list[ProviderInfo]: ...
+```
+
+### 障害時
+
+| 障害 | 対応 |
+|---|---|
+| 外部エンジンが起動していない | **明示的なエラー。** ユーザーに「Ollama が起動していません」と伝える |
+| `load()` 失敗 | 該当 Provider を無効化。代替があれば切り替えを提案 |
+| 推論中のエラー | Activity を `failed` にし、Lumi が「うまくいかなかった」と言う |
+
+**黙って劣化しない。** 音声が出ない、返事が来ない、が原因不明になるのが最悪。
+
+---
+
+## Phase 5: ModelResourceManager
+
+〔Deferred。Phase 0-1 の VRAM 実測値の上に設計する〕
+
+```python
+class ModelResourceManager:
+    async def acquire(self, provider: Provider) -> None:
+        """VRAM を確保。必要なら LRU で他をアンロード。"""
+    async def release(self, provider: Provider) -> None: ...
+    def budget(self) -> ResourceBudget: ...
+```
+
+### 想定配置
+
+**モデル配置と VRAM 見積の表は [../DESIGN.md](../DESIGN.md) §7 が唯一の定義場所。**〔Provisional。Phase 0-1 で実測して更新する〕
+
+### `ModelResourceManager` と `inference_lease` は別物
+
+| | 管理するもの |
+|---|---|
+| `ModelResourceManager`（Phase 5） | **どのモデルが VRAM に載るか** |
+| `arbiter.inference_lease()`（Phase 2〜） | **誰が今推論してよいか**（foreground Activity か Job か）→ [ADR-018](../decisions/ADR-018-foreground-and-jobs.md) |
+
+後者は Reflection Job の登場（Phase 2）から必要であり、Phase 5 を待たない。
+
+### 明示ルール
+
+**Vision が載らない場合は、小型 VLM に降格するか、明示的に失敗させる。** 黙って遅くならない。
+
+GameAgent セッション中の Vision ロードは予算チェック必須。
+
+---
+
+## テスト
+
+| # | テスト |
+|---|---|
+| 1 | 各 Provider が `Provider` protocol を満たす |
+| 2 | `load` / `unload` が冪等 |
+| 3 | 外部エンジン未起動時に明示的なエラーになる |
+| 4 | LLM の `cancel_token` でストリームが中断する |
+| 5 | Tool Calling 非対応の検知とフォールバックが動く |
+| 6 | `reasoning` が TTS に流れない |
+| 7 | 埋め込みモデル変更が検出される（`model_id` の不一致） |
+| 8 | TTS の `supported_languages` に無い言語で明示的に失敗する |
+| 9 | Vision の結果が `UNTRUSTED` になる |
+| 10 | `resource_hint` の `vram_estimate_mb` が実測と大きく乖離しない（Phase 5） |
