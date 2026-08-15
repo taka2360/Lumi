@@ -120,7 +120,11 @@ class AttentionArbiter:
 |---|---|---|
 | 子 Tool | 全て停止または完了済み | まだ動いているものがある |
 | 結果の扱い | 破棄 | **完了しても破棄**（`abandoned_result` として監査ログにのみ記録） |
-| いつ起きるか | 全ての子が `cooperative` / `hard` | `non_cancellable` な子がいる |
+| いつ起きるか | 全ての子が猶予時間内に停止した | `non_cancellable` な子がいる / **`cooperative` な子が猶予時間内に停止しなかった** |
+
+> **猶予時間内に止まらなかった `cooperative` も `abandoned` になる。**〔Phase 1 実装時に明確化〕
+> `abandoned` の定義は「**まだ動いている子がある**」であって「`non_cancellable` な子がある」ではない。
+> 契約違反の兆候なので警告は残すが、**待ち続けて barge-in を壊す方が悪い。**
 
 ### idle Activity — 特別扱い
 

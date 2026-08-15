@@ -204,6 +204,7 @@ Lumi は常時マイクを開き、会話の生ログを永続化し、前面ア
 | 4 | **第三者の音声**。部屋の中の他人の発話も STT され、永続化されうる（[contracts/provenance.md](contracts/provenance.md) が限界として記録済み）。録音・保存の是非は別問題として決める |
 | 5 | ユーザーが「全部消したい」と言ったときに応えられる構造か |
 | 6 | 監査ログの保持期間（append-only だが無限に貯まる） |
+| 7 | **Phase 1 から貯まり始めた `DomainEvent` の扱い。** Phase 1 では **Kernel の事実だけ**を永続化し、発話本文は入れていない（`core/lumi/storage/sqlite.py`）。保持期間と、#5「全部消したい」の対象に含めるかを決める |
 
 **方針として既に決まっているもの**（新文書に集約する）:
 - `user.focus_app` は取るが**ウィンドウタイトルは取らない**（[architecture/world-state.md](architecture/world-state.md)）

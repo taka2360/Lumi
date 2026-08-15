@@ -173,6 +173,11 @@ trust の型は kernel・permission・tools・agent・memory の**すべてが�
 
 規則の定義は [../contracts/provenance.md](../contracts/provenance.md)。
 
+**`kernel/` が import してよい lumi 配下のモジュールは、`lumi.kernel.*` / `lumi.provenance` /
+`lumi.logging` の3つだけ**（構造化ログは能力ではなく全モジュールの土台）。
+永続化のような「外の世界」は Protocol（`EventStore`）で受け取り、実装は kernel の外に置く。
+**これを AST の静的検査で縛る**（`core/tests/test_kernel_boundaries.py`）。
+
 ---
 
 ## 5. Shell と Stage の責務
