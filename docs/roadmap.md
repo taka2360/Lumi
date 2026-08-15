@@ -65,8 +65,10 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 - [x] ハードコードされた「こんにちは」を AivisSpeech で発話 → リップシンク
   〔エンジンの起動・停止は Core が持つ（[architecture/core.md](architecture/core.md) §6）。
   リップシンクの方式は実測を経て確定（[interfaces/renderer.md](interfaces/renderer.md)）〕
-- [ ] duplex stream の骨格（capture + playback + reference channel）
-- [ ] **入出力が別デバイスのときの duplex 動作を実測**（別デバイスだと失敗 / クロックドリフトする。Phase 2 の AEC の前提が崩れないか）
+- [x] **音声デバイスの選択と開通確認の骨格**〔duplex は使わないことにした → [ADR-020](decisions/ADR-020-split-audio-streams.md)。
+  reference signal は Core が自前で持つ。リング・VAD・ミュートは Phase 1〕
+- [x] **入出力が別デバイスのときの動作を実測** 〔2026-08-15。**別デバイスでも開ける。同一デバイスでも開けないことがある。**
+  分離ストリームのドリフトは測定分解能以下 → [measurements/phase0.md](measurements/phase0.md)〕
 - [x] `PlatformShell` インターフェースを定義（Electron 退避路の確保）〔Stage に露出するのは OS 特権を含まない部分集合。[interfaces/shell.md](interfaces/shell.md)〕
 - [ ] **VRAM / RAM / インストーラサイズを実測して記録**（Phase 5 の設計根拠になる）→ [measurements/phase0.md](measurements/phase0.md)
 - [ ] **サイドカー同梱状態で sqlite-vec（SQLite ローダブル拡張）がロードできることを確認**（Phase 2 で気づくと記憶機能ごと止まる）〔**uv 環境では確認済み**。同梱サイドカーでの確認が残り〕
@@ -90,7 +92,9 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 9. **未知の `os.*` コマンドを Shell に送ると拒否され、ログに残る**（B3 骨格の確認）
 10. **アイドル時の VRAM / RAM 実測値を記録**
 11. ~~音声ライブラリ利用規約を確認し、記録~~ 〔2026-08-15 完了 → [licensing.md](licensing.md)〕
-12. **マイクとスピーカーが別デバイスの構成で duplex stream が開けるか確認**（開けないならフォールバック方針を決めて記録）
+12. ~~マイクとスピーカーが別デバイスの構成で duplex stream が開けるか確認~~
+    〔2026-08-15 完了。**duplex を使わない**方針に変更 → [ADR-020](decisions/ADR-020-split-audio-streams.md)。
+    別マシンでは `uv run python -m lumi.audio.probe` を回して**入出力が開通することだけ**確認する〕
 13. **サイドカーから sqlite-vec がロードできるか確認**
 14. **インストーラに AivisSpeech / VOICEVOX のバイナリが含まれていないことを確認**（[licensing.md](licensing.md) テスト1）
 15. **初回セットアップで「取得しない」を選び、Lumi が起動して「TTS 未セットアップ」が表示されることを確認**
@@ -357,7 +361,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 1b | **AivisSpeech の LICENSE 本文・依存ライブラリ・同梱モデルのライセンス**（同梱を再検討する場合に必要） | Phase 0（取得実装時）→ [licensing.md](licensing.md) §7 |
 | 2 | Python サイドカーのパッケージング（PyInstaller vs uv 同梱） | Phase 0（実測） |
 | 3 | Ollama を同梱するかユーザーに別途インストールさせるか（**[ADR-019](decisions/ADR-019-tts-engine-distribution.md) と同じ論法を適用予定**） | Phase 0-1 |
-| 4 | 入出力が別デバイスのときの duplex stream の扱い | Phase 0（実測。Phase 2 の AEC の前提） |
+| 4 | ~~入出力が別デバイスのときの duplex stream の扱い~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-020](decisions/ADR-020-split-audio-streams.md)。**duplex を使わない**（別ストリーム + Core が持つ reference） |
 | 5 | LLM モデル選定（Qwen3系 / Gemma3系）— 日本語会話品質と Tool Calling 品質 | Phase 1（実測） |
 | 6 | 🔴 **プライバシーとデータ保存の方針**（`contracts/privacy.md` を書く） | **Phase 2 着手前** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
