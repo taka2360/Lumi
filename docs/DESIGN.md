@@ -9,8 +9,21 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.7 |
-| 実装フェーズ | **Phase 0 実装中。** 残るは PyInstaller パッケージング・インストーラ・別マシン検証 → [roadmap.md](roadmap.md) |
+| Revision | rev.8 |
+| 実装フェーズ | **Phase 0 の完了条件を達成。Phase 1（MVP: Talking Desktop Character）着手。** セットアップ周りの検証手順 15〜18 が残る → [roadmap.md](roadmap.md) |
+
+> **rev.8 の変更点**（Phase 0 のクローズと、Phase 1 着手前に決めたこと）
+> 1. **Phase 0 の完了条件を達成した。** 別マシンのインストーラから起動し、キャラクターが立って一言喋るところまで確認した。
+>    **セットアップ周りの検証手順 15〜18 は未実施**（roadmap に残す）。
+>    **既定同梱 VRM モデルが決まった**（再配布 OK / 改変 OK / クレジット不要 / VRM 0.0）→ [licensing.md](licensing.md) §4.5。未確認 #5 が解消
+> 2. **LLM ランタイムと推論モデルの取得方針を決めた** → [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)。
+>    **Ollama は検出のみ**（取得もインストールもしない。ロールバックが保証できないため）/ **Silero VAD は同梱**（barge-in は中核機能で「取得するまで遮れない」を作らない）/ **STT モデルは同意に基づく実行時取得**。
+>    **ライブラリ既定の自動ダウンロードを無効化する**（Network-optional がライブラリの都合で迂回されるため）。roadmap 未確定事項 #3 が解消
+> 3. **Activity の priority 体系を決めた** → [ADR-024](decisions/ADR-024-activity-priority.md)。
+>    `interruptible_by: set[int]` を **`interruptible_at: int` の単一閾値**に置き換え、判定を `p.priority >= cur.interruptible_at` にした。
+>    **`>` ではなく `>=` なのは、barge-in が同一 priority の preempt だから。** roadmap 未確定事項 #10 が解消
+> 4. **`provenance.py` をトップレベルの依存ゼロモジュールにした** → [architecture/core.md](architecture/core.md) §4。
+>    `Signal` が `trust_level` を持つため、memory/ の下に置くと **kernel → memory の逆依存**が生まれる
 
 > **rev.7 の変更点**（Phase 0 の実装と実測による修正。**すべて「作ってみたら想定と違った」もの**）
 > 1. **リップシンクの生成方式を確定した。** 口の形はモーラ列から、時間は**合成された音声の長さ**から割り振る。
@@ -358,6 +371,8 @@ Core内部:
 | Drive System の存在と決定論性 | **Confirmed** |
 | SQLite + sqlite-vec | Provisional |
 | Drive・Policy既定値・SLO具体値・モデル選定 | Provisional |
+| **Activity の priority の値**（割り込み判定の**方式**は Confirmed → [ADR-024](decisions/ADR-024-activity-priority.md)） | Provisional |
+| **推論スタックの取得方法**（Ollama は検出のみ / VAD は同梱 / STT モデルは実行時取得） | **Confirmed**〔rev.8〕→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) |
 | WS プロトコルの具体スキーマ | Provisional |
 | **公開配布を前提とすること・配布物の構成・クレジット義務** | **Confirmed**〔rev.6〕→ [licensing.md](licensing.md) |
 | 個別コンポーネントのライセンスの理解（AivisSpeech の LICENSE 本文など） | Provisional → [licensing.md](licensing.md) §7 の未確認事項 |
@@ -575,6 +590,8 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [020](decisions/ADR-020-split-audio-streams.md) | 入力と出力を別ストリームで開き、クロックドリフトを実測可能にする |
 | [021](decisions/ADR-021-sidecar-packaging.md) | Python Core を PyInstaller の onedir で固め、resources として同梱する |
 | [022](decisions/ADR-022-wire-contract.md) | プロセス境界を越える名前と定数を `wire.json` に一元化し、3言語のテストで突き合わせる |
+| [023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) | LLM ランタイムと推論モデルを配布物に含めず、種類ごとに取得方法を変える |
+| [024](decisions/ADR-024-activity-priority.md) | Activity の priority を表から決め、割り込み可否を単一の閾値で判定する |
 
 ---
 
@@ -597,6 +614,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Policy（`decide()` / Risk 階層 / actor） | [architecture/permission.md](architecture/permission.md) |
 | Provenance の型・伝播・trust の3スコープ・隔離ブロック書式 | [contracts/provenance.md](contracts/provenance.md) |
 | Activity / Tool の状態機械・foreground の定義・Cancellation 3契約・barge-in 手順 | [contracts/state-machines.md](contracts/state-machines.md) |
+| **Activity の `priority` / `interruptible_at` の値と割り込み判定** | [architecture/agent.md](architecture/agent.md) §1 |
 | Kernel 実行契約・Class A / Class B | [contracts/tool-execution.md](contracts/tool-execution.md) |
 | Signal / DomainEvent / Command・**Hook 一覧** | [contracts/event-model.md](contracts/event-model.md) |
 | 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |

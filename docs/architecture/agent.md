@@ -31,8 +31,8 @@ class Activity:
     id: ActivityId
     kind: ActivityKind          # conversation | autonomous | task | game | idle
     actor: Actor                # user_initiated | self_initiated | scheduled | system
-    priority: int
-    interruptible_by: set[int]
+    priority: int               # priority_of(kind, actor) が決める。提案者は渡せない
+    interruptible_at: int       # この値**以上**の priority を持つ提案に割り込まれる
     state: ActivityState        # contracts/state-machines.md
     cancel_token: CancelToken
     deadline: datetime | None
@@ -66,13 +66,45 @@ class AttentionArbiter:
 
 詳細と根拠 → [../contracts/state-machines.md](../contracts/state-machines.md), [ADR-016](../decisions/ADR-016-always-one-activity.md), [ADR-018](../decisions/ADR-018-foreground-and-jobs.md)
 
+### priority と割り込み可否〔ADR-024。値は Provisional〕
+
+> **この表が priority の唯一の定義場所。**（DESIGN.md §12）
+
+**priority は `priority_of(kind, actor)` が決める。** 提案者（LLM・Stage・Extension）は渡せない。
+「この自律行動は緊急です」と主張する経路を作らないため（Invariant 1 を Arbiter 側でも守る）。
+
+| kind | actor | `priority` | `interruptible_at` | 意味 |
+|---|---|---|---|---|
+| `idle` | `system` | **0** | **0** | すべてに割り込まれる。消滅はせず `suspended` になる |
+| `autonomous` | `self_initiated` | 30 | 100 | ユーザー発話にだけ割り込まれる。他の自律には割り込まれない |
+| `task` | `scheduled` | 50 | 100 | 同上 |
+| `game` | （Phase 8） | 60 | 100 | 同上 |
+| **`conversation`** | `user_initiated` | **100** | **100** | **新しいユーザー発話に割り込まれる（barge-in）** |
+
+**値は 10 刻み。** 後から間に挿入できるようにしてある。
+
+```python
+def can_preempt(p: ActivityProposal, current: Activity) -> bool:
+    return p.priority >= current.interruptible_at      # ★ > ではない
+```
+
+**`>=` である理由: barge-in は同一 priority の preempt だから。** 会話中の新しいユーザー発話は
+priority 100 で、現在の会話も 100 である。`>` にすると barge-in が動かない。
+**同じ強さのものは、新しい方が勝つ。**
+
+**値を2つ持つ理由:** 「どれくらい重要か」（priority）と「どれくらい邪魔されたくないか」
+（`interruptible_at`）は別の軸である。1つに潰すと、game（強いが中断されたくない）と
+idle（弱いがいつでも中断してよい）を同時に表現できない。
+
+根拠・代替案・捨てたもの → [ADR-024](../decisions/ADR-024-activity-priority.md)
+
 ### propose の判定
 
 ```python
 def propose(self, p: ActivityProposal) -> Accepted | Deferred | Rejected:
     cur = self.current()
 
-    if p.priority in cur.interruptible_by:
+    if can_preempt(p, cur):
         new = self._accept(p)                        # 3. accepted
         self._begin_interrupt(cur, reason=f"preempted_by:{p.kind}")   # 1-2
         self._foreground = new.id                    # 4. ★切り替え
@@ -301,7 +333,9 @@ async with arbiter.inference_lease(job) as lease:
 | 2 | 会話中の自律提案が `Deferred` になり、`DeferredQueue` に入る |
 | 2b | `DeferredQueue` の提案が TTL で破棄される |
 | 3 | idle 中の自律提案が `Accepted` になる |
-| 4 | 会話中のユーザー発話が既存 Activity を preempt する |
+| 3b | **`priority_of()` が全 kind × actor で表通りの値を返す**（表駆動） |
+| 3c | **`ActivityProposal` に priority を渡す経路が存在しない**（静的検査。ADR-024） |
+| 4 | 会話中のユーザー発話が既存 Activity を preempt する（**同一 priority の `>=` による preempt**） |
 | 4b | **Job が foreground を取らない** |
 | 4c | **foreground が推論を要求すると Job の `inference_lease` が revoke される** |
 | 4d | **revoke された Job が `cooperative` に中断し、後で再開する** |

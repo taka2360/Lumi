@@ -140,10 +140,11 @@ Core 内部:
 
 ```
 core/lumi/
+├── provenance.py    ProvenanceClass / TrustLevel / join / propagate（**依存ゼロ**）
 ├── kernel/          arbiter, activity, job, command, event, hooks,
 │                    cancellation, inference_lease, recovery, scheduler
 ├── agent/           reactive, deliberative, drives, prompt assembly
-├── memory/          working, episodic, semantic, reflection, retrieval, decay, provenance
+├── memory/          working, episodic, semantic, reflection, retrieval, decay
 ├── world/           facets, snapshot, projection
 ├── internal/        mood, fatigue, drives state
 ├── permission/      policy, canonicalization, bind_verifier, result_verifier,
@@ -158,6 +159,19 @@ core/lumi/
 ```
 
 **`kernel/` が他のどのモジュールにも依存しないこと**を静的検査で保証する。kernel は型と調停だけを持ち、具体的な能力を知らない。
+
+### なぜ `provenance.py` がトップレベルにあるのか〔Phase 1〕
+
+**`kernel/` より下に置く必要があるため。** `Signal` が `trust_level` を持つ
+（[../contracts/event-model.md](../contracts/event-model.md)）ので、kernel は provenance に依存する。
+memory/ の下に置くと **kernel → memory の依存**が生まれ、上の規則が破れる。
+
+trust の型は kernel・permission・tools・agent・memory の**すべてが使う横断的な制約**
+（[Invariant 3](../contracts/invariants.md) / 7 の型による実装）であり、どれか1つの下に置くと
+「そのモジュールの持ち物」に見えてしまう。**依存ゼロの単独モジュールにして、位置そのもので
+「これは全体の制約である」と示す。**
+
+規則の定義は [../contracts/provenance.md](../contracts/provenance.md)。
 
 ---
 
