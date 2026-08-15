@@ -16,6 +16,7 @@ from lumi import __version__
 from lumi import logging as lumi_logging
 from lumi.dev_probe import ENV_FLAG as DEV_PROBE_FLAG
 from lumi.dev_probe import probe_os_boundary
+from lumi.greeting import Greeter
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.transport.protocol import Role
 from lumi.transport.server import WsServer, tokens_from_env
@@ -62,16 +63,24 @@ async def _run() -> int:
 
     server: WsServer
     setup: SetupCoordinator
+    greeter: Greeter
+
+    async def on_stage_connected() -> None:
+        # **セットアップが片付いてから喋る。** 取得の途中で喋り始めると、
+        # 進捗表示と発話が混ざって何が起きているか分からなくなる。
+        await setup.on_stage_connected()
+        await greeter.greet_once()
 
     async def on_connect(role: Role) -> None:
         # 接続ハンドラを塞がないように、時間のかかるものは別タスクで走らせる。
         if role is Role.SHELL and os.environ.get(DEV_PROBE_FLAG) == "1":
             asyncio.create_task(probe_os_boundary(server))  # noqa: RUF006
         if role is Role.STAGE:
-            asyncio.create_task(setup.on_stage_connected())  # noqa: RUF006
+            asyncio.create_task(on_stage_connected())  # noqa: RUF006
 
     server = WsServer(tokens, port=int(os.environ.get("LUMI_WS_PORT", "0")), on_connect=on_connect)
     setup = SetupCoordinator(server, os.environ)
+    greeter = Greeter(server, setup)
     port = await server.start()
     # **Shell はこの行を stdout から読んで接続先を知る。** イベント名を変えない。
     log.info("core.ws.listening", host="127.0.0.1", port=port)
@@ -87,6 +96,8 @@ async def _run() -> int:
         await stop.wait()
     finally:
         log.info("core.stopping")
+        # **Lumi が起動したエンジンだけ止める**（docs/architecture/core.md §6）。
+        await greeter.aclose()
         await server.stop()
     return 0
 

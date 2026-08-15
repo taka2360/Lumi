@@ -15,5 +15,13 @@ export default defineConfig({
     // Tauri の WebView2 に合わせる
     target: "chrome110",
     sourcemap: true,
+    rollupOptions: {
+      // クレジットは別ページにする。**Core に繋がる Stage のコードを読み込ませない**
+      // ため（docs/architecture/ui.md「`credits` を Core に繋がない理由」）。
+      input: {
+        main: "index.html",
+        credits: "credits.html",
+      },
+    },
   },
 });

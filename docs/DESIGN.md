@@ -584,7 +584,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Signal / DomainEvent / Command・**Hook 一覧** | [contracts/event-model.md](contracts/event-model.md) |
 | 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |
 | 権限マトリクス・オブジェクト責務行列 | [contracts/authority-matrix.md](contracts/authority-matrix.md) |
-| Shell / Stage の責務・ウィンドウ一覧・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
+| Shell / Stage の責務・ウィンドウ一覧・**トレイメニュー**・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
 | 音声の3層構造・EchoGuard・VAD パラメータ・**レイテンシ SLO** | [architecture/audio.md](architecture/audio.md) |
 | 記憶の形成・忘却・矛盾・**検索スコアリング式**・salience 補正 | [architecture/memory.md](architecture/memory.md) |
 | Extension の2機構・信頼レベル・ライフサイクル・Content Pack | [architecture/extension.md](architecture/extension.md) |
@@ -592,6 +592,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | World / Internal State の分離と facet 定義 | [architecture/world-state.md](architecture/world-state.md) |
 | `Tool` / `SecurityScope` / `Handle` / 検証器の**型定義** | [interfaces/tool.md](interfaces/tool.md) |
 | `MemoryRecord` / `AssertionMode` の**型定義** | [interfaces/memory.md](interfaces/memory.md) |
+| Renderer に渡す意図の型・**リップシンクの生成方式**・`stage.speech.*` の契約 | [interfaces/renderer.md](interfaces/renderer.md) |
 | GPU / VRAM 戦略とモデル配置 | **DESIGN.md** §7 |
 | Phase 分割と完了条件・未確定事項・リスク一覧 | [roadmap.md](roadmap.md) |
 | **外部コンポーネントのライセンス・配布物の構成・クレジット義務・ACML 特例への対応** | [licensing.md](licensing.md) |

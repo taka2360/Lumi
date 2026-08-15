@@ -57,10 +57,14 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
   - [x] 失敗時のロールバック（**部分的にインストールされた状態を残さない**）
   - [x] 取得しない場合も Lumi が起動し、**「TTS 未セットアップ」が明示される**
   - [x] ユーザーが別途インストール済みの AivisSpeech / VOICEVOX を検出する
-- [ ] **クレジット表示画面**（トレイ → クレジット）〔ADR-019〕
-  - [ ] エンジン名・音源名・ライセンス全文・禁止事項をユーザーが読める
-  - [ ] Phase 0 では Stage 側に静的に作る。`Provider.attribution()` との接続は Phase 1
-- [ ] ハードコードされた「こんにちは」を AivisSpeech で発話 → リップシンク
+- [x] **クレジット表示画面**（トレイ → クレジット）〔ADR-019 / 内容は [licensing.md](licensing.md) §6〕
+  - [x] エンジン名・音源のクレジット例・ライセンス全文・禁止事項をユーザーが読める
+  - [x] Phase 0 では Stage 側に静的に作る。`Provider.attribution()` との接続は Phase 1
+  - [x] **Core が落ちていても読める**（クレジット画面は Core に接続しない）
+  - [ ] **推移的依存を含む OSS 通知の生成**〔何が実際に配布物へ入るかが決まってから = インストーラ作成時〕
+- [x] ハードコードされた「こんにちは」を AivisSpeech で発話 → リップシンク
+  〔エンジンの起動・停止は Core が持つ（[architecture/core.md](architecture/core.md) §6）。
+  リップシンクの方式は実測を経て確定（[interfaces/renderer.md](interfaces/renderer.md)）〕
 - [ ] duplex stream の骨格（capture + playback + reference channel）
 - [ ] **入出力が別デバイスのときの duplex 動作を実測**（別デバイスだと失敗 / クロックドリフトする。Phase 2 の AEC の前提が崩れないか）
 - [x] `PlatformShell` インターフェースを定義（Electron 退避路の確保）〔Stage に露出するのは OS 特権を含まない部分集合。[interfaces/shell.md](interfaces/shell.md)〕

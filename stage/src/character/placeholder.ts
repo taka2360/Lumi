@@ -18,6 +18,7 @@ import {
 } from "three";
 
 import { computeIdlePose } from "./idle";
+import type { MouthWeights } from "./lipsync";
 import type { CharacterModel } from "./types";
 
 const SKIN = new Color("#8fb4ff");
@@ -57,6 +58,12 @@ export function createPlaceholder(): CharacterModel {
     body.add(eye);
   }
 
+  // 口。**リップシンクが動いていることが目で分かる**必要がある（Phase 0 の検証手順 6）。
+  const mouth = new Mesh(new SphereGeometry(0.032, 20, 14), accent);
+  mouth.position.set(0, 1.28, 0.15);
+  mouth.scale.set(1.0, 0.12, 0.5);
+  body.add(mouth);
+
   const baseY = body.position.y;
 
   return {
@@ -67,6 +74,14 @@ export function createPlaceholder(): CharacterModel {
       body.position.y = baseY + pose.offsetY;
       body.rotation.z = pose.tiltZ;
       body.scale.setScalar(pose.breathScale);
+    },
+    applyMouth(weights: MouthWeights) {
+      // 開き具合と横幅の2つだけで近似する。プレースホルダなので忠実さは要らないが、
+      // **母音ごとに違う形になる**ことは見えた方がよい。
+      const open = Math.max(weights.A, weights.E, weights.I, weights.O, weights.U);
+      const wide = Math.max(weights.I, weights.E);
+      const round = Math.max(weights.U, weights.O);
+      mouth.scale.set(1.0 + wide * 0.5 - round * 0.35, 0.12 + open * 1.1, 0.5);
     },
     dispose() {
       root.traverse((child) => {

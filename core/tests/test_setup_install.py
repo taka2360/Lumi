@@ -7,14 +7,17 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import re
 import shutil
 import zipfile
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from typing import ClassVar
 
 import httpx
 import pytest
 
+from lumi.providers.tts import aivisspeech
 from lumi.setup import install as install_module
 from lumi.setup.engines import (
     ALLOWED_ORIGIN_PREFIX,
@@ -263,17 +266,35 @@ class TestNetworkOptional:
     （.claude/rules/tests.md「静的検査もテストである」）。
     """
 
-    def test_http_is_confined_to_the_installer(self) -> None:
+    #: HTTP クライアントを持ってよいモジュールと、その理由。
+    #: **増やすときは「いつ・どこへ通信するか」を必ず書く。**
+    ALLOWED_HTTP: ClassVar[dict[str, str]] = {
+        "setup/install.py": "エンジンの取得。ユーザーが選んだときだけ呼ばれる",
+        "providers/tts/aivisspeech.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
+    }
+
+    def test_http_is_confined_to_known_modules(self) -> None:
         root = Path(__file__).resolve().parent.parent / "lumi"
-        offenders = [
+        offenders = sorted(
             path.relative_to(root).as_posix()
             for path in root.rglob("*.py")
             if "httpx" in path.read_text(encoding="utf-8")
-        ]
-        assert offenders == ["setup/install.py"], (
-            "HTTP クライアントを使ってよいのは取得処理だけ。"
-            "他から使うと、ユーザーの選択より前に通信が起きうる"
         )
+        assert offenders == sorted(self.ALLOWED_HTTP), (
+            "HTTP クライアントを持ってよいのは取得処理と外部エンジンのクライアントだけ。"
+            "他から使うと、ユーザーの選択より前に外部通信が起きうる"
+        )
+
+    def test_the_engine_client_only_talks_to_localhost(self) -> None:
+        """エンジンの宛先を**設定可能にしない**。
+
+        可能にすると「Lumi が任意のサーバに読み上げテキストを送る機能」になる。
+        """
+        module = Path(aivisspeech.__file__)
+        urls = re.findall(r"https?://[^\"']*", module.read_text(encoding="utf-8"))
+        assert urls, "URL の組み立て方が変わった。このテストを見直すこと"
+        assert all(url.startswith("http://{HOST}:") for url in urls), urls
+        assert aivisspeech.HOST == "127.0.0.1"
 
     def test_the_installer_is_only_reachable_through_the_coordinator(self) -> None:
         root = Path(__file__).resolve().parent.parent / "lumi"

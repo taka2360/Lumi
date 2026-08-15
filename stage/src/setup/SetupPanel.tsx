@@ -38,6 +38,25 @@ function failureText(reason: string | null): string {
 }
 
 function StatusLine({ tts }: { tts: TtsSetupSnapshot }) {
+  // **プロセスの状態を先に見る。** 「入っているのに起動できない」を
+  // 「入っている」で塗り潰すと、ユーザーは何を直せばよいか分からない
+  // （docs/architecture/setup.md「導入の状態と、プロセスの状態を混ぜない」）。
+  if (tts.runtime === "starting") {
+    return (
+      <p className="panel__status">
+        {tts.engine_name}{" "}
+        を起動しています…（初回はエンジンが音声モデルを取得するため数分かかります）
+      </p>
+    );
+  }
+  if (tts.runtime === "failed") {
+    return (
+      <p className="panel__status panel__status--bad">
+        {tts.engine_name} を起動できませんでした（入ってはいますが、動いていません）
+      </p>
+    );
+  }
+
   switch (tts.state) {
     case "installing":
       return (
@@ -105,8 +124,13 @@ export function SetupPanel() {
     );
   }
 
-  if (tts.state === "unknown" || tts.state === "installed" || tts.state === "detected") {
+  const settled = tts.runtime === "stopped" || tts.runtime === "ready";
+  if (
+    settled &&
+    (tts.state === "unknown" || tts.state === "installed" || tts.state === "detected")
+  ) {
     // 使える状態と、まだ何も分かっていない状態では、パネルを出さない。
+    // ただし**起動中と起動失敗は出す**（喋らない理由が分からないままにしない）。
     return null;
   }
 

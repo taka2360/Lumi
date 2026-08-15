@@ -1,0 +1,128 @@
+/* クレジットは**通常のウィンドウ**。Stage と違って背景を塗る（透過ではない）。
+   長い文書なので、読めることだけを優先する。 */
+:root {
+  color-scheme: light dark;
+  --credits-bg: #ffffff;
+  --credits-fg: #1a1a1a;
+  --credits-muted: #5c5c5c;
+  --credits-line: #d8d8d8;
+  --credits-code-bg: #f4f4f4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --credits-bg: #1c1c1e;
+    --credits-fg: #eaeaea;
+    --credits-muted: #a0a0a0;
+    --credits-line: #3a3a3c;
+    --credits-code-bg: #2a2a2c;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--credits-bg);
+  color: var(--credits-fg);
+  font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.credits {
+  max-width: 780px;
+  margin: 0 auto;
+  padding: 24px 24px 64px;
+}
+
+.credits__title {
+  font-size: 20px;
+  margin: 0 0 24px;
+}
+
+.credits__section {
+  margin: 0 0 32px;
+}
+
+.credits__heading {
+  font-size: 16px;
+  margin: 0 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--credits-line);
+}
+
+.credits__subheading {
+  font-size: 14px;
+  margin: 16px 0 4px;
+}
+
+.credits__group {
+  margin-bottom: 16px;
+}
+
+.credits__lead {
+  margin: 4px 0;
+}
+
+.credits__note {
+  margin: 4px 0;
+  color: var(--credits-muted);
+  font-size: 13px;
+  /* URL や長い条件文で横スクロールが出ないようにする。 */
+  overflow-wrap: anywhere;
+}
+
+.credits__list {
+  margin: 4px 0;
+  padding-left: 1.4em;
+}
+
+.credits__table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.credits__table td {
+  padding: 2px 8px 2px 0;
+  border-bottom: 1px solid var(--credits-line);
+  vertical-align: top;
+}
+
+.credits__version {
+  color: var(--credits-muted);
+  white-space: nowrap;
+}
+
+.credits__license {
+  border: 1px solid var(--credits-line);
+  border-radius: 4px;
+  padding: 8px 12px;
+  margin-bottom: 8px;
+}
+
+.credits__summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+/* ライセンス全文は**折り返して全部見せる**。省略や高さ固定をしない
+   （読めない状態で置くのは、載せていないのと同じ）。 */
+.credits__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: "Consolas", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--credits-code-bg);
+  padding: 12px;
+  border-radius: 4px;
+  margin: 8px 0 0;
+}
+
+code {
+  background: var(--credits-code-bg);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: "Consolas", "Courier New", monospace;
+}
