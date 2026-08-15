@@ -70,6 +70,10 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
   reference signal は Core が自前で持つ。リング・VAD・ミュートは Phase 1〕
 - [x] **入出力が別デバイスのときの動作を実測** 〔2026-08-15。**別デバイスでも開ける。同一デバイスでも開けないことがある。**
   分離ストリームのドリフトは測定分解能以下 → [measurements/phase0.md](measurements/phase0.md)〕
+- [x] **起動フェーズに応じた画面**〔2026-08-15。セットアップ → 取得中 → 起動中 → キャラクター表示。
+  **出してよいかは Core が決める**（[architecture/ui.md](architecture/ui.md)「起動フェーズ」）〕
+- [x] **ウィンドウの移動と拡大縮小**〔簡易版。キャラクターの上でドラッグ / ホイール。
+  **位置と大きさは保存しない**（設定の保存形式が未確定のため。未確定事項 #9）〕
 - [x] `PlatformShell` インターフェースを定義（Electron 退避路の確保）〔Stage に露出するのは OS 特権を含まない部分集合。[interfaces/shell.md](interfaces/shell.md)〕
 - [x] **VRAM / RAM / インストーラサイズを実測して記録** 〔2026-08-15。**インストーラ 13.1 MB / Lumi 本体 497 MB / VRAM 55 MiB**。
   R1 解消 → [measurements/phase0.md](measurements/phase0.md)〕

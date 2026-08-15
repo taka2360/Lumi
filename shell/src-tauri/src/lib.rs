@@ -21,8 +21,8 @@ use crate::core_endpoint::{shell_core_endpoint, spawn_endpoint_notifier, CoreEnd
 use crate::core_process::{find_sidecar, resolve_launch_spec, CoreSupervisor, CoreTokens};
 use crate::hover::{shell_hit_region_set, spawn_cursor_watcher, HitRegionStore};
 use crate::window::{
-    compute_credits_window_options, compute_stage_window_options, StageConfig, WindowKind,
-    WindowSpec,
+    compute_credits_window_options, compute_stage_placement, compute_stage_window_options,
+    shell_window_drag_start, shell_window_scale, ScreenArea, StageConfig, WindowKind, WindowSpec,
 };
 
 /// 仕様どおりにウィンドウを開く。
@@ -57,6 +57,12 @@ fn create_window(
     win.set_content_protected(spec.content_protected)?;
     win.set_ignore_cursor_events(spec.click_through)?;
 
+    // **ビルダーの `position` だけでは効かない**（Windows で数十 px ずれた。2026-08-15 実測）。
+    // 生成後にもう一度置き直す。ビルダー側にも渡してあるので、ここでの移動は見えない。
+    if let Some((x, y)) = spec.position {
+        win.set_position(tauri::LogicalPosition::new(x, y))?;
+    }
+
     Ok(win)
 }
 
@@ -82,6 +88,43 @@ fn open_credits(app: &AppHandle) {
         // **黙って何も起きない、にしない。** 開けなかったならログに残す。
         Err(error) => log::error!("credits.open_failed {error}"),
     }
+}
+
+/// 画面から Stage ウィンドウの大きさと位置を決める。
+///
+/// **どう置くかは `window.rs` の純粋関数が決める。** ここがやるのは、
+/// Tauri から作業領域を取り出して**論理ピクセルに直す**ことだけ。
+/// モニタが取れなければ既定値に落ちる（**黙って落ちない**ようにログを残す）。
+fn stage_placement(app: &AppHandle) -> StageConfig {
+    let monitor = match app.primary_monitor() {
+        Ok(Some(monitor)) => monitor,
+        _ => {
+            log::warn!("stage.monitor_unavailable 既定の大きさで開く");
+            return StageConfig::default();
+        }
+    };
+    // 作業領域 = タスクバーなどを除いた範囲。ここに収めれば下端が隠れない。
+    let area = monitor.work_area();
+    let scale = monitor.scale_factor();
+    let placement = compute_stage_placement(ScreenArea {
+        x: f64::from(area.position.x) / scale,
+        y: f64::from(area.position.y) / scale,
+        width: f64::from(area.size.width) / scale,
+        height: f64::from(area.size.height) / scale,
+    });
+    // **どこに置いたかを残す。** ずれていたときに、画面の値と計算のどちらが
+    // おかしいのかを、後から切り分けられるようにする。
+    log::info!(
+        "stage.placement work_area={}x{}+{}+{} scale={scale} size={}x{} position={:?}",
+        area.size.width,
+        area.size.height,
+        area.position.x,
+        area.position.y,
+        placement.width,
+        placement.height,
+        placement.position,
+    );
+    placement
 }
 
 /// WS token を生成する。**Shell が作り、環境変数で Core に渡す**
@@ -120,7 +163,12 @@ pub fn run() {
         .manage(CoreEndpointState::new(port_rx.clone(), stage_token.clone()))
         // `shell.*` の allowlist（B1）。ここに載っていないものは Stage から呼べない。
         // **AI の判断を運ぶコマンドをここに足さない。**
-        .invoke_handler(tauri::generate_handler![shell_hit_region_set, shell_core_endpoint])
+        .invoke_handler(tauri::generate_handler![
+            shell_hit_region_set,
+            shell_core_endpoint,
+            shell_window_drag_start,
+            shell_window_scale
+        ])
         .setup(move |app| {
             if cfg!(debug_assertions) {
                 app.handle().plugin(
@@ -129,8 +177,8 @@ pub fn run() {
             }
 
             // ウィンドウ位置の永続化は Core が持つ（設定の保存は Core → docs/architecture/ui.md §2）。
-            // Phase 0 の時点では Core との接続前に Stage を出すため、既定値で開く。
-            let spec = compute_stage_window_options(&StageConfig::default());
+            // Phase 0 では保存しないので、**毎回画面から計算して右下に置く**。
+            let spec = compute_stage_window_options(&stage_placement(app.handle()));
             create_window(app.handle(), &spec, WebviewUrl::App("index.html".into()))?;
 
             // トレイが無いと Lumi を終了できない（`stage` は枠なし・タスクバー非表示）。

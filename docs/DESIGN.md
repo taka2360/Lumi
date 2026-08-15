@@ -597,7 +597,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Signal / DomainEvent / Command・**Hook 一覧** | [contracts/event-model.md](contracts/event-model.md) |
 | 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |
 | 権限マトリクス・オブジェクト責務行列 | [contracts/authority-matrix.md](contracts/authority-matrix.md) |
-| Shell / Stage の責務・ウィンドウ一覧・**トレイメニュー**・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
+| Shell / Stage の責務・ウィンドウ一覧・**トレイメニュー**・**起動フェーズ**・**ウィンドウ操作**・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
 | 音声の3層構造・EchoGuard・VAD パラメータ・**レイテンシ SLO**・**デバイス選択とストリームの開き方** | [architecture/audio.md](architecture/audio.md) |
 | 記憶の形成・忘却・矛盾・**検索スコアリング式**・salience 補正 | [architecture/memory.md](architecture/memory.md) |
 | Extension の2機構・信頼レベル・ライフサイクル・Content Pack | [architecture/extension.md](architecture/extension.md) |

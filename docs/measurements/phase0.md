@@ -338,6 +338,24 @@ CI で回し続けるテスト: `core/tests/test_sqlite_extensions.py`
 | **日本語ログを書いた瞬間に Core が落ちる** | 固めた実行体は stdout が **cp932** になる。Core のログは日本語を含み、**Shell はそれを stdout から読む契約**。`uv run` では UTF-8 なので開発中は気づけない → `lumi/__main__.py` で UTF-8 に固定した |
 | **ASIO 版の PortAudio が混入する** | `sounddevice` のフックが `_sounddevice_data` を丸ごと集める。**指定しなくても入る。** Steinberg の SDK は非 OSS → spec で除外し、**残っていたらビルドを失敗させる** |
 
+### ★ 同梱したら、開発時もそれが動いてしまった
+
+`bundle.resources` を足すと、**`tauri dev` も `target/debug/core/` に配る。**
+サイドカーを優先していたため、**Python を編集しても反映されず、前回固めた実行体が動いた**
+（2026-08-15。新しい状態フィールドがログに出ないことで気づいた）。
+
+**開発ビルドではソース（`uv run`）を優先する。** 配布物には `core_project_dir` が
+無いので、常にサイドカーが選ばれる（`resolve_launch_spec`）。
+
+### ★ コンソールウィンドウが出る
+
+Core は console サブシステムの実行体（**stdout の構造化ログを Shell が読む契約**なので
+windowed にはできない）。そのまま起動すると黒い窓が並んで出る。しかも
+**ユーザーがその窓を閉じると Core が死に、Supervisor が正しく再起動して、また挨拶する。**
+
+対処は `CREATE_NO_WINDOW`（Shell 側の spawn に付ける）。エンジン起動時にも同じ扱いをしている。
+確認方法: `ConsoleWindowClass` のウィンドウが存在しないこと。
+
 ### 検証手順 13 — サイドカーからの sqlite-vec
 
 **✓ 固めた実行体で確認済み。** `lumi-core.exe --self-check`:

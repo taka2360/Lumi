@@ -45,4 +45,20 @@ export interface PlatformShell {
 
   /** ホバー状態の変化を購読する。**変化したときだけ**呼ばれる。 */
   onHoverState(callback: (state: HoverState) => void): Promise<Disposable>;
+
+  /**
+   * ウィンドウを掴んで動かす。**座標は OS が決める。**
+   *
+   * `setPosition` を露出しないのは、Stage が画面外へウィンドウを追い出せるため
+   * （docs/interfaces/shell.md）。押した瞬間に呼ぶ。
+   */
+  startWindowDrag(): Promise<void>;
+
+  /**
+   * ウィンドウの大きさを**倍率で**変える。
+   *
+   * 絶対値ではなく倍率を渡す。**上限・下限を決めるのは Shell 側**であり、
+   * Stage は「もう少し大きく」としか言えない（B1 / B2）。
+   */
+  scaleWindow(factor: number): Promise<void>;
 }

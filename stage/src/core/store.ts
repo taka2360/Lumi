@@ -16,6 +16,14 @@ import type { VisemeTimeline } from "../character/lipsync";
 /** エンジン**プロセス**の状態。導入の状態（`TtsSetupState`）とは別の軸。 */
 export type EngineRuntime = "stopped" | "starting" | "ready" | "failed";
 
+/**
+ * 起動フェーズ。**キャラクターを出してよいかは Core が決める。**
+ *
+ * 定義 → docs/architecture/ui.md「起動フェーズ」。
+ * Stage はこれを見て画面を切り替えるだけで、**自分では判断しない**。
+ */
+export type BootPhase = "setup" | "installing" | "starting" | "ready";
+
 export type TtsSetupState =
   | "unknown"
   | "not_configured"
@@ -26,6 +34,7 @@ export type TtsSetupState =
 
 /** Core の `TtsSetup.to_payload()` と同じ形（core/lumi/setup/state.py）。 */
 export interface TtsSetupSnapshot {
+  boot: BootPhase;
   state: TtsSetupState;
   engine_name: string | null;
   version: string | null;
@@ -63,6 +72,8 @@ interface StageState {
 }
 
 const UNKNOWN_TTS: TtsSetupSnapshot = {
+  // **繋がる前はまだ何も出さない。** Core が `ready` と言うまでキャラクターは出さない。
+  boot: "starting",
   state: "unknown",
   engine_name: null,
   version: null,
@@ -96,7 +107,11 @@ export function toTtsSnapshot(payload: Record<string, unknown>): TtsSetupSnapsho
     "failed",
   ];
   const runtimes: EngineRuntime[] = ["stopped", "starting", "ready", "failed"];
+  const phases: BootPhase[] = ["setup", "installing", "starting", "ready"];
   return {
+    // **知らないフェーズを `ready` に丸めない。** 丸めると、準備できていないのに
+    // キャラクターが出る（fail-closed で `starting` = ローディングに倒す）。
+    boot: phases.find((candidate) => candidate === payload.boot) ?? "starting",
     state: known.find((candidate) => candidate === state) ?? "unknown",
     runtime: runtimes.find((candidate) => candidate === payload.runtime) ?? "stopped",
     engine_name: typeof payload.engine_name === "string" ? payload.engine_name : null,

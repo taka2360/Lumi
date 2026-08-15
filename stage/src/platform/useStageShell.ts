@@ -17,6 +17,8 @@ import { createTauriPlatformShell, isTauri } from "./tauri";
 const noopShell: PlatformShell = {
   setHitRegion: async () => {},
   onHoverState: async () => ({ dispose: () => {} }),
+  startWindowDrag: async () => {},
+  scaleWindow: async () => {},
 };
 
 export function getPlatformShell(): PlatformShell {
@@ -64,4 +66,37 @@ export function useHitRegionReporter(): (rects: CssRect[]) => void {
     },
     [shell],
   );
+}
+
+/** ホイールの1目盛りあたりの拡大率。**小さめ**にする（一気に飛ぶと戻せない）。 */
+const SCALE_STEP = 1.08;
+
+/**
+ * ウィンドウの移動と拡大縮小のハンドラ。**キャラクターの上でだけ使う。**
+ *
+ * 判断（どこまで小さく / 大きくできるか）は Shell 側にある
+ * → docs/architecture/ui.md「ウィンドウの移動と大きさ」
+ */
+export function useWindowGestures() {
+  const shell = useMemo(getPlatformShell, []);
+
+  const onPointerDown = useCallback(
+    (event: React.PointerEvent) => {
+      // 左ボタンだけ。右クリックは将来メニューに使う。
+      if (event.button !== 0) {
+        return;
+      }
+      void shell.startWindowDrag();
+    },
+    [shell],
+  );
+
+  const onWheel = useCallback(
+    (event: React.WheelEvent) => {
+      void shell.scaleWindow(event.deltaY < 0 ? SCALE_STEP : 1 / SCALE_STEP);
+    },
+    [shell],
+  );
+
+  return { onPointerDown, onWheel };
 }

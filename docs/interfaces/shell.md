@@ -38,6 +38,8 @@ interface PlatformShell {
   setContentProtection(w: WindowHandle, on: boolean): Promise<void>
   setPosition(w: WindowHandle, x: number, y: number): Promise<void>
   getPosition(w: WindowHandle): Promise<Point>
+  startDragging(w: WindowHandle): Promise<void>          // 掴んで動かす。OS に委ねる
+  scaleWindow(w: WindowHandle, factor: number): Promise<void>  // 倍率。**クランプは Shell 側**
 
   // ── 入力 ───────────────────────────────────
   onCursorMove(cb: (p: Point) => void): Disposable
@@ -112,6 +114,14 @@ Rust 側で ~60Hz でカーソル位置を取得（GetCursorPos 相当）
 **Stage 側の TypeScript の `PlatformShell` には OS 特権を載せない。**
 `stage.*` は絶対に OS 特権を要求しない、という規則を型で守るため
 （実装: `stage/src/platform/PlatformShell.ts`）。
+
+#### `scaleWindow` に「大きさ」ではなく「倍率」を渡す理由〔Phase 0〕
+
+Stage が「この大きさにしろ」と絶対値を渡せると、**画面より大きい / 1 ピクセルの
+ウィンドウを要求できてしまう。** Stage は信頼されていない（B1 / B2）ので、
+**上限・下限を決めるのは Shell 側**にする（`compute_scaled_size` は純粋関数）。
+
+同じ理由で移動は `setPosition` ではなく `startDragging`。**座標を Stage に計算させない。**
 
 ---
 
@@ -238,3 +248,8 @@ function decideFadeState(cursor: Point, region: HitRegion, prev: FadeState): Fad
 | 8 | **Core 側の BindVerifier を無効化しても Shell 側で拒否される**（二重化の確認） |
 | 9 | カーソル監視の CPU 使用率が許容範囲（Phase 0 実測） |
 | 10 | ホバー検知が hit_region の変化に追従する |
+| 11 | **`compute_scaled_size` が上限・下限でクランプする**（Stage が画面外の大きさを要求できない） |
+| 12 | **Core のサイドカーを起動してもコンソールウィンドウが出ない**（Windows） |
+| 13 | **`compute_stage_placement` が作業領域の右下に収まる位置を返す**（マルチモニタのオフセットを含む） |
+| 14 | **拡大しても右下の角が動かない**（`anchor_bottom_right`） |
+| 15 | **開発ビルドではサイドカーよりソースを優先する**（固めた実行体が古いまま動かない） |

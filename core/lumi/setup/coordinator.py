@@ -50,7 +50,11 @@ class SetupCoordinator:
         self._state = TtsSetup(state=TtsSetupState.UNKNOWN)
         self._answers_path: Path = paths.setup_state_file()
         self._answers = SetupAnswers()
+        # **2つを分ける。** `_prompting` は「この一連の処理に入っているか」（多重起動の防止）、
+        # `_awaiting_answer` は「いま画面に質問が出ているか」（起動フェーズ）。
+        # 混ぜると、取得が終わった直後に質問画面が一瞬戻る（テストで踏んだ）。
         self._prompting = False
+        self._awaiting_answer = False
         # **Stage は検出より先に繋がりうる。** 実測で先に繋がった（2026-08-15）。
         # 状態が unknown のまま prompt の判定をすると、聞くべきときに聞かなくなる。
         self._initialized = asyncio.Event()
@@ -89,8 +93,17 @@ class SetupCoordinator:
 
     async def _set_state(self, state: TtsSetup) -> None:
         self._state = state
-        log.info("setup.state", **state.to_payload())
-        await self._server.notify(Role.STAGE, METHOD_STATE, state.to_payload())
+        await self._broadcast()
+
+    async def _broadcast(self) -> None:
+        """今の状態を配る。**起動フェーズを含む**（docs/architecture/ui.md）。
+
+        フェーズは「尋ねている最中か」にも依るので、状態が変わらなくても
+        **尋ね始めた / 尋ね終わったときには配り直す**。
+        """
+        payload = self._state.to_payload(prompting=self._awaiting_answer)
+        log.info("setup.state", **payload)
+        await self._server.notify(Role.STAGE, METHOD_STATE, payload)
 
     async def set_runtime(self, runtime: EngineRuntime) -> None:
         """エンジン**プロセス**の状態が変わった。
@@ -107,7 +120,7 @@ class SetupCoordinator:
         待たないと状態が `unknown` のまま「尋ねなくてよい」と判断してしまう。
         """
         await self._initialized.wait()
-        await self._server.notify(Role.STAGE, METHOD_STATE, self._state.to_payload())
+        await self._broadcast()
 
         if self._state.state is not TtsSetupState.NOT_CONFIGURED:
             return
@@ -120,6 +133,9 @@ class SetupCoordinator:
             await self._ask_and_maybe_install()
         finally:
             self._prompting = False
+            self._awaiting_answer = False
+            # 答え終わった（あるいは諦めた）ことを配る。**待たせっぱなしにしない。**
+            await self._broadcast()
 
     async def _ask_and_maybe_install(self) -> None:
         """尋ねて、選ばれたら取得する。**失敗したら一度だけ聞き直す。**
@@ -131,6 +147,10 @@ class SetupCoordinator:
         reason: str | None = None
 
         for _ in range(MAX_PROMPTS):
+            # **質問を出す前にフェーズを配る。** これを忘れると Stage は
+            # ローディングを出したまま、その裏で質問を出すことになる。
+            self._awaiting_answer = True
+            await self._broadcast()
             try:
                 result = await self._server.invoke(
                     Role.STAGE,
@@ -143,6 +163,8 @@ class SetupCoordinator:
                 log.info("setup.prompt.unanswered")
                 return
 
+            # **答えが来た時点で質問は消える。** 取得中のフェーズを質問で塗り潰さない。
+            self._awaiting_answer = False
             choice = result.payload.get("choice") if result.ok else None
             # **未知の答えは「取得しない」と同じ扱いにする**（fail-closed）。
             install = choice == "install"
@@ -181,15 +203,12 @@ class SetupCoordinator:
             if fraction - last_sent < 0.01 and fraction < 1.0:
                 return
             last_sent = fraction
+            # 進捗だけを更新する。**`_state` は INSTALLING のまま**なので
+            # フェーズも installing のままになる。
             await self._server.notify(
                 Role.STAGE,
                 METHOD_STATE,
-                TtsSetup(
-                    state=TtsSetupState.INSTALLING,
-                    engine_name=artifact.display_name,
-                    version=artifact.version,
-                    progress=fraction,
-                ).to_payload(),
+                replace(self._state, progress=fraction).to_payload(prompting=self._prompting),
             )
 
         try:

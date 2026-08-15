@@ -24,6 +24,10 @@ use tokio::sync::{watch, Mutex};
 
 use crate::job_object::KillOnCloseJob;
 
+/// `CREATE_NO_WINDOW`。コンソールの実行体を**窓なしで**起動する。
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
 /// Core に渡す token。**role ごとに別のものを渡す**（B2 / B3）。
 #[derive(Debug, Clone)]
 pub struct CoreTokens {
@@ -54,26 +58,32 @@ const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// どうやって Core を起動するかを決める。**純粋関数**。
 ///
-/// 1. 同梱サイドカーがあればそれを使う（配布された Lumi の経路）
-/// 2. 無ければ開発用に `uv run` で `core/` を起動する
+/// 1. 開発用のプロジェクトが分かっていれば `uv run` で `core/` を起動する
+/// 2. 無ければ同梱サイドカー（配布された Lumi の経路）
 /// 3. どちらも無ければ `None` = **起動しない**。黙って劣化させない
+///
+/// **開発時にソースを優先するのは、固めたサイドカーが同じ場所に置かれるため。**
+/// `tauri dev` も `resources` を `target/debug/core/` に配るので、サイドカーを
+/// 優先すると **Python を編集しても反映されない**（起動するのは前回固めた実行体）。
+/// 実際にこれを踏んだ（2026-08-15）。`core_project_dir` は debug ビルドでしか
+/// 与えられないので、配布物では常にサイドカーが選ばれる。
 pub fn resolve_launch_spec(
     sidecar: Option<&Path>,
     core_project_dir: Option<&Path>,
 ) -> Option<CoreLaunchSpec> {
-    if let Some(path) = sidecar {
-        return Some(CoreLaunchSpec { program: path.to_path_buf(), args: Vec::new() });
+    if let Some(project) = core_project_dir {
+        return Some(CoreLaunchSpec {
+            program: PathBuf::from("uv"),
+            args: vec![
+                "run".into(),
+                "--project".into(),
+                project.to_string_lossy().into_owned(),
+                "lumi-core".into(),
+            ],
+        });
     }
-    let project = core_project_dir?;
-    Some(CoreLaunchSpec {
-        program: PathBuf::from("uv"),
-        args: vec![
-            "run".into(),
-            "--project".into(),
-            project.to_string_lossy().into_owned(),
-            "lumi-core".into(),
-        ],
-    })
+    let path = sidecar?;
+    Some(CoreLaunchSpec { program: path.to_path_buf(), args: Vec::new() })
 }
 
 /// 同梱サイドカーを探す。存在しなければ `None`（= 開発経路にフォールバックする）。
@@ -178,6 +188,13 @@ impl CoreSupervisor {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
+        // **コンソールウィンドウを出さない。** Core は console サブシステムの実行体
+        // （stdout の構造化ログを Shell が読む契約なので windowed にはできない）。
+        // これを付けないと黒い cmd の窓が一緒に出て、しかもユーザーがそれを閉じると
+        // Core が死に、Supervisor が正しく再起動して**また喋り直す**（2026-08-15 実測）。
+        #[cfg(windows)]
+        command.creation_flags(CREATE_NO_WINDOW);
+
         let mut child = command.spawn()?;
 
         // **起動直後にジョブへ入れる。** ここより後に Shell が死ぬと道連れにできない。
@@ -266,10 +283,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn prefers_the_bundled_sidecar() {
+    fn uses_the_bundled_sidecar_when_there_is_no_source() {
         let spec = resolve_launch_spec(Some(Path::new("C:/app/lumi-core.exe")), None).unwrap();
         assert_eq!(spec.program, PathBuf::from("C:/app/lumi-core.exe"));
         assert!(spec.args.is_empty());
+    }
+
+    #[test]
+    fn development_prefers_the_source_over_a_stale_sidecar() {
+        // **`tauri dev` も resources を target/debug/core/ に配る。**
+        // サイドカーを優先すると、Python を編集しても前回固めた実行体が動く。
+        let spec = resolve_launch_spec(
+            Some(Path::new("C:/app/lumi-core.exe")),
+            Some(Path::new("C:/repo/core")),
+        )
+        .unwrap();
+        assert_eq!(spec.program, PathBuf::from("uv"));
     }
 
     #[test]
