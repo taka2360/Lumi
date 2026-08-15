@@ -27,6 +27,25 @@ class TtsSetupState(StrEnum):
     FAILED = "failed"
 
 
+class EngineRuntime(StrEnum):
+    """エンジン**プロセス**の状態。導入の状態（`TtsSetupState`）とは別の軸。
+
+    docs/architecture/setup.md「導入の状態と、プロセスの状態を混ぜない」
+
+    1つの enum に混ぜると「入っているのに起動できない」を表現できず、
+    ユーザーに「取得してください」と嘘の案内をすることになる。
+    """
+
+    #: 起動していない。
+    STOPPED = "stopped"
+    #: 起動中。まだ応答しない（初回はエンジン自身のモデル取得で数分かかる）。
+    STARTING = "starting"
+    #: 喋れる。
+    READY = "ready"
+    #: 入っているのに起動できない = **壊れている**。
+    FAILED = "failed"
+
+
 @dataclass(frozen=True, slots=True)
 class TtsSetup:
     """Stage に配る状態。Stage は**表示するだけ**。"""
@@ -40,6 +59,8 @@ class TtsSetup:
     reason: str | None = None
     #: 取得の進捗（0.0-1.0）。`INSTALLING` のときだけ入る。
     progress: float | None = None
+    #: エンジン**プロセス**の状態。導入の状態とは独立に動く。
+    runtime: EngineRuntime = EngineRuntime.STOPPED
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -50,6 +71,7 @@ class TtsSetup:
             "executable": self.executable,
             "reason": self.reason,
             "progress": self.progress,
+            "runtime": str(self.runtime),
         }
 
     @property

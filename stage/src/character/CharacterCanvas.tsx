@@ -18,7 +18,9 @@ import {
   WebGLRenderer,
 } from "three";
 
+import { useStageStore } from "../core/store";
 import type { CssRect } from "../platform/geometry";
+import { advanceMouth, MOUTH_CLOSED, type MouthWeights, visemeAt } from "./lipsync";
 import { loadCharacter } from "./loadCharacter";
 import { hasMovedEnough, type NdcPoint, screenRectFromNdcPoints } from "./projection";
 import type { CharacterKind } from "./types";
@@ -94,11 +96,20 @@ export function CharacterCanvas({
       let frame = 0;
       let previousTime = performance.now();
       const startedAt = previousTime;
+      let mouth: MouthWeights = MOUTH_CLOSED;
 
       const tick = (now: number) => {
         animationFrame = requestAnimationFrame(tick);
         const delta = Math.min((now - previousTime) / 1000, 0.1);
         previousTime = now;
+
+        // **口を先に決めてから update する。** VRM は update の中で表情を反映するので、
+        // 順序を逆にすると1フレーム遅れる。
+        const speech = useStageStore.getState().speech;
+        const target = speech ? visemeAt(speech.timeline, now - speech.startedAtMs) : null;
+        mouth = advanceMouth(mouth, target, delta);
+        model.applyMouth(mouth);
+
         model.update(delta, (now - startedAt) / 1000);
         renderer.render(scene, camera);
 

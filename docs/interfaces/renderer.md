@@ -118,14 +118,65 @@ class Viseme(Enum):
 
 VRM の標準ビセーム（`aa` / `ee` / `ih` / `oh` / `ou`）にマップする。
 
-### 生成方式〔Provisional。Phase 0-1 で決める〕
+### 生成方式 — **口の形は音素列から、時間は音声から**〔Confirmed。2026-08-15 / Phase 0 実測〕
 
-| 方式 | 評価 |
+| 方式 | 評価 | 採否 |
+|---|---|---|
+| **TTS の音素列（モーラ）から口の形を決める** | 母音を取り違えない。エンジンが返す情報そのもの | **採用** |
+| 再生中の音声の振幅から推定 | エンジン非依存。AIRI は wLipSync を使用 | 不採用（母音が分からない） |
+
+`audio_query` の `accent_phrases[].moras[]` に `vowel`（`a`/`i`/`u`/`e`/`o`/`N`/`cl`/`pau`）が入る。
+**これが口の形の唯一の入力。**
+
+#### ★ 音素の長さは、返ってこないことがある〔2026-08-15 実測〕
+
+**AivisSpeech は `audio_query` のモーラ長を すべて `0.0` で返す。**
+`engine_manifest` の `adjust_phoneme_length: false` がその宣言であり、
+長さは合成時にモデルが決めるため、事前には存在しない。VOICEVOX は返す。
+
+| エンジンが返すもの | 時間の決め方 |
 |---|---|
-| TTS 出力から音素タイミングを取得 | 精度が高い。TTS エンジンが対応していれば |
-| 再生中の音声から推定 | エンジン非依存。AIRI は wLipSync を使用 |
+| 音素長がある（VOICEVOX） | **その値を使う。** 実際の発話と一致する |
+| 音素長が無い（AivisSpeech） | **合成された音声の長さをモーラ列で割り振る**（閉じるモーラは短め） |
+| どちらも無い | **ビセームを送らない。** 口は閉じたまま（でたらめな時間で動かさない） |
+
+**設計上の帰結: タイムラインは合成の「あと」にしか作れない。**
+当初は「合成前に得られる」と書いていたが、実測で誤りだった。
+`stage.speech.started` は**再生開始と同時**に送るので、体感上の遅れは無い。
+
+割り振りは近似であり、**モーラごとの長短は実際の発話と一致しない。**
+一致させたければ、音声から音素境界を推定する処理が要る（Phase 0 では作らない）。
+
+```python
+@dataclass(frozen=True)
+class VisemeSpan:
+    """1つのビセームを、いつからいつまで出すか。**Core が作る。**"""
+    viseme: Viseme | None   # None = 口を閉じる（無音・撥音・促音）
+    start_ms: int           # 発話開始からの相対時刻
+    duration_ms: int
+
+
+@dataclass(frozen=True)
+class VisemeTimeline:
+    spans: list[VisemeSpan]
+    total_ms: int
+```
+
+### Core → Renderer の契約
+
+| method | 向き | 内容 |
+|---|---|---|
+| `stage.speech.started` | Core → Stage | `{text, timeline, total_ms}`。**再生開始と同時に送る** |
+| `stage.speech.ended` | Core → Stage | `{}`。再生が終わった / 中断された |
+
+**時刻は Stage 側の時計で進める。** 1フレームごとに Core から送ると 60Hz の WS 往復になり、
+Stage が詰まると口が固まる（ホバー検知と同じ理由 → [../architecture/ui.md](../architecture/ui.md)）。
+
+**`ended` が来なかった場合、Stage は `total_ms` を過ぎた時点で口を閉じる。**
+Core が落ちても口が開きっぱなしにならない（fail-closed）。
 
 **アタック/リリースの非対称スムージングと無音判定は必須。** これが無いと口がガクガクする。
+**スムージングは Renderer 側で行う**（表現の詳細であり、Core は意図だけを送る）。
 
 ---
 

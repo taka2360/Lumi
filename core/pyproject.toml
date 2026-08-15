@@ -10,6 +10,7 @@ dependencies = [
     "structlog>=24.4.0",
     "sqlite-vec>=0.1.9",
     "httpx>=0.28.1",
+    "sounddevice>=0.5.5",
 ]
 
 # torch に依存しない（インストーラサイズ R1）。
@@ -51,7 +52,7 @@ files = ["lumi", "tests"]
 
 # 型スタブを持たない外部ライブラリ。**個別に列挙する**（全体を無視しない）。
 [[tool.mypy.overrides]]
-module = ["sqlite_vec.*"]
+module = ["sqlite_vec.*", "sounddevice.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

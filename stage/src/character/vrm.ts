@@ -10,7 +10,17 @@ import { type VRM, VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
 import { computeIdlePose } from "./idle";
+import type { MouthWeights, Viseme } from "./lipsync";
 import type { CharacterModel } from "./types";
+
+/** ビセーム → VRM の標準表情名（docs/interfaces/renderer.md）。 */
+const VRM_EXPRESSION: Readonly<Record<Viseme, string>> = {
+  A: "aa",
+  I: "ih",
+  U: "ou",
+  E: "ee",
+  O: "oh",
+};
 
 /**
  * Phase 0 の暫定的な置き場所。ここに `.vrm` を置くと本番モデルとして読まれる。
@@ -46,8 +56,18 @@ export async function loadVrm(url: string): Promise<CharacterModel> {
       const pose = computeIdlePose(elapsed);
       vrm.scene.position.y = baseY + pose.offsetY;
       vrm.scene.rotation.z = pose.tiltZ;
-      // 表情・視線・揺れものの更新。**リップシンクは Phase 0 の Step J で足す。**
+      // 表情・視線・揺れものの更新。**`applyMouth` の値はここで反映される。**
       vrm.update(delta);
+    },
+    applyMouth(weights: MouthWeights) {
+      const expressions = vrm.expressionManager;
+      if (!expressions) {
+        // このモデルは表情を持たない。**黙って口を動かしたことにしない。**
+        return;
+      }
+      for (const [viseme, name] of Object.entries(VRM_EXPRESSION)) {
+        expressions.setValue(name, weights[viseme as Viseme]);
+      }
     },
     dispose() {
       VRMUtils.deepDispose(vrm.scene);

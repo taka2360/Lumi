@@ -8,18 +8,22 @@ mod core_process;
 mod hover;
 mod job_object;
 mod os_command;
+mod tray;
 mod window;
 mod ws_client;
 
 use std::path::PathBuf;
 
 use rand::RngCore as _;
-use tauri::{AppHandle, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{AppHandle, Manager as _, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 use crate::core_endpoint::{shell_core_endpoint, spawn_endpoint_notifier, CoreEndpointState};
 use crate::core_process::{find_sidecar, resolve_launch_spec, CoreSupervisor, CoreTokens};
 use crate::hover::{shell_hit_region_set, spawn_cursor_watcher, HitRegionStore};
-use crate::window::{compute_stage_window_options, StageConfig, WindowSpec};
+use crate::window::{
+    compute_credits_window_options, compute_stage_window_options, StageConfig, WindowKind,
+    WindowSpec,
+};
 
 /// 仕様どおりにウィンドウを開く。
 ///
@@ -54,6 +58,30 @@ fn create_window(
     win.set_ignore_cursor_events(spec.click_through)?;
 
     Ok(win)
+}
+
+/// クレジットとライセンスを開く（トレイ → クレジット）。
+///
+/// **Core に繋がない静的なページ**（docs/architecture/ui.md）。
+/// ライセンス文書の提示は Lumi の動作状態と無関係な義務であり、
+/// Core が落ちていても読めなければならない。
+///
+/// すでに開いていれば作り直さず前に出す。**同じ文書の窓が2枚出ても意味が無い。**
+fn open_credits(app: &AppHandle) {
+    let label = WindowKind::Credits.label();
+    if let Some(existing) = app.get_webview_window(label) {
+        let _ = existing.show();
+        let _ = existing.unminimize();
+        let _ = existing.set_focus();
+        return;
+    }
+
+    let spec = compute_credits_window_options();
+    match create_window(app, &spec, WebviewUrl::App("credits.html".into())) {
+        Ok(_) => log::info!("credits.opened"),
+        // **黙って何も起きない、にしない。** 開けなかったならログに残す。
+        Err(error) => log::error!("credits.open_failed {error}"),
+    }
 }
 
 /// WS token を生成する。**Shell が作り、環境変数で Core に渡す**
@@ -104,6 +132,9 @@ pub fn run() {
             // Phase 0 の時点では Core との接続前に Stage を出すため、既定値で開く。
             let spec = compute_stage_window_options(&StageConfig::default());
             create_window(app.handle(), &spec, WebviewUrl::App("index.html".into()))?;
+
+            // トレイが無いと Lumi を終了できない（`stage` は枠なし・タスクバー非表示）。
+            tray::init(app.handle())?;
 
             spawn_cursor_watcher(app.handle().clone());
 

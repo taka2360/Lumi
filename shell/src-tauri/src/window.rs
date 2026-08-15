@@ -10,7 +10,7 @@
 ///
 /// Phase 0 で作るのは `Stage` と `Credits` だけ。`Permission` は Phase 4a だが、
 /// **保護対象の判定（Invariant 8）に必要なので label だけ先に確定させる**。
-// Credits は Step I、Permission は Phase 4a、Settings は Phase 1 で生成する。
+// Permission は Phase 4a、Settings は Phase 1 で生成する。
 // label と保護対象の判定は先に確定させておく必要があるため、未使用の警告だけ抑える。
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -129,8 +129,6 @@ pub fn compute_stage_window_options(cfg: &StageConfig) -> WindowSpec {
 ///
 /// クレジットは Phase 0 の必須項目（docs/licensing.md §6）。
 /// 「少し探せばわかる場所」に置く必要があるため、トレイメニューから開く通常ウィンドウにする。
-// トレイからの生成は Step I で繋ぐ。
-#[allow(dead_code)]
 pub fn compute_credits_window_options() -> WindowSpec {
     WindowSpec {
         label: WindowKind::Credits.label(),

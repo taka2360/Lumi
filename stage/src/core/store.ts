@@ -11,6 +11,11 @@
 
 import { create } from "zustand";
 
+import type { VisemeTimeline } from "../character/lipsync";
+
+/** エンジン**プロセス**の状態。導入の状態（`TtsSetupState`）とは別の軸。 */
+export type EngineRuntime = "stopped" | "starting" | "ready" | "failed";
+
 export type TtsSetupState =
   | "unknown"
   | "not_configured"
@@ -28,6 +33,15 @@ export interface TtsSetupSnapshot {
   executable: string | null;
   reason: string | null;
   progress: number | null;
+  runtime: EngineRuntime;
+}
+
+/** 発話中であることと、その口のタイムライン。**時刻は Stage の時計で進む。** */
+export interface Speech {
+  text: string;
+  timeline: VisemeTimeline;
+  /** 受け取った時刻（`performance.now()`）。 */
+  startedAtMs: number;
 }
 
 export interface SetupPrompt {
@@ -41,9 +55,11 @@ interface StageState {
   connected: boolean;
   tts: TtsSetupSnapshot;
   prompt: SetupPrompt | null;
+  speech: Speech | null;
   setConnected(connected: boolean): void;
   setTts(snapshot: TtsSetupSnapshot): void;
   setPrompt(prompt: SetupPrompt | null): void;
+  setSpeech(speech: Speech | null): void;
 }
 
 const UNKNOWN_TTS: TtsSetupSnapshot = {
@@ -54,15 +70,18 @@ const UNKNOWN_TTS: TtsSetupSnapshot = {
   executable: null,
   reason: null,
   progress: null,
+  runtime: "stopped",
 };
 
 export const useStageStore = create<StageState>((set) => ({
   connected: false,
   tts: UNKNOWN_TTS,
   prompt: null,
+  speech: null,
   setConnected: (connected) => set({ connected }),
   setTts: (tts) => set({ tts }),
   setPrompt: (prompt) => set({ prompt }),
+  setSpeech: (speech) => set({ speech }),
 }));
 
 /** Core から来た payload を型に落とす。**知らない値は unknown 扱い**（勝手に補完しない）。 */
@@ -76,8 +95,10 @@ export function toTtsSnapshot(payload: Record<string, unknown>): TtsSetupSnapsho
     "installed",
     "failed",
   ];
+  const runtimes: EngineRuntime[] = ["stopped", "starting", "ready", "failed"];
   return {
     state: known.find((candidate) => candidate === state) ?? "unknown",
+    runtime: runtimes.find((candidate) => candidate === payload.runtime) ?? "stopped",
     engine_name: typeof payload.engine_name === "string" ? payload.engine_name : null,
     version: typeof payload.version === "string" ? payload.version : null,
     port: typeof payload.port === "number" ? payload.port : null,

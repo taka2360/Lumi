@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Mapping
+from dataclasses import replace
 from pathlib import Path
 
 from lumi import logging as lumi_logging
@@ -24,7 +25,7 @@ from lumi import paths
 from lumi.setup.detect import detect_engines
 from lumi.setup.engines import AIVISSPEECH_ENGINE
 from lumi.setup.install import SetupError, install_engine
-from lumi.setup.state import SetupAnswers, TtsSetup, TtsSetupState
+from lumi.setup.state import EngineRuntime, SetupAnswers, TtsSetup, TtsSetupState
 from lumi.transport.protocol import Role
 from lumi.transport.server import NotConnectedError, WsServer
 
@@ -90,6 +91,14 @@ class SetupCoordinator:
         self._state = state
         log.info("setup.state", **state.to_payload())
         await self._server.notify(Role.STAGE, METHOD_STATE, state.to_payload())
+
+    async def set_runtime(self, runtime: EngineRuntime) -> None:
+        """エンジン**プロセス**の状態が変わった。
+
+        導入の状態とは別の軸だが、Stage に配るのは同じ1つの状態なので、
+        **配信の出口をここに一本化する**（2箇所から送ると順序が保証できない）。
+        """
+        await self._set_state(replace(self._state, runtime=runtime))
 
     async def on_stage_connected(self) -> None:
         """Stage が繋がった。現在の状態を配り、必要なら尋ねる。

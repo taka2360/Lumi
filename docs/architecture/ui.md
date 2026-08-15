@@ -28,6 +28,9 @@
 | `bubble` | 吹き出し | 透過 / 最前面 / 非フォーカス |
 | `permission` | **権限プロンプト** | **フォーカス必須 / Invariant 8 の保護対象** |
 | `credits` | クレジットとライセンス（トレイ → クレジット） | 通常ウィンドウ。**Core に接続しない**（内容は静的） → [../licensing.md](../licensing.md) §6 |
+| `settings` | 設定 | 通常ウィンドウ |
+| `widget` | Widget / Gamelet | 通常ウィンドウ（Phase 7） |
+| `inspector` | 開発用 | 通常ウィンドウ（dev のみ） |
 
 ### 初回セットアップ UI は `stage` ウィンドウの中に置く〔Phase 0〕
 
@@ -40,9 +43,31 @@
 - 状態と進捗は Core が `stage.setup.state` で配信する。**Stage は表示するだけ**
 
 → [setup.md](setup.md)
-| `settings` | 設定 | 通常ウィンドウ |
-| `widget` | Widget / Gamelet | 通常ウィンドウ（Phase 7） |
-| `inspector` | 開発用 | 通常ウィンドウ（dev のみ） |
+
+### `credits` を Core に繋がない理由〔Phase 0〕
+
+上と逆に、クレジットは**独立ウィンドウにする**（長い文書であり、キャラクターの
+隣に出すものではない）。そのうえで **Core に接続しない**。理由は2つ。
+
+1. **Core が落ちていてもクレジットは読めなければならない。** ライセンス文書の提示は
+   Lumi の動作状態と無関係な義務であり、Core の生死に依存させると果たせない時がある
+2. 接続すると Stage 側の WS が 2 本になり、`stage.*` に宛先の概念が要る（上と同じ理由）
+
+代償として、Phase 0 のクレジットは「**使用中のもの**」に絞れず、
+「Lumi が使いうるもの」を条件付きで全部載せることになる。
+**足りないより多い方に倒す**（クレジットは欠けたときだけ違反になる）。
+使用中のものに絞るのは Phase 1 の `Provider.attribution()` → [../licensing.md](../licensing.md) §6
+
+### トレイメニュー〔Phase 0〕
+
+Phase 0 では **「クレジット」と「終了」の2つだけ**置く。
+
+| 項目 | なぜ Phase 0 で要るか |
+|---|---|
+| クレジット | 「紹介画面など、**少し探せばわかる場所**」に置く義務がある（[../licensing.md](../licensing.md) §6） |
+| 終了 | `stage` は枠なし・クリックスルー・タスクバー非表示のため、**トレイ以外に終了する手段が無い** |
+
+表示切替・設定・ホットキーは Phase 1。**トレイに AI の判断を出さない**（`shell.*` の規則）。
 
 ### Tauri 2 固有の課題と対応
 
@@ -183,16 +208,14 @@ LLM ストリーム内の `<|ACT {"emotion":"happy","intensity":0.7}|>` を使�
 
 ### リップシンク
 
-音素/ビセームベース。TTS の出力から抽出するか、再生中の音声から推定する〔Provisional。Phase 0-1 で方式を決める〕。
+**口の形は TTS の音素列から、時間は音声の長さから**〔Confirmed。2026-08-15〕。
+エンジンが音素長を返すとは限らない（AivisSpeech は返さない）ことが実測で分かっている。
 
-```python
-@dataclass(frozen=True)
-class VisemeFrame:
-    weights: dict[Viseme, float]    # A / E / I / O / U
-    mouth_open: float               # 0.0-1.0
-```
+**型（`VisemeSpan` / `VisemeTimeline`）と `stage.speech.*` の契約の唯一の定義場所は
+[../interfaces/renderer.md](../interfaces/renderer.md)。** ここには置かない。
 
-VRM の標準ビセーム（`aa` / `ee` / `ih` / `oh` / `ou`）にマップする。
+要点だけ: **Core は時間軸つきの意図を1回送り、時刻は Stage の時計で進める。**
+60Hz で送ると Stage が詰まったときに口が固まる（ホバー検知と同じ理由）。
 
 ---
 
