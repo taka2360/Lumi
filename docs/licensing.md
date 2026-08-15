@@ -218,6 +218,44 @@ ACML の禁止事項:
 **保証しないこと**: VRoid Hub の利用条件は**モデル登録者が設定するものであり、後から変更されうる**。
 ここに記録したのは 2026-08-16 時点で確認した条件である。**同梱を更新するときは条件を読み直す。**
 
+### 4.6 推論スタック（Phase 1 で追加）〔2026-08-16 確認〕
+
+**すべて配布物に入る。** モデルは入らない（→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)）。
+
+| コンポーネント | ライセンス | 用途 |
+|---|---|---|
+| faster-whisper | **MIT**（Copyright (c) 2023 SYSTRAN） | STT |
+| CTranslate2 | MIT | 推論エンジン（**torch の代わり**。R1） |
+| ONNX Runtime | MIT | VAD / STT |
+| numpy | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | 音声の共通表現 |
+| PyAV | BSD-3-Clause | faster-whisper の依存 |
+| tokenizers | Apache-2.0 | 同上 |
+| huggingface_hub | Apache-2.0 | 同上（**取得は無効化している**） |
+| **Silero VAD（ONNX モデル）** | **MIT**（Copyright (c) 2020-present Silero Team） | barge-in |
+
+**GPL / AGPL は1つも含まれない**（§6 のビルド時検査に抵触しない）。
+
+#### ★ Silero VAD は faster-whisper が同梱している〔2026-08-16 実測〕
+
+```
+faster_whisper/assets/silero_vad_v6.onnx   1.2 MB
+```
+
+**Lumi は別途取得しない。** PyPI の `silero-vad` パッケージは **torch に依存する**ため使わない
+（R1 に直撃する）。ONNX ファイルの所在だけを借り、**推論は onnxruntime で自前に行う**
+（faster-whisper の内部 API には依存しない → STT を差し替えても VAD が壊れないように）。
+
+**保証しないこと**: これは faster-whisper のパッケージ内部構造への依存である。
+**更新でパスが変わったら壊れる。** 起動時に明示的に失敗させる（fail-closed）。
+壊れたときの移行先は「ビルド時取得」（Live2D Cubism Core と同じパターン）。
+
+#### ★ クレジットは自動生成に載らない — 手で足す必要がある
+
+MIT は著作権表示の保持を求めるが、**Silero Team の表示は依存グラフに現れない**
+（faster-whisper の同梱物であって、依存宣言ではない）。
+§6 の `scripts/generate-oss-notice.mjs` は依存グラフから作るので、**ここだけ手で足す。**
+〔Phase 1 の宿題。Step G（クレジット接続）で対応する〕
+
 ---
 
 ## 5. ★ ACML 特例条項 — Lumi に直接適用される
@@ -341,8 +379,9 @@ Core = MIT の境界を、レビューではなくビルドで守るため。
 | 6 | LLM / STT / Embedding モデルのライセンス | モデル選定時 | **Phase 1**（LLM / STT）→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) / Phase 2（Embedding） |
 | 7 | Kokoro（英語 TTS）のライセンス | 英語対応時 | 未定 |
 | 8 | Live2D Cubism Core の配布形態ごとの条件 | Live2D 導入時 | Phase 9 |
-| **9** | **Silero VAD（ONNX モデルファイル本体）の LICENSE 本文** | **配布物に含めるため必須。確認するまで同梱しない**（fail-closed） | **Phase 1（Step D 着手時）** |
-| 10 | faster-whisper / CTranslate2 / onnxruntime のライセンスと、取得する STT モデルのライセンス | 依存追加時。onnxruntime は**配布物に入る** | Phase 1（Step C-D） |
+| ~~9~~ | ~~Silero VAD（ONNX モデルファイル本体）の LICENSE 本文~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**MIT**（Silero Team）。faster-whisper が同梱 |
+| ~~10~~ | ~~faster-whisper / CTranslate2 / onnxruntime のライセンス~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**すべて MIT / BSD / Apache-2.0** |
+| 10b | **取得する STT モデル**（`Systran/faster-whisper-*`）のライセンス | 取得先をピン留めするとき | Phase 1（STT セットアップ実装時） |
 | 11 | 案内する LLM モデルの利用条件（Qwen3 系 / Gemma3 系） | **配布はしないが、既定として案内する責任がある** | Phase 1（モデル選定時。未確定事項 #5 と同時） |
 
 ---

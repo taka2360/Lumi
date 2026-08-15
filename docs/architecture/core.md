@@ -152,7 +152,7 @@ core/lumi/
 ├── tools/           registry, descriptors,
 │                    builtin/        fs, computer, memory, character（Class A）
 ├── providers/       llm/ stt/ tts/ embedding/ vision/
-├── audio/           capture, vad, playback, echo_guard
+├── audio/           ring, resample, capture, vad, playback, io（EchoGuard L1 は vad 内）
 ├── extensions/      host, manifest, protocol
 ├── storage/         sqlite, migrations, vector store
 └── transport/       ws server, protocol schema
