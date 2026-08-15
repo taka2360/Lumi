@@ -46,6 +46,25 @@ class EngineRuntime(StrEnum):
     FAILED = "failed"
 
 
+class BootPhase(StrEnum):
+    """起動のどこまで進んだか。**キャラクターを出してよいかを Core が決める。**
+
+    定義 → docs/architecture/ui.md「起動フェーズ」
+
+    立っているのに反応しないキャラクターは**壊れて見える**。エンジンの取得に数分、
+    起動に十数秒かかる間は、代わりに何が起きているかを出す。
+    """
+
+    #: ユーザーの選択を待っている。
+    SETUP = "setup"
+    #: エンジンを取得中。
+    INSTALLING = "installing"
+    #: エンジンのプロセスを起動中。
+    STARTING = "starting"
+    #: **キャラクターを出してよい。**
+    READY = "ready"
+
+
 @dataclass(frozen=True, slots=True)
 class TtsSetup:
     """Stage に配る状態。Stage は**表示するだけ**。"""
@@ -62,8 +81,9 @@ class TtsSetup:
     #: エンジン**プロセス**の状態。導入の状態とは独立に動く。
     runtime: EngineRuntime = EngineRuntime.STOPPED
 
-    def to_payload(self) -> dict[str, Any]:
+    def to_payload(self, *, prompting: bool = False) -> dict[str, Any]:
         return {
+            "boot": str(boot_phase(self, prompting=prompting)),
             "state": str(self.state),
             "engine_name": self.engine_name,
             "version": self.version,
@@ -78,6 +98,24 @@ class TtsSetup:
     def usable(self) -> bool:
         """このまま喋れるか。"""
         return self.state in (TtsSetupState.DETECTED, TtsSetupState.INSTALLED)
+
+
+def boot_phase(setup: TtsSetup, *, prompting: bool) -> BootPhase:
+    """起動フェーズを決める。**純粋関数**（docs/architecture/ui.md）。
+
+    **待たせてよいのは「これから使えるようになる」ときだけ。**
+    取得しない選択も、取得の失敗も `READY` にする。喋れないことと、
+    Lumi が起動していないことは別であり、**キャラクターを人質にしない**。
+    """
+    if prompting:
+        return BootPhase.SETUP
+    if setup.state is TtsSetupState.INSTALLING:
+        return BootPhase.INSTALLING
+    if setup.usable and setup.runtime in (EngineRuntime.STOPPED, EngineRuntime.STARTING):
+        # **まだ起動していないだけで、これから起動する。**
+        # ここを READY にすると、キャラクターが一瞬出てから引っ込む（実測で踏んだ）。
+        return BootPhase.STARTING
+    return BootPhase.READY
 
 
 @dataclass(frozen=True, slots=True)

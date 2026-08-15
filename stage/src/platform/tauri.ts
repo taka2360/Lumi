@@ -12,6 +12,8 @@ import type { Disposable, HitRect, HoverState, PlatformShell } from "./PlatformS
 
 /** Shell の `shell.*` allowlist に登録されているコマンド名。 */
 const CMD_SET_HIT_REGION = "shell_hit_region_set";
+const CMD_DRAG_START = "shell_window_drag_start";
+const CMD_SCALE = "shell_window_scale";
 
 /**
  * ホバー状態の通知イベント名。
@@ -34,6 +36,14 @@ export function createTauriPlatformShell(): PlatformShell {
         (event) => callback(event.payload),
       );
       return { dispose: unlisten };
+    },
+
+    async startWindowDrag(): Promise<void> {
+      await invoke(CMD_DRAG_START);
+    },
+
+    async scaleWindow(factor: number): Promise<void> {
+      await invoke(CMD_SCALE, { factor });
     },
   };
 }

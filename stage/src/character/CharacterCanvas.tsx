@@ -146,6 +146,9 @@ export function CharacterCanvas({
       observer.disconnect();
       disposeModel?.();
       renderer.dispose();
+      // **消えたことを伝える。** 伝えないと、キャラクターが居ない場所の
+      // 当たり判定が残り、そこだけクリックスルーが効かなくなる。
+      onBounds?.(null);
     };
   }, [onStatus, onBounds]);
 

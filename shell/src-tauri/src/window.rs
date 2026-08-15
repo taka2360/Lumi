@@ -113,7 +113,10 @@ pub fn compute_stage_window_options(cfg: &StageConfig) -> WindowSpec {
         decorations: false,
         always_on_top: true,
         skip_taskbar: true,
-        resizable: false,
+        // 枠が無いので OS のリサイズハンドルは出ないが、**Lumi 自身が大きさを変える**
+        // （キャラクターの上でホイール → `shell_window_scale`）。
+        // `false` のままだと環境によって `set_size` が効かない可能性があるため合わせておく。
+        resizable: true,
         shadow: false,
         // 表示時にフォーカスを奪わない。奪うと、ユーザーが作業中のウィンドウから
         // 入力先が飛ぶ（常駐キャラクターとして最も嫌われる挙動）。
@@ -122,6 +125,125 @@ pub fn compute_stage_window_options(cfg: &StageConfig) -> WindowSpec {
         content_protected: cfg.content_protection,
         // 既定はクリックスルー。カーソルがキャラクター領域に入った時だけ解除する。
         click_through: true,
+    }
+}
+
+/// Stage ウィンドウの大きさの下限・上限（物理ピクセル）。
+///
+/// **Stage は信頼されていない**（B1 / B2）。倍率を受け取ってここでクランプする。
+/// 絶対値を受け取る API にすると、Stage が画面外の大きさや 1 ピクセルを要求できる。
+pub const MIN_STAGE_SIZE: f64 = 160.0;
+pub const MAX_STAGE_SIZE: f64 = 4000.0;
+
+/// 倍率をかけた後の大きさを決める。**純粋関数**（docs/architecture/ui.md）。
+///
+/// 縦横比を保つ。片方だけが上限・下限に当たると形が崩れるので、
+/// **先に倍率をクランプしてから掛ける**。
+pub fn compute_scaled_size(width: f64, height: f64, factor: f64) -> (f64, f64) {
+    if !factor.is_finite() || factor <= 0.0 || !width.is_finite() || !height.is_finite() {
+        // 壊れた値を渡されたら**変えない**（fail-closed）。
+        return (width, height);
+    }
+    let longest = width.max(height);
+    let shortest = width.min(height);
+    if shortest <= 0.0 {
+        return (width, height);
+    }
+    // 倍率の許される範囲。短い辺が下限を、長い辺が上限を決める。
+    let lowest = MIN_STAGE_SIZE / shortest;
+    let highest = MAX_STAGE_SIZE / longest;
+    // 極端な縦横比で両立しないときは、**上限を優先する**（画面外に出さない方が害が小さい）。
+    let clamped = if lowest > highest { highest } else { factor.clamp(lowest, highest) };
+    (width * clamped, height * clamped)
+}
+
+/// ウィンドウを置ける領域（**論理ピクセル**。タスクバーを除いた作業領域）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ScreenArea {
+    pub x: f64,
+    pub y: f64,
+    pub width: f64,
+    pub height: f64,
+}
+
+/// 画面の高さに対するキャラクターウィンドウの高さの比。
+///
+/// 1440p で 720px（従来の既定値）、1080p で 540px になる。
+/// **画面が変わっても見え方が変わらない**ようにするための比率。
+const STAGE_HEIGHT_RATIO: f64 = 0.3;
+
+/// 縦横比（幅 ÷ 高さ）。立ち姿のキャラクターなので縦長。
+const STAGE_ASPECT: f64 = 2.0 / 3.0;
+
+/// 右端との余白。少し内側に置く。
+const STAGE_MARGIN_RIGHT: f64 = 16.0;
+
+/// 下端との余白は **0**。作業領域の下端 = タスクバーの上端に**接地させる**。
+///
+/// ここを空けるとキャラクターが宙に浮いて見える。デスクトップに住んでいるものは、
+/// 床の上に立っている方が自然である。
+const STAGE_MARGIN_BOTTOM: f64 = 0.0;
+
+/// 既定の大きさと位置を決める。**純粋関数**（docs/architecture/ui.md）。
+///
+/// **右下に置く。** デスクトップの右下は、常駐するものが伝統的に居る場所であり、
+/// 作業領域（タスクバーを除いた範囲）の右下なら、タスクバーに隠れない。
+pub fn compute_stage_placement(area: ScreenArea) -> StageConfig {
+    let height = (area.height * STAGE_HEIGHT_RATIO).clamp(MIN_STAGE_SIZE, MAX_STAGE_SIZE);
+    let width = (height * STAGE_ASPECT).clamp(MIN_STAGE_SIZE, MAX_STAGE_SIZE);
+    // 画面より大きくなったら、はみ出させずに左上へ寄せる（小さい画面での fail-safe）。
+    let x = (area.x + area.width - width - STAGE_MARGIN_RIGHT).max(area.x);
+    let y = (area.y + area.height - height - STAGE_MARGIN_BOTTOM).max(area.y);
+    StageConfig { width, height, position: Some((x, y)), content_protection: false }
+}
+
+/// ウィンドウを掴んで動かす（`shell.*`）。**座標は OS が決める。**
+///
+/// Stage に座標を計算させない。`setPosition` を露出すると、Stage が
+/// 画面外へウィンドウを追い出せる（docs/interfaces/shell.md）。
+#[tauri::command]
+pub fn shell_window_drag_start(window: tauri::WebviewWindow) -> Result<(), String> {
+    require_stage(&window)?;
+    window.start_dragging().map_err(|error| error.to_string())
+}
+
+/// 拡大縮小したときの左上の位置。**右下の角を固定する**。**純粋関数**。
+///
+/// 既定でウィンドウは画面の右下に居る（`compute_stage_placement`）。
+/// 左上を固定して拡大すると、キャラクターが画面の外へはみ出していく。
+/// 立っているものは足元が動かない方が自然でもある。
+pub fn anchor_bottom_right(position: (f64, f64), old: (f64, f64), new: (f64, f64)) -> (f64, f64) {
+    (position.0 + old.0 - new.0, position.1 + old.1 - new.1)
+}
+
+/// ウィンドウの大きさを倍率で変える（`shell.*`）。**クランプは Shell 側**。
+#[tauri::command]
+pub fn shell_window_scale(window: tauri::WebviewWindow, factor: f64) -> Result<(), String> {
+    require_stage(&window)?;
+    let size = window.outer_size().map_err(|error| error.to_string())?;
+    let old = (f64::from(size.width), f64::from(size.height));
+    let new = compute_scaled_size(old.0, old.1, factor);
+
+    let position = window.outer_position().map_err(|error| error.to_string())?;
+    let moved = anchor_bottom_right((f64::from(position.x), f64::from(position.y)), old, new);
+
+    window
+        .set_size(tauri::PhysicalSize::new(new.0.round() as u32, new.1.round() as u32))
+        .map_err(|error| error.to_string())?;
+    window
+        .set_position(tauri::PhysicalPosition::new(moved.0.round() as i32, moved.1.round() as i32))
+        .map_err(|error| error.to_string())
+}
+
+/// **Stage 以外のウィンドウには効かせない。** クレジットや権限プロンプトの
+/// 大きさをキャラクターの操作で変えられる理由がない（Shell は「拒否」を持つ）。
+fn require_stage(window: &tauri::WebviewWindow) -> Result<(), String> {
+    match WindowKind::from_label(window.label()) {
+        Some(WindowKind::Stage) => Ok(()),
+        _ => {
+            log::warn!("shell.window.refused label={}", window.label());
+            Err("stage 以外のウィンドウは操作できない".into())
+        }
     }
 }
 
@@ -243,6 +365,94 @@ mod tests {
 
     fn region() -> HitRegion {
         HitRegion { rects: vec![HitRect { x: 100.0, y: 200.0, width: 50.0, height: 60.0 }] }
+    }
+
+    fn full_hd() -> ScreenArea {
+        // 1080p でタスクバー 48px を除いた作業領域。
+        ScreenArea { x: 0.0, y: 0.0, width: 1920.0, height: 1032.0 }
+    }
+
+    #[test]
+    fn the_window_starts_in_the_bottom_right() {
+        let placement = compute_stage_placement(full_hd());
+        let (x, y) = placement.position.unwrap();
+        // 右端・下端から余白のぶんだけ内側。**作業領域の外に出さない。**
+        assert!((x + placement.width + STAGE_MARGIN_RIGHT - 1920.0).abs() < 1e-9);
+        // **下端は作業領域にぴったり。** 浮くとキャラクターが宙に立って見える。
+        assert!((y + placement.height - 1032.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn the_size_follows_the_screen() {
+        let small = compute_stage_placement(full_hd());
+        let large =
+            compute_stage_placement(ScreenArea { x: 0.0, y: 0.0, width: 2560.0, height: 1392.0 });
+        assert!(large.height > small.height);
+        // 縦横比は画面によらず一定。
+        assert!((small.width / small.height - large.width / large.height).abs() < 1e-9);
+    }
+
+    #[test]
+    fn a_second_monitor_offset_is_respected() {
+        // 左に別のモニタがある場合、作業領域の原点は 0 ではない。
+        let placement = compute_stage_placement(ScreenArea {
+            x: -1920.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1032.0,
+        });
+        let (x, _) = placement.position.unwrap();
+        assert!(x < 0.0);
+    }
+
+    #[test]
+    fn a_tiny_screen_does_not_push_the_window_off() {
+        let placement =
+            compute_stage_placement(ScreenArea { x: 0.0, y: 0.0, width: 200.0, height: 200.0 });
+        let (x, y) = placement.position.unwrap();
+        assert!(x >= 0.0 && y >= 0.0);
+    }
+
+    #[test]
+    fn scaling_keeps_the_aspect_ratio() {
+        let (w, h) = compute_scaled_size(480.0, 720.0, 1.25);
+        assert_eq!((w, h), (600.0, 900.0));
+    }
+
+    #[test]
+    fn scaling_stops_at_the_lower_bound() {
+        // **Stage が窓を消せてはいけない。** 短い辺が下限で止まる。
+        let (w, h) = compute_scaled_size(480.0, 720.0, 0.01);
+        assert_eq!(w, MIN_STAGE_SIZE);
+        assert!((h - MIN_STAGE_SIZE * 1.5).abs() < 1e-9);
+    }
+
+    #[test]
+    fn scaling_stops_at_the_upper_bound() {
+        // **画面外まで広げられてはいけない。** 長い辺が上限で止まる。
+        let (w, h) = compute_scaled_size(480.0, 720.0, 100.0);
+        assert_eq!(h, MAX_STAGE_SIZE);
+        assert!(w < MAX_STAGE_SIZE);
+    }
+
+    #[test]
+    fn growing_keeps_the_bottom_right_corner() {
+        // 右下に居るキャラクターが、拡大のたびに画面外へ出ていかない。
+        let position = (2072.0, 672.0);
+        let old = (464.0, 696.0);
+        let new = (584.0, 877.0);
+        let moved = anchor_bottom_right(position, old, new);
+        assert!((moved.0 + new.0 - (position.0 + old.0)).abs() < 1e-9);
+        assert!((moved.1 + new.1 - (position.1 + old.1)).abs() < 1e-9);
+        assert!(moved.0 < position.0 && moved.1 < position.1);
+    }
+
+    #[test]
+    fn a_broken_factor_changes_nothing() {
+        // fail-closed。**壊れた値で窓を壊さない。**
+        for factor in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(compute_scaled_size(480.0, 720.0, factor), (480.0, 720.0));
+        }
     }
 
     #[test]

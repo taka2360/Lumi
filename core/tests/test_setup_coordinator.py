@@ -84,6 +84,11 @@ def states_of(server: FakeServer) -> list[str]:
     return [item["state"] for item in server.notifications if item["method"] == "stage.setup.state"]
 
 
+def boots_of(server: FakeServer) -> list[str]:
+    """配信された起動フェーズの列。**Stage が実際に見る順序**（docs/architecture/ui.md）。"""
+    return [item["boot"] for item in server.notifications if item["method"] == "stage.setup.state"]
+
+
 class TestDetection:
     async def test_reports_not_configured_on_a_clean_machine(
         self, monkeypatch: pytest.MonkeyPatch
@@ -208,7 +213,26 @@ class TestPrompt:
         await coordinator.on_stage_connected()
 
         assert coordinator.state.state is TtsSetupState.INSTALLED
-        assert states_of(server) == ["not_configured", "not_configured", "installing", "installed"]
+        # 尋ね始めと答え終わりでも配るので、同じ状態が続けて並ぶ。
+        assert states_of(server) == [
+            "not_configured",
+            "not_configured",
+            "not_configured",
+            "installing",
+            "installed",
+            "installed",
+        ]
+        # **Stage から見える遷移。** 質問 → 取得中 → エンジン起動、と一方向に進む。
+        # **`installing` の後に `setup` へ戻らない**（戻ると質問画面が一瞬ちらつく）。
+        # 取得直後は `starting`。**`ready` にするとキャラクターが出てすぐ引っ込む。**
+        assert boots_of(server) == [
+            "ready",
+            "ready",
+            "setup",
+            "installing",
+            "starting",
+            "starting",
+        ]
 
 
 class TestManagedEngine:

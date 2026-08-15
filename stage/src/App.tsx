@@ -9,9 +9,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { CharacterCanvas, type CharacterStatus } from "./character/CharacterCanvas";
+import { useStageStore } from "./core/store";
 import { useCoreConnection } from "./core/useCoreConnection";
 import type { CssRect } from "./platform/geometry";
-import { useHitRegionReporter, useHoverState } from "./platform/useStageShell";
+import { useHitRegionReporter, useHoverState, useWindowGestures } from "./platform/useStageShell";
+import { BootScreen } from "./setup/BootScreen";
 import { SetupPanel } from "./setup/SetupPanel";
 
 /** 要素の画面上の矩形を追う。レイアウトが変わるたびに更新する。 */
@@ -45,6 +47,14 @@ export function App() {
 
   const hover = useHoverState();
   const reportHitRegion = useHitRegionReporter();
+  const gestures = useWindowGestures();
+
+  // **キャラクターを出してよいかは Core が決める**（docs/architecture/ui.md「起動フェーズ」）。
+  const tts = useStageStore((state) => state.tts);
+  const connected = useStageStore((state) => state.connected);
+  const prompt = useStageStore((state) => state.prompt);
+  const phase = tts.boot;
+  const showCharacter = connected && phase === "ready";
 
   const [status, setStatus] = useState<CharacterStatus>({ kind: null, fallbackReason: null });
   const onStatus = useCallback((next: CharacterStatus) => setStatus(next), []);
@@ -70,9 +80,22 @@ export function App() {
 
   return (
     <div className={hover === "inside" ? "stage stage--hover" : "stage"}>
-      <CharacterCanvas onStatus={onStatus} onBounds={onBounds} />
+      {/* キャラクターを掴んでウィンドウを動かす面。キーボードからは到達させない
+          （ウィンドウの移動と大きさは OS の作法に従うもので、Stage の UI ではない）。 */}
+      {showCharacter && (
+        <div
+          className="stage__grab"
+          onPointerDown={gestures.onPointerDown}
+          onWheel={gestures.onWheel}
+        >
+          <CharacterCanvas onStatus={onStatus} onBounds={onBounds} />
+        </div>
+      )}
       <div className="overlay" ref={setPanel}>
-        <SetupPanel />
+        {/* 準備中は、キャラクターの代わりに何が起きているかを出す。
+            **出すのは常に1つだけ**（docs/architecture/ui.md「起動フェーズ」）。
+            ローディングとパネルを並べると、同じ状況が二重に書かれる。 */}
+        {showCharacter || prompt ? <SetupPanel /> : <BootScreen tts={tts} connected={connected} />}
         {/* **黙って劣化しない。** 本番の VRM ではなくプレースホルダで動いていることを見せる。 */}
         {status.fallbackReason && <p className="notice">{status.fallbackReason}</p>}
       </div>
