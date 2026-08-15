@@ -520,6 +520,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [state-machines.md](contracts/state-machines.md) | Activity と Tool の独立した状態機械 |
 | [event-model.md](contracts/event-model.md) | Signal と DomainEvent の分離、採番責任、順序保証 |
 | [tool-execution.md](contracts/tool-execution.md) | Kernel実行契約 canonicalize→decide→bind→verify→execute |
+| [wire.md](contracts/wire.md) | 線上に出る名前と定数の規則。値は [wire.json](contracts/wire.json) が持つ |
 
 ### architecture/ — 各領域の設計
 
@@ -571,6 +572,9 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [017](decisions/ADR-017-out-of-process-tool-contract.md) | 副作用を持つ lane の Tool を in-core に置き、out-of-process には事後検証契約を適用する |
 | [018](decisions/ADR-018-foreground-and-jobs.md) | foreground を単一の参照として定義し、Job を Activity と分離する |
 | [019](decisions/ADR-019-tts-engine-distribution.md) | TTS エンジンを配布物に含めず、ユーザーの明示的な選択に基づく実行時取得とする |
+| [020](decisions/ADR-020-split-audio-streams.md) | 入力と出力を別ストリームで開き、クロックドリフトを実測可能にする |
+| [021](decisions/ADR-021-sidecar-packaging.md) | Python Core を PyInstaller の onedir で固め、resources として同梱する |
+| [022](decisions/ADR-022-wire-contract.md) | プロセス境界を越える名前と定数を `wire.json` に一元化し、3言語のテストで突き合わせる |
 
 ---
 
@@ -597,6 +601,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Signal / DomainEvent / Command・**Hook 一覧** | [contracts/event-model.md](contracts/event-model.md) |
 | 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |
 | 権限マトリクス・オブジェクト責務行列 | [contracts/authority-matrix.md](contracts/authority-matrix.md) |
+| **線上に出る名前と定数**（`PROTOCOL_VERSION` / method 名 / Tauri のイベント・コマンド名 / 線に乗る enum の値） | [contracts/wire.json](contracts/wire.json)（値）+ [contracts/wire.md](contracts/wire.md)（規則） |
 | Shell / Stage の責務・ウィンドウ一覧・**トレイメニュー**・**起動フェーズ**・**ウィンドウ操作**・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
 | 音声の3層構造・EchoGuard・VAD パラメータ・**レイテンシ SLO**・**デバイス選択とストリームの開き方** | [architecture/audio.md](architecture/audio.md) |
 | 記憶の形成・忘却・矛盾・**検索スコアリング式**・salience 補正 | [architecture/memory.md](architecture/memory.md) |

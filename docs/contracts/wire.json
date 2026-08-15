@@ -1,0 +1,69 @@
+{
+  "$comment": "線上に出る名前と定数の唯一の定義場所。規則と対象の線引きは wire.md、決定の経緯は ADR-022。JSON にコメントは書けないので、説明はすべて wire.md に置く。",
+  "protocol_version": 1,
+  "namespace_by_role": {
+    "shell": "os.",
+    "stage": "stage."
+  },
+  "methods": {
+    "stage": [
+      "stage.setup.state",
+      "stage.setup.prompt",
+      "stage.speech.started",
+      "stage.speech.ended"
+    ],
+    "os": [
+      "os.window.get_position",
+      "os.window.set_position"
+    ]
+  },
+  "setup_prompt_choices": {
+    "install": "install",
+    "skip": "skip"
+  },
+  "tauri_events": {
+    "hover_state": "shell:hover:state",
+    "core_endpoint": "shell:core:endpoint"
+  },
+  "tauri_commands": [
+    "shell_hit_region_set",
+    "shell_core_endpoint",
+    "shell_window_drag_start",
+    "shell_window_scale"
+  ],
+  "window_labels": [
+    "stage",
+    "credits",
+    "permission",
+    "settings"
+  ],
+  "enums": {
+    "tts_setup_state": [
+      "unknown",
+      "not_configured",
+      "detected",
+      "installing",
+      "installed",
+      "failed"
+    ],
+    "engine_runtime": [
+      "stopped",
+      "starting",
+      "ready",
+      "failed"
+    ],
+    "boot_phase": [
+      "setup",
+      "installing",
+      "starting",
+      "ready"
+    ],
+    "viseme": [
+      "A",
+      "I",
+      "U",
+      "E",
+      "O"
+    ]
+  }
+}

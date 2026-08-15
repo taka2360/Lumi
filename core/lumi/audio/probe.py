@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from lumi.audio.devices import AudioPlan, Device, HostApi, StreamPlan, plan_audio
-from lumi.audio.drift import DriftEstimate, estimate_drift, relative_ppm
+from lumi.audio.drift import DriftEstimate, drift_ms, estimate_drift, relative_ppm
 
 #: 1コールバックあたりのフレーム数。小さいほど遅延が下がり、コールバックの締切が厳しくなる。
 BLOCK_SIZE = 512
@@ -140,7 +140,7 @@ class ProbeReport:
                 ppm = relative_ppm(capture_drift, playback_drift)
                 lines.append(
                     f"■ 入出力の相対ドリフト: {ppm:+.1f} ppm"
-                    f" → {abs(ppm) * 60 / 1e3:.2f} ms/分, {abs(ppm) * 3600 / 1e3:.1f} ms/時"
+                    f" → {drift_ms(ppm, 60.0):.2f} ms/分, {drift_ms(ppm, 3600.0):.1f} ms/時"
                 )
                 lines.append(
                     "    ※ 測ったのは**アプリから見たストリームのペース**であり、"
@@ -195,7 +195,6 @@ class _Session:
     """
 
     plan: StreamPlan
-    capture: bool
     recorder: _Recorder
     stream: Any = None
     opened: bool = False
@@ -224,7 +223,7 @@ def _open(plan: StreamPlan, seconds: float, *, capture: bool) -> _Session:
     import sounddevice as sd
 
     recorder = _Recorder(plan.samplerate, seconds)
-    session = _Session(plan=plan, capture=capture, recorder=recorder)
+    session = _Session(plan=plan, recorder=recorder)
     silence = bytes(BLOCK_SIZE * plan.channels * 2 * 2)
 
     def capture_callback(indata: Any, frames: int, _time: Any, status: Any) -> None:

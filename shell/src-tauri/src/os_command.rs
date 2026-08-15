@@ -56,7 +56,7 @@ impl Rejection {
 /// **Phase 0 の allowlist。** ここに無いものは通らない。
 ///
 /// 増やすときは docs/contracts/security-boundaries.md の B3 を読み直すこと。
-const ALLOWED_METHODS: &[&str] = &["os.window.get_position", "os.window.set_position"];
+pub(crate) const ALLOWED_METHODS: &[&str] = &["os.window.get_position", "os.window.set_position"];
 
 /// Phase 4c まで実装しない namespace。**存在しないのではなく、明示的に拒否する。**
 ///

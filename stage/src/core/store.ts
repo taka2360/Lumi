@@ -95,25 +95,32 @@ export const useStageStore = create<StageState>((set) => ({
   setSpeech: (speech) => set({ speech }),
 }));
 
+/**
+ * 線上に出る値。**正は `docs/contracts/wire.json`**（→ ADR-022）。
+ *
+ * 型（`TtsSetupState` など）は実行時に消えるので、**受け取った値を照合するには
+ * 実体の配列が要る**。並びは Core の enum の宣言順（状態が進む順）に合わせる。
+ */
+export const TTS_SETUP_STATES: readonly TtsSetupState[] = [
+  "unknown",
+  "not_configured",
+  "detected",
+  "installing",
+  "installed",
+  "failed",
+];
+export const ENGINE_RUNTIMES: readonly EngineRuntime[] = ["stopped", "starting", "ready", "failed"];
+export const BOOT_PHASES: readonly BootPhase[] = ["setup", "installing", "starting", "ready"];
+
 /** Core から来た payload を型に落とす。**知らない値は unknown 扱い**（勝手に補完しない）。 */
 export function toTtsSnapshot(payload: Record<string, unknown>): TtsSetupSnapshot {
   const state = payload.state;
-  const known: TtsSetupState[] = [
-    "unknown",
-    "not_configured",
-    "detected",
-    "installing",
-    "installed",
-    "failed",
-  ];
-  const runtimes: EngineRuntime[] = ["stopped", "starting", "ready", "failed"];
-  const phases: BootPhase[] = ["setup", "installing", "starting", "ready"];
   return {
     // **知らないフェーズを `ready` に丸めない。** 丸めると、準備できていないのに
     // キャラクターが出る（fail-closed で `starting` = ローディングに倒す）。
-    boot: phases.find((candidate) => candidate === payload.boot) ?? "starting",
-    state: known.find((candidate) => candidate === state) ?? "unknown",
-    runtime: runtimes.find((candidate) => candidate === payload.runtime) ?? "stopped",
+    boot: BOOT_PHASES.find((candidate) => candidate === payload.boot) ?? "starting",
+    state: TTS_SETUP_STATES.find((candidate) => candidate === state) ?? "unknown",
+    runtime: ENGINE_RUNTIMES.find((candidate) => candidate === payload.runtime) ?? "stopped",
     engine_name: typeof payload.engine_name === "string" ? payload.engine_name : null,
     version: typeof payload.version === "string" ? payload.version : null,
     port: typeof payload.port === "number" ? payload.port : null,

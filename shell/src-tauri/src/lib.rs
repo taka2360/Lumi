@@ -10,6 +10,10 @@ mod job_object;
 mod os_command;
 mod tray;
 mod window;
+/// 線上に出る名前と定数を `docs/contracts/wire.json` と突き合わせる（ADR-022）。
+/// **テストしか持たない**ので、配布物には入らない。
+#[cfg(test)]
+mod wire_contract;
 mod ws_client;
 
 use std::path::PathBuf;

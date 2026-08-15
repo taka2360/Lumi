@@ -15,7 +15,7 @@ use crate::window::WindowKind;
 
 /// ポートが決まった / 変わったことを Stage に伝えるイベント名。
 /// （Tauri のイベント名にドットは使えないので `.` を `:` にしてある）
-const EVENT_CORE_ENDPOINT: &str = "shell:core:endpoint";
+pub(crate) const EVENT_CORE_ENDPOINT: &str = "shell:core:endpoint";
 
 #[derive(Clone, Serialize)]
 pub struct CoreEndpoint {

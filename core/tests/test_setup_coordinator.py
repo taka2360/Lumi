@@ -234,6 +234,40 @@ class TestPrompt:
             "starting",
         ]
 
+    async def test_progress_keeps_the_installing_phase(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """取得中の進捗は **`boot=installing` のまま**配られる。
+
+        進捗の配信が `_broadcast` を迂回していたため、`_prompting`（この処理に
+        入っているか）を `_awaiting_answer`（いま質問が出ているか）と取り違え、
+        取得中ずっと `boot=setup` が流れていた。Stage 側は `installing` 以外を
+        「準備しています…」に落とすので、**200MB の取得中に進捗が出ない。**
+        """
+        no_engines(monkeypatch)
+        server = FakeServer(["install"])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        async def fake_install(*_args: Any, **kwargs: Any) -> Path:
+            progress = kwargs["progress"]
+            for fraction in (0.25, 0.5, 1.0):
+                await progress(fraction)
+            return tmp_path / "engines" / "aivisspeech-1.2.0" / "run.exe"
+
+        monkeypatch.setattr(coordinator_module, "install_engine", fake_install)
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        installing = [
+            item
+            for item in server.notifications
+            if item["method"] == "stage.setup.state" and item["state"] == "installing"
+        ]
+        assert [item["progress"] for item in installing] == [0.0, 0.25, 0.5, 1.0]
+        # **1つでも `setup` に戻ったら質問画面がちらつく。**
+        assert {item["boot"] for item in installing} == {"installing"}
+
 
 class TestManagedEngine:
     async def test_an_engine_lumi_installed_reports_installed_not_detected(

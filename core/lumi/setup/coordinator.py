@@ -42,6 +42,11 @@ METHOD_STATE = "stage.setup.state"
 #: 取得するかを尋ねる method（Core → Stage、結果を待つ）。
 METHOD_PROMPT = "stage.setup.prompt"
 
+#: Stage が result で返してくる選択肢。**線上に出る値**なので docs/contracts/wire.json が正
+#: （→ ADR-022）。`CHOICE_SKIP` は比較に使わないが、**契約の片側だけを書かない**ために置く。
+CHOICE_INSTALL = "install"
+CHOICE_SKIP = "skip"
+
 
 class SetupCoordinator:
     def __init__(self, server: WsServer, env: Mapping[str, str]) -> None:
@@ -167,7 +172,7 @@ class SetupCoordinator:
             self._awaiting_answer = False
             choice = result.payload.get("choice") if result.ok else None
             # **未知の答えは「取得しない」と同じ扱いにする**（fail-closed）。
-            install = choice == "install"
+            install = choice == CHOICE_INSTALL
             log.info("setup.prompt.answered", choice=choice, install=install)
 
             self._answers = SetupAnswers(tts_prompt_answered=True)
@@ -205,11 +210,13 @@ class SetupCoordinator:
             last_sent = fraction
             # 進捗だけを更新する。**`_state` は INSTALLING のまま**なので
             # フェーズも installing のままになる。
-            await self._server.notify(
-                Role.STAGE,
-                METHOD_STATE,
-                replace(self._state, progress=fraction).to_payload(prompting=self._prompting),
-            )
+            #
+            # **配信は必ず `_set_state` を通す。** ここで `notify` を直に呼ぶと、
+            # `to_payload(prompting=...)` に渡す旗を自分で選ぶことになり、
+            # `_prompting`（この処理に入っているか）と `_awaiting_answer`
+            # （いま画面に質問が出ているか）を取り違える。取り違えると、
+            # 取得中の 200MB の間ずっと `boot=setup` が流れ、進捗が出ない。
+            await self._set_state(replace(self._state, progress=fraction))
 
         try:
             executable = await install_engine(artifact, paths.engines_dir(), progress=report)

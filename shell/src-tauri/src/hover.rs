@@ -30,7 +30,7 @@ const POLL_INTERVAL: Duration = Duration::from_millis(16);
 /// docs では `shell.hover.state` と書くが、**Tauri のイベント名にドットは使えない**
 /// （英数字と `-` `/` `:` `_` のみ）。`.` を `:` に置き換えた名前を線上の名前とする。
 /// 対応する Stage 側の定数は `stage/src/platform/tauri.ts`。
-const EVENT_HOVER_STATE: &str = "shell:hover:state";
+pub(crate) const EVENT_HOVER_STATE: &str = "shell:hover:state";
 
 /// Stage から渡された当たり判定領域。Shell が持つ唯一の可変状態。
 #[derive(Default)]

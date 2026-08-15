@@ -18,7 +18,7 @@ use tokio_tungstenite::tungstenite::Message;
 use crate::os_command::{validate, OsCommand};
 
 /// Core と同じ値を使う（core/lumi/transport/protocol.py の `PROTOCOL_VERSION`）。
-const PROTOCOL_VERSION: u64 = 1;
+pub(crate) const PROTOCOL_VERSION: u64 = 1;
 
 /// 接続に失敗したときの再試行間隔。
 const RECONNECT_DELAY: Duration = Duration::from_millis(500);
