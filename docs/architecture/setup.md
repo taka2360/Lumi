@@ -196,6 +196,23 @@ Python の 7z ライブラリ（py7zr 等）は **LGPL であり、Core = MIT �
 
 ---
 
+## 6b. 配布物が壊れていないかを、その PC で確かめる〔2026-08-15 追加〕
+
+```
+lumi-core.exe --self-check
+```
+
+sqlite-vec / FTS5 / PortAudio / TLS 証明書を、**実際に読み込んで**確認する。
+
+**開発環境で通ることは、固めた後に通ることを意味しない。** ネイティブ拡張は
+自動では同梱されず、しかも**入っていなくても import は成功する**。
+実際に読み込むまで壊れていることが分からないため、**配布物を作った直後と、
+別のマシンで動かない報告を受けたときに、これを回す。**
+
+パッケージングの方式と理由 → [../decisions/ADR-021-sidecar-packaging.md](../decisions/ADR-021-sidecar-packaging.md)
+
+---
+
 ## 7. Phase 0 でやらないこと
 
 - **エンジンの自動更新**（ピン留めしたバージョンだけを扱う）
@@ -227,3 +244,5 @@ Python の 7z ライブラリ（py7zr 等）は **LGPL であり、Core = MIT �
 | 9 | 既存の AivisSpeech / VOICEVOX を検出して `detected` になる |
 | 10 | 検出処理が外部へ接続しない（127.0.0.1 とファイルシステムのみ） |
 | 11 | 状態が `failed` のとき、`not_configured` と区別して表示される |
+| 12 | **固めた実行体で `--self-check` が全項目成功する**（sqlite-vec / FTS5 / PortAudio / TLS） |
+| 13 | **配布物に ASIO 版の PortAudio が入っていない**（`lumi-core.spec` がビルド時に落とす） |

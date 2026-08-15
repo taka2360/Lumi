@@ -313,29 +313,92 @@ PortAudio が選んだホスト API のものなので見ない）。
 | 環境 | 結果 |
 |---|---|
 | uv 管理の Python 3.12.11（SQLite 3.49.1） | **✓** `vec_version = v0.1.9`、`vec0` 仮想テーブルの KNN 検索が動く。FTS5 も利用可 |
-| **同梱サイドカー（PyInstaller）** | **未確認 → Step M** |
+| **同梱サイドカー（PyInstaller onedir）** | **✓**〔2026-08-15。`lumi-core.exe --self-check`〕 |
 
 CI で回し続けるテスト: `core/tests/test_sqlite_extensions.py`
 
 ---
 
-## R1 — インストーラサイズ / RAM
+## パッケージング（未確定事項 #2 / 検証手順 1・13）
 
-〔Step M で測る〕
+**判定: PyInstaller の onedir。** → [ADR-021](../decisions/ADR-021-sidecar-packaging.md)
+
+| | onefile | **onedir（採用）** |
+|---|---|---|
+| Core のサイズ | 13.4 MB（1 ファイル） | 26.7 MB（89 ファイル） |
+| 起動（`--self-check` の実時間） | 803, 787, 808, 775, 949 ms | 919（初回）, 262, 263, 263, 265 ms |
+| **強制終了したとき** | **`%TEMP%` に 21.4 MB が残る** | **何も残らない** |
+
+参考: 開発経路（`uv run lumi-core`）は 344〜609 ms。
+
+### ★ 固めた実行体だけで壊れるもの
+
+| 事象 | 原因 |
+|---|---|
+| **日本語ログを書いた瞬間に Core が落ちる** | 固めた実行体は stdout が **cp932** になる。Core のログは日本語を含み、**Shell はそれを stdout から読む契約**。`uv run` では UTF-8 なので開発中は気づけない → `lumi/__main__.py` で UTF-8 に固定した |
+| **ASIO 版の PortAudio が混入する** | `sounddevice` のフックが `_sounddevice_data` を丸ごと集める。**指定しなくても入る。** Steinberg の SDK は非 OSS → spec で除外し、**残っていたらビルドを失敗させる** |
+
+### 検証手順 13 — サイドカーからの sqlite-vec
+
+**✓ 固めた実行体で確認済み。** `lumi-core.exe --self-check`:
+
+```
+✓ sqlite-vec: v0.1.9 / KNN 検索が動く
+✓ FTS5: SQLite 3.49.1
+✓ PortAudio: 入力 15 / 出力 34 / ホスト API: MME, DirectSound, WASAPI, WDM-KS
+✓ TLS: CA 証明書 72 件
+```
+
+---
+
+## R1 — インストーラサイズ / RAM / VRAM
+
+**判定: R1 は解消。** torch を避けた結果、Python Core を同梱して **13.1 MB**。
 
 | 項目 | 値 |
 |---|---|
-| インストーラ（NSIS） | — |
-| Shell の RAM（アイドル） | — |
-| Core の RAM（アイドル） | — |
-| VRAM（アイドル） | — |
+| **インストーラ（NSIS）** | **13.10 MB** |
+| `lumi-shell.exe` | 8.59 MB |
+| `core/`（Python Core 一式） | 26.75 MB / 89 ファイル |
+| Shell の RAM（アイドル） | 37 MB |
+| Core の RAM（アイドル） | 50 MB |
+| WebView2（6 プロセス合計） | 393 MB |
+| **Lumi 本体の合計（TTS エンジンを除く）** | **497 MB** |
+| TTS エンジン（別プロセス） | 1,284 MB |
+| **VRAM（Lumi 起動前後の差分）** | **55 MiB** |
+
+VRAM は WebView2 の合成と three.js のプレースホルダ描画のみ。**LLM を積む前の値。**
+per-process の GPU カウンタは Windows では取得が重く実用にならなかったため、**起動前後の差分**で測っている。
+
+### ★ インストーラに 33 MB のモデルが入っていた
+
+最初のビルドは **39.14 MB** で、そのほとんどが `stage/public/` に置いていた
+開発用 VRM（33 MB）だった。**Vite は `public/` を配布物へ丸ごとコピーする。**
+
+| | サイズ |
+|---|---|
+| モデルとソースマップが入っていたとき | 39.14 MB |
+| 除いた後 | **13.10 MB** |
+
+同梱してよいモデルは未決（[../licensing.md](../licensing.md) §7 未確認 #5）なので、
+**入っていたこと自体がライセンス上の危険**だった。対処:
+
+- 開発用の実体は `stage/dev-assets/`（**`public/` ではない**）に置く
+- dev サーバだけが `/character.vrm` として配る（`apply: "serve"` のプラグイン）。
+  **本番ビルドにはこの経路が存在しない**ので、構造的に混入しない
+- ソースマップを本番ビルドで無効化（5 MB）
+
+### プロセスの後始末（検証手順 8・パッケージ版）
+
+`lumi-shell.exe` を `Stop-Process -Force` → **Core も TTS エンジンも消えた。** ゾンビなし。
 
 ---
 
 ## 未測定（Phase 0 中に埋める）
 
 - [x] ~~入出力が別デバイスのときの duplex stream~~〔2026-08-15 完了 → 上記 / [ADR-020](../decisions/ADR-020-split-audio-streams.md)〕
-- [ ] **同梱サイドカー**での sqlite-vec のロード（Step M）
+- [x] ~~**同梱サイドカー**での sqlite-vec のロード~~〔2026-08-15 完了〕
+- [x] ~~インストーラサイズ・アイドル時 RAM / VRAM~~〔2026-08-15 完了〕
+- [x] ~~Python サイドカーのパッケージング方式の比較~~〔2026-08-15 完了 → [ADR-021](../decisions/ADR-021-sidecar-packaging.md)〕
 - [ ] release ビルドでのカーソル監視 CPU
-- [ ] インストーラサイズ・アイドル時 RAM / VRAM（Step M）
-- [ ] Python サイドカーのパッケージング方式の比較（PyInstaller vs uv 同梱。未確定事項 #2 / Step M）
+- [ ] **別マシンでのインストールと起動**（Phase 0 の完了条件。ビルドしたマシンでしか確認していない）

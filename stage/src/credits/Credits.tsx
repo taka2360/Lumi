@@ -16,6 +16,7 @@ import {
   LUMI,
   PROHIBITIONS,
   type SectionId,
+  THIRD_PARTY,
 } from "./content";
 
 function Section({
@@ -122,6 +123,31 @@ export function Credits() {
               ))}
             </ul>
           </div>
+        ))}
+      </Section>
+
+      <Section
+        id="third-party"
+        title="サードパーティの完全な一覧"
+        lead={`推移的な依存を含めて ${THIRD_PARTY.total} 件。依存グラフから生成しています。`}
+      >
+        {THIRD_PARTY.ecosystems.map((ecosystem) => (
+          <details key={ecosystem.name} className="credits__license">
+            <summary className="credits__summary">
+              {ecosystem.name} <span className="credits__note">{ecosystem.packages.length} 件</span>
+            </summary>
+            <table className="credits__table">
+              <tbody>
+                {ecosystem.packages.map((dep) => (
+                  <tr key={`${dep.name}@${dep.version}`}>
+                    <td>{dep.name}</td>
+                    <td className="credits__version">{dep.version}</td>
+                    <td>{dep.license}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </details>
         ))}
       </Section>
 

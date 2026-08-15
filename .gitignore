@@ -21,7 +21,9 @@ voicevox/
 # --- Content Pack の実体（キャラクター・音声・モーション） ---
 # content/ の構造とサンプル設定は追跡するが、実体アセットは追跡しない。
 *.vrm
-# Stage が読むキャラクター実体（ローカルに置くだけ。拡張子を変えて無効化することがある）
+# 開発中に読ませるキャラクター実体。**public/ ではなくここに置く。**
+# public/ は Vite が配布物へ丸ごとコピーするため、置くと 33 MB がインストーラに入る（2026-08-15 実測）。
+stage/dev-assets/
 stage/public/character.*
 *.moc3
 *.model3.json

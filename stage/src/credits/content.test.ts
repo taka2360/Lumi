@@ -16,11 +16,20 @@ import {
   LUMI,
   PROHIBITIONS,
   SECTIONS,
+  THIRD_PARTY,
 } from "./content";
 
 describe("クレジットの構成", () => {
   it("docs/licensing.md §6 の節がすべて在る", () => {
-    expect(SECTIONS).toEqual(["lumi", "bundled", "external", "voice", "prohibitions", "licenses"]);
+    expect(SECTIONS).toEqual([
+      "lumi",
+      "bundled",
+      "external",
+      "voice",
+      "prohibitions",
+      "third-party",
+      "licenses",
+    ]);
   });
 
   it("Lumi 本体が MIT だと書いてある", () => {
@@ -151,5 +160,39 @@ describe("同梱している OSS", () => {
       expect(listed.get(name), name).toBe(range.replace(/^[\^~]/, ""));
     }
     expect(listed.size).toBe(Object.keys(pkg.dependencies).length);
+  });
+});
+
+describe("サードパーティの完全な一覧（生成物）", () => {
+  const all = THIRD_PARTY.ecosystems.flatMap((e) => e.packages);
+
+  it("3つのエコシステムと、依存グラフに現れないものが揃っている", () => {
+    // **最後のひとつが抜けやすい。** CPython・PortAudio・PyInstaller の bootloader は
+    // どの依存グラフにも出てこないのに配布物へ入る。
+    expect(THIRD_PARTY.ecosystems).toHaveLength(4);
+    expect(all.length).toBe(THIRD_PARTY.total);
+  });
+
+  it("ライセンスが不明なものが無い", () => {
+    // 不明 = 義務が判定できない。**判定できないものを配らない。**
+    for (const dep of all) {
+      expect(dep.license, dep.name).not.toBe("");
+      expect(dep.license, dep.name).not.toBe("不明");
+    }
+  });
+
+  it("GPL / AGPL が例外条項付きの1件以外に無い", () => {
+    // Core = MIT の境界（docs/licensing.md §1）。生成スクリプトも同じ検査をするが、
+    // **生成物そのものを見る検査**をここに置く（スクリプトを回し忘れても落ちる）。
+    const copyleft = all.filter((dep) => /GPL/i.test(dep.license));
+    expect(copyleft.map((dep) => dep.name)).toEqual(["PyInstaller bootloader"]);
+    expect(copyleft[0]?.license).toContain("Bootloader-exception");
+  });
+
+  it("Lumi が依存する主要なものが漏れていない", () => {
+    const names = new Set(all.map((dep) => dep.name));
+    for (const name of ["tauri", "sqlite-vec", "sounddevice", "three", "react", "PortAudio"]) {
+      expect(names.has(name), `${name} が一覧に無い`).toBe(true);
+    }
   });
 });

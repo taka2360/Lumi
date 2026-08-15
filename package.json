@@ -6,7 +6,8 @@
   "packageManager": "pnpm@11.21.0",
   "scripts": {
     "dev": "pnpm --filter @lumi/shell dev",
-    "build": "pnpm --filter @lumi/shell build",
+    "build": "pnpm build:core && pnpm --filter @lumi/shell build",
+    "build:core": "cd core && uv run pyinstaller lumi-core.spec --noconfirm",
     "stage:dev": "pnpm --filter @lumi/stage dev",
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
