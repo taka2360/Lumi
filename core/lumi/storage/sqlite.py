@@ -36,7 +36,7 @@ from lumi import logging as lumi_logging
 log = lumi_logging.get_logger(__name__)
 
 #: このスキーマ版。マイグレーションを足したら **`_MIGRATIONS` の長さと一致する**。
-SCHEMA_VERSION: Final = 1
+SCHEMA_VERSION: Final = 2
 
 #: index 0 を適用するとスキーマ版 1 になる。**既存の要素を書き換えない**（追記のみ）。
 _MIGRATIONS: Final[tuple[tuple[str, ...], ...]] = (
@@ -56,6 +56,35 @@ _MIGRATIONS: Final[tuple[tuple[str, ...], ...]] = (
         """,
         "CREATE INDEX events_by_stream ON events (stream_key, sequence_id)",
         "CREATE INDEX events_by_correlation ON events (correlation_id)",
+    ),
+    (
+        # 監査ログ。**append-only**（docs/architecture/permission.md §7）。
+        # `prev_hash` / `record_hash` は Phase 4a でマイグレーションとして足す。
+        # 今入れないのは、**使わない列を「将来のために」置かない**ため。
+        """
+        CREATE TABLE audit_log (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts                  TEXT NOT NULL,
+            actor               TEXT NOT NULL,
+            activity_id         TEXT NOT NULL,
+            correlation_id      TEXT NOT NULL,
+            capability          TEXT NOT NULL,
+            security_scope_json TEXT NOT NULL,
+            raw_input_digest    TEXT NOT NULL,
+            decision            TEXT NOT NULL,
+            reason              TEXT NOT NULL,
+            policy_version      TEXT NOT NULL,
+            policy_rule_id      TEXT NOT NULL,
+            grant_id            TEXT,
+            tool                TEXT NOT NULL,
+            args_digest         TEXT NOT NULL,
+            result_digest       TEXT,
+            provenance_class    TEXT,
+            trust_level         TEXT
+        )
+        """,
+        "CREATE INDEX audit_by_activity ON audit_log (activity_id)",
+        "CREATE INDEX audit_by_ts ON audit_log (ts)",
     ),
 )
 

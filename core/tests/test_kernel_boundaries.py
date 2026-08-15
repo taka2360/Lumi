@@ -97,6 +97,83 @@ def test_only_the_event_module_constructs_domain_events() -> None:
     assert builders == ["kernel/event.py"]
 
 
+def test_permission_does_not_depend_on_tools() -> None:
+    """依存の向きは `tools → permission`。**Kernel が個別ツールを知らない**（Invariant 1）。
+
+    知り始めると、ツールを1つ足すたびに Permission Kernel が変わる。
+    """
+    for source in sorted((LUMI / "permission").rglob("*.py")):
+        assert not any(name.startswith("lumi.tools") for name in imported_names(source)), (
+            source.name
+        )
+
+
+def test_tools_do_not_call_the_permission_kernel() -> None:
+    """**Tool が自分で authorize すると、実装ミスがそのまま権限バイパスになる**（Invariant 1）。
+
+    Tool が import してよいのは型（`PermissionSpec` / `SecurityScope` など）だけで、
+    判断する側（`PermissionKernel` / `decide` / `GrantStore`）には触れない。
+    """
+    forbidden = {
+        "lumi.permission.kernel.PermissionKernel",
+        "lumi.permission.policy.decide",
+        "lumi.permission.policy.decide_with_rule",
+        "lumi.permission.grants.GrantStore",
+    }
+    for source in sorted((LUMI / "tools").rglob("*.py")):
+        if source.name == "registry.py":
+            continue  # Registry は Kernel を呼ぶ側（そこが唯一の経路）
+        assert not (imported_names(source) & forbidden), source.name
+
+
+def test_tools_do_not_implement_the_verifiers() -> None:
+    """`canonicalize` / `verify` を Tool 側に実装すると、**Tool を信頼することになる。**"""
+    for source in sorted((LUMI / "tools").rglob("*.py")):
+        text = source.read_text(encoding="utf-8")
+        assert "def canonicalize(" not in text, source.name
+        assert "def verify(" not in text, source.name
+
+
+def test_only_the_registry_executes_tools() -> None:
+    """`ToolRegistry.invoke` 以外から `Tool.execute` を呼ばない（Invariant 2）。"""
+    callers = [
+        source.relative_to(LUMI).as_posix()
+        for source in lumi_sources()
+        if "tool.execute(" in source.read_text(encoding="utf-8")
+    ]
+    assert callers == ["tools/registry.py"]
+
+
+def test_only_decide_returns_a_decision() -> None:
+    """**`Decision` を返す関数は `decide()` ひとつだけ**（.claude/rules/00-invariants.md）。
+
+    `decide_with_rule` は `tuple[Decision, str]` を返すので、この検査には掛からない。
+    2つ目の「判断する関数」が生えていないことを、戻り値の型で見張る。
+    """
+    offenders: list[str] = []
+    for source in lumi_sources():
+        tree = ast.parse(source.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                continue
+            returns = node.returns
+            if isinstance(returns, ast.Name) and returns.id == "Decision":
+                offenders.append(f"{source.name}:{node.name}")
+    assert offenders == ["policy.py:decide"]
+
+
+def test_the_audit_log_is_append_only() -> None:
+    """**Phase 1 の append-only は「コードベースに `DELETE` / `UPDATE` が無い」こと。**
+
+    OS 管理者権限からの改竄は防げない。**それは脅威モデル外であり、防げると書かない。**
+    hash chain による**検出**は Phase 4a。
+    """
+    for source in lumi_sources():
+        text = source.read_text(encoding="utf-8").upper()
+        assert "DELETE FROM AUDIT_LOG" not in text, source.name
+        assert "UPDATE AUDIT_LOG" not in text, source.name
+
+
 def test_trust_level_trusted_is_only_written_where_allowed() -> None:
     """**自動昇格の実装を作らない**（Invariant 7 / provenance.md テスト5）。
 

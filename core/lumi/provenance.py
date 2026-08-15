@@ -27,8 +27,9 @@ trusted を返す）。これは grep とテストで検証する。
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from enum import StrEnum
-from typing import Protocol
+from typing import Literal, Protocol
 
 
 class ProvenanceClass(StrEnum):
@@ -101,3 +102,54 @@ def propagate(inputs: Iterable[Provenanced], *, is_raw_external: bool) -> Proven
 def propagate_trust(inputs: Iterable[Provenanced]) -> TrustLevel:
     """処理の出力の `TrustLevel`。入力の join。"""
     return join_all(i.trust_level for i in inputs)
+
+
+def propagate_from_trust(trust: TrustLevel, *, is_raw_external: bool) -> ProvenanceClass:
+    """入力の `TrustLevel` しか手元に無いときの `propagate()`。
+
+    Tool 結果の provenance を Kernel が付けるときに使う（入力は呼び出し元 context の
+    `effective_trust` 1つだけ）。**`is_raw_external` の判断は lane が持つ**
+    （`lumi.permission.scope.LANE_RESULT_IS_EXTERNAL`）。Tool に申告させない。
+    """
+    if is_raw_external:
+        return ProvenanceClass.UNTRUSTED
+    return ProvenanceClass.TRUSTED if trust is TrustLevel.TRUSTED else ProvenanceClass.DERIVED
+
+
+@dataclass(frozen=True, slots=True)
+class Turn:
+    """会話の1ターン。
+
+    **Lumi のターンの `trust_level` は、そのターンの生成に使った入力の join。**
+    「LLM 出力だから常に tainted」ではない。純粋な雑談ターンは persona・ユーザー発話・
+    internal state だけから生成されており、tainted 扱いする理由が無い。
+    """
+
+    role: Literal["user", "lumi"]
+    text: str
+    trust_level: TrustLevel
+
+
+@dataclass(frozen=True, slots=True)
+class PromptContext:
+    """プロンプト全体としての実効的な信頼度。**3つのスコープに分ける。**
+
+    分けない場合、設計は2通りに割れてどちらも受け入れられない。
+
+    - 過去ターンを block と同列に join する
+      → **2ターン目以降が常に TAINTED** になり、昇格規則が判別力を失う
+    - 過去ターンを join から外す
+      → Web の要約が「自分の発話」として次ターンに入り、**そこで taint が消える**
+    """
+
+    #: このターンの ContextBlock（ツール結果・記憶）の join
+    block_trust: TrustLevel = TrustLevel.TRUSTED
+    #: Working Memory に載っている Turn の join
+    history_trust: TrustLevel = TrustLevel.TRUSTED
+    #: セッション開始以降の全 join。**sticky**（一度 TAINTED になったら戻らない）
+    session_trust: TrustLevel = TrustLevel.TRUSTED
+
+    @property
+    def effective_trust(self) -> TrustLevel:
+        """**`max_provenance` とは呼ばない。**「最大」が何を意味するかが曖昧で、必ず取り違える。"""
+        return join(self.block_trust, join(self.history_trust, self.session_trust))
