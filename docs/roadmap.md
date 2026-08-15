@@ -45,12 +45,12 @@ Phase 4 は Kernel 本実装・権限 UI・Grant・監査・hash chain・Crash R
 Lumi は**公開配布される前提**で設計する。これによりクレジット表記が Phase 0 の必須項目になった（下記）。
 
 ### やること
-- [ ] Tauri 2 で透過ウィンドウ・常時最前面・クリックスルー
-- [ ] **ホバー検知**（Rust 側で Win32 カーソル監視の自前実装。Tauri には Electron の `forward:true` 相当が無い）
-- [ ] VRM を Stage に表示し、アイドルモーションでループ
-- [ ] Python Core を **Tauri サイドカーとして起動・監視・終了**
-- [ ] WS 接続（token 認証）、ハートビート、片方が落ちた時の復帰
-- [ ] **`os.*` の schema 検証 + allowlist を Shell 側に最小実装**（[B3](contracts/security-boundaries.md) の骨格）
+- [x] Tauri 2 で透過ウィンドウ・常時最前面・クリックスルー 〔2026-08-15。透過の目視確認は残〕
+- [x] **ホバー検知**（Rust 側で Win32 カーソル監視の自前実装。Tauri には Electron の `forward:true` 相当が無い）〔判定は Shell 側の純粋関数。[measurements/phase0.md](measurements/phase0.md)〕
+- [ ] VRM を Stage に表示し、アイドルモーションでループ 〔**プレースホルダで貫通済み**。VRM ローダーの統合点は実装済みで、`.vrm` を置けば読む。既定同梱モデルは未定（[licensing.md](licensing.md) §7 未確認 #5）〕
+- [x] Python Core を **Tauri サイドカーとして起動・監視・終了** 〔Job Object でゾンビを残さない〕
+- [x] WS 接続（token 認証）、ハートビート、片方が落ちた時の復帰
+- [x] **`os.*` の schema 検証 + allowlist を Shell 側に最小実装**（[B3](contracts/security-boundaries.md) の骨格）
 - [ ] **初回セットアップ**〔ADR-019〕
   - [ ] TTS エンジンを取得する / しない の選択を**同等に**提示する（既定で取得しない）
   - [ ] 公式配布元からの取得 → **検証**（完全性・配布元）→ セットアップ
@@ -63,9 +63,9 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 - [ ] ハードコードされた「こんにちは」を AivisSpeech で発話 → リップシンク
 - [ ] duplex stream の骨格（capture + playback + reference channel）
 - [ ] **入出力が別デバイスのときの duplex 動作を実測**（別デバイスだと失敗 / クロックドリフトする。Phase 2 の AEC の前提が崩れないか）
-- [ ] `PlatformShell` インターフェースを定義（Electron 退避路の確保）
-- [ ] **VRAM / RAM / インストーラサイズを実測して記録**（Phase 5 の設計根拠になる）
-- [ ] **サイドカー同梱状態で sqlite-vec（SQLite ローダブル拡張）がロードできることを確認**（Phase 2 で気づくと記憶機能ごと止まる）
+- [x] `PlatformShell` インターフェースを定義（Electron 退避路の確保）〔Stage に露出するのは OS 特権を含まない部分集合。[interfaces/shell.md](interfaces/shell.md)〕
+- [ ] **VRAM / RAM / インストーラサイズを実測して記録**（Phase 5 の設計根拠になる）→ [measurements/phase0.md](measurements/phase0.md)
+- [ ] **サイドカー同梱状態で sqlite-vec（SQLite ローダブル拡張）がロードできることを確認**（Phase 2 で気づくと記憶機能ごと止まる）〔**uv 環境では確認済み**。同梱サイドカーでの確認が残り〕
 
 ### 完了条件
 インストーラを作って**別マシン**で起動し、**初回セットアップを通した上で**、キャラクターが立って一言喋る。
