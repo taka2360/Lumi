@@ -35,7 +35,7 @@ AIRI の `worklet → worker → Pinia store → pipeline` という多段経路
 
 ```
 AudioIO
-  duplex stream (sounddevice): capture + playback + playback reference channel
+  capture stream / playback stream（sounddevice。**別々に開く** → ADR-020）
   │
   ├─ [audio callback スレッド]  リアルタイム制約下。推論・確保・ロックをしない
   │     capture → ring buffer に write
@@ -49,9 +49,13 @@ AudioIO
   ├─ [asyncio]  後片付け。遅くてよい
   │     arbiter.interrupt() / STT / TTS 生成タスクの破棄
   │
+  ├─ reference ring     → **再生リングに書いたサンプルそのもの。** Phase 2 の AEC の参照信号
   ├─ EchoGuard          → 自分の声を自分で拾う問題への対処（§4）
   └─ PlaybackScheduler  → 文単位TTS先読み並列生成 + 順序保証再生 + 即時ミュート（§6）
 ```
+
+**capture と playback は別のコールバックで動く**（別ストリームなので）。
+両者の整合は、**各コールバックで採る共通の実時間とフレーム番号**で取る（→ [ADR-020](../decisions/ADR-020-split-audio-streams.md)）。
 
 ### なぜ VAD をオーディオコールバックの中で回さないのか
 
@@ -63,20 +67,28 @@ AudioIO
 
 **専用スレッドに出しても ADR-003 の要件は満たされる。** 要件は「asyncio を経由しないこと」であって「コールバック内で完結すること」ではない。ring buffer 1段の追加コストは 1フレーム分（16kHz / 32ms フレームなら最悪 32ms、実際にはフレーム到着ごとに起こすので数 ms）であり、**GIL 競合によるスパイクより遥かに小さく、分散も小さい。**
 
-### duplex stream に reference channel を持つ理由
+### なぜ duplex stream を使わないのか〔Confirmed。2026-08-15 実測 → [ADR-020](../decisions/ADR-020-split-audio-streams.md)〕
 
-**Phase 2 の AEC で、再生バッファを参照信号として渡すため。** 後から duplex 化すると全面書き換えになるので、Phase 1 から duplex で開く。
+当初は「Phase 1 から duplex（capture + playback + reference channel）で開く」としていた。
+**Phase 0 で実測し、2箇所で想定が外れたため撤回した。**
 
-### 🔴 duplex の前提が崩れる場合〔Phase 0 で実測〕
+| 想定 | 実測 |
+|---|---|
+| duplex は入出力が同一デバイスなら開ける | **条件は「同一ホスト API かつ両者が受け入れる単一のレートが存在すること」。** 同一の USB ヘッドセットでもマイク 48 kHz / ヘッドホン 96 kHz で**開けない**。逆に USB マイク + HDMI モニタは**開ける** |
+| 別デバイスだとクロックドリフトで reference がずれる | **分離ストリームでも有意なドリフトが観測されない**（測定分解能の数 ppm 以下 = 0.1 ms/分 程度）。duplex と有意差なし |
 
-PortAudio の全二重ストリームは、**入出力が同一デバイス（少なくとも同一ホスト API・同一クロック）**であることを前提とする。
+**したがって duplex の可否はユーザーの機材が決める。** 設計で担保できないものを
+barge-in の土台にはできない。**入出力は常に別ストリームで開く。**
 
-実際のユーザー環境では「USB マイク + HDMI 経由のスピーカー」「ヘッドセットマイク + デスクトップスピーカー」が普通にある。この場合:
+**reference signal はハードウェアから取らない。** Lumi は再生する音を自分で作っているので、
+**再生リングに書いたサンプルそのもの**が参照信号になる（EchoGuard L3 が成立するのと同じ根拠）。
 
-- ストリーム生成自体が失敗する、または
-- **クロックドリフトで reference channel が徐々にずれ、Phase 2 の AEC が機能しなくなる**
+数値と測定条件 → [../measurements/phase0.md](../measurements/phase0.md)
 
-**Phase 0 の検証項目に「入出力が別デバイスのときの duplex 動作」を含める。** 失敗時のフォールバック（入出力を別ストリームで開き、reference はタイムスタンプで整合を取る）を Phase 0 で決めておく。Phase 2 で気づくと AEC の設計をやり直すことになる。
+### 保証しないこと
+
+**ここで測ったのはアプリから見たストリームのペースであり、スピーカーから出てマイクに入るまでの実遅延ではない。**
+2 ppm という値も1台の測定である。**Phase 2 の AEC は、ドリフトが無いことを前提にしてはならない**（遅延推定を必ず持つ）。
 
 ---
 
@@ -86,13 +98,18 @@ PortAudio の全二重ストリームは、**入出力が同一デバイス（�
 
 ```python
 # ── audio callback スレッド（リアルタイム制約下）─────────────
-def _audio_callback(self, indata, outdata, frames, time_info, status):
+# **入力と出力は別ストリーム**なので、コールバックも別（→ ADR-020）。
+def _capture_callback(self, indata, frames, time_info, status):
     """推論しない。確保しない。ロックしない。"""
-    self._capture_ring.write(indata)             # lock-free
+    self._capture_ring.write(indata, at=perf_counter())   # lock-free
+
+def _playback_callback(self, outdata, frames, time_info, status):
     if self._mute_flag.is_set():
         outdata[:] = 0                           # 即座に無音
     else:
         self._playback_ring.read_into(outdata)
+    # 実際に出した分を参照信号として残す。**ミュートした事実も含めて残す**
+    self._reference_ring.write(outdata, at=perf_counter())
 
 
 # ── VAD スレッド（専用 OS スレッド。asyncio ではない）─────────
@@ -195,7 +212,7 @@ AIRI の実測値を出発点にする（`packages/stage-ui/src/libs/audio/vad.t
 
 | パラメータ | 初期値 | 用途 |
 |---|---|---|
-| `sample_rate` | 16000 | |
+| `sample_rate` | 16000 | **VAD に入れる前のレート。ストリームをこのレートで開くのではない**（→ §8） |
 | `frame_ms` | 32 | VAD スレッドの起床間隔 |
 | **`mute_threshold`** | **0.5** | **ミュート判定（即時）。誤爆を許容する** |
 | `speech_threshold` | 0.3 | 発話区間の開始 |
@@ -310,10 +327,27 @@ Phase 1 は記憶検索が無いので区間合計 0.95 s。
 
 | 項目 | 扱い |
 |---|---|
+| ホスト API | **Windows では WASAPI を明示的に選ぶ。** PortAudio の既定に任せない（MME は出力遅延 209 ms で barge-in が成立しない → [ADR-020](../decisions/ADR-020-split-audio-streams.md)） |
 | 入力デバイス選択 | 設定。既定はシステム既定 |
 | 出力デバイス選択 | 設定。既定はシステム既定 |
+| サンプルレート | **デバイスが受け付けるレートで開く。** WASAPI 共有モードは mix format の1レートしか受け付けず、**16 kHz では開けない** |
+| サンプルレート変換 | **必須。** ストリームのレート → VAD の 16 kHz を Core 内で行う（Phase 1） |
 | デバイス切断 | 検知して再接続を試み、失敗したらユーザーに通知 |
-| サンプルレート変換 | 必要なら Core 内で行う（VAD は 16kHz 固定） |
+
+### 開通したと言える条件〔2026-08-15 実測〕
+
+**`open()` の成功では足りない。** 無効化されたエンドポイントは開けるのに**フレームが1つも来ない**
+（実測したマシンの Realtek マイク端子がこれだった）。
+
+**最初のフレームが規定時間内に届いて初めて「聞けている」と扱う。** 届かなければ明示的に失敗させる。
+「聞いているつもりで無音を聞き続ける」は、黙って劣化する典型である。
+
+### 入力デバイスが1つも無い場合
+
+**実在する**（実測したマシンの初期状態がこれだった。録音デバイスが1つも有効でなかった）。
+
+この場合 Lumi は**起動し、音声入力が無いことを明示する。** TTS 未セットアップと同じ扱いで、
+**壊れているのではない状態**として表現する（→ [setup.md](setup.md)）。
 
 ---
 
@@ -339,7 +373,7 @@ Lumi はここを差別化点にする。代償として AEC を自前で持つ�
 
 | Phase | 内容 |
 |---|---|
-| **0** | ハードコードされた「こんにちは」を AivisSpeech で発話 → リップシンク。duplex stream の骨格。**入出力が別デバイスのときの duplex 動作を実測** |
+| **0** | ハードコードされた「こんにちは」を AivisSpeech で発話 → リップシンク。**デバイス選択の骨格と、ストリームの開き方の実測**（→ [ADR-020](../decisions/ADR-020-split-audio-streams.md)） |
 | **1** | VAD / STT / TTS の全経路。**barge-in**（3層分離 + 2閾値）。**EchoGuard L1**。SLO 計測 |
 | **2** | **EchoGuard L2**（AEC） |
 | **3** | **EchoGuard L3**（テキストレベル棄却） |
@@ -366,4 +400,8 @@ Lumi はここを差別化点にする。代償として AEC を自前で持つ�
 | 11 | 区間別レイテンシと `unaccounted_ms` が毎ターン記録される |
 | 12 | **オーディオコールバック内で推論・メモリ確保・ロック取得をしていない**（静的検査 + 実行時のコールバック所要時間の計測） |
 | 13 | **負荷時（LLM 推論 + TTS 生成の同時実行）にバッファアンダーランが発生しない** |
-| 14 | **入出力が別デバイスのときの duplex 動作**（Phase 0。失敗するならフォールバック経路が動く） |
+| 14 | **入出力が別デバイスでも capture / playback が開ける**（Phase 0 で実測済み。別マシンでも確認する） |
+| 15 | **ホスト API の選択が WASAPI を選ぶ**（純粋関数。MME しか無い環境では MME を選び、遅延を警告する） |
+| 16 | **16 kHz で開けないデバイスでも、デバイス既定のレートで開いて 16 kHz にリサンプルできる** |
+| 17 | **フレームが来ないデバイスを開通失敗として扱う**（`open()` は成功する。タイムアウトで失敗させる） |
+| 18 | **入力デバイスが1つも無い環境で Lumi が起動し、その状態が明示される** |

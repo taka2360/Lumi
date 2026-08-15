@@ -9,8 +9,17 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.6 |
-| 実装フェーズ | Phase 0 未着手（🔴 着手前の決定事項は解消済み） |
+| Revision | rev.7 |
+| 実装フェーズ | **Phase 0 実装中。** 残るは PyInstaller パッケージング・インストーラ・別マシン検証 → [roadmap.md](roadmap.md) |
+
+> **rev.7 の変更点**（Phase 0 の実装と実測による修正。**すべて「作ってみたら想定と違った」もの**）
+> 1. **リップシンクの生成方式を確定した。** 口の形はモーラ列から、時間は**合成された音声の長さ**から割り振る。
+>    AivisSpeech は音素長を返さない（全モーラ `0.0`）ため、当初の「TTS 出力から音素タイミングを取る」は成立しなかった → [interfaces/renderer.md](interfaces/renderer.md)
+> 2. **duplex stream を使わないことにした。** duplex が開ける条件はユーザーの機材が決めてしまい、
+>    分離ストリームでもドリフトは測定分解能以下だった。reference signal は Core が自前で持つ → [ADR-020](decisions/ADR-020-split-audio-streams.md)。roadmap 未確定事項 #4 が解消
+> 3. **音声デバイスの選択方針を確定した**（OS の既定デバイス / WASAPI / デバイス既定レート / **開通は最初のフレームの到着で判定**）→ [architecture/audio.md](architecture/audio.md) §8
+> 4. **TTS エンジンプロセスの所有者を Core にした。** Lumi が起動したものだけ Lumi が止める → [architecture/core.md](architecture/core.md) §6
+> 5. **使用中モデルのライセンス全文は、モデル自身の manifest が持っている**ことが分かった（licensing.md 未確認 #2 が解消）→ [licensing.md](licensing.md) §4.4
 
 > **rev.6 の変更点**（Phase 0 の 🔴 ブロッカー解消）
 > 1. **音声ライブラリ・TTS エンジンの利用規約を調査し、[licensing.md](licensing.md) に記録した。** roadmap 未確定事項 #1 が解消 → §10
@@ -585,7 +594,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |
 | 権限マトリクス・オブジェクト責務行列 | [contracts/authority-matrix.md](contracts/authority-matrix.md) |
 | Shell / Stage の責務・ウィンドウ一覧・**トレイメニュー**・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
-| 音声の3層構造・EchoGuard・VAD パラメータ・**レイテンシ SLO** | [architecture/audio.md](architecture/audio.md) |
+| 音声の3層構造・EchoGuard・VAD パラメータ・**レイテンシ SLO**・**デバイス選択とストリームの開き方** | [architecture/audio.md](architecture/audio.md) |
 | 記憶の形成・忘却・矛盾・**検索スコアリング式**・salience 補正 | [architecture/memory.md](architecture/memory.md) |
 | Extension の2機構・信頼レベル・ライフサイクル・Content Pack | [architecture/extension.md](architecture/extension.md) |
 | Drive / AutonomyGate / AutonomyBudget | [architecture/autonomy.md](architecture/autonomy.md) |
