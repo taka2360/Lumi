@@ -39,18 +39,31 @@
 | Windows での透過 + 常時最前面 | Phase 0 で検証。破綻したら `PlatformShell` 越しに Electron へ退避 |
 | Python サイドカーの同梱 | Tauri の `externalBin`。**torch を避けてサイズを抑える**。Phase 0 で実測（R1） |
 
-### ホバー検知の実装方針〔Provisional〕
+### ホバー検知の実装方針〔Provisional / Phase 0 で実装・実測済み〕
 
 ```
-Rust 側で ~60Hz でカーソル位置をポーリング（またはローレベルフック）
+Stage が VRM の描画結果から当たり判定領域を算出 → shell.hit_region.set で Shell に渡す
   ↓
-Stage が Core から受け取った「キャラクターの当たり判定領域」と比較
-  ↓
+Rust 側で ~60Hz でカーソル位置をポーリング（GetCursorPos 相当）
+  ↓  判定は Shell 側の純粋関数 decide_click_through / decide_hover_transition
 領域内 → set_ignore_cursor_events(false) + shell.hover.state を Stage に通知
 領域外 → set_ignore_cursor_events(true)
 ```
 
-当たり判定領域は Stage が VRM の描画結果から算出し、Shell に渡す（`shell.*` namespace）。
+**判定を Shell 側で行う**（当初案は「Stage が比較する」だった）。理由は2つ。
+
+1. 60Hz のカーソル位置を毎周期 Stage に送って往復させると、`shell.*` の
+   「1ms 以下であるべきもの」という規則を守れない
+2. Stage が固まっている間もクリックスルーの切り替えは正しく動く必要がある
+
+Stage が渡すのは**領域だけ**で、判断は渡さない。この経路に AI の判断は乗らない。
+領域が未設定のときは**クリックスルーを維持する**（Stage が壊れたときにデスクトップが
+操作不能になる方が危険なため。ここだけは fail-closed に倒さない）。
+
+座標は **Stage ウィンドウのクライアント領域を原点とする物理ピクセル**。
+CSS ピクセルからの変換は Stage 側の責務（混在 DPI → 未確定事項 #15）。
+
+実測値（ポーリングの CPU コスト）→ [../measurements/phase0.md](../measurements/phase0.md)
 
 ### AIRI から借りる運用知見
 

@@ -1,0 +1,58 @@
+/* Stage は透過ウィンドウ。**背景を塗らない**。
+   ここで色を塗ると、透過ウィンドウの意味が無くなる。 */
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  /* 透過部分でマウスイベントを拾わない。クリックスルーの判定は Shell 側が持つが、
+     WebView 側でも拾わないようにしておく（多層防御ではなく、単純な整合性のため）。 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body {
+  font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.character {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ホバー中はうっすら光らせる。クリックスルーが解除されている状態が見えること自体が
+   Phase 0 の検証項目（roadmap 検証手順 4）。 */
+.stage--hover .character {
+  filter: drop-shadow(0 0 12px rgba(160, 200, 255, 0.85));
+}
+
+/* VRM が未配置であることの表示。**隠さない。** */
+.notice {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 8px;
+  margin: 0;
+  padding: 4px 8px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 6px;
+}

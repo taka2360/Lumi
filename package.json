@@ -1,0 +1,16 @@
+{
+  "name": "lumi",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "packageManager": "pnpm@11.21.0",
+  "scripts": {
+    "dev": "pnpm --filter @lumi/shell dev",
+    "build": "pnpm --filter @lumi/shell build",
+    "stage:dev": "pnpm --filter @lumi/stage dev",
+    "lint": "pnpm -r lint",
+    "format": "pnpm -r format",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test"
+  }
+}

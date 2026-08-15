@@ -393,4 +393,3 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | R13 | **Crash 中の副作用の宙ぶらりん** | 状態不整合 | イベント語彙を Phase 1 で固定。非 idempotent は再実行せず報告 | Phase 4a |
 | R14 | **音声ライブラリ・モデルのライセンス** | 配布時の法務 | ~~Phase 0 で確認~~ → **確認済み**。配布物に非再配布可のものを入れない（[ADR-019](decisions/ADR-019-tts-engine-distribution.md)）。Provider 抽象で差し替え可能 | **Phase 0（対応済み。残: [licensing.md](licensing.md) §7 の未確認事項）** |
 | R19 | **ACML 特例条項の「開発元の努力」義務**。LLM が任意テキストを生成して TTS に流す構成そのものが対象。努力が不十分と評価されるリスク | 音声モデルが使えなくなる | 人格プロンプト・なりすまし機能の不在・[Invariant 3](contracts/invariants.md) による外部テキスト隔離・クレジット/禁止事項の提示（[licensing.md](licensing.md) §5）。**内容分類器は作らない**（レイテンシと誤検知のコストが上回る） | Phase 1 |
-[REDACTED]

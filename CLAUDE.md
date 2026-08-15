@@ -6,8 +6,10 @@
 
 ## 現在の状態
 
-**Phase 0 未着手。`docs/` 以外のコードは存在しない。** 設計は rev.5 まで完了し承認済み。
-これから書くコードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
+**Phase 0 着手中。** 設計は rev.6 まで完了し承認済み。
+コードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
+
+Phase 0 の進捗と実測値 → [docs/measurements/phase0.md](docs/measurements/phase0.md) / [docs/roadmap.md](docs/roadmap.md)
 
 ## リポジトリ構成
 
@@ -76,13 +78,21 @@ Lumi/
 
 ## 開発コマンド
 
-**Phase 0 未着手のため、まだ存在しない。** Phase 0 で以下を確定させ、このセクションを更新すること。
+| 何を | コマンド | 場所 |
+|---|---|---|
+| アプリを起動（Shell + Stage） | `pnpm dev` | リポジトリroot |
+| インストーラを作る | `pnpm build` | リポジトリroot |
+| Stage だけ起動 | `pnpm stage:dev` | リポジトリroot |
+| Core のセットアップ | `uv sync` | `core/` |
+| Core を単体起動 | `uv run lumi-core` | `core/` |
+| Core のテスト | `uv run pytest` | `core/` |
+| Core の lint / format / 型 | `uv run ruff check` / `uv run ruff format` / `uv run mypy` | `core/` |
+| Stage のテスト / lint / 型 | `pnpm test` / `pnpm lint` / `pnpm typecheck` | `stage/` |
+| Shell のテスト / lint / format | `cargo test` / `cargo clippy --all-targets -- -D warnings` / `cargo fmt` | `shell/src-tauri/` |
 
-- [ ] Core のセットアップ・起動・テスト（uv / pytest）
-- [ ] Shell のビルド（`pnpm tauri build`）
-- [ ] Stage の開発サーバ
-- [ ] lint / format / 型チェック
-- [ ] 静的検査（[authority-matrix.md](docs/contracts/authority-matrix.md) の16項目）
+**必要なもの**: Rust（MSVC ツールチェイン）/ Node 24+ / pnpm 11 / uv。Python 3.12 は uv が取得する。
+
+- [ ] 静的検査（[authority-matrix.md](docs/contracts/authority-matrix.md) の16項目）— **未実装**
 
 ## 進め方の原則
 
