@@ -494,6 +494,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 |---|---|
 | [roadmap.md](roadmap.md) | Phase 分割・完了条件・未確定事項・リスク一覧 |
 | [licensing.md](licensing.md) | 外部コンポーネントのライセンス調査結果・**配布物の構成**・クレジット義務 |
+| [measurements/](measurements/) | **実測値の記録**（設計ではなく観測）。R1 / R2 / R4 と Phase 5 の判定根拠 |
 
 ### contracts/ — 型と契約（すべて Confirmed。変更コストが最も高い）
 
@@ -593,3 +594,4 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | GPU / VRAM 戦略とモデル配置 | **DESIGN.md** §7 |
 | Phase 分割と完了条件・未確定事項・リスク一覧 | [roadmap.md](roadmap.md) |
 | **外部コンポーネントのライセンス・配布物の構成・クレジット義務・ACML 特例への対応** | [licensing.md](licensing.md) |
+| **実測値**（インストーラサイズ / RAM / VRAM / レイテンシ / CPU） | `measurements/phase<N>.md` |

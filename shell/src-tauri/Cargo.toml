@@ -1,0 +1,33 @@
+[package]
+name = "lumi-shell"
+version = "0.0.0"
+description = "Lumi Shell — OS 特権プリミティブのみを持つデスクトップシェル"
+authors = ["Lumi contributors"]
+license = "MIT"
+repository = ""
+edition = "2021"
+rust-version = "1.77.2"
+
+[lib]
+name = "lumi_shell"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+log = "0.4"
+tauri = { version = "2.11.3", features = ["tray-icon", "image-png"] }
+tauri-plugin-log = "2"
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "io-util", "time", "sync"] }
+tokio-tungstenite = "0.29.0"
+futures-util = "0.3.34"
+rand = "0.9.5"
+windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_System_Threading"] }
+
+[lints.clippy]
+# Shell は「拒否」だけを持つ。panic で落ちると拒否できなくなるため、
+# unwrap / expect は原則書かない（起動シーケンスの初期化のみ例外）。
+unwrap_used = "warn"
