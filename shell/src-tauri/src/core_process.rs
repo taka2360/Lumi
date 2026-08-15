@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | 1 | Shell 終了時に Core も確実に終了する | **Job Object（強制終了でも効く）＋** 明示的 kill ＋ stdin EOF による自己終了の3層 → `job_object.rs` |
 //! | 2 | Core が異常終了したら検知して再起動する | 監視タスクが指数バックオフで再起動 |
-//! | 3 | WS token を環境変数で渡す | `LUMI_WS_TOKEN`。**コマンドラインに載せない** |
+//! | 3 | WS token を環境変数で渡す | `LUMI_WS_TOKEN_SHELL` / `LUMI_WS_TOKEN_STAGE`。**コマンドラインに載せない** |
 //! | 4 | stdout / stderr を Shell 側でログに落とす | 1行ずつ `log` に流す |
 //!
 //! **ポート番号は Core の stdout から読む。** Core は 127.0.0.1 の空きポートに bind し、
@@ -23,6 +23,13 @@ use tokio::process::{Child, Command};
 use tokio::sync::{watch, Mutex};
 
 use crate::job_object::KillOnCloseJob;
+
+/// Core に渡す token。**role ごとに別のものを渡す**（B2 / B3）。
+#[derive(Debug, Clone)]
+pub struct CoreTokens {
+    pub shell: String,
+    pub stage: String,
+}
 
 /// Core を起動するコマンド。**純粋なデータ**にしておき、決定をテストできるようにする。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,7 +127,7 @@ impl CoreSupervisor {
     }
 
     /// 監視ループを開始する。Core が落ちたら再起動する。
-    pub fn start(&self, spec: CoreLaunchSpec, token: String) {
+    pub fn start(&self, spec: CoreLaunchSpec, tokens: CoreTokens) {
         let supervisor = self.clone();
         tauri::async_runtime::spawn(async move {
             let mut failures: u32 = 0;
@@ -128,7 +135,7 @@ impl CoreSupervisor {
                 if supervisor.is_shutting_down() {
                     return;
                 }
-                if let Err(err) = supervisor.spawn_once(&spec, &token).await {
+                if let Err(err) = supervisor.spawn_once(&spec, &tokens).await {
                     log::error!("core.spawn_failed {err}");
                 }
                 // 正常終了でも異常終了でも、Shell が生きている限り Core は居るべき。
@@ -146,12 +153,13 @@ impl CoreSupervisor {
         self.shutdown.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    async fn spawn_once(&self, spec: &CoreLaunchSpec, token: &str) -> std::io::Result<()> {
+    async fn spawn_once(&self, spec: &CoreLaunchSpec, tokens: &CoreTokens) -> std::io::Result<()> {
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
             // **token はコマンドラインに載せない。**（ps で他プロセスから見える）
-            .env("LUMI_WS_TOKEN", token)
+            .env("LUMI_WS_TOKEN_SHELL", &tokens.shell)
+            .env("LUMI_WS_TOKEN_STAGE", &tokens.stage)
             // 親が消えたら自分も終わる（ゾンビ対策の2枚目）。
             .env("LUMI_PARENT_WATCH", "stdin")
             .stdin(Stdio::piped())

@@ -14,6 +14,12 @@
 これを型で守る。`method` の namespace と接続の role が一致しない送信は、
 **送る前に**弾く（`method_matches_role`）。Stage に `os.*` を送れる経路を作らない。
 
+## token は role ごとに分ける
+
+Shell と Stage は**別の token** を持つ。共有すると、乗っ取られた Stage（B2 は Stage を信用しない）が
+`role: "shell"` として接続し、**`os.*` の command を横取りできてしまう**。
+Shell が両方を生成し、Stage には Stage 用のものだけを渡す。
+
 ## Phase 0 で command を出すのは Core だけ
 
 クライアント（Shell / Stage）から Core への `command` は**受け付けない**。
@@ -91,6 +97,29 @@ class Command:
                 "v": PROTOCOL_VERSION,
                 "kind": "command",
                 "id": self.id,
+                "method": self.method,
+                "payload": self.payload,
+            },
+            ensure_ascii=False,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Notify:
+    """Core → クライアント。**結果が要らないもの**。
+
+    「結果が要るか？」で command と分ける（docs/contracts/event-model.md の判断基準）。
+    進捗の通知や状態の配信はこちら。応答を待たないので、相手が遅くても Core は止まらない。
+    """
+
+    method: str
+    payload: dict[str, Any]
+
+    def to_json(self) -> str:
+        return json.dumps(
+            {
+                "v": PROTOCOL_VERSION,
+                "kind": "notify",
                 "method": self.method,
                 "payload": self.payload,
             },

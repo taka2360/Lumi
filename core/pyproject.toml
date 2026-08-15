@@ -9,6 +9,7 @@ dependencies = [
     "websockets>=13.0",
     "structlog>=24.4.0",
     "sqlite-vec>=0.1.9",
+    "httpx>=0.28.1",
 ]
 
 # torch に依存しない（インストーラサイズ R1）。

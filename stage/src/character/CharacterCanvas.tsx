@@ -19,7 +19,6 @@ import {
 } from "three";
 
 import type { CssRect } from "../platform/geometry";
-import { useHitRegionReporter } from "../platform/useStageShell";
 import { loadCharacter } from "./loadCharacter";
 import { hasMovedEnough, type NdcPoint, screenRectFromNdcPoints } from "./projection";
 import type { CharacterKind } from "./types";
@@ -32,9 +31,15 @@ export interface CharacterStatus {
   fallbackReason: string | null;
 }
 
-export function CharacterCanvas({ onStatus }: { onStatus?: (status: CharacterStatus) => void }) {
+export function CharacterCanvas({
+  onStatus,
+  onBounds,
+}: {
+  onStatus?: (status: CharacterStatus) => void;
+  /** 画面上でキャラクターが占めている矩形。**当たり判定の材料**（判定は Shell 側）。 */
+  onBounds?: (rect: CssRect | null) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const reportHitRegion = useHitRegionReporter();
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -118,7 +123,7 @@ export function CharacterCanvas({ onStatus }: { onStatus?: (status: CharacterSta
         const rect = screenRectFromNdcPoints(points, canvas.clientWidth, canvas.clientHeight);
         if (hasMovedEnough(lastRect, rect)) {
           lastRect = rect;
-          reportHitRegion(rect ? [rect] : []);
+          onBounds?.(rect);
         }
       };
       animationFrame = requestAnimationFrame(tick);
@@ -131,7 +136,7 @@ export function CharacterCanvas({ onStatus }: { onStatus?: (status: CharacterSta
       disposeModel?.();
       renderer.dispose();
     };
-  }, [onStatus, reportHitRegion]);
+  }, [onStatus, onBounds]);
 
   return <canvas ref={canvasRef} className="character" />;
 }

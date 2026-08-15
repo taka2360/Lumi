@@ -41,12 +41,88 @@ body {
   filter: drop-shadow(0 0 12px rgba(160, 200, 255, 0.85));
 }
 
+/* オーバーレイ（セットアップ UI と注意書き）。
+   **中身に合わせて縮む**ようにする。ここが広いと、その分だけクリックスルーが
+   解除されてしまう（当たり判定として Shell に渡すため）。 */
+.overlay {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 20px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(20, 24, 34, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #f2f5fb;
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.panel--compact {
+  padding: 8px 12px;
+}
+
+.panel__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.panel__body {
+  margin: 0 0 8px;
+}
+
+.panel__note {
+  margin: 0 0 12px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.panel__status {
+  margin: 0;
+}
+
+.panel__status--bad {
+  color: #ffb4b4;
+}
+
+/* **取得する / しない を同等に提示する**（ADR-019 原則2）。
+   同じ大きさ・同じ色。片方を目立たせない。 */
+.panel__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.panel__button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.1);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.panel__button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
 /* VRM が未配置であることの表示。**隠さない。** */
 .notice {
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 8px;
   margin: 0;
   padding: 4px 8px;
   text-align: center;

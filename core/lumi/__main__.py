@@ -16,8 +16,9 @@ from lumi import __version__
 from lumi import logging as lumi_logging
 from lumi.dev_probe import ENV_FLAG as DEV_PROBE_FLAG
 from lumi.dev_probe import probe_os_boundary
+from lumi.setup.coordinator import SetupCoordinator
 from lumi.transport.protocol import Role
-from lumi.transport.server import WsServer, token_from_env
+from lumi.transport.server import WsServer, tokens_from_env
 
 log = lumi_logging.get_logger(__name__)
 
@@ -53,24 +54,31 @@ async def _run() -> int:
             # Windows の ProactorEventLoop は add_signal_handler を持たない。
             signal.signal(sig, lambda *_: stop.set())
 
-    token, generated = token_from_env(dict(os.environ))
+    tokens, generated = tokens_from_env(os.environ)
     if generated:
         # 本番経路（Shell からのサイドカー起動）では必ず環境変数で渡ってくる。
         # 生成したということは、単体で起動されている = 開発時である。
-        log.warning("core.token.generated", token=token)
+        log.warning("core.token.generated", roles=[role.value for role in tokens])
 
     server: WsServer
+    setup: SetupCoordinator
 
     async def on_connect(role: Role) -> None:
+        # 接続ハンドラを塞がないように、時間のかかるものは別タスクで走らせる。
         if role is Role.SHELL and os.environ.get(DEV_PROBE_FLAG) == "1":
-            # 接続ハンドラを塞がないように別タスクで走らせる。
             asyncio.create_task(probe_os_boundary(server))  # noqa: RUF006
+        if role is Role.STAGE:
+            asyncio.create_task(setup.on_stage_connected())  # noqa: RUF006
 
-    server = WsServer(token, port=int(os.environ.get("LUMI_WS_PORT", "0")), on_connect=on_connect)
+    server = WsServer(tokens, port=int(os.environ.get("LUMI_WS_PORT", "0")), on_connect=on_connect)
+    setup = SetupCoordinator(server, os.environ)
     port = await server.start()
     # **Shell はこの行を stdout から読んで接続先を知る。** イベント名を変えない。
     log.info("core.ws.listening", host="127.0.0.1", port=port)
     log.info("core.started", version=__version__, pid=os.getpid())
+
+    # 検出はローカルのみ。**ここで外部通信は起きない**（docs/architecture/setup.md §1）。
+    await setup.initialize()
 
     if os.environ.get(PARENT_WATCH_ENV) == "stdin":
         _watch_parent_via_stdin(stop, loop)
