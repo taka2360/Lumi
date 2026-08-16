@@ -1,24 +1,25 @@
-"""Provider の共通基底。
+"""Common base for Providers.
 
-型の定義 → docs/interfaces/provider.md / 決定 → ADR-008
+Type definitions → docs/interfaces/provider.md / Decision → ADR-008
 
-## `load` / `unload` / `resource_hint` を Phase 1 で入れる理由
+## Why `load` / `unload` / `resource_hint` are added in Phase 1
 
-Phase 1 に Vision は無いので `ModelResourceManager` は要らない（Phase 5）。
-しかし**後から Provider にライフサイクルを追加すると全 Provider の書き換えになる。**
-窓口だけ先に確保しておけば、Phase 5 は Manager を上に被せるだけで済む。
+Phase 1 has no Vision, so `ModelResourceManager` isn't needed yet (Phase 5).
+But **adding a lifecycle to Provider later would mean rewriting every Provider.**
+Reserving the interface now means Phase 5 can just layer a Manager on top.
 
-## `attribution()` を Phase 1 で入れる理由
+## Why `attribution()` is added in Phase 1
 
-**クレジット文字列を Core にハードコードすると、Provider を差し替えた瞬間に
-クレジットが嘘になる。**「差し替え可能性がライセンスリスクの緩和策である」（ADR-008）
-という主張は、差し替えたときに表示も追随して初めて成立する。
+**Hardcoding the credit string into Core makes the credit false the instant the
+Provider is swapped out.** The claim that "swappability mitigates license risk"
+(ADR-008) only holds if the displayed credit follows along when the swap happens.
 
-## 失敗の型を分ける
+## Separate failure types
 
-**「セットアップされていない」と「起動に失敗した」は違う**（docs/architecture/core.md §6）。
-前者は「まだ導入されていない」、後者は「壊れている」であり、
-**ユーザーに要求する行動が違う。** 1つの例外に潰すと、案内が嘘になる。
+**"Not set up" and "failed to start" are different things** (docs/architecture/core.md §6).
+The former is "not yet installed," the latter is "broken," and
+**what the user needs to do about them differs.** Collapsing them into one exception
+makes the guidance shown to the user wrong.
 """
 
 from __future__ import annotations
@@ -40,7 +41,7 @@ class DevicePref(StrEnum):
     GPU_REQUIRED = "gpu_required"
     GPU_PREFERRED = "gpu_preferred"
     CPU_ONLY = "cpu_only"
-    #: 別プロセスで動く。Lumi の VRAM 予算の外にある
+    #: Runs in a separate process. Outside Lumi's VRAM budget
     EXTERNAL_PROCESS = "external_process"
 
 
@@ -52,10 +53,10 @@ class UnloadPolicy(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ResourceHint:
-    """Phase 5 の `ModelResourceManager` が読む。**Phase 1 では宣言するだけ。**"""
+    """Read by Phase 5's `ModelResourceManager`. **In Phase 1, only declared.**"""
 
     device_pref: DevicePref
-    #: 0 = GPU を使わない
+    #: 0 = doesn't use GPU
     vram_estimate_mb: int
     load_time_estimate_ms: int
     unload_policy: UnloadPolicy
@@ -63,10 +64,10 @@ class ResourceHint:
 
 @dataclass(frozen=True, slots=True)
 class Attribution:
-    """クレジット表示に必要な情報。**Core はこれを解釈せず、そのまま Stage に渡す。**"""
+    """Information needed for the credit display. **Core doesn't interpret this — it's passed straight to the Stage.**"""
 
     display_name: str
-    #: 規約が要求する表記。例: "VOICEVOX:ずんだもん"
+    #: The exact wording required by the license. e.g. "VOICEVOX:Zundamon"
     credit_text: str
     license_name: str
     license_url: str | None = None
@@ -74,7 +75,7 @@ class Attribution:
 
 
 class ProviderError(RuntimeError):
-    """**理由を持つ。** 黙って劣化させないための土台。"""
+    """**Carries a reason.** The foundation for never silently degrading."""
 
     def __init__(self, reason: str, detail: str = "") -> None:
         super().__init__(f"{reason}: {detail}" if detail else reason)
@@ -83,22 +84,22 @@ class ProviderError(RuntimeError):
 
 
 class ProviderNotConfigured(ProviderError):
-    """**まだ導入されていない。** ユーザーに求めるのは「セットアップ」。
+    """**Not yet installed.** What's asked of the user is "set it up."
 
-    これを `ProviderUnavailable` と混ぜると、入っていないのに
-    「起動してください」と案内することになる。
+    Mixing this with `ProviderUnavailable` would tell the user to "please start it"
+    when it isn't even installed.
     """
 
 
 class ProviderUnavailable(ProviderError):
-    """**導入されているが使えない**（起動していない / バージョン不整合）。
+    """**Installed but unusable** (not running / version mismatch).
 
-    ユーザーに求めるのは「起動」または「修復」。
+    What's asked of the user is "start it" or "repair it."
     """
 
 
 class ProviderFailed(ProviderError):
-    """推論中に失敗した。Activity は `failed` になり、Lumi は「うまくいかなかった」と言う。"""
+    """Failed during inference. The Activity becomes `failed`, and Lumi says "that didn't work."""
 
 
 class Provider(Protocol):
@@ -106,7 +107,7 @@ class Provider(Protocol):
     kind: ProviderKind
 
     async def load(self) -> None:
-        """**冪等。** 2回呼んでも壊れない。"""
+        """**Idempotent.** Calling it twice doesn't break anything."""
         ...
 
     async def unload(self) -> None: ...

@@ -1,13 +1,15 @@
-"""ストリームのクロックが実時間からどれだけずれているかを推定する。**純粋関数**。
+"""Estimates how far a stream's clock drifts from wall-clock time. **Pure functions.**
 
-設計 → [ADR-020](../../../docs/decisions/ADR-020-split-audio-streams.md)
+Design → [ADR-020](../../../docs/decisions/ADR-020-split-audio-streams.md)
 
-入出力を別ストリームで開く以上、**両者が同じ速さで進んでいることは保証されない。**
-その差（相対ドリフト）が Phase 2 の AEC の再整合頻度を決めるので、測れるようにしておく。
+Since input and output are opened as separate streams, **there's no guarantee they
+advance at the same rate.** That difference (relative drift) determines how often
+Phase 2's AEC needs to re-align, so it needs to be measurable.
 
-オーディオコールバックは「先読み」で呼ばれ、その先読み量は数 ms 揺れる。
-2点の差で傾きを出すとこの揺れがそのまま ppm に化けるため、**最小二乗を当て、残差も返す。**
-残差が大きいまま出た ppm は信用してはいけない。
+The audio callback is invoked with "look-ahead," and the amount of look-ahead jitters
+by a few ms. Computing a slope from just two points would turn that jitter directly
+into ppm error, so **a least-squares fit is used, and the residual is also returned.**
+A ppm value with a large residual should not be trusted.
 """
 
 from __future__ import annotations
@@ -16,19 +18,19 @@ import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-#: 傾きを当てる最小のサンプル数。これを下回るなら推定しない（**当てずっぽうを返さない**）。
+#: Minimum sample count needed to fit a slope. Below this, no estimate is made (**never return a guess**).
 MIN_SAMPLES = 64
 
 
 @dataclass(frozen=True, slots=True)
 class DriftEstimate:
-    """実時間に対するストリーム時間の進み方。"""
+    """How stream time advances relative to wall-clock time."""
 
     ppm: float
-    """百万分率。+100 なら実時間より 100 ppm 速い。"""
+    """Parts per million. +100 means 100 ppm faster than wall-clock time."""
 
     residual_ms: float
-    """直線からの残差（標準偏差）。**これが大きいなら ppm を信用しない。**"""
+    """Residual from the fitted line (standard deviation). **Don't trust ppm if this is large.**"""
 
     samples: int
 
@@ -37,19 +39,22 @@ class DriftEstimate:
 
 
 def drift_ms(ppm: float, seconds: float) -> float:
-    """`ppm` のずれが `seconds` 秒で何 ms たまるか。**符号は捨てる**（大きさだけを見る）。
+    """How many ms a `ppm` drift accumulates over `seconds` seconds. **Sign is discarded**
+    (only magnitude matters).
 
-    ppm → ms の換算を**ここ1箇所に置く**。呼び出し側で書き下すと、
-    相対ドリフト（`relative_ppm` の戻り値）と絶対ドリフトで式が分かれて必ずずれる。
+    The ppm → ms conversion **lives in this one place.** Writing it out at each call
+    site would inevitably diverge between relative drift (`relative_ppm`'s return value)
+    and absolute drift.
     """
     return abs(ppm) * seconds / 1e3
 
 
 def estimate_drift(samples: Sequence[tuple[float, float]]) -> DriftEstimate | None:
-    """`(実時間[秒], ストリーム時間[秒])` の列から進み方を推定する。
+    """Estimate the rate from a sequence of `(wall time [s], stream time [s])`.
 
-    **後半だけを使う。** 開始直後はバッファの充填で傾きが立つため、そこを含めると過大に出る。
-    サンプルが足りなければ `None`（**推定できないことを推定値で埋めない**）。
+    **Only the second half is used.** Right after start, buffer filling produces a
+    spurious slope, and including it would overestimate. Returns `None` if there aren't
+    enough samples (**never fill "can't estimate" with a guess**).
     """
     if len(samples) < MIN_SAMPLES:
         return None
@@ -72,5 +77,5 @@ def estimate_drift(samples: Sequence[tuple[float, float]]) -> DriftEstimate | No
 
 
 def relative_ppm(capture: DriftEstimate, playback: DriftEstimate) -> float:
-    """入力と出力のクロックの差。**AEC を壊すのはこの値。**"""
+    """The difference between input and output clocks. **This is the value that breaks AEC.**"""
     return capture.ppm - playback.ppm

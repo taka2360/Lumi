@@ -1,17 +1,18 @@
-//! Core サイドカーの起動・生存監視・確実な終了。
+//! Launching the Core sidecar, watching it stay alive, and reliably terminating it.
 //!
-//! 要件 → docs/interfaces/shell.md `spawnSidecar`
+//! Requirements → docs/interfaces/shell.md `spawnSidecar`
 //!
-//! | # | 要件 | 実装 |
+//! | # | Requirement | Implementation |
 //! |---|---|---|
-//! | 1 | Shell 終了時に Core も確実に終了する | **Job Object（強制終了でも効く）＋** 明示的 kill ＋ stdin EOF による自己終了の3層 → `job_object.rs` |
-//! | 2 | Core が異常終了したら検知して再起動する | 監視タスクが指数バックオフで再起動 |
-//! | 3 | WS token を環境変数で渡す | `LUMI_WS_TOKEN_SHELL` / `LUMI_WS_TOKEN_STAGE`。**コマンドラインに載せない** |
-//! | 4 | stdout / stderr を Shell 側でログに落とす | 1行ずつ `log` に流す |
+//! | 1 | Core reliably terminates when Shell terminates | Three layers: **Job Object (works even under force-kill) +** explicit kill + self-termination via stdin EOF → `job_object.rs` |
+//! | 2 | Detects and restarts Core if it exits abnormally | The watcher task restarts with exponential backoff |
+//! | 3 | Pass the WS token via environment variable | `LUMI_WS_TOKEN_SHELL` / `LUMI_WS_TOKEN_STAGE`. **Never put it on the command line** |
+//! | 4 | Shell logs stdout / stderr | Streamed to `log` line by line |
 //!
-//! **ポート番号は Core の stdout から読む。** Core は 127.0.0.1 の空きポートに bind し、
-//! `core.ws.listening` という構造化ログを 1 行出す。Shell が先にポートを決めて渡す方式は、
-//! 決めてから起動するまでの間に他プロセスに取られる余地があるため採らない。
+//! **The port number is read from Core's stdout.** Core binds to a free port
+//! on 127.0.0.1 and emits a single structured log line, `core.ws.listening`.
+//! Having Shell decide the port up front and hand it over isn't used, since
+//! another process could grab it in the gap between deciding and launching.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -24,49 +25,53 @@ use tokio::sync::{watch, Mutex};
 
 use crate::job_object::KillOnCloseJob;
 
-/// `CREATE_NO_WINDOW`。コンソールの実行体を**窓なしで**起動する。
+/// `CREATE_NO_WINDOW`. Launches the console executable **without a window.**
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Core に渡す token。**role ごとに別のものを渡す**（B2 / B3）。
+/// The token passed to Core. **A different one is passed per role** (B2 / B3).
 #[derive(Debug, Clone)]
 pub struct CoreTokens {
     pub shell: String,
     pub stage: String,
 }
 
-/// Core を起動するコマンド。**純粋なデータ**にしておき、決定をテストできるようにする。
+/// The command that launches Core. Kept as **pure data** so the decision is testable.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoreLaunchSpec {
     pub program: PathBuf,
     pub args: Vec<String>,
 }
 
-/// 配布物に同梱されたサイドカーの実行体名。
+/// The sidecar executable name bundled into the distributable.
 const SIDECAR_NAME: &str = "lumi-core.exe";
 
-/// サイドカーを探す場所（実行体のあるディレクトリからの相対）。**順に見る。**
+/// Where to look for the sidecar (relative to the directory the executable is
+/// in). **Checked in this order.**
 ///
-/// `core/` は Tauri の `resources` が配置する場所。PyInstaller の onedir 出力は
-/// 実行体と 80 個以上の依存ファイルの組なので、**Shell の隣に撒かずにディレクトリごと置く**
-/// （→ docs/decisions/ADR-021-sidecar-packaging.md）。
+/// `core/` is where Tauri's `resources` places it. PyInstaller's onedir
+/// output is a bundle of the executable plus 80+ dependency files, so
+/// **it's placed as a whole directory instead of scattered next to Shell**
+/// (→ docs/decisions/ADR-021-sidecar-packaging.md).
 const SIDECAR_DIRS: &[&str] = &["core", "."];
 
-/// 子プロセスの終了を確認する間隔。`wait` は可変参照を要求し、
-/// 終了時に kill するための保持と両立しないので、短い間隔で `try_wait` する。
+/// The interval for checking whether the child process has exited. `wait`
+/// requires a mutable reference, which conflicts with holding it to `kill` on
+/// shutdown, so `try_wait` is polled at a short interval instead.
 const WAIT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
-/// どうやって Core を起動するかを決める。**純粋関数**。
+/// Decides how to launch Core. **A pure function.**
 ///
-/// 1. 開発用のプロジェクトが分かっていれば `uv run` で `core/` を起動する
-/// 2. 無ければ同梱サイドカー（配布された Lumi の経路）
-/// 3. どちらも無ければ `None` = **起動しない**。黙って劣化させない
+/// 1. If a dev project is known, launch `core/` via `uv run`
+/// 2. Otherwise, the bundled sidecar (the path for a distributed Lumi)
+/// 3. If neither is available, `None` = **don't launch.** Never degrade silently
 ///
-/// **開発時にソースを優先するのは、固めたサイドカーが同じ場所に置かれるため。**
-/// `tauri dev` も `resources` を `target/debug/core/` に配るので、サイドカーを
-/// 優先すると **Python を編集しても反映されない**（起動するのは前回固めた実行体）。
-/// 実際にこれを踏んだ（2026-08-15）。`core_project_dir` は debug ビルドでしか
-/// 与えられないので、配布物では常にサイドカーが選ばれる。
+/// **The reason source is preferred during development is that the built
+/// sidecar sits in the same location.** `tauri dev` also places `resources`
+/// under `target/debug/core/`, so preferring the sidecar would mean **editing
+/// Python has no effect** (the previously built executable would run
+/// instead). This actually happened (2026-08-15). `core_project_dir` is only
+/// ever supplied in debug builds, so the sidecar is always chosen in the distributable.
 pub fn resolve_launch_spec(
     sidecar: Option<&Path>,
     core_project_dir: Option<&Path>,
@@ -86,19 +91,20 @@ pub fn resolve_launch_spec(
     Some(CoreLaunchSpec { program: path.to_path_buf(), args: Vec::new() })
 }
 
-/// 同梱サイドカーを探す。存在しなければ `None`（= 開発経路にフォールバックする）。
+/// Looks for the bundled sidecar. `None` if it doesn't exist (= falls back to the dev path).
 pub fn find_sidecar(exe_dir: &Path) -> Option<PathBuf> {
     sidecar_candidates(exe_dir).into_iter().find(|path| path.is_file())
 }
 
-/// 探す順に並べた候補。**純粋関数**（ファイルシステムに触らない）。
+/// Candidates ordered by search priority. **A pure function** (doesn't touch the filesystem).
 pub fn sidecar_candidates(exe_dir: &Path) -> Vec<PathBuf> {
     SIDECAR_DIRS.iter().map(|dir| exe_dir.join(dir).join(SIDECAR_NAME)).collect()
 }
 
-/// stdout の 1 行から listen ポートを取り出す。**純粋関数**。
+/// Extracts the listening port from a single line of stdout. **A pure function.**
 ///
-/// Core の構造化ログ（1行1JSON）のうち `event == "core.ws.listening"` の行だけを見る。
+/// Only looks at lines from Core's structured log (one JSON object per line)
+/// where `event == "core.ws.listening"`.
 pub fn parse_listening_port(line: &str) -> Option<u16> {
     let value: serde_json::Value = serde_json::from_str(line).ok()?;
     if value.get("event").and_then(|v| v.as_str()) != Some("core.ws.listening") {
@@ -108,14 +114,14 @@ pub fn parse_listening_port(line: &str) -> Option<u16> {
     u16::try_from(port).ok()
 }
 
-/// 再起動の待ち時間。**純粋関数**。落ち続けるものを 100% CPU で叩き直さない。
+/// The restart backoff delay. **A pure function.** Avoids hammering something that keeps failing at 100% CPU.
 pub fn restart_delay(consecutive_failures: u32) -> Duration {
     let capped = consecutive_failures.min(4);
     Duration::from_millis(500 * 2_u64.pow(capped))
 }
 
-/// 起動中の Core。**stdin を保持し続ける**ことが重要。
-/// ここで stdin を drop すると Core 側の親監視が EOF を受け取って即座に終了する。
+/// A running Core process. **Holding onto stdin matters.**
+/// Dropping stdin here makes Core's own parent-watch see EOF and exit immediately.
 struct RunningCore {
     child: Child,
 }
@@ -125,8 +131,9 @@ pub struct CoreSupervisor {
     running: Arc<Mutex<Option<RunningCore>>>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
     port_tx: watch::Sender<Option<u16>>,
-    /// Shell のプロセスが消えた時点で Core（とその子）を道連れにするためのジョブ。
-    /// **強制終了に耐える唯一の層**なので、supervisor と同じ寿命で持つ。
+    /// The job that takes Core (and its children) down together the moment
+    /// Shell's process disappears. **The only layer that survives a force-kill**,
+    /// so it's held with the same lifetime as the supervisor.
     job: Arc<Option<KillOnCloseJob>>,
 }
 
@@ -135,7 +142,7 @@ impl CoreSupervisor {
         let (port_tx, port_rx) = watch::channel(None);
         let job = KillOnCloseJob::create();
         if job.is_none() {
-            // 黙って弱くならない。ゾンビが残りうる状態であることをログに残す。
+            // Never silently weaken. Logs that zombies may be left behind.
             log::warn!("core.job_object.unavailable 強制終了時に Core が残る可能性がある");
         }
         let supervisor = Self {
@@ -147,7 +154,7 @@ impl CoreSupervisor {
         (supervisor, port_rx)
     }
 
-    /// 監視ループを開始する。Core が落ちたら再起動する。
+    /// Starts the watch loop. Restarts Core if it goes down.
     pub fn start(&self, spec: CoreLaunchSpec, tokens: CoreTokens) {
         let supervisor = self.clone();
         tauri::async_runtime::spawn(async move {
@@ -159,7 +166,7 @@ impl CoreSupervisor {
                 if let Err(err) = supervisor.spawn_once(&spec, &tokens).await {
                     log::error!("core.spawn_failed {err}");
                 }
-                // 正常終了でも異常終了でも、Shell が生きている限り Core は居るべき。
+                // Whether it exited normally or abnormally, Core should be present as long as Shell is alive.
                 failures = failures.saturating_add(1);
                 if supervisor.is_shutting_down() {
                     return;
@@ -178,26 +185,28 @@ impl CoreSupervisor {
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
-            // **token はコマンドラインに載せない。**（ps で他プロセスから見える）
+            // **The token is never put on the command line** (visible to other processes via `ps`).
             .env("LUMI_WS_TOKEN_SHELL", &tokens.shell)
             .env("LUMI_WS_TOKEN_STAGE", &tokens.stage)
-            // 親が消えたら自分も終わる（ゾンビ対策の2枚目）。
+            // Exits on its own once the parent disappears (the second layer of zombie prevention).
             .env("LUMI_PARENT_WATCH", "stdin")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
-        // **コンソールウィンドウを出さない。** Core は console サブシステムの実行体
-        // （stdout の構造化ログを Shell が読む契約なので windowed にはできない）。
-        // これを付けないと黒い cmd の窓が一緒に出て、しかもユーザーがそれを閉じると
-        // Core が死に、Supervisor が正しく再起動して**また喋り直す**（2026-08-15 実測）。
+        // **Never show a console window.** Core is a console-subsystem
+        // executable (it can't be windowed, since the contract is that Shell
+        // reads its structured stdout log). Without this flag, a black cmd
+        // window appears alongside it, and if the user closes that window,
+        // Core dies and the Supervisor correctly restarts it — **and it starts talking again** (observed 2026-08-15).
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
 
         let mut child = command.spawn()?;
 
-        // **起動直後にジョブへ入れる。** ここより後に Shell が死ぬと道連れにできない。
+        // **Assigns it to the job immediately after launch.** If Shell dies
+        // after this point, it can't be taken down together.
         #[cfg(windows)]
         if let Some(job) = self.job.as_ref() {
             let assigned = match child.raw_handle() {
@@ -233,8 +242,8 @@ impl CoreSupervisor {
 
         log::info!("core.spawned program={:?}", spec.program);
 
-        // 待つ前に child を state に置く（終了時に kill できるようにする）。
-        // `wait` には可変参照が要るので、待機用のハンドルだけ別に取る。
+        // Puts the child into state before waiting (so it can be killed on shutdown).
+        // `wait` needs a mutable reference, so only the handle used for waiting is taken separately.
         let pid = child.id();
         {
             let mut slot = self.running.lock().await;
@@ -243,7 +252,7 @@ impl CoreSupervisor {
         loop {
             let mut slot = self.running.lock().await;
             let Some(running) = slot.as_mut() else {
-                // shutdown 側が奪って kill した。
+                // The shutdown path took it and killed it.
                 log::info!("core.taken_over_by_shutdown pid={pid:?}");
                 return Ok(());
             };
@@ -261,14 +270,14 @@ impl CoreSupervisor {
         }
     }
 
-    /// Shell の終了時に呼ぶ。**確実に殺す。ゾンビを残さない。**
+    /// Called when Shell exits. **Reliably kills it. Never leaves a zombie behind.**
     pub async fn shutdown(&self) {
         self.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
         let mut slot = self.running.lock().await;
         if let Some(mut running) = slot.take() {
-            // stdin を先に落とす → Core は EOF を見て自分で終了する（正常系）。
+            // Closes stdin first → Core sees EOF and exits on its own (the normal path).
             drop(running.child.stdin.take());
-            // 応答が無ければ確実に殺す。
+            // Kills it outright if there's no response.
             let _ = running.child.kill().await;
             log::info!("core.killed");
         }
@@ -277,7 +286,7 @@ impl CoreSupervisor {
 
 #[cfg(test)]
 mod tests {
-    // テストは panic してよい場所なので unwrap を許す。
+    // Tests are allowed to panic, so unwrap is permitted here.
     #![allow(clippy::unwrap_used)]
 
     use super::*;
@@ -291,8 +300,9 @@ mod tests {
 
     #[test]
     fn development_prefers_the_source_over_a_stale_sidecar() {
-        // **`tauri dev` も resources を target/debug/core/ に配る。**
-        // サイドカーを優先すると、Python を編集しても前回固めた実行体が動く。
+        // **`tauri dev` also places resources under target/debug/core/.**
+        // Preferring the sidecar would mean the previously built executable
+        // runs even after editing Python.
         let spec = resolve_launch_spec(
             Some(Path::new("C:/app/lumi-core.exe")),
             Some(Path::new("C:/repo/core")),
@@ -303,8 +313,8 @@ mod tests {
 
     #[test]
     fn looks_in_the_resources_directory_first() {
-        // 配布物では `core/` に入る（Tauri の resources）。
-        // 実行体の隣も見るのは、手で置いた場合と将来の externalBin のため。
+        // In the distributable, it lives under `core/` (Tauri's resources).
+        // Also checking next to the executable covers manual placement and a future externalBin.
         let candidates = sidecar_candidates(Path::new("C:/app"));
         assert_eq!(candidates.first().unwrap(), Path::new("C:/app/core/lumi-core.exe"));
         assert_eq!(candidates.len(), 2);
@@ -320,7 +330,7 @@ mod tests {
 
     #[test]
     fn refuses_to_guess_when_nothing_is_available() {
-        // 黙って起動しないより、起動しないことが分かる方がよい。
+        // Knowing it won't launch is better than it silently not launching.
         assert_eq!(resolve_launch_spec(None, None), None);
     }
 
@@ -335,7 +345,7 @@ mod tests {
         assert_eq!(parse_listening_port("not json"), None);
         assert_eq!(parse_listening_port(r#"{"event":"core.started"}"#), None);
         assert_eq!(parse_listening_port(r#"{"event":"core.ws.listening"}"#), None);
-        // ポート番号として成立しない値を通さない
+        // Doesn't let through a value that isn't a valid port number
         assert_eq!(parse_listening_port(r#"{"event":"core.ws.listening","port":99999}"#), None);
     }
 

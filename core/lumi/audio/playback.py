@@ -1,21 +1,21 @@
-"""スピーカー出力。**即時ミュートができることが実装要件。**
+"""Speaker output. **Instant mute is a hard implementation requirement.**
 
-設計 → docs/architecture/audio.md §3, §6 / 決定 → ADR-020
+Design → docs/architecture/audio.md §3, §6 / Decision → ADR-020
 
-> **TTS 再生の停止は `hard`。** バッファのミュートで即座に無音化できること
-> （docs/contracts/state-machines.md「Cancellation 契約」）。
+> **TTS playback stop is `hard`.** Muting the buffer must silence it instantly
+> (docs/contracts/state-machines.md "Cancellation contract").
 
-## Phase 0 の `play_wav` と何が違うか
+## How this differs from Phase 0's `play_wav`
 
-Phase 0 は「鳴り終わるまで待つ」だけで、**止める手段が無かった**。
-Phase 1 は常時開いたストリームにリング経由で書き込み、
-**コールバックが `mute_flag` を見て 0 を出す。** ここが barge-in の出口。
+Phase 0 only "waited until playback finished" — **there was no way to stop it**.
+Phase 1 writes through a ring buffer into an always-open stream, and
+**the callback checks `mute_flag` and outputs 0.** This is the barge-in exit point.
 
-## reference リング
+## reference ring
 
-**再生リングに書いたサンプルそのもの**を残す（ハードウェアから取らない）。
-Lumi は再生する音を自分で作っているので、それが参照信号になる。
-**ミュートした事実も含めて残す** — Phase 2 の AEC は「実際にスピーカーへ出た波形」を要る。
+Keep **the exact samples written to the playback ring** (not captured from hardware).
+Lumi generates the sound it plays itself, so that becomes the reference signal.
+**Keep the mute events too** — Phase 2's AEC needs "the waveform that actually reached the speaker."
 """
 
 from __future__ import annotations
@@ -31,18 +31,18 @@ from lumi.audio.ring import RingBuffer, Samples
 
 log = lumi_logging.get_logger(__name__)
 
-#: 再生リングの長さ〔Provisional〕。**先読み生成した数文を保持できる長さ**
+#: Playback ring length [Provisional]. **Long enough to hold several pre-generated sentences**
 PLAYBACK_RING_SECONDS: Final = 30.0
-#: 参照信号のリング。AEC の遅延推定に必要な分（Phase 2）
+#: Reference signal ring. Sized for AEC delay estimation (Phase 2)
 REFERENCE_RING_SECONDS: Final = 4.0
 
 
 class PlaybackUnavailable(RuntimeError):
-    """出力を開けない。**黙って無音にしない。**"""
+    """Cannot open output. **Never fail silently into muted audio.**"""
 
 
 class SpeakerPlayback:
-    """出力ストリーム + リング + `mute_flag`。"""
+    """Output stream + ring buffer + `mute_flag`."""
 
     __slots__ = ("_mute_flag", "_plan", "_reference", "_ring", "_stream", "_underruns")
 
@@ -50,7 +50,7 @@ class SpeakerPlayback:
         self._plan = plan
         self._ring = RingBuffer(int(plan.samplerate * PLAYBACK_RING_SECONDS))
         self._reference = RingBuffer(int(plan.samplerate * REFERENCE_RING_SECONDS))
-        #: **VAD スレッドと共有する。** これが立つと次のコールバックから無音になる
+        #: **Shared with the VAD thread.** Once set, output goes silent from the next callback onward
         self._mute_flag = mute_flag or threading.Event()
         self._underruns = 0
         self._stream: Any = None
@@ -65,7 +65,7 @@ class SpeakerPlayback:
 
     @property
     def reference(self) -> RingBuffer:
-        """Phase 2 の AEC が読む。**Phase 1 では書くだけ。**"""
+        """Read by Phase 2's AEC. **Phase 1 only writes to it.**"""
         return self._reference
 
     def start(self) -> None:
@@ -84,44 +84,44 @@ class SpeakerPlayback:
             raise PlaybackUnavailable(f"出力を開けない: {error}") from error
 
     def _callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
-        """**リアルタイム制約下。** 見るのは `mute_flag` とリングだけ。"""
+        """**Runs under real-time constraints.** Only touches `mute_flag` and the ring buffer."""
         del time_info
         if status:
             self._underruns += 1
 
         view = np.asarray(outdata, dtype=np.float32).reshape(-1)
         if self._mute_flag.is_set():
-            # ★ **ここで音が止まる。** 生成中のものを待たない
+            # * **Sound stops here.** Does not wait for in-progress generation
             view[:] = 0.0
         else:
             self._ring.read_into(view)
 
-        # **実際に出した分**を参照信号として残す（ミュートした 0 も含めて）
+        # Keep **what was actually output** as the reference signal (including muted zeros)
         self._reference.write(view)
         del frames
 
     def write(self, samples: Samples) -> None:
-        """再生キューに足す。**デバイスのレートに揃えてから渡すこと。**"""
+        """Append to the playback queue. **Must be resampled to the device rate before passing in.**"""
         self._ring.write(samples)
 
     @property
     def queued(self) -> int:
-        """再生待ちのサンプル数。**Inspector とテストが「捨てられたか」を見る。**"""
+        """Number of samples still queued for playback. **Used by the Inspector and tests to check whether audio was dropped.**"""
         return self._ring.available
 
     def is_active(self) -> bool:
-        """再生中か。**EchoGuard L1 の閾値ブーストはこれで決まる。**"""
+        """Whether playback is active. **Determines EchoGuard L1's threshold boost.**"""
         return not self._mute_flag.is_set() and self._ring.available > 0
 
     def mute(self) -> None:
-        """**barge-in の出口。** 同期。次のコールバックから無音になる。"""
+        """**The barge-in exit point.** Synchronous — silence takes effect from the next callback."""
         self._mute_flag.set()
 
     def unmute(self) -> None:
         self._mute_flag.clear()
 
     def clear(self) -> None:
-        """**再生予定を捨てる。** 中断したあと、古い音が再開しないように。"""
+        """**Discard queued playback.** Prevents stale audio from resuming after an interruption."""
         self._ring.clear()
 
     def stop(self) -> None:

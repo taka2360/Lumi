@@ -1,7 +1,8 @@
-"""会話セッションと trust の3スコープ。**docs/contracts/provenance.md テスト 8 / 9 / 10 / 11。**
+"""The conversation session and trust's 3 scopes. **docs/contracts/provenance.md tests 8 / 9 / 10 / 11.**
 
-ここが Invariant 7（No Laundering）の要である。汚染が消える経路を1つでも作ると、
-「Web を読んだあとの Lumi の発話」から taint が抜けて、次のターンで L3 が素通りする。
+This is the crux of Invariant 7 (No Laundering). Building even one path where taint
+disappears would strip it from "what Lumi says after reading the web," letting L3
+pass through unchecked on the next turn.
 """
 
 from __future__ import annotations
@@ -13,18 +14,19 @@ from lumi.provenance import TrustLevel
 
 
 def test_a_new_session_starts_trusted() -> None:
-    """**テスト11。** セッションを跨いで汚染を持ち越さない（provenance.md 規則5）。
+    """**Test 11.** Taint never carries over across sessions (provenance.md rule 5).
 
-    これが「文脈を切れば汚染から抜けられる」というユーザーの逃げ道になっている。
+    This is the user's escape hatch: "cutting context lets you get out of taint."
     """
     assert Session().session_trust is TrustLevel.TRUSTED
 
 
 def test_a_small_talk_turn_stays_trusted() -> None:
-    """**テスト8。** persona とユーザー発話だけで作った Lumi のターンは汚染されない。
+    """**Test 8.** A Lumi turn built solely from persona and the user's utterance is never tainted.
 
-    ここを一律 tainted にすると、**2ターン目以降が常に TAINTED** になり、
-    provenance 昇格が常時発火して規則が判別力を失う。
+    Making this uniformly tainted would make **every turn from the second one onward
+    always TAINTED**, causing provenance escalation to fire constantly and stripping
+    the rule of its discriminating power.
     """
     session = Session()
     session.record_user_utterance("おはよう")
@@ -43,16 +45,17 @@ def test_a_tool_result_taints_the_session() -> None:
 
 
 def test_the_session_trust_is_sticky() -> None:
-    """**テスト9。** untrusted なブロックが文脈から落ちても汚染は残る。
+    """**Test 9.** Taint remains even after an untrusted block drops out of context.
 
-    sticky でないと、**ブロックが予算超過で落ちた瞬間に taint が消える。**
-    インジェクション文字列は LLM の中に「意図」として残るので、それでは足りない。
+    Without being sticky, **taint would vanish the instant a block falls out from
+    budget overflow.** An injection string lingers inside the LLM as "intent," so
+    that alone isn't enough.
     """
     session = Session()
     session.record_user_utterance("このページ読んで")
     session.observe(TrustLevel.TAINTED)
 
-    # 次のターンではブロックを渡さない（block_trust は trusted）
+    # No block passed on the next turn (block_trust is trusted)
     session.record_lumi_turn("読んだよ", TrustLevel.TAINTED)
     session.record_user_utterance("ところで今日の天気は？")
 
@@ -62,10 +65,11 @@ def test_the_session_trust_is_sticky() -> None:
 
 
 def test_compact_preserves_the_join() -> None:
-    """**テスト10。** Working Memory を縮めても `history_trust` は下がらない。
+    """**Test 10.** `history_trust` never decreases even when Working Memory shrinks.
 
-    〔Phase 1 は要約せずに落とすだけ。要約への置換は Phase 2（Reflection が要る）。
-    **join を保存するという契約は同じ**なので、置き換わっても振る舞いは変わらない。〕
+    [Phase 1 just drops without summarizing. Replacing this with summarization is
+    Phase 2 (needs Reflection). Since **the contract of preserving the join stays the
+    same**, behavior doesn't change once it's replaced.]
     """
     session = Session()
     session.record_user_utterance("ページの内容を教えて")
@@ -78,7 +82,7 @@ def test_compact_preserves_the_join() -> None:
     assert dropped == 2
     assert len(session.turns) == 1
     assert session.turns[0].trust_level is TrustLevel.TRUSTED
-    # ★ **落とした Turn の汚染が残っている**
+    # * **The dropped Turn's taint remains**
     assert session.history_trust is TrustLevel.TAINTED
 
 
@@ -95,7 +99,7 @@ def test_compact_rejects_a_negative_count() -> None:
 
 
 def test_recording_a_lumi_turn_also_taints_the_session() -> None:
-    """ターンの汚染が session に伝播する。**記録だけして観測しない、が起きないように。**"""
+    """A turn's taint propagates to the session. **Prevents "recorded but not observed" from happening.**"""
     session = Session()
     session.record_lumi_turn("さっき読んだページによると…", TrustLevel.TAINTED)
     assert session.session_trust is TrustLevel.TAINTED

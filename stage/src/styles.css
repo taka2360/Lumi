@@ -1,5 +1,5 @@
-/* Stage は透過ウィンドウ。**背景を塗らない**。
-   ここで色を塗ると、透過ウィンドウの意味が無くなる。 */
+/* The Stage is a transparent window. **Never paint a background.**
+   Painting a color here would defeat the point of a transparent window. */
 :root {
   color-scheme: light dark;
 }
@@ -13,8 +13,9 @@ body,
   height: 100%;
   background: transparent;
   overflow: hidden;
-  /* 透過部分でマウスイベントを拾わない。クリックスルーの判定は Shell 側が持つが、
-     WebView 側でも拾わないようにしておく（多層防御ではなく、単純な整合性のため）。 */
+  /* Don't pick up mouse events on the transparent area. The click-through
+     decision belongs to the Shell side, but this keeps the WebView side from
+     picking them up too (for simple consistency, not defense in depth). */
   user-select: none;
   -webkit-user-select: none;
 }
@@ -35,15 +36,15 @@ body {
   height: 100%;
 }
 
-/* ホバー中はうっすら光らせる。クリックスルーが解除されている状態が見えること自体が
-   Phase 0 の検証項目（roadmap 検証手順 4）。 */
+/* A faint glow while hovered. Being able to see click-through released is
+   itself a Phase 0 verification item (roadmap verification step 4). */
 .stage--hover .character {
   filter: drop-shadow(0 0 12px rgba(160, 200, 255, 0.85));
 }
 
-/* オーバーレイ（セットアップ UI と注意書き）。
-   **中身に合わせて縮む**ようにする。ここが広いと、その分だけクリックスルーが
-   解除されてしまう（当たり判定として Shell に渡すため）。 */
+/* The overlay (setup UI and notices).
+   **Shrinks to fit its contents.** Making this wider releases click-through
+   over that much more area (since it's handed to Shell as the hit region). */
 .overlay {
   position: absolute;
   left: 50%;
@@ -98,8 +99,8 @@ body {
   color: #ffb4b4;
 }
 
-/* **取得する / しない を同等に提示する**（ADR-019 原則2）。
-   同じ大きさ・同じ色。片方を目立たせない。 */
+/* **Presents "grant" and "decline" as equals** (ADR-019 principle 2).
+   Same size, same color. Never make one stand out over the other. */
 .panel__actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -121,9 +122,9 @@ body {
   background: rgba(255, 255, 255, 0.18);
 }
 
-/* キャラクターを掴む面。ドラッグで移動、ホイールで拡大縮小
-   （docs/architecture/ui.md「ウィンドウの移動と大きさ」）。
-   **キャラクターの上でだけ効く。** 透過部分は Shell がクリックスルーにしている。 */
+/* The surface for grabbing the character. Drag to move, wheel to resize
+   (docs/architecture/ui.md "Moving and resizing the window").
+   **Only active over the character.** Shell makes the transparent area click-through. */
 .stage__grab {
   width: 100%;
   height: 100%;
@@ -134,7 +135,7 @@ body {
   cursor: grabbing;
 }
 
-/* 起動中の表示。キャラクターが出るまでの間に何が起きているかを見せる。 */
+/* The boot-time display. Shows what's happening before the character appears. */
 .boot {
   display: flex;
   flex-direction: column;
@@ -164,14 +165,14 @@ body {
   }
 }
 
-/* 動きを減らす設定を尊重する。**回り続けるものは、その設定の主な対象**。 */
+/* Respects the reduced-motion setting. **Something that spins forever is exactly what that setting targets.** */
 @media (prefers-reduced-motion: reduce) {
   .boot__spinner {
     animation: none;
   }
 }
 
-/* **主語は Lumi。** ここが一番大きい（docs/architecture/ui.md「起動フェーズ」）。 */
+/* **The subject is Lumi.** This is the largest element here (docs/architecture/ui.md "Boot phase"). */
 .boot__title {
   margin: 0;
   font-size: 13px;
@@ -180,7 +181,7 @@ body {
   line-height: 1.5;
 }
 
-/* 今どの内訳を進めているか。見出しより小さくして、内訳であることを見せる。 */
+/* Which sub-step is currently in progress. Smaller than the heading, to show that it's a sub-step. */
 .boot__step {
   margin: 0;
   font-size: 12px;
@@ -211,7 +212,7 @@ body {
   transition: width 200ms ease-out;
 }
 
-/* VRM が未配置であることの表示。**隠さない。** */
+/* A notice that no VRM is placed yet. **Never hide it.** */
 .notice {
   margin: 0;
   padding: 4px 8px;

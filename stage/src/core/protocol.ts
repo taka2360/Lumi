@@ -1,10 +1,11 @@
 /**
- * Core との WS プロトコル（Stage 側）— **純粋な型と解釈だけ**。
+ * The WS protocol with Core (Stage side) — **pure types and parsing only**.
  *
- * Core 側の定義は `core/lumi/transport/protocol.py`。**両方を同時に直す。**
+ * The corresponding definition on the Core side is `core/lumi/transport/protocol.py`.
+ * **Fix both at the same time.**
  *
- * Stage が受け取るのは `stage.*` だけ。`os.*` は届かないし、届いても解釈しない
- * （**`stage.*` は絶対に OS 特権を要求しない** → docs/architecture/core.md §3）。
+ * The Stage receives only `stage.*`. `os.*` never arrives, and even if it did it
+ * would never be interpreted (**`stage.*` must never request OS privileges** → docs/architecture/core.md §3).
  */
 
 export const PROTOCOL_VERSION = 1;
@@ -35,10 +36,10 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 /**
- * 受信メッセージを解釈する。**解釈できないものは null**（黙って何かを実行しない）。
+ * Parses a received message. **`null` if it can't be parsed** (never executes anything silently).
  *
- * `stage.` で始まらない method は捨てる。Core は送ってこないはずだが、
- * **送られてきても Stage が受け取らない**ことを型と実装の両方で担保する。
+ * A method not starting with `stage.` is discarded. Core shouldn't send one, but
+ * **even if it did, both the type and the implementation guarantee the Stage never receives it.**
  */
 export function parseCoreMessage(raw: string): CoreMessage | null {
   let value: unknown;

@@ -1,15 +1,15 @@
-"""会話に必要なものを組み立てる。**構成だけ。判断は持たない。**
+"""Assembles what a conversation needs. **Wiring only. Holds no judgment.**
 
-起動シーケンス → docs/architecture/core.md §7
+Startup sequence → docs/architecture/core.md §7
 
-`__main__` から分けているのは、**「何と何が繋がっているか」を1画面で読めるようにする**ため。
-Phase 0 の `Greeter` が置き換わったもので、`greeting.py` はここに吸収されて消えた。
+Separated out from `__main__` so **"what connects to what" can be read on one screen**.
+This replaces Phase 0's `Greeter`; `greeting.py` was absorbed into here and no longer exists.
 
-## 未セットアップは「壊れている」ではない
+## Not-yet-set-up is not "broken"
 
-Ollama が入っていない / STT のモデルがまだ無い / 入力デバイスが無い —
-いずれも**正常な状態**であり、明示して起動を続ける（ADR-023 / docs/architecture/setup.md）。
-**黙って劣化させない**が、起動を止めもしない。
+Ollama not installed / no STT model yet / no input device —
+all of these are **normal states**, and startup continues while making that explicit
+(ADR-023 / docs/architecture/setup.md). **Never silently degrade**, but never block startup either.
 """
 
 from __future__ import annotations
@@ -50,16 +50,16 @@ from lumi.transport.server import WsServer
 
 log = lumi_logging.get_logger(__name__)
 
-#: 使う LLM。**モデルの取得は Lumi がしない**（ADR-023）
+#: The LLM to use. **Lumi doesn't fetch the model itself** (ADR-023)
 MODEL_ENV: Final = "LUMI_LLM_MODEL"
 DEFAULT_MODEL: Final = "qwen3:4b"
-#: STT のモデルサイズ〔Provisional〕。実測してから確定させる
+#: STT model size [Provisional]. To be finalized after measurement
 STT_MODEL_ENV: Final = "LUMI_STT_MODEL"
 DEFAULT_STT_MODEL: Final = "small"
 
 
 class ConversationRuntime:
-    """会話に要るものを持ち、起動と停止を担う。**使い捨てではない**（プロセスと同じ寿命）。"""
+    """Holds what conversation needs and owns start/stop. **Not disposable** (lives as long as the process)."""
 
     __slots__ = ("_audio", "_database", "_loop", "_providers", "_setup", "_task")
 
@@ -69,9 +69,10 @@ class ConversationRuntime:
         self._audio = AudioIO(plan)
         self._providers = ProviderRegistry()
 
-        # **イベントの置き場所は決めない。** どこに置くかを決めるには「何を書いてよいか」を
-        # 決める必要があり、それは Phase 2 の contracts/privacy.md が決めること。
-        # **先に場所だけ決めて、後から意味を付けない。**
+        # **The location for events is not decided here.** Deciding where requires
+        # deciding "what's allowed to be written," which is what Phase 2's
+        # contracts/privacy.md will settle. **Don't pin down a location first and
+        # attach meaning to it later.**
         self._database = Database.open(":memory:")
         self._database.migrate()
         log.info("core.event_store.in_memory", reason="privacy contract is Phase 2")
@@ -103,7 +104,7 @@ class ConversationRuntime:
         )
 
     async def start(self) -> None:
-        """**喋れるかどうかに関わらず起動する。** 足りないものはログと状態に出す。"""
+        """**Starts regardless of whether it can speak.** Missing pieces show up in logs and state."""
         self._register_providers()
         await self._audio.start()
 
@@ -114,8 +115,8 @@ class ConversationRuntime:
         log.info("conversation.started", can_listen=self._audio.can_listen)
 
     def _register_providers(self) -> None:
-        """**未セットアップでも登録する。** 失敗するのは `load()` の時であり、
-        そこで初めて「何が足りないか」を具体的に言える。
+        """**Registered even when not set up.** Failure happens at `load()` time, which
+        is the first point where "what's missing" can be stated concretely.
         """
         state = self._setup.state
         if state.usable and state.port is not None:
@@ -133,7 +134,7 @@ class ConversationRuntime:
         )
 
     async def stop(self) -> None:
-        """**Lumi が起動したものだけ止める**（docs/architecture/core.md §6）。"""
+        """**Only stops what Lumi itself started** (docs/architecture/core.md §6)."""
         if self._task is not None:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -149,7 +150,7 @@ class ConversationRuntime:
 
 
 def _load_pack() -> CharacterPack | None:
-    """**人格が無い Lumi は Lumi ではない。** 読めなければ会話を組み立てない。"""
+    """**Lumi without a persona isn't Lumi.** If it can't be read, conversation isn't assembled."""
     try:
         return load_character(paths.default_character_dir())
     except ContentPackError as error:
@@ -158,11 +159,12 @@ def _load_pack() -> CharacterPack | None:
 
 
 def _expression_sender(server: WsServer):  # type: ignore[no-untyped-def]
-    """`character.set_expression` の出口。**Tool は WS も Stage も知らない**（注入される）。
+    """Exit point for `character.set_expression`. **The Tool knows nothing about WS or
+    the Stage** (it's injected).
 
-    〔Step G〕`stage.character.expression` はまだ `wire.json` に無いので、
-    ここではログにだけ出す。**経路は本番と同じ**（マーカー → invoke → ここ）で、
-    足りないのは Stage 側の受け口と契約への追加だけ。
+    [Step G] `stage.character.expression` isn't in `wire.json` yet, so this only logs
+    for now. **The path is the same as production** (marker → invoke → here); all
+    that's missing is the Stage-side receiver and the contract addition.
     """
     del server
 

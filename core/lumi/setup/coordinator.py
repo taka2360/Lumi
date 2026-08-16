@@ -1,15 +1,16 @@
-"""初回セットアップの進行役。**判断はここに集める**（Stage は表示するだけ）。
+"""The coordinator for first-run setup. **All decisions are concentrated here**
+(the Stage only displays).
 
-設計 → docs/architecture/setup.md
+Design → docs/architecture/setup.md
 
-流れ:
+Flow:
 
 ```
-起動 → 検出（ローカルのみ）→ 状態が決まる
-Stage が接続 → 状態を配信
-  状態が not_configured で、まだ聞いていなければ → 取得するかを尋ねる
-    「取得する」→ installing（進捗を配信）→ installed / failed
-    「取得しない」→ not_configured のまま。**聞いたことだけ覚える**
+Startup → detection (local only) → state is determined
+Stage connects → state is broadcast
+  If state is not_configured and it hasn't been asked yet → ask whether to fetch
+    "Fetch" → installing (progress broadcast) → installed / failed
+    "Don't fetch" → stays not_configured. **Only remembers that it was asked**
 ```
 """
 
@@ -31,19 +32,20 @@ from lumi.transport.server import NotConnectedError, WsServer
 
 log = lumi_logging.get_logger(__name__)
 
-#: ユーザーが選ぶのを待つ時間。**人間の時間**なので長い。
+#: How long to wait for the user's choice. **Human time**, so it's long.
 PROMPT_TIMEOUT_S = 600.0
 
-#: 尋ねる回数の上限（失敗後の聞き直しを含む）。**しつこくしない。**
+#: The cap on how many times to ask (including retries after a failure). **Never nags.**
 MAX_PROMPTS = 2
 
-#: 状態を配信する method（Core → Stage）。
+#: The method for broadcasting state (Core → Stage).
 METHOD_STATE = "stage.setup.state"
-#: 取得するかを尋ねる method（Core → Stage、結果を待つ）。
+#: The method for asking whether to fetch (Core → Stage, awaits the result).
 METHOD_PROMPT = "stage.setup.prompt"
 
-#: Stage が result で返してくる選択肢。**線上に出る値**なので docs/contracts/wire.json が正
-#: （→ ADR-022）。`CHOICE_SKIP` は比較に使わないが、**契約の片側だけを書かない**ために置く。
+#: The choices the Stage returns in `result`. **A value that goes on the wire**, so
+#: docs/contracts/wire.json is authoritative (→ ADR-022). `CHOICE_SKIP` isn't used in
+#: any comparison, but it's kept here so **only one side of the contract isn't documented**.
 CHOICE_INSTALL = "install"
 CHOICE_SKIP = "skip"
 
@@ -55,13 +57,16 @@ class SetupCoordinator:
         self._state = TtsSetup(state=TtsSetupState.UNKNOWN)
         self._answers_path: Path = paths.setup_state_file()
         self._answers = SetupAnswers()
-        # **2つを分ける。** `_prompting` は「この一連の処理に入っているか」（多重起動の防止）、
-        # `_awaiting_answer` は「いま画面に質問が出ているか」（起動フェーズ）。
-        # 混ぜると、取得が終わった直後に質問画面が一瞬戻る（テストで踏んだ）。
+        # **Kept as two separate flags.** `_prompting` is "is this sequence
+        # currently in progress" (prevents duplicate runs); `_awaiting_answer` is
+        # "is a question currently shown on screen" (boot phase). Conflating them
+        # made the question screen flash back right after fetching finished (hit
+        # this in testing).
         self._prompting = False
         self._awaiting_answer = False
-        # **Stage は検出より先に繋がりうる。** 実測で先に繋がった（2026-08-15）。
-        # 状態が unknown のまま prompt の判定をすると、聞くべきときに聞かなくなる。
+        # **The Stage can connect before detection finishes.** Observed connecting
+        # first in practice (2026-08-15). Deciding whether to prompt while state is
+        # still unknown would skip asking when it should.
         self._initialized = asyncio.Event()
 
     @property
@@ -69,12 +74,12 @@ class SetupCoordinator:
         return self._state
 
     async def initialize(self) -> None:
-        """起動時に一度だけ。**外部通信しない。**"""
+        """Called exactly once at startup. **No external communication.**"""
         try:
             self._answers = await asyncio.to_thread(SetupAnswers.load, self._answers_path)
             await self._redetect()
         finally:
-            # 失敗しても待っている側を放置しない。
+            # Even on failure, whatever is waiting is never left hanging.
             self._initialized.set()
 
     async def _redetect(self) -> None:
@@ -83,7 +88,7 @@ class SetupCoordinator:
         if usable is None:
             await self._set_state(TtsSetup(state=TtsSetupState.NOT_CONFIGURED))
             return
-        # Lumi が入れたものと、ユーザー自身が入れたものを区別する（setup.md §2）。
+        # Distinguishes what Lumi installed from what the user installed themselves (setup.md §2).
         await self._set_state(
             TtsSetup(
                 state=(
@@ -101,28 +106,31 @@ class SetupCoordinator:
         await self._broadcast()
 
     async def _broadcast(self) -> None:
-        """今の状態を配る。**起動フェーズを含む**（docs/architecture/ui.md）。
+        """Broadcasts the current state. **Includes the boot phase** (docs/architecture/ui.md).
 
-        フェーズは「尋ねている最中か」にも依るので、状態が変わらなくても
-        **尋ね始めた / 尋ね終わったときには配り直す**。
+        The phase also depends on "is a question currently being asked," so
+        **it's rebroadcast whenever asking starts / finishes**, even if the state
+        itself hasn't changed.
         """
         payload = self._state.to_payload(prompting=self._awaiting_answer)
         log.info("setup.state", **payload)
         await self._server.notify(Role.STAGE, METHOD_STATE, payload)
 
     async def set_runtime(self, runtime: EngineRuntime) -> None:
-        """エンジン**プロセス**の状態が変わった。
+        """The engine **process**'s state changed.
 
-        導入の状態とは別の軸だが、Stage に配るのは同じ1つの状態なので、
-        **配信の出口をここに一本化する**（2箇所から送ると順序が保証できない）。
+        A separate axis from installation state, but it's the same single state
+        distributed to the Stage, so **broadcasting is consolidated to this one
+        exit point** (sending from two places couldn't guarantee ordering).
         """
         await self._set_state(replace(self._state, runtime=runtime))
 
     async def on_stage_connected(self) -> None:
-        """Stage が繋がった。現在の状態を配り、必要なら尋ねる。
+        """The Stage connected. Broadcasts the current state and asks if needed.
 
-        **検出が終わるのを待つ。** Stage の接続の方が先に来ることがあり、
-        待たないと状態が `unknown` のまま「尋ねなくてよい」と判断してしまう。
+        **Waits for detection to finish.** The Stage's connection can arrive first,
+        and without waiting, state would still be `unknown` and get judged as "no
+        need to ask."
         """
         await self._initialized.wait()
         await self._broadcast()
@@ -130,7 +138,7 @@ class SetupCoordinator:
         if self._state.state is not TtsSetupState.NOT_CONFIGURED:
             return
         if self._answers.tts_prompt_answered or self._prompting:
-            # **一度答えたら二度と聞かない。** 起動のたびに聞くのは鬱陶しさの典型。
+            # **Once answered, never asked again.** Asking every startup is the textbook definition of annoying.
             return
 
         self._prompting = True
@@ -139,21 +147,22 @@ class SetupCoordinator:
         finally:
             self._prompting = False
             self._awaiting_answer = False
-            # 答え終わった（あるいは諦めた）ことを配る。**待たせっぱなしにしない。**
+            # Broadcasts that answering is done (or was given up on). **Never left hanging.**
             await self._broadcast()
 
     async def _ask_and_maybe_install(self) -> None:
-        """尋ねて、選ばれたら取得する。**失敗したら一度だけ聞き直す。**
+        """Asks, and fetches if chosen. **Asks again exactly once if it fails.**
 
-        聞き直すのは1回まで。それ以上は鬱陶しさの方が害になる。
-        「まだ試していない」に戻さないので、状態は `failed` のまま残る。
+        Only one retry. Beyond that, the annoyance outweighs the benefit.
+        State stays `failed` since it's never reverted to "not yet attempted."
         """
         retry = False
         reason: str | None = None
 
         for _ in range(MAX_PROMPTS):
-            # **質問を出す前にフェーズを配る。** これを忘れると Stage は
-            # ローディングを出したまま、その裏で質問を出すことになる。
+            # **Broadcasts the phase before showing the question.** Forgetting this
+            # would leave the Stage showing a loading indicator while the question
+            # sits hidden behind it.
             self._awaiting_answer = True
             await self._broadcast()
             try:
@@ -164,14 +173,14 @@ class SetupCoordinator:
                     timeout=PROMPT_TIMEOUT_S,
                 )
             except (NotConnectedError, TimeoutError):
-                # 答えをもらえなかった。**「聞いた」ことにしない**（次の起動でまた尋ねる）。
+                # No answer was received. **Never counted as "asked"** (asked again next startup).
                 log.info("setup.prompt.unanswered")
                 return
 
-            # **答えが来た時点で質問は消える。** 取得中のフェーズを質問で塗り潰さない。
+            # **The question disappears the moment an answer arrives.** Never lets the question paint over the fetching phase.
             self._awaiting_answer = False
             choice = result.payload.get("choice") if result.ok else None
-            # **未知の答えは「取得しない」と同じ扱いにする**（fail-closed）。
+            # **An unrecognized answer is treated the same as "don't fetch"** (fail-closed).
             install = choice == CHOICE_INSTALL
             log.info("setup.prompt.answered", choice=choice, install=install)
 
@@ -189,7 +198,7 @@ class SetupCoordinator:
             reason = self._state.reason
 
     async def install_tts_engine(self) -> None:
-        """ユーザーが選んだので取得する。**ここより前に外部通信は起きない。**"""
+        """Fetches because the user chose to. **No external communication happens before this point.**"""
         artifact = AIVISSPEECH_ENGINE
         await self._set_state(
             TtsSetup(
@@ -204,18 +213,19 @@ class SetupCoordinator:
 
         async def report(fraction: float) -> None:
             nonlocal last_sent
-            # 1% ごとに配る。毎チャンク送ると WS が進捗で埋まる。
+            # Broadcasts every 1%. Sending on every chunk would flood the WS with progress updates.
             if fraction - last_sent < 0.01 and fraction < 1.0:
                 return
             last_sent = fraction
-            # 進捗だけを更新する。**`_state` は INSTALLING のまま**なので
-            # フェーズも installing のままになる。
+            # Only progress is updated. **`_state` stays INSTALLING**, so the phase
+            # stays installing too.
             #
-            # **配信は必ず `_set_state` を通す。** ここで `notify` を直に呼ぶと、
-            # `to_payload(prompting=...)` に渡す旗を自分で選ぶことになり、
-            # `_prompting`（この処理に入っているか）と `_awaiting_answer`
-            # （いま画面に質問が出ているか）を取り違える。取り違えると、
-            # 取得中の 200MB の間ずっと `boot=setup` が流れ、進捗が出ない。
+            # **Broadcasting always goes through `_set_state`.** Calling `notify`
+            # directly here would mean choosing the flag passed to
+            # `to_payload(prompting=...)` by hand, and risk conflating `_prompting`
+            # (is this sequence in progress) with `_awaiting_answer` (is a question
+            # currently shown). Conflating them would stream `boot=setup` for the
+            # entire 200MB fetch with no progress shown.
             await self._set_state(replace(self._state, progress=fraction))
 
         try:
@@ -235,7 +245,7 @@ class SetupCoordinator:
             await self._set_state(TtsSetup(state=TtsSetupState.FAILED, reason="cancelled"))
             raise
         except Exception as error:
-            # 想定外でも**黙って未設定に戻さない**。何が起きたかを残す。
+            # Even for the unexpected, **never silently reverts to not-configured.** What happened is recorded.
             log.exception("setup.install.crashed")
             await self._set_state(TtsSetup(state=TtsSetupState.FAILED, reason="unexpected_error"))
             del error

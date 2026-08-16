@@ -1,9 +1,9 @@
 /**
- * VRM の読み込み。**本番モデルの受け口はここ1箇所**。
+ * Loading VRM. **The single point where a production model is received.**
  *
- * `@pixiv/three-vrm` は MIT。**モデルファイル自体は配布物に含めない**
- * （リポジトリでも `.gitignore` 済み → docs/licensing.md §2）。
- * 既定同梱モデルが決まったら `DEFAULT_VRM_URL` の指す先を Content Pack に変える。
+ * `@pixiv/three-vrm` is MIT. **The model file itself is never included in the
+ * distributable** (already `.gitignore`d in the repo too → docs/licensing.md §2).
+ * Once a default bundled model is decided, change what `DEFAULT_VRM_URL` points at to the Content Pack.
  */
 
 import { type VRM, VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
@@ -13,7 +13,7 @@ import { computeIdlePose } from "./idle";
 import type { MouthWeights, Viseme } from "./lipsync";
 import type { CharacterModel } from "./types";
 
-/** ビセーム → VRM の標準表情名（docs/interfaces/renderer.md）。 */
+/** Viseme → VRM's standard expression name (docs/interfaces/renderer.md). */
 const VRM_EXPRESSION: Readonly<Record<Viseme, string>> = {
   A: "aa",
   I: "ih",
@@ -23,10 +23,10 @@ const VRM_EXPRESSION: Readonly<Record<Viseme, string>> = {
 };
 
 /**
- * Phase 0 の暫定的な置き場所。ここに `.vrm` を置くと本番モデルとして読まれる。
+ * The provisional location for Phase 0. Placing a `.vrm` here loads it as the production model.
  *
- * Phase 1 以降、モデルの選択は Content Pack の設定として **Core が決めて `stage.*` で配る**。
- * Stage が自分でパスを決めているのは Phase 0 の暫定処置である。
+ * From Phase 1 onward, model selection is a Content Pack setting **decided by
+ * Core and broadcast via `stage.*`.** The Stage deciding its own path is Phase 0's provisional measure.
  */
 export const DEFAULT_VRM_URL = "/character.vrm";
 
@@ -40,11 +40,11 @@ export async function loadVrm(url: string): Promise<CharacterModel> {
     throw new Error(`VRM として読めない: ${url}`);
   }
 
-  // 使われないジョイントを落とす（描画コストを下げる、three-vrm の推奨手順）。
+  // Drops unused joints (lowers render cost; three-vrm's recommended procedure).
   VRMUtils.removeUnnecessaryVertices(gltf.scene);
   VRMUtils.combineSkeletons(gltf.scene);
 
-  // 正面をこちらに向ける。VRM 1.0 は -Z 前方。
+  // Faces it toward us. VRM 1.0 faces -Z.
   vrm.scene.rotation.y = Math.PI;
 
   const baseY = vrm.scene.position.y;
@@ -56,13 +56,13 @@ export async function loadVrm(url: string): Promise<CharacterModel> {
       const pose = computeIdlePose(elapsed);
       vrm.scene.position.y = baseY + pose.offsetY;
       vrm.scene.rotation.z = pose.tiltZ;
-      // 表情・視線・揺れものの更新。**`applyMouth` の値はここで反映される。**
+      // Updates expressions, gaze, and physics. **`applyMouth`'s values get applied here.**
       vrm.update(delta);
     },
     applyMouth(weights: MouthWeights) {
       const expressions = vrm.expressionManager;
       if (!expressions) {
-        // このモデルは表情を持たない。**黙って口を動かしたことにしない。**
+        // This model has no expressions. **Never silently pretends the mouth moved.**
         return;
       }
       for (const [viseme, name] of Object.entries(VRM_EXPRESSION)) {

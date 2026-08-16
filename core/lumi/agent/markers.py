@@ -1,20 +1,21 @@
-"""`<|ACT {...}|>` — LLM ストリームに埋め込まれた表情指示。
+"""`<|ACT {...}|>` — an expression directive embedded in the LLM's token stream.
 
-設計 → docs/architecture/agent.md §3「インラインマーカー」（AIRI のアプローチを借用）
+Design → docs/architecture/agent.md §3 "Inline markers" (borrows AIRI's approach)
 
-## 守ること
+## Rules to keep
 
 | | |
 |---|---|
-| **音声化前に除去する** | 「縦棒 ACT 波括弧」と読み上げたら台無しになる |
-| **パース失敗はマーカーごと落とす** | 読み上げない。**中途半端に読ませない** |
-| **ストリームの途中で切れても壊れない** | マーカーがチャンク境界を跨ぐのは普通に起きる |
+| **Strip before speaking** | Reading "pipe ACT brace" out loud would ruin it |
+| **Drop the whole marker on parse failure** | Don't speak it. **Never read it half-parsed** |
+| **Must not break if the stream cuts mid-marker** | Markers spanning chunk boundaries is normal |
 
-## 「未知の emotion」の扱い
+## Handling an "unknown emotion"
 
-renderer.md の「未知の emotion は Renderer 側でフォールバック」は、
-**`Emotion` にはあるが、そのモデルに表現手段が無い**場合の話である。
-`Emotion` に無い文字列はここでパース失敗として落とす — 型に無いものを線に乗せない。
+renderer.md's "the Renderer falls back for an unknown emotion" refers to the case where
+**the emotion exists in `Emotion` but the model has no way to express it**.
+A string not in `Emotion` is dropped here as a parse failure — don't put something onto
+the wire that isn't in the type.
 """
 
 from __future__ import annotations
@@ -34,17 +35,17 @@ MARKER_CLOSE: Final = "|>"
 
 @dataclass(frozen=True, slots=True)
 class MarkerChunk:
-    """1回の `feed` の結果。"""
+    """Result of a single `feed` call."""
 
-    #: **そのまま TTS に渡してよいテキスト。** マーカーは除去済み
+    #: **Text that can be passed straight to TTS.** Markers already stripped
     text: str
     intents: tuple[ExpressionIntent, ...]
 
 
 class MarkerStream:
-    """ストリーミングパーサ。**未完のマーカーは手元に留める。**
+    """Streaming parser. **Holds onto incomplete markers.**
 
-    留めないと、`<|ACT {"emo` までしか来ていない時点でそれを喋ってしまう。
+    Without this, `<|ACT {"emo` would get spoken as-is the moment it arrives.
     """
 
     __slots__ = ("_buffer",)
@@ -60,7 +61,7 @@ class MarkerStream:
         while True:
             start = self._buffer.find(MARKER_OPEN)
             if start < 0:
-                # マーカーの**先頭になりかけている**末尾は残す
+                # Hold back a tail that **might be the start of a marker**
                 hold = _partial_open_length(self._buffer)
                 if hold:
                     text.append(self._buffer[:-hold])
@@ -72,7 +73,7 @@ class MarkerStream:
 
             end = self._buffer.find(MARKER_CLOSE, start + len(MARKER_OPEN))
             if end < 0:
-                # 閉じていない。**続きが来るまで待つ**
+                # Not closed yet. **Wait for more to arrive**
                 text.append(self._buffer[:start])
                 self._buffer = self._buffer[start:]
                 break
@@ -86,9 +87,10 @@ class MarkerStream:
         return MarkerChunk(text="".join(text), intents=tuple(intents))
 
     def flush(self) -> str:
-        """ストリームが終わった。**閉じていないマーカーは捨てる。**
+        """The stream has ended. **Discard any unterminated marker.**
 
-        「たぶんテキストだろう」で読み上げると、失敗したときに必ず変な音が出る。
+        Reading it aloud on the assumption "it's probably just text" always produces
+        something weird when that assumption is wrong.
         """
         remainder = self._buffer
         self._buffer = ""
@@ -99,7 +101,7 @@ class MarkerStream:
 
 
 def parse_marker(body: str) -> ExpressionIntent | None:
-    """`<|ACT` と `|>` の間を読む。**失敗したら None**（マーカーごと落ちる）。"""
+    """Read the content between `<|ACT` and `|>`. **Returns None on failure** (drops the whole marker)."""
     try:
         payload: Any = json.loads(body.strip())
     except json.JSONDecodeError:
@@ -112,7 +114,7 @@ def parse_marker(body: str) -> ExpressionIntent | None:
 
     raw_emotion = payload.get("emotion")
     if raw_emotion not in tuple(Emotion):
-        # **型に無いものを線に乗せない。** Renderer のフォールバックはここの話ではない
+        # **Don't put something onto the wire that isn't in the type.** The Renderer's fallback is not what this is about
         log.info("marker.unknown_emotion", emotion=str(raw_emotion)[:40])
         return None
 
@@ -125,21 +127,21 @@ def parse_marker(body: str) -> ExpressionIntent | None:
 
 
 def _clamp(value: Any, *, default: float) -> float:
-    """**範囲外は捨てずに丸める。** 強度がおかしいだけで表情を失う理由が無い。"""
+    """**Clamp out-of-range values instead of discarding them.** No reason to lose an expression just because the intensity is off."""
     if not isinstance(value, int | float) or isinstance(value, bool):
         return default
     return max(0.0, min(1.0, float(value)))
 
 
 def _positive_int(value: Any) -> int | None:
-    """**壊れた値は「指定が無かった」と同じ扱いにする**（マーカーごとは落とさない）。"""
+    """**Treat a malformed value the same as "not specified"** (don't drop the whole marker for it)."""
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         return None
     return value
 
 
 def _partial_open_length(text: str) -> int:
-    """末尾が `<|ACT` の途中になっている長さ。無ければ 0。"""
+    """Length of the trailing partial match of `<|ACT`. 0 if none."""
     for length in range(min(len(MARKER_OPEN) - 1, len(text)), 0, -1):
         if text.endswith(MARKER_OPEN[:length]):
             return length

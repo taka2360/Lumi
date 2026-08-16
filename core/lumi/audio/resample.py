@@ -1,27 +1,28 @@
-"""サンプルレート変換。**純粋関数**（デバイスに触らない）。
+"""Sample rate conversion. **Pure functions** (never touches a device).
 
-設計 → docs/architecture/audio.md §8
+Design → docs/architecture/audio.md §8
 
-## なぜ要るのか
+## Why this is needed
 
-**16 kHz でストリームを開くことはできない。** WASAPI 共有モードはエンドポイントの
-mix format のレート（普通 48 kHz）しか受け付けない（Phase 0 実測）。
-一方 VAD と STT は 16 kHz を前提にしている。**その間を Core 内で埋める。**
+**Streams can't be opened at 16 kHz.** WASAPI shared mode only accepts the endpoint's
+mix format rate (usually 48 kHz) (observed in Phase 0). VAD and STT, meanwhile, assume
+16 kHz. **This bridges the gap inside Core.**
 
-## どこで変換するか
+## Where the conversion happens
 
-**VAD スレッドで行う。オーディオコールバックではしない。**
-変換はメモリ確保を伴い、コールバックの締切（数 ms）を脅かす。
-コールバックはデバイスのレートのままリングに書き、読む側が変換する。
+**In the VAD thread. Never in the audio callback.**
+Conversion involves memory allocation, which threatens the callback's deadline (a few ms).
+The callback writes to the ring at the device's native rate, and the reader converts.
 
-## 品質について（正直に）
+## On quality (being honest)
 
-ここにあるのは **移動平均 + 線形補間**の簡易な実装である。
-polyphase FIR（soxr / scipy）に比べれば折り返しの抑制は弱い。
+What's here is a simple **moving average + linear interpolation** implementation.
+Alias suppression is weaker than a polyphase FIR (soxr / scipy).
 
-**採ったのは「まず依存を増やさない」判断であって、品質が十分だという主張ではない。**
-Step F の実測で STT 精度に影響が見えたら `soxr`（~300 KB）を足す。
-そのときここだけを差し替えれば済むよう、**純粋関数1つに閉じてある。**
+**This was chosen to avoid adding a dependency for now — it isn't a claim that the
+quality is good enough.** If Step F's measurements show an impact on STT accuracy,
+add `soxr` (~300 KB). Kept inside **a single pure function** so that swap is the only
+thing that needs to change.
 """
 
 from __future__ import annotations
@@ -32,10 +33,11 @@ from lumi.audio.ring import Samples
 
 
 def resample(x: Samples, src_rate: int, dst_rate: int) -> Samples:
-    """`src_rate` の波形を `dst_rate` に変換する。
+    """Convert a waveform at `src_rate` to `dst_rate`.
 
-    ダウンサンプル時は**先に移動平均をかける**。かけないと、ナイキスト周波数より上が
-    折り返して低域に化け、VAD が「声がある」と誤判定する材料になる。
+    When downsampling, **a moving average is applied first**. Without it, content above
+    the Nyquist frequency aliases down into the low end, which can make VAD misjudge
+    "there's a voice."
     """
     if src_rate == dst_rate or len(x) == 0:
         return x.astype(np.float32, copy=False)
@@ -60,10 +62,10 @@ def resample(x: Samples, src_rate: int, dst_rate: int) -> Samples:
 
 
 def to_mono(x: Samples, channels: int) -> Samples:
-    """インターリーブされた多チャンネルを mono に落とす。**平均する。**
+    """Collapse interleaved multi-channel audio to mono. **Averages the channels.**
 
-    片方のチャンネルだけを採ると、そちらが無音のデバイス（実在する）で
-    「聞こえているのに聞こえない」になる。
+    Taking just one channel would cause "should be audible but isn't" on devices where
+    that particular channel is silent (these exist in the wild).
     """
     if channels <= 1:
         return x.astype(np.float32, copy=False)
@@ -74,10 +76,11 @@ def to_mono(x: Samples, channels: int) -> Samples:
 
 
 def to_interleaved(mono: Samples, channels: int) -> Samples:
-    """mono を出力ストリームのチャンネル数に広げる。**全チャンネルに同じ波形を配る。**
+    """Expand mono to the output stream's channel count. **Copies the same waveform to every channel.**
 
-    TTS の出力は mono だが、出力ストリームはデバイス既定のチャンネル数で開く
-    （docs/architecture/audio.md §8）。片方だけに入れると片耳から聞こえる。
+    TTS output is mono, but the output stream is opened with the device's default
+    channel count (docs/architecture/audio.md §8). Putting it in only one channel would
+    make it audible from only one ear.
     """
     if channels <= 1:
         return mono.astype(np.float32, copy=False)
@@ -85,7 +88,7 @@ def to_interleaved(mono: Samples, channels: int) -> Samples:
 
 
 def pcm16_to_float32(data: bytes) -> Samples:
-    """16bit PCM（TTS エンジンの出力）を float32 に。**-1.0〜1.0 に正規化する。**"""
+    """Convert 16-bit PCM (TTS engine output) to float32. **Normalized to -1.0..1.0.**"""
     if not data:
         return np.zeros(0, dtype=np.float32)
     ints = np.frombuffer(data, dtype="<i2")

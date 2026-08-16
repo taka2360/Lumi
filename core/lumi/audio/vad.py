@@ -1,28 +1,28 @@
-"""VAD — **barge-in の critical path。**
+"""VAD — **the barge-in critical path.**
 
-設計 → docs/architecture/audio.md §3, §5 / 決定 → ADR-003
+Design → docs/architecture/audio.md §3, §5 / Decision → ADR-003
 
-## ミュート判定と発話区間確定を分ける
+## Separate mute decisions from speech-segment confirmation
 
-**この2つは別の閾値で別々に行う。**
+**These two use different thresholds and run separately.**
 
-| | ミュート判定 | 発話区間の確定 |
+| | Mute decision | Speech segment confirmation |
 |---|---|---|
-| 目的 | **すぐ黙る** | STT に渡す区間を切る |
-| 閾値 | `mute_threshold`（高め・即時） | `speech_threshold` + ヒステリシス |
-| 最小継続 | **無し**（1フレームで発火） | `min_speech_duration_ms` |
-| 誤爆時 | **戻して再生を再開** | 区間を破棄 |
-| 到達先 | `mute_flag`（同期） | asyncio → Arbiter |
+| Purpose | **Go silent immediately** | Cut the segment to pass to STT |
+| Threshold | `mute_threshold` (higher, instant) | `speech_threshold` + hysteresis |
+| Min duration | **None** (fires on a single frame) | `min_speech_duration_ms` |
+| On false trigger | **Revert and resume playback** | Discard the segment |
+| Destination | `mute_flag` (synchronous) | asyncio → Arbiter |
 
-同じにすると、`min_speech_duration_ms = 250` を待つ間ずっと Lumi が喋り続ける。
-**誤爆から復帰できる構造にしておくことで、ミュート閾値をかなり攻められる。**
-「一瞬止まってすぐ戻る」は「300 ms 被り続ける」より遥かに体感が良い。
+If these were the same, Lumi would keep talking the whole time `min_speech_duration_ms = 250` is waited out.
+**Being able to recover from a false trigger lets the mute threshold be pushed much more aggressively.**
+"Stop for an instant and resume right away" feels far better than "talk over the user for 300 ms."
 
-## EchoGuard L1 — 「抑制」しない
+## EchoGuard L1 — do not "suppress"
 
-再生中は `mute_threshold` を**上げるだけ**。入力を止めない。
-AIRI の「発話中は音声入力を抑制」は自己ループを防ぐが、**barge-in を原理的に不可能にする。**
-大きな声なら必ず割り込める、が Lumi の側の要件である。
+During playback, **only raise** `mute_threshold`. Never stop input.
+AIRI's "suppress voice input while speaking" prevents self-loops, but **makes barge-in fundamentally impossible.**
+Being interruptible by a loud enough voice is a requirement on Lumi's side.
 """
 
 from __future__ import annotations
@@ -37,32 +37,32 @@ import numpy as np
 
 from lumi.audio.ring import Samples
 
-#: VAD が前提とするレート。ストリームはこのレートで開けないので Core 内で変換する
+#: The rate VAD assumes. Streams can't be opened at this rate, so Core converts internally
 SAMPLE_RATE: Final = 16_000
-#: Silero v5 以降の窓（512 サンプル = 32 ms）
+#: Window for Silero v5+ (512 samples = 32 ms)
 WINDOW_SAMPLES: Final = 512
-#: 前フレームの末尾を文脈として結合する（モデルの入力は 576）
+#: Concatenate the tail of the previous frame as context (model input is 576)
 CONTEXT_SAMPLES: Final = 64
 FRAME_MS: Final = WINDOW_SAMPLES * 1000 // SAMPLE_RATE
 
 
 @dataclass(frozen=True, slots=True)
 class VadParams:
-    """〔Provisional〕AIRI の実運用値を出発点にする（docs/architecture/audio.md §5）。"""
+    """[Provisional] Starting from AIRI's production values (docs/architecture/audio.md §5)."""
 
-    #: **ミュート判定（即時）。誤爆を許容する**
+    #: **Mute decision (instant). Tolerates false triggers**
     mute_threshold: float = 0.5
-    #: 発話区間の開始。**ミュートより低い**（語頭を取りこぼさない）
+    #: Start of speech segment. **Lower than mute** (so word onsets aren't clipped)
     speech_threshold: float = 0.3
-    #: 発話区間の終了（ヒステリシス）
+    #: End of speech segment (hysteresis)
     exit_threshold: float = 0.1
     min_speech_duration_ms: int = 250
     min_silence_duration_ms: int = 400
-    #: 語頭を切らないためのプリロール
+    #: Preroll to avoid cutting off word onsets
     speech_pad_ms: int = 80
-    #: この時間内に区間が確定しなければ**ミュートを戻す**
+    #: **Revert the mute** if no segment is confirmed within this time
     false_trigger_ms: int = 300
-    #: **EchoGuard L1。** 再生中に閾値を何倍にするか。**抑制ではない**
+    #: **EchoGuard L1.** Multiplier applied to the threshold during playback. **Not suppression**
     playback_boost: float = 1.4
 
     def mute_threshold_for(self, *, playing: bool) -> float:
@@ -70,20 +70,20 @@ class VadParams:
 
 
 class VadEvent(StrEnum):
-    #: **今すぐ黙れ。** VAD スレッドが同期的に `mute_flag` を立てる（Arbiter を経由しない）
+    #: **Go silent now.** The VAD thread sets `mute_flag` synchronously (bypasses the Arbiter)
     MUTE_REQUESTED = "mute_requested"
-    #: 誤爆だった。**再生を戻す**
+    #: It was a false trigger. **Resume playback**
     FALSE_TRIGGER = "false_trigger"
-    #: 発話区間が確定した → asyncio → `arbiter.interrupt()`
+    #: Speech segment confirmed → asyncio → `arbiter.interrupt()`
     SPEECH_STARTED = "speech_started"
-    #: 発話が終わった → asyncio → STT
+    #: Speech ended → asyncio → STT
     SPEECH_ENDED = "speech_ended"
 
 
 class SpeechSegmenter:
-    """**純粋なロジック。** モデルもデバイスも触らない（確率の列を食べてイベントを吐く）。
+    """**Pure logic.** Touches neither the model nor the device (consumes a stream of probabilities, emits events).
 
-    ここが純粋であることが、barge-in をテストできることの土台になっている。
+    Keeping this pure is what makes barge-in testable.
     """
 
     __slots__ = (
@@ -102,16 +102,16 @@ class SpeechSegmenter:
     def __init__(self, params: VadParams | None = None) -> None:
         self._params = params or VadParams()
         preroll_frames = max(1, self._params.speech_pad_ms // FRAME_MS)
-        #: 語頭のためのプリロール。**発話が始まる「前」のフレーム**
+        #: Preroll for word onsets. **Frames from "before" speech begins**
         self._preroll: deque[Samples] = deque(maxlen=preroll_frames)
-        #: 発話が始まってから**区間が確定するまで**のフレーム。
-        #: これを捨てると `min_speech_duration_ms`（250 ms）分まるごと語頭が消える
+        #: Frames from when speech starts **until the segment is confirmed**.
+        #: Discarding these would drop the entire `min_speech_duration_ms` (250 ms) worth of word onset
         self._candidate: list[Samples] = []
         self._segment: list[Samples] = []
         self._speech_frames = 0
         self._silence_frames = 0
         self._muted_frames = 0
-        #: このミュート以降に発話区間が確定したか。**確定したなら誤爆ではない**
+        #: Whether a speech segment was confirmed since this mute. **If confirmed, it wasn't a false trigger**
         self._confirmed_since_mute = False
         self.muted = False
         self.in_speech = False
@@ -121,11 +121,11 @@ class SpeechSegmenter:
         return self._params
 
     def feed(self, probability: float, frame: Samples, *, playing: bool) -> tuple[VadEvent, ...]:
-        """1フレーム分を食べて、起きたことを返す。"""
+        """Consume one frame's worth and return what happened."""
         events: list[VadEvent] = []
         params = self._params
 
-        # ── (a) ミュート判定 — 即時・**最小継続を適用しない** ──
+        # ── (a) Mute decision — instant, **no minimum duration applied** ──
         if playing and not self.muted and probability > params.mute_threshold_for(playing=True):
             self.muted = True
             self._muted_frames = 0
@@ -134,14 +134,14 @@ class SpeechSegmenter:
         elif self.muted:
             self._muted_frames += 1
 
-        # ── (b) 発話区間の確定 — ヒステリシス + 最小継続 ──
+        # ── (b) Speech segment confirmation — hysteresis + minimum duration ──
         if not self.in_speech:
             if probability >= params.speech_threshold:
-                # **確定していなくても貯める。** 捨てると、確定までの 250 ms が丸ごと消える
+                # **Buffer even before confirmation.** Discarding would lose the full 250 ms leading up to confirmation
                 self._speech_frames += 1
                 self._candidate.append(frame)
             else:
-                # 声ではなかった。候補をプリロールに流して捨てる
+                # Not speech. Flush the candidate into preroll and discard it
                 self._speech_frames = 0
                 self._preroll.extend(self._candidate)
                 self._candidate.clear()
@@ -150,11 +150,11 @@ class SpeechSegmenter:
             if self._speech_frames * FRAME_MS >= params.min_speech_duration_ms:
                 self.in_speech = True
                 self._silence_frames = 0
-                # **プリロール（発話の前）+ 候補（確定まで）** を先頭に付ける
+                # Prepend **preroll (before speech) + candidate (up to confirmation)**
                 self._segment = [*self._preroll, *self._candidate]
                 self._preroll.clear()
                 self._candidate.clear()
-                # **このミュートは正しかった。** 以降 (c) の対象にしない
+                # **This mute was correct.** Exclude it from (c) from now on
                 self._confirmed_since_mute = True
                 events.append(VadEvent.SPEECH_STARTED)
         else:
@@ -168,11 +168,11 @@ class SpeechSegmenter:
                 self._speech_frames = 0
                 events.append(VadEvent.SPEECH_ENDED)
 
-        # ── (c) 誤爆からの復帰 ──
-        # **確定した発話を「誤爆」と呼ばない。** 区間が終われば (b) は in_speech を下ろすので、
-        # `_confirmed_since_mute` が無いと、正しく遮った発話の直後に必ずここが発火する。
-        # そうなると呼び出し側は「遮ったのは間違いだった」と受け取り、
-        # **中断したはずの再生を戻してしまう。**
+        # ── (c) Recovery from a false trigger ──
+        # **Don't call a confirmed utterance a "false trigger."** Once the segment ends, (b) clears
+        # in_speech, so without `_confirmed_since_mute`, this would always fire right after a
+        # correctly interrupted utterance. The caller would then interpret that as "the
+        # interruption was a mistake" and **resume playback that should have stayed interrupted.**
         if (
             self.muted
             and not self.in_speech
@@ -186,7 +186,7 @@ class SpeechSegmenter:
         return tuple(events)
 
     def take(self) -> Samples:
-        """確定した区間を取り出す。**取り出したら空にする。**"""
+        """Retrieve the confirmed segment. **Empties it once retrieved.**"""
         if not self._segment:
             return np.zeros(0, dtype=np.float32)
         audio = np.concatenate(self._segment).astype(np.float32)
@@ -194,11 +194,11 @@ class SpeechSegmenter:
         return audio
 
     def unmute(self) -> None:
-        """外からミュート状態を解除する。**確定した発話の後はこれが唯一の戻し方。**
+        """Clear the mute state from outside. **The only way to revert it after a confirmed utterance.**
 
-        (c) は誤爆にしか効かないので、**遮ってから次に喋り出すまでの間に
-        呼び出し側が明示的に戻す**（`VadWorker.resume` → `AudioIO.resume_listening`）。
-        呼ばないと `muted` が立ったままになり、**barge-in が1回しか効かない。**
+        (c) only handles false triggers, so **the caller must explicitly revert it
+        between interrupting and the next time it speaks** (`VadWorker.resume` → `AudioIO.resume_listening`).
+        Failing to call this leaves `muted` set, so **barge-in only works once.**
         """
         self.muted = False
         self._muted_frames = 0
@@ -206,17 +206,17 @@ class SpeechSegmenter:
 
 
 class VadModelUnavailable(RuntimeError):
-    """モデルが見つからない / 読めない。**黙って「声が無い」ことにしない。**"""
+    """Model not found / unreadable. **Never silently treat this as "no voice."**"""
 
 
 def default_model_path() -> Path:
-    """**faster-whisper が同梱している Silero VAD を使う**（→ docs/licensing.md §4.6）。
+    """**Uses the Silero VAD bundled with faster-whisper** (→ docs/licensing.md §4.6).
 
-    別途取得しないのは、PyPI の `silero-vad` が **torch に依存する**ため（R1）。
+    We don't fetch it separately because PyPI's `silero-vad` **depends on torch** (R1).
 
-    **保証しないこと**: これは faster-whisper のパッケージ内部構造への依存であり、
-    更新でパスが変われば壊れる。**壊れたら明示的に失敗する**（fail-closed）ので、
-    黙って VAD が効かない状態にはならない。
+    **What this does not guarantee**: this depends on faster-whisper's internal package
+    structure, and will break if an update moves the path. **It fails explicitly when
+    broken** (fail-closed), so VAD never silently stops working.
     """
     try:
         import faster_whisper
@@ -230,21 +230,21 @@ def default_model_path() -> Path:
 
 
 class SileroVad:
-    """Silero VAD (ONNX Runtime, CPU)。**VRAM を使わない。**
+    """Silero VAD (ONNX Runtime, CPU). **Uses no VRAM.**
 
-    **オーディオコールバックから呼ばない。** ONNX 推論は GIL を取り、
-    アロケータとスレッドプールの挙動で数十 ms のスパイクを出しうる。
-    それは p99 に直撃し、通常の再生まで壊す（docs/architecture/audio.md §3）。
+    **Never call from the audio callback.** ONNX inference holds the GIL, and
+    allocator/thread-pool behavior can produce spikes of tens of milliseconds.
+    That hits p99 directly and can break even normal playback (docs/architecture/audio.md §3).
     """
 
     __slots__ = ("_c", "_context", "_h", "_session")
 
     def __init__(self, model_path: Path | None = None) -> None:
-        import onnxruntime  # 遅延 import。起動を重くしない
+        import onnxruntime  # Lazy import; keeps startup light
 
         options = onnxruntime.SessionOptions()
-        # **CPU 1スレッドに固定する。** VAD は 32 ms ごとの小さな推論であり、
-        # スレッドを増やすと LLM / TTS と CPU を奪い合うだけで速くならない
+        # **Pin to 1 CPU thread.** VAD does small inferences every 32 ms;
+        # adding threads would only compete with LLM / TTS for CPU without speeding anything up
         options.intra_op_num_threads = 1
         options.inter_op_num_threads = 1
         try:
@@ -261,11 +261,11 @@ class SileroVad:
         self._context = np.zeros(CONTEXT_SAMPLES, dtype=np.float32)
 
     def probability(self, frame: Samples) -> float:
-        """512 サンプル（32 ms / 16 kHz）を食べて、発話らしさを返す。"""
+        """Consume 512 samples (32 ms / 16 kHz) and return the speech probability."""
         if len(frame) != WINDOW_SAMPLES:
             raise ValueError(f"{WINDOW_SAMPLES} サンプルが必要（来たのは {len(frame)}）")
 
-        # v5 以降は「前フレームの末尾 64 サンプル + 今回の 512」を入力にする
+        # From v5 onward, input is "the previous frame's trailing 64 samples + this frame's 512"
         window = np.concatenate((self._context, frame)).reshape(1, -1).astype(np.float32)
         outputs: list[Any] = self._session.run(None, {"input": window, "h": self._h, "c": self._c})
         probability, self._h, self._c = outputs[0], outputs[1], outputs[2]
@@ -273,7 +273,7 @@ class SileroVad:
         return float(np.asarray(probability).reshape(-1)[0])
 
     def reset(self) -> None:
-        """セッションを跨ぐときに状態を捨てる。**LSTM の状態が残ると誤判定する。**"""
+        """Discard state across sessions. **Leftover LSTM state causes misjudgments.**"""
         self._h = np.zeros((1, 1, 128), dtype=np.float32)
         self._c = np.zeros((1, 1, 128), dtype=np.float32)
         self._context = np.zeros(CONTEXT_SAMPLES, dtype=np.float32)

@@ -1,17 +1,18 @@
-"""Job — foreground を取らない処理。
+"""Job — processing that never takes foreground.
 
-決定 → ADR-018 / docs/architecture/agent.md §5
+Decision → ADR-018 / docs/architecture/agent.md §5
 
-Reflection・再埋め込み・DB メンテナンスは **Activity ではない。**
-Activity にすると foreground を占有し、「Lumi は今なにをしているか」が
-「記憶の整理」になってしまう。かといって同時実行を認めると Invariant 4 が意味を失う。
+Reflection, re-embedding, and DB maintenance are **not Activities.**
+Making them Activities would occupy foreground, turning "what is Lumi doing right
+now" into "tidying up memories." But allowing them to run concurrently would strip
+Invariant 4 of its meaning.
 
 | | `Activity` | `Job` |
 |---|---|---|
-| foreground | 取る（1つだけ） | **取らない** |
-| 発話 | する | **しない** |
-| actor | 4種 | **`system` 固定 → L0 のみ** |
-| barge-in | 対象になる | `uses_inference` なら**推論を明け渡す** |
+| foreground | Takes it (only one) | **Never takes it** |
+| Speaks | Yes | **No** |
+| actor | 4 kinds | **Fixed to `system` → L0 only** |
+| barge-in | Subject to it | **Yields inference** if `uses_inference` |
 """
 
 from __future__ import annotations
@@ -25,25 +26,25 @@ from lumi.kernel.ids import JobId
 
 
 class JobKind(StrEnum):
-    #: Phase 2。セッション終了時 / 長いアイドル時に記憶を抽出する
+    #: Phase 2. Extracts memories at session end / during a long idle period
     REFLECTION = "reflection"
-    #: Phase 2。埋め込みモデルを変えたとき
+    #: Phase 2. When the embedding model changes
     REEMBEDDING = "reembedding"
     MAINTENANCE = "maintenance"
 
 
 @dataclass(slots=True)
 class Job:
-    """**`actor` は `system` 固定。** フィールドにしないのは、書き換えを型で塞ぐため。
+    """**`actor` is fixed to `system`.** It isn't a field so rewriting it is blocked at the type level.
 
-    L1 以上のツールが必要なら、それは Job ではなく **Activity として propose すべき仕事**である
-    （docs/architecture/agent.md §5 の規則4）。
+    If L1-or-above tools are needed, that's not a Job — it's **work that should be
+    proposed as an Activity instead** (docs/architecture/agent.md §5, rule 4).
     """
 
     id: JobId
     kind: JobKind
     cancellation: Cancellation
-    #: True なら Arbiter から `inference_lease` を取る。foreground が推論を要求すると revoke される
+    #: If True, acquires an `inference_lease` from the Arbiter. Revoked if foreground requests inference
     uses_inference: bool = False
     cancel_token: CancelToken = field(default_factory=CancelToken)
 

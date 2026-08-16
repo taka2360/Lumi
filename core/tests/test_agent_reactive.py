@@ -1,7 +1,7 @@
-"""Reactive Loop。**LLM を呼ばずに全経路を通す**（`.claude/rules/tests.md` の大原則）。
+"""Reactive Loop. **Exercises every path without calling an LLM** (the core principle of `.claude/rules/tests.md`).
 
-docs/architecture/agent.md テスト 7（`max_steps` / `deadline` / cancel）と、
-docs/contracts/provenance.md テスト 8〜10（ターンの trust の継承）。
+docs/architecture/agent.md test 7 (`max_steps` / `deadline` / cancel), and
+docs/contracts/provenance.md tests 8-10 (a turn's trust inheritance).
 """
 
 from __future__ import annotations
@@ -70,11 +70,11 @@ PACK = CharacterPack(
 )
 
 
-# ── 偽物 ────────────────────────────────────────────────────
+# ── Fakes ────────────────────────────────────────────────────
 
 
 class _Base:
-    """`Provider` の退屈な部分。**テストの本題ではない。**"""
+    """The boring parts of `Provider`. **Not the point of the test.**"""
 
     def __init__(self) -> None:
         self._loaded = False
@@ -101,7 +101,7 @@ class _Base:
 
 
 class FakeLlm(_Base):
-    """**台本どおりに流す。** ステップごとに別の台本を使う。"""
+    """**Plays through a script.** Uses a different script per step."""
 
     id = "fake-llm"
     kind = ProviderKind.LLM
@@ -183,7 +183,7 @@ class FakeNotifier:
 
 
 class Rig:
-    """1本の会話を回すのに要るもの一式。"""
+    """The complete set of things needed to run one conversation."""
 
     def __init__(self, llm: FakeLlm, *, stt_text: str = "やあ", limits: LoopLimits | None = None):
         self.database = Database.open(":memory:")
@@ -236,7 +236,7 @@ class _NullAudit:
 
 
 def _audio() -> AudioIO:
-    """**デバイスを開かない。** `start()` を呼ばなければ出力の入れ物があるだけ。"""
+    """**Never opens a device.** Without calling `start()`, it's just an output container."""
     device = Device(
         index=0,
         name="fake",
@@ -257,7 +257,7 @@ def text(*chunks: str) -> list[LLMEvent]:
     return [*(TextDelta(text=chunk) for chunk in chunks), Finish(reason="stop")]
 
 
-# ── 基本の1ターン ───────────────────────────────────────────
+# ── The basic single turn ───────────────────────────────────────────
 
 
 async def test_a_turn_speaks_and_records() -> None:
@@ -271,7 +271,7 @@ async def test_a_turn_speaks_and_records() -> None:
 
 
 async def test_the_activity_returns_to_idle() -> None:
-    """**Activity を開きっぱなしにしない。** 終わったら idle に戻る。"""
+    """**An Activity is never left open.** Returns to idle once finished."""
     rig = Rig(FakeLlm([text("うん。")]))
     await rig.start()
 
@@ -290,7 +290,7 @@ async def test_speech_ended_goes_through_stt() -> None:
 
 
 async def test_an_empty_transcription_creates_no_activity() -> None:
-    """**何も言っていないなら Activity を作らない。** Inspector を汚さない。"""
+    """**No Activity is created if nothing was said.** Never clutters the Inspector."""
     rig = Rig(FakeLlm([text("？")]), stt_text="   ")
     await rig.start()
 
@@ -299,11 +299,11 @@ async def test_an_empty_transcription_creates_no_activity() -> None:
     assert rig.session.turns == ()
 
 
-# ── マーカーと思考 ──────────────────────────────────────────
+# ── Markers and reasoning ──────────────────────────────────────────
 
 
 async def test_markers_are_not_spoken_and_reach_the_tool() -> None:
-    """**マーカーも `invoke` を通る**（Invariant 2）。読み上げはされない。"""
+    """**Markers also go through `invoke`** (Invariant 2). Never spoken aloud."""
     rig = Rig(FakeLlm([text('うれしい<|ACT {"emotion":"happy"}|>な。')]))
     await rig.start()
 
@@ -314,7 +314,7 @@ async def test_markers_are_not_spoken_and_reach_the_tool() -> None:
 
 
 async def test_reasoning_is_never_spoken() -> None:
-    """**思考は音声化しない**（docs/interfaces/provider.md）。"""
+    """**Reasoning is never spoken** (docs/interfaces/provider.md)."""
     script: list[LLMEvent] = [
         ReasoningDelta(text="ユーザーは挨拶している。丁寧に返そう。"),
         TextDelta(text="やあ。"),
@@ -328,7 +328,7 @@ async def test_reasoning_is_never_spoken() -> None:
     assert rig.tts.texts == ["やあ。"]
 
 
-# ── ツールループ（表7）──────────────────────────────────────
+# ── The tool loop (table 7) ──────────────────────────────────────
 
 
 async def test_the_tool_loop_feeds_the_result_back() -> None:
@@ -343,12 +343,12 @@ async def test_the_tool_loop_feeds_the_result_back() -> None:
 
     assert rig.expressions == ["happy"]
     assert rig.llm.step == 2
-    # 2回目のプロンプトにツール結果が入っている
+    # The second prompt has the tool result included
     assert "character.set_expression" in rig.llm.prompts[1][0].content
 
 
 async def test_the_tool_loop_stops_at_max_steps() -> None:
-    """**無限に回さない。** 上限は Activity が持つ。"""
+    """**Never loops forever.** The limit belongs to the Activity."""
     call: list[LLMEvent] = [
         ToolCall(id="1", name="character.set_expression", arguments={"emotion": "happy"}),
         Finish(reason="tool_calls"),
@@ -362,7 +362,7 @@ async def test_the_tool_loop_stops_at_max_steps() -> None:
 
 
 async def test_an_unknown_tool_becomes_a_failed_block() -> None:
-    """**登録されていないツールで会話が止まらない。** 失敗も文脈である。"""
+    """**An unregistered tool never stops the conversation.** A failure is context too."""
     call: list[LLMEvent] = [
         ToolCall(id="1", name="fs.read", arguments={"path": "/etc/passwd"}),
         Finish(reason="tool_calls"),
@@ -376,11 +376,11 @@ async def test_an_unknown_tool_becomes_a_failed_block() -> None:
     assert "unknown_tool" in rig.llm.prompts[1][0].content
 
 
-# ── trust の継承 ────────────────────────────────────────────
+# ── Trust inheritance ────────────────────────────────────────────
 
 
 async def test_a_small_talk_turn_stays_trusted() -> None:
-    """**テスト8。** trusted な入力だけで作ったターンは汚染されない。"""
+    """**Test 8.** A turn built solely from trusted input is never tainted."""
     rig = Rig(FakeLlm([text("そうだね。")]))
     await rig.start()
 
@@ -391,10 +391,10 @@ async def test_a_small_talk_turn_stays_trusted() -> None:
 
 
 async def test_a_tool_result_taints_the_following_turn() -> None:
-    """ツール結果が入った後のターンは **`DERIVED` = `TAINTED`**。
+    """A turn after a tool result comes in is **`DERIVED` = `TAINTED`**.
 
-    `character` lane の結果は外界の観測ではないので `is_raw_external` ではないが、
-    **入力の join を継承する**という規則はここでも同じ形で働く。
+    A `character` lane result isn't `is_raw_external` since it's not an observation
+    of the outside world, but the rule **"inherits the join of the inputs"** applies here in the same form.
     """
     call: list[LLMEvent] = [
         ToolCall(id="1", name="fs.read", arguments={}),
@@ -413,7 +413,7 @@ async def test_a_tool_result_taints_the_following_turn() -> None:
 
 
 async def test_speech_started_interrupts_the_current_activity() -> None:
-    """**Activity の中断は `interrupt()` を経由する**（Invariant 4）。"""
+    """**Interrupting an Activity goes through `interrupt()`** (Invariant 4)."""
     rig = Rig(FakeLlm([text("ながいはなしを。")], delay=0.05))
     await rig.start()
 
@@ -426,7 +426,7 @@ async def test_speech_started_interrupts_the_current_activity() -> None:
 
 
 async def test_an_interrupt_mutes_the_playback() -> None:
-    """**barge-in の出口。** 生成完了を待たずに音が止まる。"""
+    """**The barge-in exit point.** Sound stops without waiting for generation to finish."""
     rig = Rig(FakeLlm([text("あ。", "い。", "う。")], delay=0.02))
     await rig.start()
     playback = rig.audio.playback
@@ -437,7 +437,7 @@ async def test_an_interrupt_mutes_the_playback() -> None:
     await rig.loop.on_speech_started()
     await turn
 
-    # 喋り始めていたのに止まった、であること（何も鳴っていなければ試験になっていない）
+    # Confirms it had started speaking and then stopped (if nothing had played, this wouldn't be a real test)
     assert rig.notifier.spoken() == ["あ。"]
     assert playback.mute_flag.is_set()
     assert playback.queued == 0
@@ -452,11 +452,11 @@ async def test_interrupting_when_idle_is_a_no_op() -> None:
     assert rig.arbiter.current().kind.value == "idle"
 
 
-# ── 失敗 ────────────────────────────────────────────────────
+# ── Failure ────────────────────────────────────────────────────
 
 
 async def test_a_missing_provider_fails_the_turn_without_crashing() -> None:
-    """**黙って劣化しない。** 喋れないことは Activity の失敗として残る。"""
+    """**Never silently degrades.** Being unable to speak is recorded as the Activity failing."""
     rig = Rig(FakeLlm([text("…")]))
     await rig.start()
     rig.loop._providers = ProviderRegistry()

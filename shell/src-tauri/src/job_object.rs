@@ -1,24 +1,27 @@
-//! Windows Job Object — **子プロセスを親と一緒に確実に殺す**。
+//! Windows Job Object — **reliably kills child processes together with the parent**.
 //!
-//! docs/interfaces/shell.md の要件1「Shell 終了時に Core も確実に終了する（ゾンビを残さない）」。
+//! docs/interfaces/shell.md requirement 1: "Core reliably terminates when Shell
+//! terminates (no zombies left behind)."
 //!
-//! ## なぜ必要か（実測でわかったこと）
+//! ## Why this is needed (learned from observation)
 //!
-//! 当初は2つの手段だけで足りると考えていた。
+//! Two measures were originally thought to be enough.
 //!
-//! 1. Shell の終了処理で明示的に kill する → **強制終了されたら走らない**
-//! 2. Core 側で stdin の EOF を見て自分で終わる → **単体では動くが、間に別のプロセスが挟まると漏れる**
+//! 1. Explicitly kill it during Shell's shutdown → **doesn't run if force-killed**
+//! 2. Core watches for stdin EOF and exits on its own → **works standalone, but
+//!    leaks if another process sits in between**
 //!
-//! 開発時の Core は `uv run lumi-core` で起動するため、`Shell → uv.exe → python.exe` になる。
-//! Shell を `Stop-Process -Force` で殺すと **uv.exe が孤児として残った**（2026-08-15 実測）。
+//! In dev, Core is launched via `uv run lumi-core`, making it `Shell → uv.exe →
+//! python.exe`. Killing Shell with `Stop-Process -Force` **left uv.exe orphaned**
+//! (observed 2026-08-15).
 //!
-//! Job Object に入れておくと、**Shell のプロセスハンドルが OS に閉じられた時点で**
-//! ジョブ内のプロセスがまとめて終了する。強制終了でも効く。
+//! Placing it in a Job Object means **the moment the OS closes Shell's process
+//! handle**, every process in the job terminates together. This also works under a force-kill.
 //!
-//! ## 保証しないこと
+//! ## What this does not guarantee
 //!
-//! Windows 専用の仕組みである。他 OS では別の手段（プロセスグループ / `PDEATHSIG`）が要る。
-//! Phase 0 の対象は Windows なので、ここでは Windows だけを実装する。
+//! This is a Windows-only mechanism. Other OSes need a different approach
+//! (process groups / `PDEATHSIG`). Phase 0 targets Windows, so only Windows is implemented here.
 
 #[cfg(windows)]
 mod imp {
@@ -32,17 +35,17 @@ mod imp {
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
     };
 
-    /// 「このハンドルが閉じたら中のプロセスを全部殺す」ジョブ。
+    /// A job that means "kill every process inside once this handle closes."
     pub struct KillOnCloseJob(HANDLE);
 
-    // HANDLE は生ポインタだが、ここでは所有権を持つ1本だけを保持し、
-    // 閉じるのは Drop のみ。スレッド間で共有しても安全。
+    // HANDLE is a raw pointer, but this only ever holds a single owning
+    // instance, closed only by Drop. Safe to share across threads.
     unsafe impl Send for KillOnCloseJob {}
     unsafe impl Sync for KillOnCloseJob {}
 
     impl KillOnCloseJob {
         pub fn create() -> Option<Self> {
-            // SAFETY: 引数は null 可。戻り値の妥当性を直後に確認している。
+            // SAFETY: the arguments may be null. The return value's validity is checked immediately after.
             unsafe {
                 let handle = CreateJobObjectW(std::ptr::null(), std::ptr::null());
                 if handle.is_null() {
@@ -64,19 +67,20 @@ mod imp {
             }
         }
 
-        /// 子プロセスをジョブに入れる。**失敗したら false**。握りつぶさず呼び出し側でログに残す。
+        /// Adds a child process to the job. **`false` on failure.** Never
+        /// swallowed — the caller logs it.
         pub fn assign(&self, process: HANDLE) -> bool {
             if process.is_null() {
                 return false;
             }
-            // SAFETY: 両方とも有効なハンドル。失敗しても副作用は無い。
+            // SAFETY: both are valid handles. No side effect on failure.
             unsafe { AssignProcessToJobObject(self.0, process) != 0 }
         }
     }
 
     impl Drop for KillOnCloseJob {
         fn drop(&mut self) {
-            // SAFETY: create でのみ得たハンドルを一度だけ閉じる。
+            // SAFETY: closes exactly once a handle obtained only via create.
             unsafe { CloseHandle(self.0) };
         }
     }
@@ -84,8 +88,8 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
-    /// Windows 以外では何もしない。**「効いている」と誤解させないため、
-    /// `create` は `None` を返す**（呼び出し側が「使えない」とログに書ける）。
+    /// Does nothing outside Windows. **`create` returns `None`, so it's never
+    /// mistaken for "this is working"** (the caller can log "unavailable").
     pub struct KillOnCloseJob;
 
     impl KillOnCloseJob {

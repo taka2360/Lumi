@@ -1,18 +1,19 @@
-"""Signal と DomainEvent、そして EventBus。
+"""Signal, DomainEvent, and the EventBus.
 
-契約の唯一の定義場所 → docs/contracts/event-model.md
+Single source of definition for the contract → docs/contracts/event-model.md
 
-> **外から来るものと、Core が「起こった」と宣言するものは、同じ型であってはならない。**
+> **Something arriving from outside and something Core declares "happened" must
+> never be the same type.**
 
-## 型で塞いでいること
+## What's blocked at the type level
 
-| 塞ぐもの | やり方 |
+| What's blocked | How |
 |---|---|
-| 外部が DomainEvent を直接書く | `Signal` が `stream_key` / `sequence_id` を**持たない** |
-| 発行者が採番する | `DomainEventDraft` に `sequence_id` が**無い**。付けるのは `EventBus` だけ |
+| External code writing a DomainEvent directly | `Signal` **has no** `stream_key` / `sequence_id` |
+| A publisher assigning its own number | `DomainEventDraft` **has no** `sequence_id`. Only `EventBus` assigns one |
 
-`Signal` を `DomainEvent` にするかどうか・どう表現するかは **Core が決める**。
-Signal は素材であって、事実ではない。
+**Core decides** whether and how a `Signal` becomes a `DomainEvent`.
+A Signal is raw material, not a fact.
 """
 
 from __future__ import annotations
@@ -31,8 +32,9 @@ log = lumi_logging.get_logger(__name__)
 
 
 # ── stream_key ────────────────────────────────────────────────
-# 「何についての Event か」から機械的に決まる。**「順序保証が要るか?」を判断させない**
-# （その判断は間違えやすい → docs/contracts/event-model.md）。
+# Determined mechanically from "what the Event is about." **Never asks "does this
+# need order guarantees?"** (that judgment is easy to get wrong →
+# docs/contracts/event-model.md).
 
 
 def activity_stream(activity_id: ActivityId) -> str:
@@ -57,45 +59,46 @@ AUTONOMY_STREAM = "autonomy"
 
 @dataclass(frozen=True, slots=True)
 class Signal:
-    """外部（Shell / Stage / Extension / Widget）から Core に届く通知。
+    """A notification arriving at Core from outside (Shell / Stage / Extension / Widget).
 
-    **これは事実ではない。** Core が解釈して初めて DomainEvent になる。
-    Stage は「予算を減らせ」とは言わない。「ユーザーがうるさいと言った」と伝えるだけである。
+    **This is not a fact.** It only becomes a DomainEvent once Core interprets it.
+    The Stage never says "reduce the budget." It only reports "the user said it's noisy."
     """
 
-    #: 誰が送ったか。認証済みの peer identity
+    #: Who sent it. An authenticated peer identity
     source_id: str
     type: str
     payload: Mapping[str, Any]
     received_at: datetime
-    #: 送出元の信頼度から決まる。ここから派生物に伝播する
+    #: Determined by the sender's trust level. Propagates to anything derived from this
     trust_level: TrustLevel
 
-    # stream_key も sequence_id も**持たない**。これが型による保証（Invariant 6）。
+    # **Has neither** `stream_key` nor `sequence_id`. This is the type-level guarantee (Invariant 6).
 
 
 @dataclass(frozen=True, slots=True)
 class DomainEventDraft:
-    """発行者が作るもの。**`sequence_id` を持たない。**
+    """Constructed by the publisher. **Carries no `sequence_id`.**
 
-    別の型にしてあるのは、発行者が採番に触れないことをコンパイル時に保証するため。
+    Kept as a separate type so it's guaranteed at compile time that the publisher
+    never touches numbering.
     """
 
     stream_key: str
     type: str
     payload: Mapping[str, Any]
     correlation_id: CorrelationId
-    #: これを引き起こした Command / Signal / DomainEvent
+    #: The Command / Signal / DomainEvent that caused this
     causation_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class DomainEvent:
-    """Core が「起きた」と宣言する事実。**過去形で名づける。**"""
+    """A fact Core declares "happened." **Named in the past tense.**"""
 
     id: EventId
     stream_key: str
-    #: stream_key 内での単調増加。ギャップなし。**代入するのは EventBus だけ**
+    #: Monotonically increasing within a stream_key. No gaps. **Only `EventBus` assigns this**
     sequence_id: int
     causation_id: str | None
     correlation_id: CorrelationId
@@ -105,15 +108,17 @@ class DomainEvent:
 
 
 class EventStore(Protocol):
-    """DomainEvent の永続化。実装は `lumi.storage`（依存の向きを逆にするための Protocol）。"""
+    """Persistence of DomainEvents. Implemented by `lumi.storage` (a Protocol to invert the dependency direction)."""
 
     async def append(
         self, event_id: EventId, draft: DomainEventDraft, occurred_at: datetime
     ) -> int:
-        """`stream_key` の次の `sequence_id` を採番し、**同一トランザクションで**永続化して返す。
+        """Assigns the next `sequence_id` for `stream_key`, persists it **in the same
+        transaction**, and returns it.
 
-        **採番と永続化を分けてはならない。** 分けると、その間のクラッシュでギャップが生まれ、
-        「ギャップ = 真の異常」という前提が崩れて、検出そのものが意味を失う。
+        **Numbering and persistence must never be split apart.** Splitting them would
+        let a crash in between create a gap, breaking the assumption that "a gap
+        means a genuine anomaly" and rendering detection itself meaningless.
         """
         ...
 
@@ -122,14 +127,14 @@ Subscriber = Callable[[DomainEvent], Awaitable[None]]
 
 
 class SequenceError(RuntimeError):
-    """欠番または逆転を検出した。**黙って処理しない。**"""
+    """Detected a gap or an out-of-order sequence. **Never processed silently.**"""
 
 
 class SequenceChecker:
-    """消費側のためのもの。stream ごとに連番を検査する。
+    """For the consumer side. Checks sequential numbering per stream.
 
-    **欠番を無視しないための道具。** 無視すると、EventBus の採番が壊れていることに
-    誰も気づかないまま Lumi が動き続ける。
+    **A tool to make sure gaps are never ignored.** Ignoring them would let Lumi keep
+    running with a broken EventBus numbering scheme and nobody noticing.
     """
 
     __slots__ = ("_last",)
@@ -148,10 +153,11 @@ class SequenceChecker:
 
 
 class EventBus:
-    """**唯一の採番者。** stream_key ごとに直列化する。
+    """**The sole numbering authority.** Serializes per stream_key.
 
-    複数のコルーチンが同じ stream に発行する状況は必ず発生するため、
-    「発行者が気をつける」ではなく Bus 側で直列化する。
+    Multiple coroutines publishing to the same stream is bound to happen, so
+    serialization is handled by the Bus itself instead of relying on "publishers
+    being careful."
     """
 
     __slots__ = ("_clock", "_locks", "_store", "_subscribers")
@@ -168,7 +174,7 @@ class EventBus:
         self._subscribers: list[Subscriber] = []
 
     def subscribe(self, handler: Subscriber) -> Callable[[], None]:
-        """購読する。戻り値を呼ぶと解除される。"""
+        """Subscribes. Calling the returned function unsubscribes."""
         self._subscribers.append(handler)
 
         def unsubscribe() -> None:
@@ -178,10 +184,11 @@ class EventBus:
         return unsubscribe
 
     async def publish(self, draft: DomainEventDraft) -> DomainEvent:
-        """採番 → 永続化 → 配送。**この順序を変えない。**
+        """Number → persist → dispatch. **This order never changes.**
 
-        配送してから永続化すると、購読側が観測した事実が永続化されないまま
-        クラッシュしうる（購読側の状態と履歴が食い違う）。
+        Dispatching before persisting risks a crash where a subscriber observed a
+        fact that never got persisted (the subscriber's state and the history would
+        then disagree).
         """
         lock = self._locks.setdefault(draft.stream_key, asyncio.Lock())
         async with lock:
@@ -206,7 +213,7 @@ class EventBus:
             try:
                 await handler(event)
             except Exception:
-                # **1つの購読者の失敗で Bus を止めない。** ただし黙って捨てない。
+                # **One subscriber's failure never stops the Bus.** But it's never silently dropped either.
                 log.exception(
                     "event.subscriber_failed",
                     stream_key=event.stream_key,

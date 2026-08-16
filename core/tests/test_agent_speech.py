@@ -1,7 +1,7 @@
-"""PlaybackScheduler。**docs/architecture/audio.md §6**（先読み並列生成 + 順序保証再生）。
+"""PlaybackScheduler. **docs/architecture/audio.md §6** (parallel pre-generation + order-preserving playback).
 
-デバイスを開かずに試験できる。`SpeakerPlayback` は `start()` を呼ばなければ
-リングと `mute_flag` だけの入れ物であり、それがここで見たいものである。
+Testable without opening a device. Without calling `start()`, `SpeakerPlayback` is
+just a container holding a ring and `mute_flag` — exactly what's being tested here.
 """
 
 from __future__ import annotations
@@ -48,7 +48,7 @@ def playback(channels: int = 1) -> SpeakerPlayback:
 
 
 class FakeTts:
-    """`TTSProvider` の形だけ。**遅延を指定できる**（順序保証を試験するため）。"""
+    """Only the shape of `TTSProvider`. **Lets you specify delays** (to test order preservation)."""
 
     id = "fake-tts"
 
@@ -94,11 +94,11 @@ def make(tts: FakeTts, notifier: FakeNotifier, **kwargs: Any) -> PlaybackSchedul
     )
 
 
-# ── 順序 ────────────────────────────────────────────────────
+# ── Ordering ────────────────────────────────────────────────────
 
 
 async def test_sentences_play_in_order_even_when_the_short_one_finishes_first() -> None:
-    """★ **短い文の方が先に生成完了する。** 到着順に再生すると文が入れ替わる。"""
+    """* **A shorter sentence finishes generating first.** Playing in arrival order would scramble sentences."""
     tts = FakeTts(delays={"ながい文。": 0.05, "みじかい。": 0.0})
     notifier = FakeNotifier()
     scheduler = make(tts, notifier)
@@ -111,7 +111,7 @@ async def test_sentences_play_in_order_even_when_the_short_one_finishes_first() 
 
 
 async def test_generation_is_parallel() -> None:
-    """**逐次だと文の切れ目で必ず間が空く。** 4文が生成の直列和より速く終わる。"""
+    """**Sequential generation always leaves a gap between sentences.** 4 sentences finish faster than their sum in series."""
     tts = FakeTts(delays=dict.fromkeys(["A。", "B。", "C。", "D。"], 0.05))
     scheduler = make(tts, FakeNotifier())
 
@@ -123,7 +123,7 @@ async def test_generation_is_parallel() -> None:
     assert asyncio.get_running_loop().time() - started < 0.05 * 4
 
 
-# ── 再生と通知 ──────────────────────────────────────────────
+# ── Playback and notification ──────────────────────────────────────────────
 
 
 async def test_audio_reaches_the_ring() -> None:
@@ -144,12 +144,12 @@ async def test_the_ring_gets_one_sample_per_channel() -> None:
     scheduler.speak("あ。")
     await scheduler.finish()
 
-    # 10 ms = 160 フレーム × 2ch
+    # 10 ms = 160 frames x 2ch
     assert speaker.queued == 320
 
 
 async def test_ended_is_sent_once_at_the_end() -> None:
-    """**`started` は文ごと、`ended` は1回**（docs/interfaces/renderer.md）。"""
+    """**`started` fires per sentence, `ended` fires once** (docs/interfaces/renderer.md)."""
     notifier = FakeNotifier()
     scheduler = make(FakeTts(), notifier)
 
@@ -162,14 +162,14 @@ async def test_ended_is_sent_once_at_the_end() -> None:
 
 
 async def test_nothing_is_sent_when_nothing_was_spoken() -> None:
-    """喋っていないのに `ended` を送ると、Stage は開いていない口を閉じにいく。"""
+    """Sending `ended` when nothing was spoken would make the Stage try to close a mouth that was never open."""
     notifier = FakeNotifier()
     await make(FakeTts(), notifier).finish()
     assert notifier.sent == []
 
 
 async def test_visemes_are_omitted_without_a_timeline() -> None:
-    """**でたらめな時間で口を動かすより動かさない**（docs/interfaces/renderer.md）。"""
+    """**Better to not move the mouth than move it on bogus timing** (docs/interfaces/renderer.md)."""
     notifier = FakeNotifier()
     scheduler = make(FakeTts(), notifier)
 
@@ -179,11 +179,11 @@ async def test_visemes_are_omitted_without_a_timeline() -> None:
     assert "spans" not in notifier.sent[0][1]
 
 
-# ── 中断 ────────────────────────────────────────────────────
+# ── Interruption ────────────────────────────────────────────────────
 
 
 async def test_abort_mutes_immediately_and_discards_the_queue() -> None:
-    """**生成完了を待たない。** ミュートが先（ユーザーが体感するのはそこだけ）。"""
+    """**Never waits for generation to finish.** Mute comes first (the only part the user actually feels)."""
     speaker = playback()
     tts = FakeTts(delays={"ながい。": 1.0})
     scheduler = make(tts, FakeNotifier(), playback=speaker)
@@ -214,7 +214,7 @@ async def test_speaking_after_abort_does_nothing() -> None:
 
 
 async def test_a_cancelled_token_stops_synthesis_before_it_starts() -> None:
-    """**始める前に「まだ意味があるか」を見る**（docs/interfaces/provider.md）。"""
+    """**Checks "is this still worth doing" before starting** (docs/interfaces/provider.md)."""
     token = CancelToken()
     token.fire("barge-in")
     tts = FakeTts()
@@ -226,11 +226,11 @@ async def test_a_cancelled_token_stops_synthesis_before_it_starts() -> None:
     assert outcome.spoken == 0
 
 
-# ── 失敗 ────────────────────────────────────────────────────
+# ── Failure ────────────────────────────────────────────────────
 
 
 async def test_a_failed_sentence_is_counted_not_swallowed() -> None:
-    """**1文が喋れなかったことを残す。** 黙って飛ばさない。"""
+    """**Records that a sentence couldn't be spoken.** Never silently skipped."""
     notifier = FakeNotifier()
     scheduler = make(FakeTts(fail={"だめ。"}), notifier)
 
@@ -244,7 +244,7 @@ async def test_a_failed_sentence_is_counted_not_swallowed() -> None:
 
 
 async def test_a_broken_wav_is_counted() -> None:
-    """**エンジンの出力を信用しない**（Invariant 3）。"""
+    """**Never trusts the engine's output** (Invariant 3)."""
 
     class BrokenTts(FakeTts):
         async def synthesize(
@@ -262,7 +262,7 @@ async def test_a_broken_wav_is_counted() -> None:
 
 
 async def test_an_unsupported_sample_width_is_refused_not_converted() -> None:
-    """**変換を自作せず失敗させる。** 黙って変換すると音が壊れた理由が分からなくなる。"""
+    """**Fails rather than inventing a conversion.** Silently converting would make a broken-sound bug impossible to trace."""
 
     class EightBitTts(FakeTts):
         async def synthesize(

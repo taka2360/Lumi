@@ -1,14 +1,15 @@
 /**
- * クレジットとライセンスの中身。**データだけ。描画は Credits.tsx。**
+ * The content of the credits and licenses. **Data only. Rendering lives in Credits.tsx.**
  *
- * 設計 → docs/licensing.md §6「Phase 0 のクレジット画面に載せるもの」
+ * Design → docs/licensing.md §6 "What Phase 0's credits screen shows"
  *
- * **Phase 0 のクレジットは静的で、Core にも外部にも接続しない**
- * （docs/architecture/ui.md「`credits` を Core に繋がない理由」）。
- * したがって「いま使っているもの」を知らない。**知らないものを省略せず、
- * 適用条件を書いて全部載せる。** クレジットは欠けたときだけ違反になる。
+ * **Phase 0's credits are static and connect neither to Core nor externally**
+ * (docs/architecture/ui.md "Why `credits` doesn't connect to Core").
+ * So it has no way to know "what's actually in use." **Nothing unknown is
+ * omitted — everything is listed along with when it applies.** Credits become a
+ * violation only when something is missing.
  *
- * 使用中のものに絞るのは Phase 1 の `Provider.attribution()`。
+ * Narrowing this down to what's actually in use is Phase 1's `Provider.attribution()`.
  */
 
 import acmlText from "./licenses/acml-1.0.txt?raw";
@@ -41,12 +42,12 @@ export type BundledComponent = {
 export type ExternalComponent = {
   readonly name: string;
   readonly license: string;
-  /** 全文をこの画面のどこで読めるか。空なら全文は載せていない。 */
+  /** Where on this screen the full text can be read. Empty means the full text isn't included. */
   readonly licenses: readonly LicenseId[];
-  /** **どんなときに適用されるか。** Phase 0 は「使用中」を知らないので、必ず書く。 */
+  /** **When this applies.** Phase 0 doesn't know what's "in use," so this is always filled in. */
   readonly appliesWhen: string;
   readonly source: string;
-  /** Lumi の利用者が負う義務。**「知らせる義務」もここに含む。** */
+  /** Obligations Lumi's user bears. **The "obligation to disclose" is included here too.** */
   readonly obligations: readonly string[];
 };
 
@@ -56,7 +57,7 @@ export type ProhibitionSet = {
   readonly items: readonly string[];
 };
 
-/** Lumi 本体。**MIT で、これだけが Lumi の配布物**。 */
+/** Lumi itself. **MIT, and this is the only thing that's Lumi's own distributable.** */
 export const LUMI = {
   name: "Lumi",
   license: "MIT",
@@ -66,11 +67,12 @@ export const LUMI = {
 } as const;
 
 /**
- * Lumi が**同梱する** OSS の直接依存。
+ * The direct OSS dependencies Lumi **bundles**.
  *
- * **推移的依存を含む完全な一覧は、何が実際に配布物へ入るかが決まってから生成する**
- * （docs/licensing.md §6「保証しないこと」）。バージョンは package.json /
- * Cargo.toml / pyproject.toml と一致していること（content.test.ts が検査する）。
+ * **The complete list, including transitive dependencies, is generated once
+ * what actually ships in the distributable is decided**
+ * (docs/licensing.md §6 "What this does not guarantee"). Versions must match
+ * package.json / Cargo.toml / pyproject.toml (checked by content.test.ts).
  */
 export const BUNDLED: readonly BundledComponent[] = [
   {
@@ -110,16 +112,16 @@ export const BUNDLED: readonly BundledComponent[] = [
       { name: "sqlite-vec", version: "0.1.9", license: "MIT OR Apache-2.0" },
       { name: "httpx", version: "0.28.1", license: "BSD-3-Clause" },
       { name: "sounddevice", version: "0.5.5", license: "MIT" },
-      // sounddevice が同梱するバイナリ。**同梱物なので一緒に載せる。**
+      // The binary sounddevice bundles. **Listed alongside it since it's bundled too.**
       { name: "PortAudio", version: "V19.7.0", license: "MIT" },
     ],
   },
 ];
 
 /**
- * Lumi が**同梱しない**もの。取得もインストールも**ユーザーの PC の上で**起きる。
+ * Things Lumi **doesn't bundle**. Both fetching and installing happen **on the user's own PC**.
  *
- * → docs/licensing.md §2（配布方針）/ §4
+ * → docs/licensing.md §2 (distribution policy) / §4
  */
 export const EXTERNAL: readonly ExternalComponent[] = [
   {
@@ -161,12 +163,13 @@ export const EXTERNAL: readonly ExternalComponent[] = [
   },
 ];
 
-/** 音源クレジットの書き方の例。**「少し探せばわかる場所」に置く義務への対応。** */
+/** Examples of how to write voice-source credit. **Addresses the obligation to place it "somewhere findable with a bit of effort."** */
 export const CREDIT_EXAMPLES: readonly string[] = ["VOICEVOX:ずんだもん", "VOICEVOX:四国めたん"];
 
 /**
- * 禁止事項。**VOICEVOX の再許諾義務（利用者にも遵守を義務付ける）への対応**であり、
- * ACML 特例条項の「開発元の努力」の一部でもある（docs/licensing.md §5 措置5）。
+ * Prohibited uses. **Addresses VOICEVOX's sublicensing obligation (requiring
+ * users to comply too)**, and is also part of the "developer's effort" under
+ * ACML's special provision (docs/licensing.md §5 measure 5).
  */
 export const PROHIBITIONS: readonly ProhibitionSet[] = [
   {
@@ -197,10 +200,10 @@ export const PROHIBITIONS: readonly ProhibitionSet[] = [
 ];
 
 /**
- * ライセンス全文。
+ * The full license texts.
  *
- * **GPL-3.0 も載せる。** LGPL-3.0 は本文中で GPL-3.0 を取り込んでおり、
- * LGPL だけでは条件を読めない。
+ * **GPL-3.0 is included too.** LGPL-3.0's text incorporates GPL-3.0 by reference,
+ * so the terms can't be read from LGPL alone.
  */
 export const LICENSES: readonly LicenseDocument[] = [
   {
@@ -235,10 +238,12 @@ export type Ecosystem = {
 };
 
 /**
- * **推移的依存を含む完全な一覧。** `scripts/generate-oss-notice.mjs` が3つの依存グラフから生成する。
+ * **The complete list, including transitive dependencies.** Generated from all
+ * three dependency graphs by `scripts/generate-oss-notice.mjs`.
  *
- * 手で書かない。手で書いた一覧は必ず古くなり、**欠けたことに誰も気づけない**。
- * 上の BUNDLED は「読む人が知りたい主要な依存」であり、こちらは「義務としての網羅」。
+ * Never written by hand. A hand-written list would inevitably go stale, and
+ * **nobody would notice something was missing.** The `BUNDLED` list above is "the
+ * main dependencies a reader wants to know about"; this one is "complete coverage as an obligation."
  */
 export const THIRD_PARTY = generated as {
   readonly total: number;
@@ -246,8 +251,8 @@ export const THIRD_PARTY = generated as {
 };
 
 /**
- * 画面の見出しに使う節。**docs/licensing.md §6 の表と1対1**。
- * 節が消えていないことを content.test.ts が検査する。
+ * The sections used for the screen's headings. **A 1:1 match with the table in docs/licensing.md §6**.
+ * content.test.ts checks that no section has disappeared.
  */
 export const SECTIONS = [
   "lumi",

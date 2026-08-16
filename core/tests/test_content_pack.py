@@ -1,6 +1,6 @@
-"""Content Pack。**docs/architecture/extension.md テスト 13 / 13b。**
+"""Content Pack. **docs/architecture/extension.md tests 13 / 13b.**
 
-どちらも fail-closed である。「読めなかったので既定でいきます」を作らない。
+Both are fail-closed. Never builds a "couldn't read it, so falling back to a default" path.
 """
 
 from __future__ import annotations
@@ -54,9 +54,9 @@ def test_a_speaker_id_is_read(tmp_path: Path) -> None:
 
 
 def test_a_pack_with_code_is_rejected(tmp_path: Path) -> None:
-    """**テスト13。** Content Pack は共有・配布されやすい。
+    """**Test 13.** Content Packs are easily shared and redistributed.
 
-    コードを含むと、Content Pack が Extension と同じ脅威になる。
+    Including code would make a Content Pack the same threat as an Extension.
     """
     root = pack(tmp_path)
     (root / "hook.py").write_text("print('hi')", encoding="utf-8")
@@ -75,7 +75,7 @@ def test_code_nested_deeper_is_also_rejected(tmp_path: Path) -> None:
 
 
 def test_a_pack_without_credit_is_rejected(tmp_path: Path) -> None:
-    """**テスト13b。** クレジット表記は音源規約上の義務であり、後から足せない。"""
+    """**Test 13b.** Credit attribution is an obligation from the voice source's terms, and can't be added later."""
     root = pack(tmp_path, voice="[voice]\nspeaker = 0\n")
 
     with pytest.raises(ContentPackError, match=r"\[credit\]"):
@@ -108,19 +108,19 @@ def test_broken_toml_is_reported(tmp_path: Path) -> None:
 
 
 def test_a_missing_persona_is_reported(tmp_path: Path) -> None:
-    """**人格が無い Lumi は Lumi ではない。** 空文字で代用しない。"""
+    """**Lumi without a persona isn't Lumi.** Never substituted with an empty string."""
     with pytest.raises(ContentPackError, match="persona"):
         load_character(pack(tmp_path, character='[character]\nname = "Lumi"\n'))
 
 
-# ── 同梱されている既定パック ────────────────────────────────
+# ── The bundled default pack ────────────────────────────────
 
 
 def test_the_bundled_default_pack_loads() -> None:
-    """**配布物に入るものが読めることを CI で確かめる。**
+    """**Confirms in CI that what ships in the distributable can actually be read.**
 
-    ここが落ちるということは、`content/` の toml を壊したか、
-    うっかりコードを置いたということである。
+    A failure here means either the `content/` toml got broken, or code was
+    accidentally placed inside it.
     """
     loaded = load_character(paths.default_character_dir())
     assert loaded.persona

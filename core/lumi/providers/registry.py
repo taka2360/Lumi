@@ -1,10 +1,10 @@
-"""Provider Registry。
+"""Provider Registry.
 
-設計 → docs/interfaces/provider.md「Provider Registry」
+Design → docs/interfaces/provider.md "Provider Registry"
 
-**黙って劣化しない。** 音声が出ない・返事が来ない、が原因不明になるのが最悪である。
-未セットアップ（`ProviderNotConfigured`）と起動失敗（`ProviderUnavailable`）は
-**別の例外として上げる**（呼び出し側がユーザーへの案内を変えられるように）。
+**Never silently degrade.** The worst outcome is "no sound, no reply" with an unknown
+cause. Not-set-up (`ProviderNotConfigured`) and failed-to-start (`ProviderUnavailable`)
+are **raised as distinct exceptions** (so callers can tailor guidance to the user).
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ class ProviderInfo:
 
 
 class ProviderRegistry:
-    """kind ごとに1つ選択する。**選択の設定は Phase 1 後半（設定 UI）。**"""
+    """Selects one per kind. **UI for choosing the selection lands later in Phase 1 (settings UI).**"""
 
     __slots__ = ("_providers", "_selected")
 
@@ -45,9 +45,9 @@ class ProviderRegistry:
         self._selected[kind] = provider_id
 
     async def get(self, kind: ProviderKind) -> Provider:
-        """選択されている Provider を返す。**未 load なら load する。**
+        """Returns the selected Provider. **Loads it if not yet loaded.**
 
-        `load()` は冪等なので、呼び出し側が状態を気にしなくてよい。
+        `load()` is idempotent, so the caller doesn't need to track state.
         """
         provider = self.peek(kind)
         if not provider.is_loaded():
@@ -55,7 +55,7 @@ class ProviderRegistry:
         return provider
 
     def peek(self, kind: ProviderKind) -> Provider:
-        """**load せずに**取り出す。状態表示や `attribution()` に使う。"""
+        """Retrieves it **without loading.** Used for status display and `attribution()`."""
         provider_id = self._selected.get(kind)
         if provider_id is None:
             raise ProviderNotConfigured(f"{kind} の Provider が登録されていない")
@@ -71,10 +71,10 @@ class ProviderRegistry:
         ]
 
     def attributions(self) -> list[Attribution]:
-        """クレジット画面へ。**選択されているものだけ**を出す。
+        """For the credits screen. Emits **only the ones currently selected.**
 
-        使っていない Provider のクレジットを並べると、
-        「何のクレジットなのか」が読み手に伝わらなくなる。
+        Listing credits for unused Providers would leave the reader unable to tell
+        what each credit is actually for.
         """
         return [self.peek(kind).attribution() for kind in sorted(self._selected)]
 

@@ -1,8 +1,8 @@
 /**
- * クレジットの受け入れ条件。**docs/licensing.md §8 のテスト 7 に対応する。**
+ * Acceptance criteria for the credits. **Corresponds to test 7 in docs/licensing.md §8.**
  *
- * クレジットは「欠けていること」だけが違反になる。したがってここで検査するのは
- * **必要なものが在ること**であって、見栄えではない。
+ * Credits become a violation only when "something is missing." So what's checked
+ * here is **that the necessary things are present** — not appearance.
  */
 
 import { describe, expect, it } from "vitest";
@@ -19,8 +19,8 @@ import {
   THIRD_PARTY,
 } from "./content";
 
-describe("クレジットの構成", () => {
-  it("docs/licensing.md §6 の節がすべて在る", () => {
+describe("credits structure", () => {
+  it("every section from docs/licensing.md §6 is present", () => {
     expect(SECTIONS).toEqual([
       "lumi",
       "bundled",
@@ -32,35 +32,35 @@ describe("クレジットの構成", () => {
     ]);
   });
 
-  it("Lumi 本体が MIT だと書いてある", () => {
+  it("states that Lumi itself is MIT", () => {
     expect(LUMI.license).toBe("MIT");
     expect(LICENSES.some((l) => l.id === LUMI.licenseId)).toBe(true);
   });
 });
 
-describe("ライセンス全文", () => {
-  it("LGPL-3.0 と、それが取り込む GPL-3.0 の両方が入っている", () => {
+describe("full license texts", () => {
+  it("has both LGPL-3.0 and the GPL-3.0 it incorporates", () => {
     const ids = LICENSES.map((l) => l.id);
     expect(ids).toContain("lgpl-3.0");
     expect(ids).toContain("gpl-3.0");
   });
 
-  it("音声合成モデルのライセンス全文が入っている", () => {
+  it("has the full license text for the voice synthesis model", () => {
     const acml = LICENSES.find((l) => l.id === "acml-1.0");
     expect(acml).toBeDefined();
-    // 「全文」であることの確認。要約だと差し替わったときに気づけない。
+    // Confirms it's the "full text." A summary wouldn't be noticed if it got swapped out.
     expect(acml?.text).toContain("できないこと");
     expect(acml?.text).toContain("免責事項");
   });
 
-  it("全文が空でも省略でもない", () => {
+  it("no full text is empty or abridged", () => {
     for (const license of LICENSES) {
       expect(license.text.length, license.id).toBeGreaterThan(900);
       expect(license.text, license.id).not.toContain("…");
     }
   });
 
-  it("参照されているライセンス全文がすべて存在する（リンク切れが無い）", () => {
+  it("every referenced license's full text exists (no broken links)", () => {
     const ids = new Set(LICENSES.map((l) => l.id));
     for (const external of EXTERNAL) {
       for (const id of external.licenses) {
@@ -70,14 +70,14 @@ describe("ライセンス全文", () => {
   });
 });
 
-describe("同梱していないもの", () => {
-  it("エンジン名が載っている", () => {
+describe("things not bundled", () => {
+  it("lists the engine names", () => {
     const names = EXTERNAL.map((e) => e.name);
     expect(names.some((n) => n.includes("AivisSpeech"))).toBe(true);
     expect(names.some((n) => n.includes("VOICEVOX"))).toBe(true);
   });
 
-  it("**いつ適用されるか**が全部に書いてある（Phase 0 は使用中のものを知らない）", () => {
+  it("**when it applies** is written for every entry (Phase 0 doesn't know what's in use)", () => {
     for (const external of EXTERNAL) {
       expect(external.appliesWhen.length, external.name).toBeGreaterThan(0);
       expect(external.source, external.name).toMatch(/^https:\/\//);
@@ -85,21 +85,21 @@ describe("同梱していないもの", () => {
     }
   });
 
-  it("エンジンが初回起動時に外部からモデルを取ることが書いてある", () => {
+  it("states that the engine fetches a model externally on first run", () => {
     const aivis = EXTERNAL.find((e) => e.name.includes("AivisSpeech"));
     expect(aivis?.obligations.join("")).toContain("AivisHub");
   });
 });
 
-describe("音源のクレジットと禁止事項", () => {
-  it("VOICEVOX 形式のクレジット例がある", () => {
+describe("voice credits and prohibitions", () => {
+  it("has a VOICEVOX-format credit example", () => {
     expect(CREDIT_EXAMPLES.length).toBeGreaterThan(0);
     for (const example of CREDIT_EXAMPLES) {
       expect(example).toMatch(/^VOICEVOX:/);
     }
   });
 
-  it("ACML と VOICEVOX の両方の禁止事項が載っている（再許諾義務）", () => {
+  it("lists prohibitions from both ACML and VOICEVOX (sublicensing obligation)", () => {
     const sources = PROHIBITIONS.map((p) => p.source);
     expect(sources.some((s) => s.includes("ACML"))).toBe(true);
     expect(sources.some((s) => s.includes("VOICEVOX"))).toBe(true);
@@ -109,11 +109,11 @@ describe("音源のクレジットと禁止事項", () => {
   });
 });
 
-describe("クレジットは Core に依存しない", () => {
-  it("credits 配下から Core・Shell の経路を import していない", () => {
-    // **Core が落ちていてもクレジットは読めなければならない**
-    // （docs/licensing.md §8 テスト10 / docs/architecture/ui.md）。
-    // import が1つ入るだけで、この保証は黙って壊れる。
+describe("credits never depend on Core", () => {
+  it("nothing under credits/ imports the Core or Shell paths", () => {
+    // **Credits must be readable even if Core is down**
+    // (docs/licensing.md §8 test 10 / docs/architecture/ui.md).
+    // A single import slipping in would silently break this guarantee.
     const sources = import.meta.glob("./*.{ts,tsx}", {
       query: "?raw",
       import: "default",
@@ -127,21 +127,21 @@ describe("クレジットは Core に依存しない", () => {
       }
       expect(text, `${file} が Core の経路を参照している`).not.toMatch(/from\s+"\.\.\/core\//);
       expect(text, `${file} が Shell の経路を参照している`).not.toMatch(/from\s+"\.\.\/platform\//);
-      // 依存の**名前**は載る（クレジットなので当然）。禁止するのは import。
+      // The **name** of the dependency is listed (naturally, since this is credits). What's forbidden is the import.
       expect(text, `${file} が Tauri API を import している`).not.toMatch(/from\s+"@tauri-apps/);
     }
   });
 });
 
-describe("同梱している OSS", () => {
-  it("Shell / Stage / Core の3つとも載っている", () => {
+describe("bundled OSS", () => {
+  it("lists all three of Shell / Stage / Core", () => {
     expect(BUNDLED).toHaveLength(3);
     for (const component of BUNDLED) {
       expect(component.dependencies.length, component.component).toBeGreaterThan(0);
     }
   });
 
-  it("ライセンス識別子が空のものが無い", () => {
+  it("no license identifier is empty", () => {
     for (const component of BUNDLED) {
       for (const dep of component.dependencies) {
         expect(dep.license, dep.name).not.toBe("");
@@ -150,9 +150,9 @@ describe("同梱している OSS", () => {
     }
   });
 
-  it("Stage の依存とバージョンが package.json と一致する", () => {
-    // **クレジットが古くなるのは、依存を足したときに気づかないから。**
-    // ここで落ちたら content.ts を直す。
+  it("the Stage's dependencies and versions match package.json", () => {
+    // **Credits go stale because adding a dependency goes unnoticed.**
+    // If this fails, fix content.ts.
     const stage = BUNDLED.find((c) => c.component.includes("Stage"));
     const listed = new Map(stage?.dependencies.map((d) => [d.name, d.version]));
     for (const [name, range] of Object.entries(pkg.dependencies)) {
@@ -163,33 +163,34 @@ describe("同梱している OSS", () => {
   });
 });
 
-describe("サードパーティの完全な一覧（生成物）", () => {
+describe("the complete third-party list (generated)", () => {
   const all = THIRD_PARTY.ecosystems.flatMap((e) => e.packages);
 
-  it("3つのエコシステムと、依存グラフに現れないものが揃っている", () => {
-    // **最後のひとつが抜けやすい。** CPython・PortAudio・PyInstaller の bootloader は
-    // どの依存グラフにも出てこないのに配布物へ入る。
+  it("has all 3 ecosystems plus the ones absent from any dependency graph", () => {
+    // **The last one is easy to miss.** CPython, PortAudio, and the PyInstaller
+    // bootloader appear in no dependency graph, yet ship in the distributable.
     expect(THIRD_PARTY.ecosystems).toHaveLength(4);
     expect(all.length).toBe(THIRD_PARTY.total);
   });
 
-  it("ライセンスが不明なものが無い", () => {
-    // 不明 = 義務が判定できない。**判定できないものを配らない。**
+  it("nothing has an unknown license", () => {
+    // Unknown = obligations can't be determined. **Never ship something that can't be determined.**
     for (const dep of all) {
       expect(dep.license, dep.name).not.toBe("");
       expect(dep.license, dep.name).not.toBe("不明");
     }
   });
 
-  it("GPL / AGPL が例外条項付きの1件以外に無い", () => {
-    // Core = MIT の境界（docs/licensing.md §1）。生成スクリプトも同じ検査をするが、
-    // **生成物そのものを見る検査**をここに置く（スクリプトを回し忘れても落ちる）。
+  it("no GPL / AGPL exists other than the one with an exception clause", () => {
+    // The Core = MIT boundary (docs/licensing.md §1). The generation script runs
+    // the same check, but **a check that looks at the generated output itself**
+    // lives here (still fails even if someone forgets to run the script).
     const copyleft = all.filter((dep) => /GPL/i.test(dep.license));
     expect(copyleft.map((dep) => dep.name)).toEqual(["PyInstaller bootloader"]);
     expect(copyleft[0]?.license).toContain("Bootloader-exception");
   });
 
-  it("Lumi が依存する主要なものが漏れていない", () => {
+  it("nothing Lumi depends on heavily is missing", () => {
     const names = new Set(all.map((dep) => dep.name));
     for (const name of ["tauri", "sqlite-vec", "sounddevice", "three", "react", "PortAudio"]) {
       expect(names.has(name), `${name} が一覧に無い`).toBe(true);

@@ -1,13 +1,13 @@
 /**
- * リップシンク — **純粋関数**。
+ * Lip sync — **pure functions**.
  *
- * 設計 → docs/interfaces/renderer.md「VisemeFrame（リップシンク）」
+ * Design → docs/interfaces/renderer.md "VisemeFrame (lip sync)"
  *
- * Core は「いつどの口の形か」を**1回だけ**送ってくる。時刻を進めるのは Stage の仕事
- * （60Hz で送ると、Stage が詰まったときに口が固まる）。
+ * Core sends "when to use which mouth shape" **exactly once**. Advancing time is
+ * the Stage's job (sending at 60Hz would freeze the mouth whenever the Stage stalls).
  *
- * **アタック/リリースの非対称スムージングと無音判定は必須。**
- * 無いと口がガクガクする（.claude/rules/stage-ts.md）。
+ * **Asymmetric attack/release smoothing and silence detection are mandatory.**
+ * Without them the mouth judders (.claude/rules/stage-ts.md).
  */
 
 export type Viseme = "A" | "I" | "U" | "E" | "O";
@@ -15,7 +15,7 @@ export type Viseme = "A" | "I" | "U" | "E" | "O";
 export const VISEMES: readonly Viseme[] = ["A", "I", "U", "E", "O"];
 
 export interface VisemeSpan {
-  /** `null` は口を閉じる（撥音・促音・無音）。 */
+  /** `null` closes the mouth (moraic nasal, geminate, or silence). */
   viseme: Viseme | null;
   startMs: number;
   durationMs: number;
@@ -26,28 +26,30 @@ export interface VisemeTimeline {
   totalMs: number;
 }
 
-/** 各ビセームの強さ（0.0-1.0）。 */
+/** The strength of each viseme (0.0-1.0). */
 export type MouthWeights = Readonly<Record<Viseme, number>>;
 
 export const MOUTH_CLOSED: MouthWeights = { A: 0, I: 0, U: 0, E: 0, O: 0 };
 
 /**
- * 口を開くのは速く、閉じるのは遅く。
+ * Opens the mouth fast, closes it slowly.
  *
- * 同じ速さにすると、子音の切れ目ごとに口が閉じきってしまい、**震えて見える**。
+ * At the same speed, the mouth would fully close at every consonant boundary,
+ * **making it look like it's trembling**.
  */
 const ATTACK_TAU_S = 0.035;
 const RELEASE_TAU_S = 0.09;
 
 /**
- * `ended` が来なくても、この時間を過ぎたら口を閉じる。
+ * Closes the mouth once this much time has passed, even without `ended` arriving.
  *
- * **Core が落ちても口が開きっぱなしにならない**（fail-closed）。
- * 再生の終わりと通知の到着には数十 ms のずれがあるので、少しだけ猶予を持たせる。
+ * **The mouth never stays open forever even if Core crashes** (fail-closed).
+ * There's a gap of tens of ms between playback ending and the notification
+ * arriving, so a small grace period is given.
  */
 export const TAIL_MS = 250;
 
-/** その時刻に出すべき口の形。**タイムラインの外なら閉じる。** */
+/** The mouth shape to show at that time. **Closed if outside the timeline.** */
 export function visemeAt(timeline: VisemeTimeline, elapsedMs: number): Viseme | null {
   if (elapsedMs < 0 || elapsedMs > timeline.totalMs + TAIL_MS) {
     return null;
@@ -63,16 +65,16 @@ export function visemeAt(timeline: VisemeTimeline, elapsedMs: number): Viseme | 
   return null;
 }
 
-/** 指数的に目標へ近づける。`tau` が小さいほど速い。 */
+/** Exponentially approaches the target. Smaller `tau` means faster. */
 function approach(current: number, target: number, deltaSeconds: number, tau: number): number {
   const rate = 1 - Math.exp(-deltaSeconds / tau);
   return current + (target - current) * rate;
 }
 
 /**
- * 1フレーム分だけ口を目標へ動かす。
+ * Moves the mouth toward the target by one frame's worth.
  *
- * 目標が `null`（無音）のときは全部 0 に向かう = 口が閉じる。
+ * When the target is `null` (silence), everything heads to 0 = the mouth closes.
  */
 export function advanceMouth(
   current: MouthWeights,
@@ -84,13 +86,13 @@ export function advanceMouth(
     const goal = viseme === target ? 1 : 0;
     const tau = goal > current[viseme] ? ATTACK_TAU_S : RELEASE_TAU_S;
     const value = approach(current[viseme], goal, deltaSeconds, tau);
-    // 端で永遠に微小値が残らないようにする（0 に落ちないと「閉じた」判定ができない）。
+    // Prevents an infinitesimal value from lingering forever at the tail end (without dropping to 0, "closed" can't be detected).
     next[viseme] = value < 0.002 ? 0 : Math.min(value, 1);
   }
   return next;
 }
 
-/** 口が閉じているか。**無音判定**。 */
+/** Whether the mouth is closed. **Silence detection.** */
 export function isMouthClosed(weights: MouthWeights): boolean {
   return VISEMES.every((viseme) => weights[viseme] === 0);
 }
@@ -100,9 +102,9 @@ function asNumber(value: unknown): number | null {
 }
 
 /**
- * Core の payload を読む。**壊れていたら `null`**（何も再生しないより悪いことをしない）。
+ * Reads Core's payload. **`null` if malformed** (never does anything worse than playing nothing).
  *
- * Core は信頼できる相手だが、**バージョン違いで形が変わることはある**。
+ * Core is a trusted peer, but **its shape can still change across versions**.
  */
 export function parseTimeline(payload: Record<string, unknown>): VisemeTimeline | null {
   const totalMs = asNumber(payload.total_ms);

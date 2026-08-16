@@ -1,22 +1,23 @@
-"""Policy — **`decide()` がその唯一の定義である。**
+"""Policy — **`decide()` is its sole definition.**
 
-唯一の定義場所 → docs/architecture/permission.md §2
+Single source of definition → docs/architecture/permission.md §2
 
-> 表と散文はすべて `decide()` の**説明**であって、実装の根拠ではない。
-> 表と `decide()` が食い違ったら `decide()` が正。
+> The tables and prose are all **explanations** of `decide()`, not the basis for the
+> implementation. If a table and `decide()` disagree, `decide()` is correct.
 
-## 引数はこの4つだけ
+## Only these four arguments
 
-`base_risk` / `actor` / `effective_trust` / `grant`。
+`base_risk` / `actor` / `effective_trust` / `grant`.
 
-**LLM の理由文・Tool の自己申告・Extension の reason は引数に含まれない**（Invariant 1, 3）。
-「これは安全な操作です」という主張が判断に入る経路を、シグネチャの段階で塞ぐ。
+**The LLM's stated reasoning, a Tool's self-reported claims, and an Extension's
+`reason` are never among the arguments** (Invariant 1, 3). This blocks, at the
+signature level, any path for a claim like "this operation is safe" to enter the decision.
 
-## 規則の適用順序を関数の行順で固定する
+## The rule application order is fixed by the order of lines in the function
 
-「累積適用され、最も厳しいものが勝つ」だけでは、provenance 昇格が `base_risk` を見るのか
-`effective_risk` を見るのかが決まらない。**`decide()` は effective_risk を見る**
-（= actor 昇格を先に適用する）。
+"Applied cumulatively, the strictest wins" alone doesn't settle whether provenance
+escalation looks at `base_risk` or `effective_risk`. **`decide()` looks at
+effective_risk** (i.e. actor escalation is applied first).
 """
 
 from __future__ import annotations
@@ -30,25 +31,25 @@ from lumi.kernel.cancellation import Cancellation
 from lumi.permission.grants import Grant
 from lumi.provenance import TrustLevel
 
-#: 監査ログに必ず入れる。**Policy は将来変わる。**
-#: 「なぜこの操作を許可したのか」に答えるには、当時のルールが分からなければならない。
+#: Always recorded in the audit log. **Policy changes over time.**
+#: Answering "why was this operation allowed" requires knowing the rule that was in effect then.
 POLICY_VERSION: Final = "2026-08-16"
 
 
 class Risk(IntEnum):
-    """L の割り当ては Provisional。**L2/L3 の境界は使ってみないと分からない。**"""
+    """The L assignments are Provisional. **Where the L2/L3 boundary should sit won't be known until it's used in practice.**"""
 
-    #: 読み取り・観測（screenshot, world 読み）
+    #: Reads and observation (screenshot, reading world state)
     L0 = 0
-    #: ブラウザ閲覧・Web 検索
+    #: Browser viewing, web search
     L1 = 1
-    #: ファイル読み取り・作業領域への書き込み
+    #: File reads, writes within the working area
     L2 = 2
-    #: アプリ起動・入力インジェクション・任意パス書き込み
+    #: Launching apps, input injection, writes to arbitrary paths
     L3 = 3
-    #: シェル実行・削除・外部送信・不可逆操作
+    #: Shell execution, deletion, sending externally, irreversible operations
     L4 = 4
-    #: **実効リスクとしてのみ現れる。** Tool は宣言できない（登録時に弾く）
+    #: **Only ever appears as an effective risk.** A Tool can never declare this (rejected at registration)
     DENIED = 5
 
 
@@ -67,10 +68,12 @@ class SideEffect(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class PermissionSpec:
-    """Tool の静的な宣言。**Tool はこれを宣言するだけ。判断も正規化も検証もしない。**
+    """A Tool's static declaration. **A Tool only declares this — it makes no
+    decisions, does no normalization, does no verification.**
 
-    `lane` はここに持たせない。lane は「どの Canonicalizer / 検証器を使うか」という
-    実行機構の選択であって、権限の宣言ではないため（重複して持つと齟齬の原因になる）。
+    `lane` doesn't live here. Lane is a choice of execution machinery — "which
+    Canonicalizer / verifier to use" — not a declaration of permission (holding it in
+    both places would be a source of drift).
     """
 
     capability: str
@@ -81,16 +84,17 @@ class PermissionSpec:
 
 
 def escalate_for_self_initiated(base: Risk) -> Risk:
-    """自律行動の実効リスク。**L3 以上は「昇格」ではなく拒否になる。**
+    """Effective risk for self-initiated (autonomous) actions. **L3 and above becomes
+    denial, not "escalation."**
 
-    「1段上がる」という説明は L3 で表と矛盾したため撤回した
-    （L3 self を1段上げると L4 の user 列 = ask になるが、表は deny）。
-    明示的な写像として書くことで、この曖昧さを消す。
+    The description "bumps up by one level" was retracted because it contradicted the
+    table at L3 (bumping L3 self up one level would give the L4/user column's `ask`,
+    but the table says `deny`). Writing this as an explicit mapping removes that ambiguity.
     """
     return {
-        Risk.L0: Risk.L0,  # 読み取り・観測は自律でも許す
-        Risk.L1: Risk.L1,  # ブラウザ閲覧は許す（AutonomyBudget が別途効く）
-        Risk.L2: Risk.L3,  # 実効的に L3 = ask
+        Risk.L0: Risk.L0,  # Reads and observation are allowed even autonomously
+        Risk.L1: Risk.L1,  # Browser viewing is allowed (AutonomyBudget applies separately)
+        Risk.L2: Risk.L3,  # Effectively L3 = ask
         Risk.L3: Risk.DENIED,
         Risk.L4: Risk.DENIED,
         Risk.DENIED: Risk.DENIED,
@@ -103,16 +107,18 @@ def _evaluate(
     effective_trust: TrustLevel,
     grant: Grant | None,
 ) -> tuple[Decision, str]:
-    """`decide()` の実装本体。**規則の識別子つき**（監査ログの `policy_rule_id`）。
+    """The implementation body of `decide()`. **Carries a rule identifier**
+    (`policy_rule_id` in the audit log).
 
-    `decide()` と2重に規則を書かないために、判断はここ1箇所に閉じる。
+    To avoid writing the rules twice — once here, once in `decide()` — the decision
+    logic is confined to this single place.
     """
-    # ── 1. 実効リスクを決める。actor による昇格はここで1回だけ起きる ──
+    # ── 1. Determine the effective risk. Actor-based escalation happens exactly once, here ──
     effective_risk = base_risk
     if actor is Actor.SELF_INITIATED:
         effective_risk = escalate_for_self_initiated(base_risk)
 
-    # ── 2. 以降の規則はすべて effective_risk に対して適用する ──
+    # ── 2. Every rule from here on applies to effective_risk ──
     if actor is Actor.SYSTEM and base_risk > Risk.L0:
         return Decision.DENY, "system_actor_is_l0_only"
 
@@ -137,9 +143,9 @@ def decide(
     effective_trust: TrustLevel,
     grant: Grant | None,
 ) -> Decision:
-    """**Policy の唯一の定義。純粋関数であること。**
+    """**The sole definition of Policy. Must be a pure function.**
 
-    `Decision` を返す関数はこれ1つだけ（.claude/rules/00-invariants.md）。
+    The only function that returns a `Decision` (.claude/rules/00-invariants.md).
     """
     return _evaluate(base_risk, actor, effective_trust, grant)[0]
 
@@ -150,5 +156,5 @@ def decide_with_rule(
     effective_trust: TrustLevel,
     grant: Grant | None,
 ) -> tuple[Decision, str]:
-    """監査ログ用。**判断そのものは `decide()` と同じ実装**（`_evaluate`）を通る。"""
+    """For the audit log. **The decision itself goes through the same implementation as `decide()`** (`_evaluate`)."""
     return _evaluate(base_risk, actor, effective_trust, grant)

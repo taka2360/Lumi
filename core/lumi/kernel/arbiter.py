@@ -1,28 +1,32 @@
-"""Attention Arbiter — 「今なにをしているか」の単一の所有者。
+"""Attention Arbiter — the sole owner of "what's happening right now."
 
-設計 → docs/architecture/agent.md §1 / 状態機械 → docs/contracts/state-machines.md
+Design → docs/architecture/agent.md §1 / State machine → docs/contracts/state-machines.md
 
-## 守る不変条件
+## Invariants upheld
 
-1. **`_foreground` が指す Activity は常にちょうど1つ**（Invariant 4）
-2. **`running` を取れるのは foreground だけ**（背景に居るのは `cancelling` / `suspended`）
-3. **Activity の状態遷移を実行できるのは Arbiter だけ**
-4. **Activity の中断は `propose` / `interrupt` 以外の経路で起きない**
-   （再生バッファのミュートは Activity 状態遷移ではないので対象外 → docs/architecture/audio.md）
+1. **The Activity `_foreground` points to is always exactly one** (Invariant 4)
+2. **Only foreground can hold `running`** (background holds `cancelling` / `suspended`)
+3. **Only the Arbiter may execute Activity state transitions**
+4. **An Activity is never interrupted through any path other than `propose` /
+   `interrupt`** (muting the playback buffer is out of scope since it isn't an
+   Activity state transition → docs/architecture/audio.md)
 
-## preempt の遷移順序
+## Transition order during preempt
 
 ```
-1. 旧 foreground → interrupt_requested
-2. 即時効果（TTS 再生ミュート等）        ← Arbiter の外。VAD スレッドが同期的に行う
-3. 新 Activity → accepted
-4. _foreground を新に切り替える          ★ ここで Invariant 4 が満たされ続ける
-5. 新 → running / 旧 → cancelling（background）
-6. 旧は background で子の停止を待つ
+1. Old foreground → interrupt_requested
+2. Immediate effects (e.g. muting TTS playback)   ← outside the Arbiter. Done
+   synchronously by the VAD thread
+3. New Activity → accepted
+4. Switch _foreground to the new one              * Invariant 4 stays satisfied from here
+5. New → running / Old → cancelling (background)
+6. Old waits in background for its children to stop
 ```
 
-**4 より前に旧を `cancelling` にしない。** 一瞬 `running` が0個になり Invariant 4 が破れる。
-**`_foreground` の切り替えは、旧の子の停止を待たない。** 待つと barge-in が遅れる。
+**Never set the old one to `cancelling` before step 4.** `running` would briefly drop
+to zero, breaking Invariant 4.
+**Switching `_foreground` never waits for the old one's children to stop.** Waiting
+would delay barge-in.
 """
 
 from __future__ import annotations
@@ -50,12 +54,12 @@ from lumi.kernel.job import Job
 
 log = lumi_logging.get_logger(__name__)
 
-#: DeferredQueue の保持期間〔Provisional〕。
-#: **30分前に話しかけたかったことを今実行されるのは不気味である。**
+#: How long the DeferredQueue holds entries [Provisional].
+#: **Executing something Lumi wanted to say 30 minutes ago, right now, would be unsettling.**
 DEFERRED_TTL: Final = timedelta(minutes=10)
 
-#: `cooperative` な仕事が止まるのを待つ時間〔Provisional〕。
-#: これを過ぎたら待たずに切り離す。**待ち続けると barge-in が壊れる。**
+#: How long to wait for a `cooperative` unit of work to stop [Provisional].
+#: Past this, it's detached without waiting. **Waiting indefinitely would break barge-in.**
 COOPERATIVE_GRACE_S: Final = 0.5
 
 
@@ -79,7 +83,7 @@ ProposalOutcome = Accepted | Deferred | Rejected
 
 @dataclass(frozen=True, slots=True)
 class InterruptResult:
-    """**何が止まり、何が abandoned になったかを返す。** Inspector に出してデバッグ可能にする。"""
+    """**Returns what stopped and what became abandoned.** Surfaced in the Inspector to make debugging possible."""
 
     activity_id: ActivityId
     final_state: ActivityState
@@ -90,7 +94,7 @@ class InterruptResult:
 
 @dataclass(frozen=True, slots=True)
 class InferenceLease:
-    """Job が推論してよい間だけ有効。**foreground が推論を要求すると revoke される。**"""
+    """Valid only while the Job may perform inference. **Revoked if foreground requests inference.**"""
 
     job_id: JobId
     token: CancelToken
@@ -103,12 +107,12 @@ class _DeferredEntry:
 
 
 class DeferredQueue:
-    """受理できなかった提案を、TTL 付きで保持する。**Arbiter が所有する。**"""
+    """Holds proposals that couldn't be accepted, with a TTL. **Owned by the Arbiter.**"""
 
     __slots__ = ("_entries", "_ttl")
 
     def __init__(self, *, ttl: timedelta = DEFERRED_TTL) -> None:
-        #: キーは (kind, intent)。**同一 kind × intent は1件**（新しい方で置換）
+        #: Keyed by (kind, intent). **One entry per identical kind × intent** (replaced by the newer one)
         self._entries: dict[tuple[ActivityKind, str], _DeferredEntry] = {}
         self._ttl = ttl
 
@@ -117,7 +121,7 @@ class DeferredQueue:
         return Deferred(retry_after=self._ttl)
 
     def take_ready(self, now: datetime) -> list[ActivityProposal]:
-        """期限内のものを取り出す。**期限切れは黙って捨てる**（それが TTL の意味）。"""
+        """Retrieves the ones still within their deadline. **Expired ones are silently dropped** (that's what TTL means)."""
         ready: list[ActivityProposal] = []
         for (kind, intent), entry in self._entries.items():
             if now - entry.offered_at > self._ttl:
@@ -132,7 +136,7 @@ class DeferredQueue:
 
 
 class AttentionArbiter:
-    """**Activity の状態遷移を実行してよい唯一の場所。**"""
+    """**The only place allowed to execute Activity state transitions.**"""
 
     __slots__ = (
         "_activities",
@@ -157,15 +161,15 @@ class AttentionArbiter:
         self._deferred = DeferredQueue(ttl=deferred_ttl)
         self._leases: dict[JobId, InferenceLease] = {}
         self._foreground: ActivityId | None = None
-        #: 背景で走る「旧 Activity の後始末」。**参照を保持しないと GC で消える**
+        #: "Cleanup of the old Activity" running in the background. **Kept referenced or GC would collect it**
         self._pending: set[asyncio.Task[InterruptResult]] = set()
 
-    # ── 起動 ──────────────────────────────────────────────
+    # ── Startup ──────────────────────────────────────────────
 
     async def start(self) -> Activity:
-        """idle Activity を `running` で生成し、foreground にする。
+        """Constructs the idle Activity as `running` and makes it foreground.
 
-        **`current()` が None を返さない**のは、ここが起動時に必ず呼ばれるため。
+        **`current()` never returns None** because this is always called at startup.
         """
         if self._foreground is not None:
             return self.current()
@@ -175,10 +179,10 @@ class AttentionArbiter:
         await self._publish_started(idle)
         return idle
 
-    # ── 参照 ──────────────────────────────────────────────
+    # ── Access ──────────────────────────────────────────────
 
     def current(self) -> Activity:
-        """**None を返さない。** 呼び出し側に null チェックを書かせない。"""
+        """**Never returns None.** Callers never need to write a null check."""
         if self._foreground is None:
             raise RuntimeError("Arbiter が start() されていない")
         return self._activities[self._foreground]
@@ -190,7 +194,7 @@ class AttentionArbiter:
     def deferred_count(self) -> int:
         return len(self._deferred)
 
-    # ── 提案 ──────────────────────────────────────────────
+    # ── Proposal ──────────────────────────────────────────────
 
     async def propose(self, proposal: ActivityProposal) -> ProposalOutcome:
         current = self.current()
@@ -210,24 +214,24 @@ class AttentionArbiter:
         )
         self._activities[new.id] = new
 
-        # 1. 旧 foreground を止めにかかる（idle は「止める」のではなく退避する）
+        # 1. Begin stopping the old foreground (idle is preempted, not "stopped")
         interrupting = current.kind is not ActivityKind.IDLE
         if interrupting:
             current._apply(ActivityState.INTERRUPT_REQUESTED)
 
-        # 3. 新 → accepted
+        # 3. New → accepted
         new._apply(ActivityState.ACCEPTED)
 
-        # 4. ★ foreground の切り替え。ここで Invariant 4 が満たされ続ける
+        # 4. * Switch foreground. Invariant 4 stays satisfied from here
         self._foreground = new.id
 
-        # 5. 新 → running / 旧 → cancelling（または idle は suspended）
+        # 5. New → running / Old → cancelling (or idle → suspended)
         new._apply(ActivityState.RUNNING)
         await self._publish_started(new)
 
         if interrupting:
             current._apply(ActivityState.CANCELLING)
-            # 6. **旧の子の停止を待たない。** 待つと barge-in が遅れる
+            # 6. **Never waits for the old one's children to stop.** Waiting would delay barge-in
             task = asyncio.create_task(
                 self._finish_cancelling(current, reason=f"preempted_by:{proposal.kind.value}")
             )
@@ -239,25 +243,28 @@ class AttentionArbiter:
         return Accepted(new)
 
     def take_deferred(self) -> list[ActivityProposal]:
-        """foreground が idle に戻ったとき等に、保留していた提案を取り出す。
+        """Retrieves held-back proposals, e.g. when foreground returns to idle.
 
-        **取り出すだけで、ここでは再提案しない。** 呼び出し側（Deliberative Loop）が
-        改めて `propose()` する。Arbiter が勝手に発火させると、
-        「なぜ今それを言ったのか」の起点が Arbiter の中に隠れてしまう。
+        **Only retrieves them — never re-proposes here.** The caller (the
+        Deliberative Loop) calls `propose()` again itself. If the Arbiter fired
+        these on its own, the origin of "why did it say that just now" would end up
+        hidden inside the Arbiter.
         """
         return self._deferred.take_ready(self._clock())
 
-    # ── 中断 ──────────────────────────────────────────────
+    # ── Interruption ──────────────────────────────────────────────
 
     async def interrupt(self, reason: str) -> InterruptResult:
-        """foreground を中断し、idle に戻す。**Activity 中断の唯一の入口**（Invariant 4）。
+        """Interrupts foreground and returns to idle. **The sole entry point for
+        interrupting an Activity** (Invariant 4).
 
-        「音が止まる」はここを通らない。VAD スレッドが同期的に `mute_flag` を立てる
-        （docs/architecture/audio.md）。**ユーザーが体感するのは前者。**
+        "Sound stopping" does not go through here. The VAD thread sets `mute_flag`
+        synchronously (docs/architecture/audio.md). **That's the part the user
+        actually feels.**
         """
         current = self.current()
         if current.kind is ActivityKind.IDLE:
-            # idle への cancel は no-op（state-machines.md）
+            # Cancelling idle is a no-op (state-machines.md)
             return InterruptResult(activity_id=current.id, final_state=current.state, reason=reason)
 
         current._apply(ActivityState.INTERRUPT_REQUESTED)
@@ -292,16 +299,17 @@ class AttentionArbiter:
         return result
 
     async def _stop_cancellables(self, activity: Activity) -> tuple[list[str], list[str]]:
-        """契約ごとに止める。
+        """Stops each one according to its contract.
 
-        | 契約 | やること |
+        | Contract | Action |
         |---|---|
-        | `hard` | `kill()` を即座に呼ぶ |
-        | `cooperative` | token を fire し、猶予時間だけ待つ |
-        | `non_cancellable` | **待たずに切り離す** → abandoned |
+        | `hard` | Calls `kill()` immediately |
+        | `cooperative` | Fires the token and waits only the grace period |
+        | `non_cancellable` | **Detached without waiting** → abandoned |
 
-        **猶予を過ぎても止まらない `cooperative` も abandoned にする。**
-        契約違反の兆候なので警告を出すが、待ち続けて barge-in を壊す方が悪い。
+        **A `cooperative` unit that doesn't stop within the grace period is also
+        marked abandoned.** A warning is logged since it hints at a contract
+        violation, but continuing to wait and breaking barge-in would be worse.
         """
         stopped: list[str] = []
         abandoned: list[str] = []
@@ -334,20 +342,20 @@ class AttentionArbiter:
         return stopped, abandoned
 
     async def _kill(self, item: Cancellable, stopped: list[str], abandoned: list[str]) -> None:
-        assert item.kill is not None  # Cancellable.__post_init__ が保証する
+        assert item.kill is not None  # Guaranteed by Cancellable.__post_init__
         try:
             await item.kill()
         except Exception:
-            # 止められなかった。**止まったことにしない。**
+            # Couldn't be stopped. **Never treated as if it stopped.**
             log.exception("arbiter.kill_failed", label=item.label)
             abandoned.append(item.label)
         else:
             stopped.append(item.label)
 
-    # ── 正常終了 ───────────────────────────────────────────
+    # ── Normal completion ───────────────────────────────────────────
 
     async def complete(self, activity_id: ActivityId, *, failed: bool = False) -> None:
-        """正常終了（または異常終了）。foreground なら idle に戻す。"""
+        """Normal completion (or abnormal completion). Returns to idle if this was foreground."""
         activity = self._activities[activity_id]
         activity._apply(ActivityState.COMPLETING)
         if self._foreground == activity_id:
@@ -356,7 +364,7 @@ class AttentionArbiter:
         await self._publish_ended(activity, reason="failed" if failed else "completed")
 
     async def _to_idle(self) -> None:
-        """foreground を idle に戻す。**idle は消滅しない**ので、探して起こすだけ。"""
+        """Returns foreground to idle. **idle never disappears**, so this just finds and wakes it."""
         idle = self._find_idle()
         self._foreground = idle.id
         if idle.state is ActivityState.SUSPENDED:
@@ -368,14 +376,14 @@ class AttentionArbiter:
                 return activity
         raise RuntimeError("idle Activity が存在しない（start() されていない）")
 
-    # ── 推論資源の調停 ──────────────────────────────────────
+    # ── Arbitrating the inference resource ──────────────────────────────────────
 
     @asynccontextmanager
     async def inference_lease(self, job: Job) -> AsyncIterator[InferenceLease]:
-        """`uses_inference` な Job は、これを取ってから推論する。
+        """A `uses_inference` Job acquires this before running inference.
 
-        これが無いと、Reflection Job の推論が会話の LLM 初トークンを待たせ、
-        **レイテンシ SLO（p95 2.0秒）を直撃する**（ADR-018）。
+        Without it, a Reflection Job's inference would delay the conversation LLM's
+        first token, **hitting the latency SLO (p95 2.0s) directly** (ADR-018).
         """
         lease = InferenceLease(job_id=job.id, token=job.cancel_token)
         self._leases[job.id] = lease
@@ -385,10 +393,10 @@ class AttentionArbiter:
             self._leases.pop(job.id, None)
 
     def request_inference(self, activity_id: ActivityId) -> None:
-        """**foreground Activity が推論を始めるときに呼ぶ。** 既存の Job lease を revoke する。
+        """**Called when the foreground Activity starts inference.** Revokes any existing Job leases.
 
-        foreground でない Activity からの要求は無視する（背景の仕事が
-        Job を追い出せると、優先順位が意味を失う）。
+        A request from a non-foreground Activity is ignored (if background work
+        could evict a Job, priority would lose its meaning).
         """
         if self._foreground != activity_id:
             return
@@ -406,11 +414,11 @@ class AttentionArbiter:
         )
 
     async def _publish(self, activity: Activity, event_type: str, extra: dict[str, object]) -> None:
-        """**payload に発話本文を入れない。**
+        """**Never puts utterance text into the payload.**
 
-        `intent` は「何をしようとしているか」の識別子（`user_speech` など）であって、
-        ユーザーが何と言ったかではない。会話内容の永続化は Phase 2
-        （`contracts/privacy.md` を書いてから）→ `lumi/storage/sqlite.py`
+        `intent` is an identifier for "what it's trying to do" (e.g. `user_speech`),
+        not what the user actually said. Persisting conversation content is Phase 2
+        (after `contracts/privacy.md` is written) → `lumi/storage/sqlite.py`
         """
         await self._bus.publish(
             DomainEventDraft(

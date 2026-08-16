@@ -1,7 +1,7 @@
-"""既存インストールの検出。**外部通信しない。**
+"""Detects existing installations. **No external communication.**
 
-見るのはローカルのファイルシステムと 127.0.0.1 だけ
-（docs/architecture/setup.md §6）。
+Only looks at the local filesystem and 127.0.0.1
+(docs/architecture/setup.md §6).
 """
 
 from __future__ import annotations
@@ -19,22 +19,22 @@ from lumi.setup.engines import AIVISSPEECH_ENGINE, EngineArtifact
 
 log = lumi_logging.get_logger(__name__)
 
-#: ポートが開いているかを見るときの待ち時間。**長く待たない**（起動を遅らせない）。
+#: Wait time for checking whether a port is open. **Never waits long** (never delays startup).
 PROBE_TIMEOUT_S = 0.3
 
 
 @dataclass(frozen=True, slots=True)
 class KnownEngine:
-    """検出対象のエンジン。"""
+    """The engine to detect."""
 
     name: str
     display_name: str
     port: int
-    #: `%LOCALAPPDATA%` などからの相対ではなく、環境変数名と続きのパスで持つ。
+    #: Held as an environment variable name plus a trailing path, not a path relative to `%LOCALAPPDATA%` etc.
     candidates: tuple[tuple[str, str], ...]
 
 
-#: 検出対象。VOICEVOX は**同梱しないが、ユーザーが入れたものは使う**（ADR-019）。
+#: Detection targets. VOICEVOX is **not bundled, but one the user installed is used** (ADR-019).
 KNOWN_ENGINES: tuple[KnownEngine, ...] = (
     KnownEngine(
         name="aivisspeech",
@@ -57,9 +57,10 @@ KNOWN_ENGINES: tuple[KnownEngine, ...] = (
 )
 
 
-#: Ollama。**Lumi は取得もインストールもしない。検出だけ**（ADR-023）。
-#: TTS エンジンと違い `KNOWN_ENGINES` には入れない — 取得の対象ではないため、
-#: 同じ列挙に混ぜると「取得できるもの」として扱う経路が生まれる。
+#: Ollama. **Lumi neither fetches nor installs it. Detection only** (ADR-023).
+#: Unlike the TTS engines, it's not put in `KNOWN_ENGINES` — since it isn't
+#: something to be fetched, mixing it into the same list would open a path where it
+#: gets treated as fetchable.
 OLLAMA: KnownEngine = KnownEngine(
     name="ollama",
     display_name="Ollama",
@@ -77,17 +78,17 @@ class DetectedEngine:
     display_name: str
     port: int
     executable: Path | None
-    #: すでに起動しているか。起動していれば**二重に起動しない**。
+    #: Whether it's already running. If so, **never started a second time**.
     running: bool
-    #: Lumi が入れたものか。**ユーザー自身が入れたものと区別する**
-    #: （状態が `installed` か `detected` かはここで決まる → setup.md §2）。
+    #: Whether Lumi installed it. **Distinguished from something the user installed themselves**
+    #: (this decides whether the state is `installed` or `detected` → setup.md §2).
     managed_by_lumi: bool = False
-    #: Lumi が入れた場合のバージョン。
+    #: The version, if Lumi installed it.
     version: str | None = None
 
 
 def candidate_executables(engine: KnownEngine, env: Mapping[str, str]) -> list[Path]:
-    """パス候補を組み立てる。**純粋関数**（環境変数を引数で受け取る）。"""
+    """Assembles candidate paths. **A pure function** (environment variables are passed as an argument)."""
     results: list[Path] = []
     for variable, suffix in engine.candidates:
         base = env.get(variable)
@@ -97,7 +98,7 @@ def candidate_executables(engine: KnownEngine, env: Mapping[str, str]) -> list[P
 
 
 def find_installed_by_lumi(artifact: EngineArtifact, root: Path) -> Path | None:
-    """Lumi が入れたエンジンの実行体を探す。"""
+    """Finds the executable of an engine Lumi installed."""
     install_dir = root / f"{artifact.name}-{artifact.version}"
     if not install_dir.is_dir():
         return None
@@ -105,7 +106,7 @@ def find_installed_by_lumi(artifact: EngineArtifact, root: Path) -> Path | None:
 
 
 async def is_port_open(port: int, *, host: str = "127.0.0.1") -> bool:
-    """**127.0.0.1 のみ。** 外に向けて開かない。"""
+    """**127.0.0.1 only.** Never opens outward."""
     try:
         async with asyncio.timeout(PROBE_TIMEOUT_S):
             _reader, writer = await asyncio.open_connection(host, port)
@@ -113,8 +114,9 @@ async def is_port_open(port: int, *, host: str = "127.0.0.1") -> bool:
         return False
 
     writer.close()
-    # **`wait_closed()` を無制限に待たない。** 相手の実装次第で戻ってこないことがあり、
-    # 「ポートが開いているか」を知るのに待つ必要は無い（起動を遅らせない）。
+    # **Never waits unboundedly on `wait_closed()`.** Depending on the peer's
+    # implementation it may never return, and there's no need to wait just to learn
+    # "is the port open" (never delays startup).
     with contextlib.suppress(OSError, TimeoutError, asyncio.CancelledError):
         async with asyncio.timeout(PROBE_TIMEOUT_S):
             await writer.wait_closed()
@@ -122,7 +124,7 @@ async def is_port_open(port: int, *, host: str = "127.0.0.1") -> bool:
 
 
 async def detect_engines(env: Mapping[str, str]) -> list[DetectedEngine]:
-    """使えるエンジンを列挙する。**外部通信しない。**"""
+    """Enumerates usable engines. **No external communication.**"""
     found: list[DetectedEngine] = []
 
     lumi_executable = find_installed_by_lumi(AIVISSPEECH_ENGINE, paths.engines_dir())
@@ -160,21 +162,23 @@ async def detect_engines(env: Mapping[str, str]) -> list[DetectedEngine]:
 
 
 def find_on_path(command: str, env: Mapping[str, str]) -> Path | None:
-    """`PATH` から実行体を探す。**環境変数を引数で受け取る**（純粋関数として試験できる）。
+    """Finds the executable via `PATH`. **Environment variables are passed as an argument**
+    (testable as a pure function).
 
-    ユーザーが自分で入れる前提のもの（Ollama）は、決まった場所ではなく
-    `PATH` に居ることが多い。決め打ちのパスだけを見ると「入っているのに無い」と言うことになる。
+    Things assumed to be installed by the user themselves (Ollama) are often found
+    on `PATH` rather than at a fixed location. Looking only at hardcoded paths would
+    incorrectly report "installed but not found."
     """
     found = shutil.which(command, path=env.get("PATH"))
     return Path(found) if found else None
 
 
 async def detect_ollama(env: Mapping[str, str]) -> DetectedEngine | None:
-    """Ollama を探す。**外部通信しない**（ローカルのパスと 127.0.0.1 だけ）。
+    """Looks for Ollama. **No external communication** (local paths and 127.0.0.1 only).
 
-    見つからなければ `None`。これが setup.md §2b の `not_configured` になる。
-    **「入っていない」と「起動していない」を、ここで区別する**
-    （Provider は HTTP しか見えないので区別できない）。
+    Returns `None` if not found. This becomes setup.md §2b's `not_configured`.
+    **"Not installed" and "not running" are distinguished right here**
+    (the Provider only sees HTTP, so it can't tell them apart).
     """
     executable = next(
         (path for path in candidate_executables(OLLAMA, env) if path.is_file()), None

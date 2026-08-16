@@ -1,25 +1,25 @@
-"""リングバッファ。**オーディオコールバックから触る側は、確保もロックもしない。**
+"""Ring buffer. **The side touched from the audio callback never allocates or locks.**
 
-設計 → docs/architecture/audio.md §3
+Design → docs/architecture/audio.md §3
 
 ```
-[audio callback]  リング入出力とミュート適用のみ    締切: 数 ms（ハード）
-[VAD スレッド]    推論・判定                        締切: 〜30 ms
-[asyncio]         Activity 調停・STT・応答生成       遅くてよい
+[audio callback]  Ring I/O and applying mute only     deadline: a few ms (hard)
+[VAD thread]      inference / decisions                deadline: ~30 ms
+[asyncio]         Activity arbitration / STT / response generation   can be slow
 ```
 
-**コールバックで `np.concatenate` も `list.append` もしない。** メモリ確保は
-アロケータのロックを取りうるし、GC を誘発する。どちらもリアルタイム制約下では
-バッファアンダーラン（プチプチ音）になり、**barge-in どころか通常の再生が壊れる。**
+**Never call `np.concatenate` or `list.append` in the callback.** Memory allocation can
+take an allocator lock and trigger GC. Either one, under real-time constraints, causes
+buffer underruns (audible crackling), and **breaks even normal playback, let alone barge-in.**
 
-## なぜロックが要らないか
+## Why no lock is needed
 
-単一 writer（オーディオコールバック）× 単一 reader（VAD スレッド）に限定してある。
-CPython では `int` の代入と読み出しが GIL の下でアトミックなので、
-**位置カウンタの読み書きだけで整合が取れる。**
+This is restricted to a single writer (the audio callback) x a single reader (the VAD
+thread). In CPython, `int` assignment and reads are atomic under the GIL, so
+**consistency holds just from reading/writing the position counters.**
 
-> **保証しないこと**: 複数の writer / reader は想定していない。
-> 使い方を増やすときはロックを足すのではなく、**リングを分ける。**
+> **What this does not guarantee**: multiple writers / readers are not supported.
+> To support more usage patterns, don't add a lock — **split into separate rings.**
 """
 
 from __future__ import annotations
@@ -31,20 +31,20 @@ Samples = npt.NDArray[np.float32]
 
 
 class RingBuffer:
-    """固定長。**溢れたら古いものから捨てる**（新しい音を優先する）。"""
+    """Fixed length. **Drops the oldest on overflow** (prioritizes newer audio)."""
 
     __slots__ = ("_capacity", "_data", "_dropped", "_read", "_write")
 
     def __init__(self, capacity: int) -> None:
         if capacity <= 0:
             raise ValueError("capacity は正の数")
-        #: 事前に確保しておく。**コールバックの中では二度と確保しない**
+        #: Pre-allocated up front. **Never allocated again inside the callback**
         self._data: Samples = np.zeros(capacity, dtype=np.float32)
         self._capacity = capacity
-        #: 総書き込み数 / 総読み出し数（単調増加。剰余で位置を出す）
+        #: Total write count / total read count (monotonically increasing; position derived via modulo)
         self._write = 0
         self._read = 0
-        #: **捨てた数。** 黙って捨てない — これが増えていたら設計かサイズが間違っている
+        #: **Count of dropped samples.** Never dropped silently — if this grows, the design or size is wrong
         self._dropped = 0
 
     @property
@@ -56,12 +56,12 @@ class RingBuffer:
         return self._dropped
 
     def write(self, samples: Samples) -> None:
-        """**オーディオコールバックから呼ぶ。** 確保しない・ロックしない・例外を投げない。"""
+        """**Called from the audio callback.** No allocation, no locking, no exceptions."""
         count = len(samples)
         if count == 0:
             return
         if count >= self._capacity:
-            # 1回の書き込みがリングより大きい。**末尾だけ残す**（最新を優先）
+            # A single write is larger than the ring. **Keep only the tail** (prioritize newer)
             samples = samples[-self._capacity :]
             count = self._capacity
 
@@ -77,14 +77,14 @@ class RingBuffer:
         self._write += count
         overflow = self._write - self._read - self._capacity
         if overflow > 0:
-            # reader が追いつけなかった。**読み位置を進めて、古い方を捨てる**
+            # The reader couldn't keep up. **Advance the read position, dropping the oldest**
             self._read += overflow
             self._dropped += overflow
 
     def read(self, count: int) -> Samples | None:
-        """`count` サンプル揃っていれば返す。**足りなければ `None`**（部分読みをしない）。
+        """Returns data if `count` samples are available. **`None` if not enough** (never a partial read).
 
-        部分読みを許すと、VAD の窓が半端なサイズで来て推論が壊れる。
+        Allowing partial reads would let VAD's window arrive at an odd size and break inference.
         """
         if count <= 0 or self.available < count:
             return None
@@ -99,10 +99,10 @@ class RingBuffer:
         return out.astype(np.float32, copy=False)
 
     def read_into(self, out: Samples) -> int:
-        """**再生側のコールバックから呼ぶ。** 足りない分は 0 で埋める（無音）。
+        """**Called from the playback callback.** Fills any shortfall with 0 (silence).
 
-        戻り値は実際に埋めたサンプル数。**0 埋めは異常ではない**
-        （TTS がまだ生成していない、あるいは発話が終わった）。
+        Returns the number of samples actually filled. **Zero-filling isn't an error condition**
+        (TTS hasn't generated yet, or the utterance has ended).
         """
         count = len(out)
         filled = min(count, self.available)
@@ -121,5 +121,5 @@ class RingBuffer:
         return filled
 
     def clear(self) -> None:
-        """**barge-in で再生を捨てるときに使う。** 書き込み位置に読み位置を合わせる。"""
+        """**Used when discarding playback for a barge-in.** Moves the read position up to the write position."""
         self._read = self._write

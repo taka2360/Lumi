@@ -1,10 +1,10 @@
-"""STTProvider の契約。
+"""STTProvider's contract.
 
-型の定義 → docs/interfaces/provider.md「STTProvider」
+Type definitions → docs/interfaces/provider.md "STTProvider"
 
-**音声の共通表現は 16 kHz mono float32。** VAD も STT もこの形で受け取る。
-ストリームはデバイス既定のレートで開き（48 kHz が普通）、
-**Core 内で 16 kHz にリサンプルしてから**ここに渡す（docs/architecture/audio.md §8）。
+**The common audio representation is 16 kHz mono float32.** Both VAD and STT receive
+audio in this form. Streams are opened at the device's default rate (usually 48 kHz),
+and **Core resamples to 16 kHz** before passing it here (docs/architecture/audio.md §8).
 """
 
 from __future__ import annotations
@@ -18,10 +18,10 @@ import numpy.typing as npt
 from lumi.kernel.cancellation import CancelToken
 from lumi.providers.base import Provider
 
-#: 16 kHz mono float32。**この型を1箇所で決めておく**（VAD と STT で食い違わないように）
+#: 16 kHz mono float32. **Defined in exactly one place** (so VAD and STT never disagree)
 AudioBuffer = npt.NDArray[np.float32]
 
-#: VAD / STT が前提とするサンプルレート
+#: Sample rate assumed by VAD / STT
 SAMPLE_RATE = 16_000
 
 

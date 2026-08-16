@@ -1,6 +1,6 @@
-"""WAV を読む。**純粋関数**（デバイスに触らない）。
+"""Reads WAV data. **Pure functions** (never touches a device).
 
-エンジンの出力を信用しない（Invariant 3）。壊れていたら明示的に失敗する。
+Never trust the engine's output (Invariant 3). Fails explicitly if malformed.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from dataclasses import dataclass
 
 
 class WavError(ValueError):
-    """WAV として読めなかった。"""
+    """Couldn't be read as WAV."""
 
 
 @dataclass(frozen=True, slots=True)

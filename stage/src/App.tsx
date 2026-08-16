@@ -1,8 +1,8 @@
 /**
- * Stage — **表現のみ**。ビジネスロジックを持たない。
+ * Stage — **expression only**. Holds no business logic.
  *
- * 判定基準: ストアから読める値は、すべて Core が `stage.*` で配信したもの。
- * Stage が自分で計算して状態を作っていたら、ロジックが漏れている。
+ * The criterion: every value readable from the store is something Core broadcast
+ * via `stage.*`. If the Stage is computing its own state, logic has leaked in.
  * → docs/architecture/ui.md §2
  */
 
@@ -16,7 +16,7 @@ import { useHitRegionReporter, useHoverState, useWindowGestures } from "./platfo
 import { BootScreen } from "./setup/BootScreen";
 import { SetupPanel } from "./setup/SetupPanel";
 
-/** 要素の画面上の矩形を追う。レイアウトが変わるたびに更新する。 */
+/** Tracks an element's on-screen rectangle. Updates whenever the layout changes. */
 function useElementRect(element: HTMLElement | null): CssRect | null {
   const [rect, setRect] = useState<CssRect | null>(null);
 
@@ -49,7 +49,7 @@ export function App() {
   const reportHitRegion = useHitRegionReporter();
   const gestures = useWindowGestures();
 
-  // **キャラクターを出してよいかは Core が決める**（docs/architecture/ui.md「起動フェーズ」）。
+  // **Core decides whether the character may be shown** (docs/architecture/ui.md "Boot phases").
   const tts = useStageStore((state) => state.tts);
   const connected = useStageStore((state) => state.connected);
   const prompt = useStageStore((state) => state.prompt);
@@ -62,8 +62,8 @@ export function App() {
   const [characterRect, setCharacterRect] = useState<CssRect | null>(null);
   const onBounds = useCallback((rect: CssRect | null) => setCharacterRect(rect), []);
 
-  // パネルの上ではクリックスルーを解除する必要がある。
-  // **キャラクターとパネルの和**を当たり判定として渡す（docs/architecture/ui.md）。
+  // Click-through must be disabled over the panel.
+  // **The union of the character and the panel** is passed as the hit region (docs/architecture/ui.md).
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
   const panelRect = useElementRect(panel);
 
@@ -80,8 +80,8 @@ export function App() {
 
   return (
     <div className={hover === "inside" ? "stage stage--hover" : "stage"}>
-      {/* キャラクターを掴んでウィンドウを動かす面。キーボードからは到達させない
-          （ウィンドウの移動と大きさは OS の作法に従うもので、Stage の UI ではない）。 */}
+      {/* The surface for grabbing the character to move the window. Never reachable
+          from the keyboard (window move/resize follows OS conventions, not Stage UI). */}
       {showCharacter && (
         <div
           className="stage__grab"
@@ -92,11 +92,11 @@ export function App() {
         </div>
       )}
       <div className="overlay" ref={setPanel}>
-        {/* 準備中は、キャラクターの代わりに何が起きているかを出す。
-            **出すのは常に1つだけ**（docs/architecture/ui.md「起動フェーズ」）。
-            ローディングとパネルを並べると、同じ状況が二重に書かれる。 */}
+        {/* While preparing, shows what's happening instead of the character.
+            **Always shows exactly one thing** (docs/architecture/ui.md "Boot phases").
+            Showing loading and the panel side by side would describe the same situation twice. */}
         {showCharacter || prompt ? <SetupPanel /> : <BootScreen tts={tts} connected={connected} />}
-        {/* **黙って劣化しない。** 本番の VRM ではなくプレースホルダで動いていることを見せる。 */}
+        {/* **Never silently degrades.** Shows that a placeholder is running instead of the production VRM. */}
         {status.fallbackReason && <p className="notice">{status.fallbackReason}</p>}
       </div>
     </div>

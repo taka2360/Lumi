@@ -1,20 +1,19 @@
-"""Command — 「実行せよ」。**結果が要るもの。**
+"""Command — "execute this." **Something that needs a result.**
 
-契約 → docs/contracts/event-model.md
+Contract → docs/contracts/event-model.md
 
 ```
-結果が必要か？ → Yes: Command
-              → No ↓
-外から来たか？ → Yes: Signal
-              → No : DomainEvent（Core が発行）
+Does it need a result? → Yes: Command
+                       → No ↓
+Did it come from outside? → Yes: Signal
+                          → No : DomainEvent (published by Core)
 ```
 
-**迷ったら Command。** あとから Event に緩めるのは簡単だが、
-Event で組んだ制御フローを Command に直すのは難しい。
+**When unsure, use Command.** Relaxing it into an Event later is easy; converting
+control flow already built on Events back into a Command is hard.
 
-AIRI は約60種の WS イベントでモジュールのライフサイクルを振り付けており、
-「どこで止まったか」が追跡不能になっている。**Lumi はライフサイクルを
-明示的な Command シーケンスにする。**
+AIRI choreographs module lifecycles with roughly 60 kinds of WS events, and "where did
+it get stuck" has become untraceable. **Lumi makes lifecycles an explicit sequence of Commands.**
 """
 
 from __future__ import annotations
@@ -28,33 +27,33 @@ from lumi.kernel.ids import CommandId, CorrelationId
 
 @dataclass(frozen=True, slots=True)
 class Command:
-    """単一ハンドラに配送される。**戻り値を持ち、失敗しうる。**"""
+    """Dispatched to a single handler. **Has a return value, and can fail.**"""
 
     id: CommandId
     type: str
     payload: Mapping[str, Any]
     correlation_id: CorrelationId
-    #: 副作用を持つ Command には**必須**（docs/architecture/recovery.md §3）
+    #: **Required** for any Command with a side effect (docs/architecture/recovery.md §3)
     idempotency_key: str | None = None
 
 
 class CommandError(RuntimeError):
-    """Command の配送に関する失敗。"""
+    """A failure related to dispatching a Command."""
 
 
 class UnknownCommand(CommandError):
-    """ハンドラが登録されていない。**推測で処理しない。**"""
+    """No handler is registered. **Never guessed at.**"""
 
 
 class DuplicateHandler(CommandError):
-    """同じ type に2つ目のハンドラを登録した。**「単一ハンドラ」が壊れる。**"""
+    """A second handler was registered for the same type. **Breaks "single handler."**"""
 
 
 class MissingIdempotencyKey(CommandError):
-    """副作用を持つ Command に `idempotency_key` が無い。
+    """A Command with a side effect is missing `idempotency_key`.
 
-    これが無いと、クラッシュ後に「同じ操作かどうか」が判定できず、
-    Crash Recovery（Phase 4a）が成立しない。**Phase 1 の時点で塞いでおく。**
+    Without it, "was this the same operation" can't be determined after a crash, and
+    Crash Recovery (Phase 4a) can't work. **This is closed off starting in Phase 1.**
     """
 
 
@@ -62,11 +61,11 @@ CommandHandler = Callable[[Command], Awaitable[Any]]
 
 
 class CommandBus:
-    """type ごとに単一ハンドラ。
+    """A single handler per type.
 
-    **キューを持たない。** 呼び出し側が `await` するので、backpressure は
-    「待たされる」という形で自然にかかる。キューを挟むと、
-    「結果が要る」という Command の性質と衝突する。
+    **Holds no queue.** Since the caller `await`s it, backpressure applies naturally
+    as "the caller waits." Inserting a queue would conflict with a Command's defining
+    property: "it needs a result."
     """
 
     __slots__ = ("_handlers", "_side_effecting")
@@ -78,7 +77,7 @@ class CommandBus:
     def register(
         self, command_type: str, handler: CommandHandler, *, has_side_effect: bool = False
     ) -> None:
-        """`has_side_effect=True` の type は、`idempotency_key` 無しでは配送されない。"""
+        """A type with `has_side_effect=True` is never dispatched without `idempotency_key`."""
         if command_type in self._handlers:
             raise DuplicateHandler(command_type)
         self._handlers[command_type] = handler

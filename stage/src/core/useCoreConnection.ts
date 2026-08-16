@@ -1,14 +1,14 @@
 /**
- * Core への接続を React のライフサイクルに載せる。
+ * Puts the connection to Core onto React's lifecycle.
  *
- * ここで扱う `stage.*` は2つだけ（Phase 0）:
+ * Only two `stage.*` methods are handled here (Phase 0):
  *
- * | method | 種類 | 意味 |
+ * | method | kind | meaning |
  * |---|---|---|
- * | `stage.setup.state` | notify | TTS セットアップ状態が変わった |
- * | `stage.setup.prompt` | command | 取得するかを尋ねられた。**答えを result で返す** |
- * | `stage.speech.started` | notify | 発話が始まった。口のタイムラインが付いてくる |
- * | `stage.speech.ended` | notify | 発話が終わった |
+ * | `stage.setup.state` | notify | TTS setup state changed |
+ * | `stage.setup.prompt` | command | Asked whether to fetch. **The answer is returned as the result** |
+ * | `stage.speech.started` | notify | Speech started. Comes with the mouth timeline |
+ * | `stage.speech.ended` | notify | Speech ended |
  */
 
 import { useEffect } from "react";
@@ -18,27 +18,28 @@ import { connectToCore } from "./connection";
 import { type SetupPrompt, toTtsSnapshot, useStageStore } from "./store";
 
 /**
- * Core が投げてくる `stage.*` の method 名。**正は `docs/contracts/wire.json`**（→ ADR-022）。
+ * The `stage.*` method names Core sends. **`docs/contracts/wire.json` is authoritative** (→ ADR-022).
  *
- * Core 側の対応する定数は `setup/coordinator.py` の `METHOD_STATE` / `METHOD_PROMPT` と
- * `greeting.py` の `METHOD_SPEECH_*`。ハンドラのキーに直接書くと、
- * **綴りを間違えても「知らない method」として静かに捨てられる**（`unhandled_method`）。
+ * The corresponding constants on the Core side are `METHOD_STATE` / `METHOD_PROMPT`
+ * in `setup/coordinator.py` and `METHOD_SPEECH_*` in `greeting.py`. Writing these
+ * directly as handler keys means **a typo gets silently dropped as an "unknown
+ * method"** (`unhandled_method`).
  */
 export const METHOD_SETUP_STATE = "stage.setup.state";
 export const METHOD_SETUP_PROMPT = "stage.setup.prompt";
 export const METHOD_SPEECH_STARTED = "stage.speech.started";
 export const METHOD_SPEECH_ENDED = "stage.speech.ended";
 
-/** 取得するかの答え。Core は `CHOICE_INSTALL` とだけ比較する（それ以外は「しない」）。 */
+/** The answer to whether to fetch. Core only compares against `CHOICE_INSTALL` (anything else means "don't"). */
 export const CHOICE_INSTALL = "install";
 export const CHOICE_SKIP = "skip";
 
 type Answer = typeof CHOICE_INSTALL | typeof CHOICE_SKIP;
 
-/** 尋ねられている間だけ入る「答えを返す関数」。UI のボタンがこれを呼ぶ。 */
+/** The "function that returns an answer," populated only while being asked. Called by a UI button. */
 let pendingAnswer: ((answer: Answer) => void) | null = null;
 
-/** ユーザーの選択を Core に返す。**答えるまで Core は待っている**（timeout はある）。 */
+/** Returns the user's choice to Core. **Core waits until answered** (there is a timeout). */
 export function answerSetupPrompt(answer: Answer): void {
   const resolve = pendingAnswer;
   pendingAnswer = null;
@@ -57,13 +58,13 @@ export function useCoreConnection(): void {
         [METHOD_SPEECH_STARTED]: (payload) => {
           const timeline = parseTimeline(payload);
           if (!timeline) {
-            // 読めないタイムラインで口を動かさない。**音は Core が鳴らしている。**
+            // Never moves the mouth for an unreadable timeline. **The sound itself is played by Core.**
             return;
           }
           store.setSpeech({
             text: typeof payload.text === "string" ? payload.text : "",
             timeline,
-            // **時刻は Stage の時計で進める**（docs/interfaces/renderer.md）。
+            // **Time advances on the Stage's own clock** (docs/interfaces/renderer.md).
             startedAtMs: performance.now(),
           });
         },

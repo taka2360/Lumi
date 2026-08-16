@@ -1,16 +1,17 @@
-"""キャラクターに渡す「意図」。**パラメータではない。**
+"""The "intent" passed to the character. **Not a parameter set.**
 
-型の定義 → docs/interfaces/renderer.md / 決定 → ADR-009
+Type definitions → docs/interfaces/renderer.md / Decision → ADR-009
 
-VRM と Live2D は表情モデルが根本的に異なる
-（名前付きブレンドシェイプの合成 / 生パラメータの直接操作）。
-**Core がブレンドシェイプ名を知っていたら、Live2D では意味をなさない。**
+VRM and Live2D have fundamentally different expression models
+(blending named blend shapes / directly manipulating raw parameters).
+**If Core knew blend shape names, that would be meaningless for Live2D.**
 
-> **Renderer は合成に関与しない。** 受け取った意図をそのまま表現し、
-> 表現できなければ**自分で**フォールバックする。Core は `capabilities()` を見て分岐しない。
+> **The Renderer never takes part in blending.** It expresses the intent it receives
+> as-is, and **falls back on its own** if it can't. Core never branches on `capabilities()`.
 
-**`Emotion` はここにだけ定義する**（docs/interfaces/renderer.md テスト1）。
-Renderer ごとに再定義しない。線に乗る値なので `docs/contracts/wire.json` とも突き合わせる。
+**`Emotion` is defined only here** (docs/interfaces/renderer.md test 1).
+Never redefined per Renderer. Since it's a value that goes on the wire, it's also
+cross-checked against `docs/contracts/wire.json`.
 """
 
 from __future__ import annotations
@@ -33,17 +34,17 @@ class Emotion(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ExpressionIntent:
-    """`intensity` は 0.0-1.0 で伝える。
+    """`intensity` is communicated as 0.0-1.0.
 
-    **実際の値域へのマッピングは Renderer 側の実装詳細。** VRM のブレンドシェイプは
-    1.0 まで指定できるが、0.7-0.8 程度に抑えたほうが自然に見える。
-    それは表現の詳細であって、Core が持つ知識ではない。
+    **Mapping it onto an actual value range is the Renderer's implementation detail.**
+    VRM's blend shapes accept up to 1.0, but capping around 0.7-0.8 looks more natural.
+    That's a rendering detail, not something Core needs to know.
     """
 
     emotion: Emotion
     intensity: float = 0.7
     blend_ms: int = 200
-    #: None なら維持。指定があれば自動で戻る
+    #: `None` keeps it as-is. If given, it reverts automatically
     duration_ms: int | None = None
 
     def to_payload(self) -> dict[str, object]:

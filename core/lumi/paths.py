@@ -1,13 +1,13 @@
-"""ユーザーデータと同梱物の置き場所。
+"""Where user data and bundled assets live.
 
-**1箇所に閉じ込める。** 散らすと「全部消したい」に応えられなくなる
-（docs/roadmap.md Phase 2 の 🔴 プライバシー項目 #5）。
+**Confined to one place.** Scattering them makes "delete everything" impossible to honor
+(docs/roadmap.md Phase 2 🔴 privacy item #5).
 
-Phase 0 で使うのは `engines_dir` と `setup_state_file` だけ。
-記憶 DB / 監査ログの場所は Phase 2（`contracts/privacy.md` を書いてから）決める。
+Phase 0 only uses `engines_dir` and `setup_state_file`.
+Where the memory DB / audit log live is decided in Phase 2 (after `contracts/privacy.md` is written).
 
-**ユーザーデータ（消せる）と同梱物（読み取り専用）は別物。** 前者は `data_dir()` の下、
-後者は `content_dir()` の下にあり、消去の対象が違う。
+**User data (erasable) and bundled assets (read-only) are different things.** The former
+lives under `data_dir()`, the latter under `content_dir()`, and what gets erased differs.
 """
 
 from __future__ import annotations
@@ -16,27 +16,27 @@ import os
 import sys
 from pathlib import Path
 
-#: 開発時やテストで同梱物の場所を差し替える
+#: Overrides where bundled assets live, for dev/tests
 CONTENT_DIR_ENV = "LUMI_CONTENT_DIR"
 
 
 def data_dir() -> Path:
-    """Lumi のユーザーデータのルート。"""
+    """Root of Lumi's user data."""
     local_app_data = os.environ.get("LOCALAPPDATA")
     if local_app_data:
         return Path(local_app_data) / "Lumi"
-    # Windows 以外は XDG に寄せる（Phase 0 の対象外だが、パスの決定を分岐させない）。
+    # Non-Windows falls back to XDG (out of scope for Phase 0, but keep the path decision unified).
     xdg = os.environ.get("XDG_DATA_HOME")
     base = Path(xdg) if xdg else Path.home() / ".local" / "share"
     return base / "lumi"
 
 
 def content_dir() -> Path:
-    """Content Pack の置き場所。**同梱物であってユーザーデータではない。**
+    """Where Content Packs live. **A bundled asset, not user data.**
 
-    固めた実行体では PyInstaller の展開先、開発時はリポジトリ root の `content/`。
-    **存在の確認はしない** — 無いことを見つけるのは読み込み側の仕事であり、
-    ここで握り潰すと「なぜ人格が無いのか」が分からなくなる。
+    In the packed executable, PyInstaller's extraction dir; in dev, the repo root's `content/`.
+    **Existence is not checked here** — noticing it's missing is the loader's job, and
+    swallowing that here would make "why is there no persona" impossible to diagnose.
     """
     override = os.environ.get(CONTENT_DIR_ENV)
     if override:
@@ -48,28 +48,28 @@ def content_dir() -> Path:
 
 
 def default_character_dir() -> Path:
-    """既定のキャラクター（Content Pack）→ docs/architecture/extension.md §9"""
+    """The default character (Content Pack) → docs/architecture/extension.md §9"""
     return content_dir() / "characters" / "lumi"
 
 
 def engines_dir() -> Path:
-    """外部エンジンのインストール先 → docs/architecture/setup.md §5"""
+    """Where external engines get installed → docs/architecture/setup.md §5"""
     return data_dir() / "engines"
 
 
 def models_dir() -> Path:
-    """実行時に取得するモデルの置き場所（STT など）→ ADR-023
+    """Where models fetched at runtime (STT, etc.) live → ADR-023
 
-    **配布物には入らない。** 数百 MB あり、R1（インストーラサイズ）に直撃するため、
-    同意を得てから取得する。
+    **Not included in the distributable.** Hundreds of MB, which would directly hit R1
+    (installer size), so it's fetched only after consent.
     """
     return data_dir() / "models"
 
 
 def setup_state_file() -> Path:
-    """初回セットアップに「答えたか」を覚えておくファイル。
+    """File that remembers whether first-run setup has been "answered."
 
-    設定の保存形式そのものは未確定（roadmap 未確定事項 #9 / Phase 1）。
-    **ここでは「もう聞いた」1点だけを持つ。** 汎用の設定ストアにしない。
+    The settings storage format itself is undecided (roadmap open item #9 / Phase 1).
+    **This holds only the single fact "already asked."** Not a general-purpose settings store.
     """
     return data_dir() / "setup.json"

@@ -1,19 +1,22 @@
-"""Canonicalizer / BindVerifier / ResultVerifier — **すべて Kernel 所有。**
+"""Canonicalizer / BindVerifier / ResultVerifier — **all owned by the Kernel.**
 
-契約 → docs/contracts/tool-execution.md / 型 → docs/interfaces/tool.md
+Contract → docs/contracts/tool-execution.md / Types → docs/interfaces/tool.md
 
-## なぜ Tool 側に置かないのか
+## Why these don't live on the Tool side
 
-`Tool.bind` は Tool が実装する。もし Tool が（悪意または実装ミスで）scope とは違う対象の
-Handle を返したら、`execute` はその対象を操作してしまう。
+`Tool.bind` is implemented by the Tool. If a Tool returns a Handle for a different
+target than its scope (whether maliciously or by mistake), `execute` would operate on
+that wrong target.
 
-**`BindVerifier` は Kernel 所有で、Tool が返した Handle が本当に scope を指しているかを
-独立に検証する。** これが無いと、契約は「Tool を信頼する」に退化する。
+**`BindVerifier` is owned by the Kernel and independently verifies that the Handle a
+Tool returned actually points at its scope.** Without this, the contract degrades into
+"trust the Tool."
 
-## Phase 1 の範囲
+## Phase 1's scope
 
-`character` lane のみ。**Phase 4a で `fs`、4b で `browser`、4c で `input` が入る。**
-本実装（realpath / traversal / UNC / IDN / リダイレクト事前解決）は Phase 4a。
+Only the `character` lane. **`fs` arrives in Phase 4a, `browser` in 4b, `input` in 4c.**
+The real implementation (realpath / traversal / UNC / IDN / pre-resolving redirects)
+is Phase 4a.
 """
 
 from __future__ import annotations
@@ -25,71 +28,73 @@ from lumi.permission.scope import Handle, ScopeLane, SecurityScope
 
 
 class CanonicalizationError(ValueError):
-    """正規化に失敗した。**`deny` になる**（「よく分からないので通す」経路を作らない）。"""
+    """Normalization failed. **Results in `deny`** (never a "not sure, so let it through" path)."""
 
 
 class BindVerificationError(RuntimeError):
-    """Handle が scope を指していない。**`execute` しない。**"""
+    """The Handle doesn't point at the scope. **`execute` never runs.**"""
 
 
 class ResultVerificationError(RuntimeError):
-    """Class B が scope 外を操作したと申告した。**結果を破棄する**（副作用は防げない）。"""
+    """Class B reported operating outside its scope. **The result is discarded** (the side effect itself can't be undone)."""
 
 
 class Canonicalizer(Protocol):
     lane: ScopeLane
 
     def canonicalize(self, raw_input: Mapping[str, Any]) -> SecurityScope:
-        """失敗したら `CanonicalizationError`（fail-closed）。"""
+        """Raises `CanonicalizationError` on failure (fail-closed)."""
         ...
 
 
 class BindVerifier(Protocol):
-    """Class A。**execute の前に検証する。副作用を起こさせない。**"""
+    """Class A. **Verifies before execute.** Never lets the side effect happen."""
 
     lane: ScopeLane
 
     def verify(self, scope: SecurityScope, handle: Handle) -> None:
-        """不一致なら `BindVerificationError`。"""
+        """Raises `BindVerificationError` on mismatch."""
         ...
 
 
 class ResultVerifier(Protocol):
-    """Class B。**invoke の後。副作用は既に起きている可能性がある。**"""
+    """Class B. **After invoke.** The side effect may have already happened."""
 
     lane: ScopeLane
 
     def verify(self, scope: SecurityScope, acted_on: str) -> None:
-        """scope 外なら `ResultVerificationError`。結果を破棄し `denied` として記録する。"""
+        """Raises `ResultVerificationError` if outside scope. The result is discarded and recorded as `denied`."""
         ...
 
 
-#: `character` lane の対象は Lumi 自身のキャラクター1体しかない。
+#: The `character` lane only ever has one target: Lumi's own character.
 CHARACTER_SELF = "character:self"
 
 
 class CharacterCanonicalizer:
-    """`character` lane。**対象は常に Lumi 自身。**
+    """The `character` lane. **The target is always Lumi itself.**
 
-    表情の種類（`emotion`）を `canonical` に入れない。scope は「**何に対する権限か**」であって
-    「何をするか」ではない。emotion まで scope に含めると、Grant が
-    「happy にはしてよいが sad はだめ」という粒度になり、意味を持たない。
+    The kind of expression (`emotion`) is never put in `canonical`. Scope means "**what
+    authority is over**," not "what action is taken." Including emotion in the scope
+    would make a Grant granular down to "happy is allowed but sad isn't," which is
+    meaningless.
     """
 
     lane = ScopeLane.CHARACTER
 
     def canonicalize(self, raw_input: Mapping[str, Any]) -> SecurityScope:
-        """対象を正規化し、**操作パラメータは scope に載せて運ぶ。**
+        """Canonicalizes the target, and **carries the operation's parameters riding on the scope.**
 
-        `execute` は `handle.scope` しか読まない（生入力を再解決しない = TOCTOU 対策）ので、
-        引数は不変な scope に載せる必要がある。
+        `execute` only reads `handle.scope` (never re-resolving raw input — the defense
+        against TOCTOU), so arguments have to ride along on the immutable scope.
 
-        **パラメータの妥当性は検証しない。** それはドメイン知識であり Tool の仕事である。
-        Canonicalizer がやるのは「**どの対象に対する操作か**」を確定させることだけ。
+        **Parameter validity is not checked here.** That's domain knowledge and the
+        Tool's job. All the Canonicalizer does is settle "**what target is this
+        operation over**."
         """
         target = raw_input.get("target", "self")
         if target != "self":
-            # 他のキャラクターという概念は無い。**知らない対象は通さない。**
+            # There's no concept of "another character." **An unrecognized target is never let through.**
             raise CanonicalizationError(f"未知の対象: {target!r}")
         return SecurityScope(
             lane=ScopeLane.CHARACTER,
@@ -99,14 +104,14 @@ class CharacterCanonicalizer:
 
 
 class CharacterBindVerifier:
-    """`character` lane。
+    """The `character` lane.
 
-    **正直に書くと、この lane で検証できる実体は薄い。** fs の `fstat`、input の
-    `WindowFromPoint` に相当するものが無く、確かめられるのは
-    「Handle が主張する scope が、Policy の検査した scope と同一か」だけである。
+    **To be honest, there isn't much substance to verify in this lane.** There's
+    nothing equivalent to `fs`'s `fstat` or `input`'s `WindowFromPoint`; all that can
+    be confirmed is "does the scope the Handle claims match the scope Policy inspected."
 
-    それでも置くのは、**経路を本番と同じにするため**（Phase 1 の目的）。
-    ここが Kernel 所有であることが、Phase 4a で `fs` を足すときの前提になる。
+    It's still here **to keep the path identical to production** (Phase 1's goal).
+    Having this owned by the Kernel is the precondition for adding `fs` in Phase 4a.
     """
 
     lane = ScopeLane.CHARACTER

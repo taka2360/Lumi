@@ -1,33 +1,35 @@
-"""WS プロトコル — **純粋な型と検証だけ**。ソケットを開かずにテストできる。
+"""The WS protocol — **pure types and validation only.** Testable without opening a socket.
 
-確定度: **Provisional**（docs/DESIGN.md §8「WS プロトコルの具体スキーマ」）。
+Confirmation level: **Provisional** (docs/DESIGN.md §8 "The WS protocol's concrete schema").
 
-## namespace と経路（docs/architecture/core.md §3）
+## Namespaces and their paths (docs/architecture/core.md §3)
 
-| namespace | 経路 | 向き |
+| Namespace | Path | Direction |
 |---|---|---|
-| `os.*`    | Core → Shell | OS 特権操作の依頼 |
-| `stage.*` | Core → Stage | Lumi の表現と状態 |
+| `os.*`    | Core → Shell | Requests for OS-privileged operations |
+| `stage.*` | Core → Stage | Lumi's expression and state |
 
-> **`stage.*` は絶対に OS 特権を要求しない。**
+> **`stage.*` must never request OS privileges.**
 
-これを型で守る。`method` の namespace と接続の role が一致しない送信は、
-**送る前に**弾く（`method_matches_role`）。Stage に `os.*` を送れる経路を作らない。
+This is enforced at the type level. A send whose `method` namespace doesn't match the
+connection's role is rejected **before it's sent** (`method_matches_role`). No path
+exists for `os.*` to reach the Stage.
 
-## token は role ごとに分ける
+## Tokens are separated per role
 
-Shell と Stage は**別の token** を持つ。共有すると、乗っ取られた Stage（B2 は Stage を信用しない）が
-`role: "shell"` として接続し、**`os.*` の command を横取りできてしまう**。
-Shell が両方を生成し、Stage には Stage 用のものだけを渡す。
+Shell and Stage each hold a **different token.** Sharing one would let a compromised
+Stage (B2: never trust the Stage) connect as `role: "shell"` and **hijack `os.*` commands.**
+Shell generates both and only hands the Stage-specific one to the Stage.
 
-## Phase 0 で command を出すのは Core だけ
+## In Phase 0, only Core issues commands
 
-クライアント（Shell / Stage）から Core への `command` は**受け付けない**。
-クライアントが送ってよいのは `hello` と、Core の command に対する `result` だけ。
+A `command` from a client (Shell / Stage) to Core is **never accepted.**
+The only things a client may send are `hello` and a `result` in response to a Core command.
 
-ユーザーの選択（初回セットアップの「取得する / しない」など）は、
-**Core が投げた command に対する result** として返る。Core が聞き、ユーザーが答える。
-この向きにしておくと、「Stage が Core に何かをさせる」経路が構造的に存在しなくなる（B2）。
+A user's choice (e.g. "fetch or not" during first-run setup) comes back as **a
+`result` in response to a command Core sent.** Core asks, the user answers. Keeping
+this direction fixed structurally eliminates any path for "the Stage makes Core do
+something" (B2).
 """
 
 from __future__ import annotations
@@ -40,22 +42,22 @@ from uuid import uuid4
 
 PROTOCOL_VERSION: Final = 1
 
-#: hello を待つ時間。これを超えたら閉じる（無認証の接続を掴み続けない）。
+#: Time allowed to wait for hello. Closed once exceeded (never holds an unauthenticated connection open indefinitely).
 HELLO_TIMEOUT_S: Final = 5.0
 
-#: WS の ping 間隔と応答待ち。片方が落ちたことを検知する手段。
+#: The WS ping interval and how long to wait for a response. The mechanism for detecting that one side has died.
 PING_INTERVAL_S: Final = 5.0
 PING_TIMEOUT_S: Final = 10.0
 
 
 class Role(StrEnum):
-    """接続してくるクライアントの種別。"""
+    """The kind of client connecting."""
 
     SHELL = "shell"
     STAGE = "stage"
 
 
-#: role ごとに Core が送ってよい namespace。**ここに行を足すときは B2/B3 を読み直すこと。**
+#: The namespace Core is allowed to send for each role. **Re-read B2/B3 before adding a line here.**
 NAMESPACE_BY_ROLE: Final[dict[Role, str]] = {
     Role.SHELL: "os.",
     Role.STAGE: "stage.",
@@ -63,11 +65,11 @@ NAMESPACE_BY_ROLE: Final[dict[Role, str]] = {
 
 
 class ProtocolError(ValueError):
-    """プロトコル違反。**握りつぶさない。** 接続を閉じてログに残す。"""
+    """A protocol violation. **Never swallowed.** The connection is closed and it's logged."""
 
 
 def method_matches_role(method: str, role: Role) -> bool:
-    """`method` の namespace が role に一致するか。"""
+    """Whether `method`'s namespace matches the role."""
     return method.startswith(NAMESPACE_BY_ROLE[role])
 
 
@@ -77,7 +79,7 @@ def new_id() -> str:
 
 @dataclass(frozen=True, slots=True)
 class Hello:
-    """クライアント → Core。接続の最初の1通。"""
+    """Client → Core. The first message of a connection."""
 
     role: Role
     token: str
@@ -85,7 +87,7 @@ class Hello:
 
 @dataclass(frozen=True, slots=True)
 class Command:
-    """Core → クライアント。**結果が要るもの**。"""
+    """Core → client. **Something that needs a result.**"""
 
     id: str
     method: str
@@ -106,10 +108,11 @@ class Command:
 
 @dataclass(frozen=True, slots=True)
 class Notify:
-    """Core → クライアント。**結果が要らないもの**。
+    """Core → client. **Something that doesn't need a result.**
 
-    「結果が要るか？」で command と分ける（docs/contracts/event-model.md の判断基準）。
-    進捗の通知や状態の配信はこちら。応答を待たないので、相手が遅くても Core は止まらない。
+    Distinguished from a command by "does it need a result?" (the criterion from
+    docs/contracts/event-model.md). Progress notifications and state broadcasts go
+    here. Since no response is awaited, Core never stalls even if the peer is slow.
     """
 
     method: str
@@ -129,9 +132,9 @@ class Notify:
 
 @dataclass(frozen=True, slots=True)
 class Result:
-    """クライアント → Core。command への応答。
+    """Client → Core. A response to a command.
 
-    `ok=False` のとき `error` に理由が入る。**黙って握りつぶさない。**
+    When `ok=False`, `error` holds the reason. **Never silently swallowed.**
     """
 
     corr_id: str
@@ -142,7 +145,7 @@ class Result:
 
 @dataclass(frozen=True, slots=True)
 class Welcome:
-    """Core → クライアント。認証が通ったことを伝える。"""
+    """Core → client. Signals that authentication succeeded."""
 
     protocol_version: int = PROTOCOL_VERSION
 
@@ -161,7 +164,7 @@ def _require_object(raw: str) -> dict[str, Any]:
 
 
 def parse_hello(raw: str) -> Hello:
-    """接続直後の1通目を解釈する。**失敗したら例外**（fail-closed）。"""
+    """Parses the first message right after connecting. **Raises on failure** (fail-closed)."""
     message = _require_object(raw)
     if message.get("kind") != "hello":
         raise ProtocolError("最初のメッセージが hello ではない")
@@ -184,10 +187,10 @@ def parse_hello(raw: str) -> Hello:
 
 
 def parse_client_message(raw: str) -> Result:
-    """認証後にクライアントから届いたメッセージを解釈する。
+    """Parses a message arriving from the client after authentication.
 
-    Phase 0 で受理するのは `result` だけ。**クライアントからの `command` は受理しない**
-    （Core が判断の起点であることを、経路の有無で担保する）。
+    Phase 0 only accepts `result`. **A `command` from the client is never accepted**
+    (guaranteeing that Core is the origin of decisions by the mere absence of that path).
     """
     message = _require_object(raw)
     kind = message.get("kind")

@@ -1,15 +1,16 @@
-"""外部エンジンの取得・検証・展開・確定。
+"""Fetching, verifying, extracting, and committing external engines.
 
-設計 → docs/architecture/setup.md §4-5
+Design → docs/architecture/setup.md §4-5
 
-**この関数が呼ばれるのは、ユーザーが「取得する」を選んだ後だけ**である。
-モジュールを import しただけでは HTTP クライアントを作らない
-（原則1: ユーザーが選ぶまで外部通信しない）。
+**This function is called only after the user has chosen to "fetch."**
+Merely importing the module never creates an HTTP client (Principle 1: no external
+communication until the user chooses to).
 
-ファイルシステムの操作は `asyncio.to_thread` に逃がす。**イベントループを止めない**
-（.claude/rules/python-core.md「ブロッキング I/O と推論はスレッドに逃がす」）。
+Filesystem operations are offloaded to `asyncio.to_thread`. **Never blocks the event
+loop** (.claude/rules/python-core.md "Blocking I/O and inference are offloaded to threads").
 
-失敗は必ず例外にする。**部分的にインストールされた状態を残さない**（原則3）。
+Failures always become exceptions. **A partially installed state is never left
+behind** (Principle 3).
 """
 
 from __future__ import annotations
@@ -30,20 +31,20 @@ from lumi.setup.engines import EngineArtifact, is_allowed_origin, is_allowed_red
 
 log = lumi_logging.get_logger(__name__)
 
-#: 1回の読み取り単位。
+#: The unit size for a single read.
 CHUNK_SIZE = 1024 * 256
 
-#: 許すリダイレクトの回数。**無限に付いていかない。**
+#: The number of redirects allowed. **Never follows indefinitely.**
 MAX_REDIRECTS = 5
 
-#: 接続と読み取りのタイムアウト。取得は長時間かかるので read は緩め、connect は短く。
+#: Connect and read timeouts. Fetching can take a long time, so read is generous while connect stays short.
 TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=10.0)
 
 ProgressCallback = Callable[[float], Awaitable[None]]
 
 
 class SetupError(RuntimeError):
-    """セットアップの失敗。`reason` はユーザーに見せる短い識別子。"""
+    """A setup failure. `reason` is a short identifier shown to the user."""
 
     def __init__(self, reason: str, detail: str | None = None) -> None:
         super().__init__(detail or reason)
@@ -52,14 +53,14 @@ class SetupError(RuntimeError):
 
 
 def _find_executable(root: Path, name: str) -> Path | None:
-    """展開後のツリーから実行体を探す。配布物の内部構造の変更に追随するため、名前で探す。"""
+    """Finds the executable in the extracted tree. Searched by name so it tracks changes to the distributable's internal structure."""
     if not root.is_dir():
         return None
     return next(root.rglob(name), None)
 
 
 def _tar_executable() -> Path:
-    """展開に使う bsdtar。**無ければ明示的に失敗する。別の手段を探さない。**"""
+    """The bsdtar used for extraction. **Fails explicitly if missing. No alternative is sought.**"""
     system_root = os.environ.get("SystemRoot")
     if system_root:
         candidate = Path(system_root) / "System32" / "tar.exe"
@@ -77,14 +78,14 @@ async def _download(
     destination: Path,
     progress: ProgressCallback | None,
 ) -> None:
-    """取得しながら**サイズと SHA-256 を検証する**。1つでも合わなければ例外。"""
+    """Verifies **size and SHA-256 while fetching**. Raises if even one doesn't match."""
     url = artifact.url
     if not is_allowed_origin(url):
         raise SetupError("origin_not_allowed", url)
 
     for hop in range(MAX_REDIRECTS + 1):
         if hop > 0 and not is_allowed_redirect(url):
-            # リダイレクトで別の配布元へ連れて行かれるのを防ぐ。
+            # Prevents being redirected to a different distribution source.
             raise SetupError("redirect_not_allowed", url)
 
         async with client.stream("GET", url) as response:
@@ -109,7 +110,7 @@ async def _download(
                 async for chunk in response.aiter_bytes(CHUNK_SIZE):
                     written += len(chunk)
                     if written > artifact.size:
-                        # 期待より大きい。**最後まで読まずに打ち切る。**
+                        # Larger than expected. **Aborted before reading to the end.**
                         raise SetupError("size_mismatch", f"received>{artifact.size}")
                     file.write(chunk)
                     digest.update(chunk)
@@ -130,12 +131,12 @@ async def _download(
 
 
 async def _extract(archive: Path, destination: Path) -> None:
-    """bsdtar で展開する。
+    """Extracts with bsdtar.
 
-    配布物は多ボリューム形式の第1ボリューム（`.7z.001`）だが**単一ボリュームなので
-    中身は完全な 7z ストリーム**であり、libarchive がそのまま読める。
-    Python の 7z ライブラリ（LGPL）を Core に入れないための選択
-    （docs/architecture/setup.md §5）。
+    The distributable is the first volume of a multi-volume format (`.7z.001`), but
+    **since it's actually a single volume, the content is a complete 7z stream**,
+    which libarchive can read directly. This choice keeps a Python 7z library
+    (LGPL) out of Core (docs/architecture/setup.md §5).
     """
     tar = await asyncio.to_thread(_tar_executable)
     await asyncio.to_thread(destination.mkdir, parents=True, exist_ok=True)
@@ -156,9 +157,10 @@ async def install_engine(
     *,
     progress: ProgressCallback | None = None,
 ) -> Path:
-    """エンジンを取得してインストールし、実行体のパスを返す。
+    """Fetches and installs the engine, returning the executable's path.
 
-    **確定はディレクトリの rename 1手だけ。** そこに到達しなければ何も残らない。
+    **Commitment is a single directory rename.** Nothing is left behind unless that
+    step is reached.
     """
     final_dir = engines_dir / f"{artifact.name}-{artifact.version}"
     existing = await asyncio.to_thread(_find_executable, final_dir, artifact.executable_name)
@@ -173,7 +175,7 @@ async def install_engine(
     try:
         archive = work_dir / f"{artifact.name}-{artifact.version}.7z"
         log.info("setup.install.download.start", engine=artifact.name, version=artifact.version)
-        # **ここで初めて外部へ接続する。** ユーザーの選択より前には到達しない。
+        # **This is the first point external connection happens.** Never reached before the user's choice.
         async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
             await _download(client, artifact, archive, progress)
         log.info("setup.install.download.verified", sha256=artifact.sha256)
@@ -185,12 +187,12 @@ async def install_engine(
         if executable is None:
             raise SetupError("executable_not_found", artifact.executable_name)
 
-        # 展開物だけを確定させる（アーカイブは持ち越さない）。
-        # **ここが唯一の確定操作**。これより前に失敗すれば何も残らない。
+        # Only the extracted contents are committed (the archive is not carried over).
+        # **This is the sole commit operation.** Nothing is left behind if it fails before this.
         relative = executable.relative_to(extracted)
         await asyncio.to_thread(extracted.rename, final_dir)
         log.info("setup.install.committed", path=str(final_dir))
         return final_dir / relative
     finally:
-        # 成功でも失敗でも一時ディレクトリは残さない。
+        # The temp directory is never left behind, whether this succeeds or fails.
         await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)

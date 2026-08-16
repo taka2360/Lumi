@@ -1,6 +1,6 @@
-"""Content Pack の読み取り専用ローダ。
+"""Read-only loader for Content Packs.
 
-**ここにあるのはローダであって Content Pack ではない。**
-パックの実体はリポジトリ root の `content/characters/<name>/`（データのみ）。
-仕様 → docs/architecture/extension.md §9
+**What lives here is the loader, not the Content Pack itself.**
+The actual pack lives at the repo root's `content/characters/<name>/` (data only).
+Spec → docs/architecture/extension.md §9
 """

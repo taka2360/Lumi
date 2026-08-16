@@ -1,8 +1,9 @@
 /**
- * キャラクターの読み込み。**VRM を優先し、無ければプレースホルダに落とす。**
+ * Loading the character. **Prefers VRM, falls back to the placeholder if absent.**
  *
- * 落ちたことは呼び出し側に `fallbackReason` で伝える。
- * **黙って劣化しない**（docs/DESIGN.md の進め方の原則）ため、UI 側で「VRM 未配置」と表示する。
+ * The caller is told about a fallback via `fallbackReason`.
+ * **Never silently degrades** (a guiding principle from docs/DESIGN.md), so the UI
+ * shows "VRM not placed."
  */
 
 import { createPlaceholder } from "./placeholder";
@@ -11,13 +12,13 @@ import { DEFAULT_VRM_URL, loadVrm } from "./vrm";
 
 export interface LoadedCharacter {
   model: CharacterModel;
-  /** VRM を使えなかった理由。使えたときは `null`。 */
+  /** The reason VRM couldn't be used. `null` when it worked. */
   fallbackReason: string | null;
 }
 
 export async function loadCharacter(url: string = DEFAULT_VRM_URL): Promise<LoadedCharacter> {
   try {
-    // 404 のときに GLTFLoader の例外を待たず、先に存在を確かめる。
+    // Checks existence first instead of waiting for GLTFLoader's exception on a 404.
     const probe = await fetch(url, { method: "HEAD" });
     if (!probe.ok) {
       return {

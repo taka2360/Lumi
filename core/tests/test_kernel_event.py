@@ -1,4 +1,4 @@
-"""EventBus の採番と永続化。**docs/contracts/event-model.md のテスト表 1〜5 / 8。**"""
+"""EventBus numbering and persistence. **docs/contracts/event-model.md test table 1-5 / 8.**"""
 
 from __future__ import annotations
 
@@ -45,14 +45,14 @@ def draft(stream_key: str = "activity:x", event_type: str = "ActivityStarted") -
 
 
 def test_signal_has_no_stream_key_or_sequence_id() -> None:
-    """**型で塞ぐ**（Invariant 6）。外部が DomainEvent を直接書く経路を作らない。"""
+    """**Blocked at the type level** (Invariant 6). No path exists for external code to write a DomainEvent directly."""
     fields = {f.name for f in dataclasses.fields(Signal)}
     assert "stream_key" not in fields
     assert "sequence_id" not in fields
 
 
 def test_draft_has_no_sequence_id() -> None:
-    """発行者が採番に触れないことを、**別の型にすることで**保証する。"""
+    """**Using a separate type** guarantees the publisher never touches numbering."""
     assert "sequence_id" not in {f.name for f in dataclasses.fields(DomainEventDraft)}
 
 
@@ -69,9 +69,9 @@ async def test_streams_are_numbered_independently(bus: EventBus) -> None:
 
 
 async def test_concurrent_publish_has_no_gap_or_duplicate(bus: EventBus) -> None:
-    """**複数コルーチンから同一 stream への並行 publish。**
+    """**Concurrent publishes to the same stream from multiple coroutines.**
 
-    「発行者が気をつける」ではなく Bus 側で直列化していることの確認。
+    Confirms serialization happens on the Bus side, not by relying on "publishers being careful."
     """
     events = await asyncio.gather(*(bus.publish(draft("activity:same")) for _ in range(50)))
     numbers = sorted(event.sequence_id for event in events)
@@ -79,7 +79,7 @@ async def test_concurrent_publish_has_no_gap_or_duplicate(bus: EventBus) -> None
 
 
 async def test_events_are_persisted_before_dispatch(bus: EventBus, database: Database) -> None:
-    """**永続化してから配送する。** 逆だと、購読側が見た事実が履歴に無いまま落ちうる。"""
+    """**Persists before dispatching.** Reversing this risks a crash where a subscriber saw a fact absent from history."""
     seen: list[int] = []
 
     async def handler(event: DomainEvent) -> None:
@@ -123,7 +123,7 @@ async def test_unsubscribe_stops_delivery(bus: EventBus) -> None:
 
 
 async def test_payload_that_cannot_be_json_fails_loudly(bus: EventBus) -> None:
-    """**黙って捨てない。** 発行側の設計ミスとして落とす。"""
+    """**Never silently dropped.** Treated as the publisher's design error."""
     bad = DomainEventDraft(
         stream_key="activity:x",
         type="Weird",

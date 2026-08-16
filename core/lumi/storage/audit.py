@@ -1,8 +1,8 @@
-"""`AuditLog` の SQLite 実装。
+"""SQLite implementation of `AuditLog`.
 
-**このファイルに `DELETE` も `UPDATE` も書かない。** それが Phase 1 における
-append-only の実装である（docs/contracts/security-boundaries.md）。
-静的検査で「コードベース全体に audit_log への `DELETE` / `UPDATE` が存在しない」ことを縛る。
+**Never write `DELETE` or `UPDATE` in this file.** That's what "append-only" means in
+Phase 1's implementation (docs/contracts/security-boundaries.md). A static check
+enforces that "no `DELETE` / `UPDATE` against audit_log exists anywhere in the codebase."
 """
 
 from __future__ import annotations
@@ -14,7 +14,7 @@ from lumi.storage.sqlite import Database
 
 
 class SqliteAuditLog:
-    """`lumi.permission.audit.AuditLog` の実装。"""
+    """Implementation of `lumi.permission.audit.AuditLog`."""
 
     __slots__ = ("_db",)
 

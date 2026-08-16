@@ -1,9 +1,10 @@
-"""LLMProvider の契約。
+"""LLMProvider's contract.
 
-型の定義 → docs/interfaces/provider.md「LLMProvider」
+Type definitions → docs/interfaces/provider.md "LLMProvider"
 
-**`reasoning` を TTS に流さない。** 思考タグの内容は音声化しない。
-そのために、テキストと思考を**イベントの型で分ける**（後段が取り違えられないように）。
+**Never route `reasoning` to TTS.** The content of thinking tags is never spoken.
+To that end, text and reasoning are **kept as separate event types** (so downstream
+code can't mix them up).
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from lumi.tools.base import ToolDescriptor
 class Message:
     role: Literal["system", "user", "assistant", "tool"]
     content: str
-    #: `role="tool"` のとき、どの呼び出しへの応答か
+    #: When `role="tool"`, which call this is a response to
     tool_call_id: str | None = None
     name: str | None = None
 
@@ -31,20 +32,20 @@ class LLMOptions:
     model: str
     temperature: float = 0.8
     max_tokens: int | None = None
-    #: 思考を有効にするか（Qwen3 系）。**有効でも TTS には流さない**
+    #: Whether to enable reasoning (Qwen3 family). **Even when enabled, never routed to TTS**
     think: bool = False
 
 
 @dataclass(frozen=True, slots=True)
 class TextDelta:
-    """発話になるテキスト。"""
+    """Text that becomes speech."""
 
     text: str
 
 
 @dataclass(frozen=True, slots=True)
 class ReasoningDelta:
-    """思考。**TTS に流さない。** 吹き出しにも出さない（Inspector には出してよい）。"""
+    """Reasoning. **Never routed to TTS.** Not shown in the speech bubble either (fine to show in the Inspector)."""
 
     text: str
 
@@ -64,10 +65,11 @@ class Finish:
 
 @dataclass(frozen=True, slots=True)
 class LLMFailure:
-    """**ストリームの途中で壊れた。** 接続前の失敗は例外（`ProviderUnavailable`）で上げる。
+    """**Broke mid-stream.** A failure before connecting is raised as an exception
+    (`ProviderUnavailable`).
 
-    途中で失敗したことを例外にすると、それまでに再生したテキストとの
-    整合が呼び出し側で取れなくなる（もう喋ってしまっている）。
+    Raising an exception for a mid-stream failure would make it impossible for the
+    caller to stay consistent with text already played back (it's already been spoken).
     """
 
     message: str
@@ -84,5 +86,5 @@ class LLMProvider(Provider, Protocol):
         options: LLMOptions,
         cancel_token: CancelToken,
     ) -> AsyncIterator[LLMEvent]:
-        """**`cancel_token` は `cooperative`。** 次のチェックポイントで止まる。"""
+        """**`cancel_token` is `cooperative`.** Stops at the next checkpoint."""
         ...

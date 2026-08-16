@@ -1,4 +1,4 @@
-"""文分割。**最初の音が出るまでの時間が体感のほぼすべて**（docs/architecture/audio.md §6）。"""
+"""Sentence splitting. **Time to first sound is almost the entire perceived experience** (docs/architecture/audio.md §6)."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ def test_sentences_are_emitted_at_terminators() -> None:
 
 
 def test_an_incomplete_sentence_waits() -> None:
-    """**途中で切って喋らない。** 細切れの音声はイントネーションが壊れる。"""
+    """**Never cuts mid-sentence to speak.** Choppy audio breaks intonation."""
     assert SentenceStream().feed("まだ途中") == []
 
 
@@ -22,15 +22,17 @@ def test_a_sentence_split_across_chunks() -> None:
 
 
 def test_the_closing_mark_stays_with_the_sentence() -> None:
-    """`そうだね！」` の `」` を落とさない。"""
+    """The closing `」` in `そうだね！」` is never dropped."""
     stream = SentenceStream()
     assert stream.feed("「そうだね！」つぎ。") == ["「そうだね！」", "つぎ。"]
 
 
 def test_a_terminator_does_not_wait_for_a_possible_closer() -> None:
-    """**待たない。** 待つと第1文が必ず1チャンク分遅れ、そこが体感のほぼすべてである。
+    """**Never waits.** Waiting would always delay the first sentence by a full chunk,
+    which is almost the entire perceived experience.
 
-    はぐれた `」` は読み上げるものが無いので落ちる。**失うものが無い方に倒す。**
+    A stray `」` gets dropped since there's nothing to speak. **Erring where there's
+    nothing to lose.**
     """
     stream = SentenceStream()
     assert stream.feed("やった！") == ["やった！"]
@@ -38,7 +40,7 @@ def test_a_terminator_does_not_wait_for_a_possible_closer() -> None:
 
 
 def test_flush_emits_the_remainder() -> None:
-    """**終端が無くても喋る。** ストリームが終わったら残りは全部読む。"""
+    """**Speaks even without a terminator.** Once the stream ends, the entire remainder is read."""
     stream = SentenceStream()
     stream.feed("句点がない")
     assert stream.flush() == ["句点がない"]
@@ -52,7 +54,7 @@ def test_flush_is_idempotent() -> None:
 
 
 def test_a_long_run_is_cut_at_a_soft_break() -> None:
-    """終端が来ないまま伸びたら諦めるが、**切る場所は選ぶ**。"""
+    """Gives up if it grows with no terminator arriving, but **still chooses where to cut**."""
     stream = SentenceStream()
     text = "あ" * 40 + "、" + "い" * 40
     sentences = stream.feed(text)
@@ -74,7 +76,7 @@ def test_newlines_end_a_sentence() -> None:
 
 
 def test_punctuation_only_fragments_are_not_spoken() -> None:
-    """**読み上げるものが無い断片を TTS に投げない。**"""
+    """**Never sends a fragment with nothing to speak to TTS.**"""
     stream = SentenceStream()
     assert stream.feed("。。。") == []
     assert stream.flush() == []

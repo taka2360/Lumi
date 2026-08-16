@@ -1,12 +1,12 @@
-"""`AivisSpeechProvider`。既存の HTTP クライアントを `TTSProvider` に適合させる。
+"""`AivisSpeechProvider`. Adapts the existing HTTP client to `TTSProvider`.
 
-設計 → docs/interfaces/provider.md / 所有と生存 → docs/architecture/core.md §6
+Design → docs/interfaces/provider.md / Ownership and lifetime → docs/architecture/core.md §6
 
-## エンジンプロセスの所有
+## Ownership of the engine process
 
-**Lumi が起動したものだけ Lumi が止める。** すでに動いているエンジンには触らない
-（ユーザーが自分で起動したものかもしれない）。この規則は `EngineProcess` が実装しており、
-Provider はそれを `load()` / `unload()` に対応づけるだけ。
+**Lumi only stops what Lumi itself started.** An already-running engine is left alone
+(the user might have started it themselves). This rule is implemented by
+`EngineProcess`; the Provider just maps it onto `load()` / `unload()`.
 """
 
 from __future__ import annotations
@@ -32,12 +32,12 @@ from lumi.setup.state import EngineRuntime
 
 log = lumi_logging.get_logger(__name__)
 
-#: エンジンが応答するまでの猶予。**無限に待たない**（起動しないことと区別できなくなる）
+#: Grace period before the engine responds. **Never wait forever** (couldn't tell it apart from never starting)
 START_TIMEOUT_S: Final = 180.0
 
 
 class AivisSpeechProvider:
-    """`TTSProvider` の実装。**別プロセス・CPU なので VRAM を消費しない。**"""
+    """Implementation of `TTSProvider`. **A separate CPU process, so it uses no VRAM.**"""
 
     id = "aivisspeech"
     kind = ProviderKind.TTS
@@ -52,7 +52,7 @@ class AivisSpeechProvider:
         self._loaded = False
 
     async def load(self) -> None:
-        """**冪等。** エンジンを起動（既に動いていれば触らない）し、既定の話者を確定させる。"""
+        """**Idempotent.** Starts the engine (leaves it alone if already running) and settles on a default speaker."""
         if self._loaded:
             return
 
@@ -66,7 +66,7 @@ class AivisSpeechProvider:
             raise ProviderUnavailable(error.reason, error.detail) from error
 
         if speaker is None:
-            # 入っているのに喋れない = **壊れている**（未セットアップとは違う）
+            # Installed but can't speak = **broken** (different from not-set-up)
             raise ProviderUnavailable("no_speaker", "エンジンに音声モデルが登録されていません")
 
         self._default_speaker = speaker
@@ -74,7 +74,7 @@ class AivisSpeechProvider:
         log.info("tts.loaded", provider=self.id, speaker=speaker)
 
     async def unload(self) -> None:
-        """**Lumi が起動したエンジンだけ止める**（`EngineProcess` が判定する）。"""
+        """**Only stops an engine Lumi itself started** (`EngineProcess` decides)."""
         self._loaded = False
         await self._engine.stop()
 
@@ -82,7 +82,7 @@ class AivisSpeechProvider:
         return self._loaded
 
     def default_voice(self) -> VoiceConfig:
-        """Content Pack が無い間の既定。**Phase 1 後半で `voice.toml` に移す。**"""
+        """Default while there's no Content Pack. **Moves to `voice.toml` later in Phase 1.**"""
         if self._default_speaker is None:
             raise ProviderUnavailable("not_loaded", "load() の前に声を決められない")
         return VoiceConfig(speaker=self._default_speaker, name=self._speaker_name)
@@ -90,11 +90,12 @@ class AivisSpeechProvider:
     async def synthesize(
         self, text: str, voice: VoiceConfig, cancel_token: CancelToken
     ) -> SpeechAudio:
-        """**合成そのものは `non_cancellable`。**
+        """**Synthesis itself is `non_cancellable`.**
 
-        `cancel_token` は「まだ意味があるか」を**始める前に**見るために使う。
-        1文の合成は数百 ms で終わるので、途中で捨てるより
-        「生成したが再生しない」（呼び出し側が破棄する）方が単純で速い。
+        `cancel_token` is checked **before starting** to see whether it's still worth
+        doing. A single sentence's synthesis finishes in a few hundred ms, so "generate
+        it but don't play it" (discarded by the caller) is simpler and faster than
+        aborting mid-synthesis.
         """
         if cancel_token.is_set:
             raise ProviderFailed("cancelled", cancel_token.reason or "")
@@ -107,7 +108,7 @@ class AivisSpeechProvider:
         return frozenset({"ja"})
 
     def resource_hint(self) -> ResourceHint:
-        """**VRAM 0。** これが TTS 選定の主因（ADR-008 / DESIGN.md §7）。"""
+        """**Zero VRAM.** This is the primary reason TTS was chosen this way (ADR-008 / DESIGN.md §7)."""
         return ResourceHint(
             device_pref=DevicePref.EXTERNAL_PROCESS,
             vram_estimate_mb=0,
@@ -116,12 +117,13 @@ class AivisSpeechProvider:
         )
 
     def attribution(self) -> Attribution:
-        """エンジンのクレジット。
+        """The engine's credit.
 
-        **保証しないこと**: ここが返すのはエンジンの情報であって、
-        **使用中の音声モデルのライセンス全文ではない。** 全文はモデル自身の manifest に入っており
-        （docs/licensing.md §4.4）、その読み取りは Phase 2 以降で足す。
-        Phase 0 のクレジット画面は既定モデルの ACML 1.0 全文を静的に載せている。
+        **What this does not guarantee**: what's returned here is the engine's
+        information, **not the full license text of the voice model in use.** The full
+        text lives in the model's own manifest (docs/licensing.md §4.4); reading it is
+        added from Phase 2 onward. Phase 0's credits screen statically embeds the
+        default model's full ACML 1.0 text.
         """
         return Attribution(
             display_name="AivisSpeech",

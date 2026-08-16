@@ -1,9 +1,11 @@
-"""L0 の built-in Tool（Class A）。**Phase 1 で登録される唯一のツール。**
+"""An L0 built-in Tool (Class A). **The only tool registered in Phase 1.**
 
-> **Phase 1 で L0 しか無くても、`invoke` の経路は本番と同じ。**
-> Phase 4a は「Canonicalizer と Policy の中身を書く」だけになる（permission.md §10）。
+> **Even with only L0 in Phase 1, the `invoke` path is identical to production.**
+> Phase 4a just becomes "write the contents of the Canonicalizer and Policy"
+> (permission.md §10).
 
-表情そのものは Phase 1 の Stretch だが、**ツールの経路を貫通させるにはツールが1つ要る。**
+The expression feature itself is a Phase 1 stretch goal, but **one tool is needed to
+exercise the Tool path end to end.**
 """
 
 from __future__ import annotations
@@ -18,7 +20,7 @@ from lumi.permission.policy import PermissionSpec, Risk, SideEffect
 from lumi.permission.scope import ScopeLane, SecurityScope
 from lumi.tools.base import ToolContext, ToolError, ToolKind, ToolOutcome
 
-#: Stage へ意図を送る関数。**Tool は WS も Stage も知らない**（注入される）。
+#: The function that sends intent to the Stage. **The Tool knows nothing about WS or the Stage** (it's injected).
 SendExpression = Callable[[ExpressionIntent], Awaitable[None]]
 
 _DEFAULT_INTENSITY: Final = 0.7
@@ -26,21 +28,21 @@ _DEFAULT_INTENSITY: Final = 0.7
 
 @dataclass(frozen=True, slots=True)
 class CharacterHandle:
-    """`character` lane の Handle。
+    """The Handle for the `character` lane.
 
-    fs の fd や input の HWND のような OS 資源を持たない。**持っているのは scope だけ。**
-    それでも Handle を介するのは、`BindVerifier` が Kernel 所有であるという
-    構造を lane ごとに崩さないため。
+    Holds no OS resource like `fs`'s fd or `input`'s HWND. **All it holds is a scope.**
+    It still goes through a Handle so the structure — "`BindVerifier` is owned by the
+    Kernel" — stays consistent lane by lane.
     """
 
     scope: SecurityScope
 
     def close(self) -> None:
-        """解放するものが無い。**空実装であることを明示する。**"""
+        """Nothing to release. **Explicitly an empty implementation.**"""
 
 
 class SetExpressionTool:
-    """`character.set_expression`。**L0**（読み取りでも書き込みでもなく、Lumi 自身の表現）。"""
+    """`character.set_expression`. **L0** (neither a read nor a write — Lumi's own expression)."""
 
     name = "character.set_expression"
     description = "Lumi の表情を変える。感情の名前と強さを指定する"
@@ -60,9 +62,9 @@ class SetExpressionTool:
         capability="character.expression",
         risk=Risk.L0,
         reversible=True,
-        # ユーザーの PC を変えない。Lumi 自身の表現の変更である
+        # Doesn't change anything on the user's PC. This changes Lumi's own expression
         side_effect=SideEffect.NONE,
-        # 1回の送信は始めたら止められない。**副作用が none なので L3 制約はかからない**
+        # A single send can't be stopped once started. **No L3 constraint applies since the side effect is none**
         cancellation=Cancellation.NON_CANCELLABLE,
     )
     concurrency_safe = True
@@ -79,14 +81,14 @@ class SetExpressionTool:
         return CharacterHandle(scope=scope)
 
     async def execute(self, ctx: ToolContext, handle: Any) -> ToolOutcome:
-        """**生入力を再解決しない。** 読むのは `handle.scope` だけ（TOCTOU 対策）。"""
+        """**Never re-resolves raw input.** Only reads `handle.scope` (the defense against TOCTOU)."""
         del ctx
         metadata = handle.scope.metadata
         raw_emotion = metadata.get("emotion")
         try:
             emotion = Emotion(raw_emotion)
         except ValueError:
-            # **黙って neutral にしない。** 分からない指定は失敗として返す
+            # **Never silently falls back to neutral.** An unrecognized value is returned as a failure
             return ToolOutcome(
                 ok=False,
                 error=ToolError(code="unknown_emotion", message=f"未知の emotion: {raw_emotion!r}"),

@@ -1,4 +1,4 @@
-"""既存インストールの検出。**外部通信しない**ことを含めて確かめる。"""
+"""Detecting existing installations. Also confirms **no external communication happens.**"""
 
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ class TestPortProbe:
             await server.wait_closed()
 
     async def test_reports_a_closed_port(self) -> None:
-        # 使われていないであろう高位ポート。開いていなければ False。
+        # A high port unlikely to be in use. False if it isn't open.
         assert not await is_port_open(59_999)
 
 

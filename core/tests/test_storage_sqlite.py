@@ -1,7 +1,7 @@
-"""SQLite の骨格。
+"""The SQLite skeleton.
 
-**ユーザーの PC の記憶は、半年後の新バージョンでも読めなければならない**
-（.claude/rules/memory.md）。Phase 1 の時点でマイグレーション管理を通しておく。
+**Memories on a user's PC must still be readable by a version released six months
+from now** (.claude/rules/memory.md). Migration management is wired through starting in Phase 1.
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def test_reopening_does_not_reapply(tmp_path: Path) -> None:
 
 
 def test_a_newer_schema_is_refused(tmp_path: Path) -> None:
-    """**推測で動かさない。** 新しい Lumi が作った DB を古い Lumi で開いたケース。"""
+    """**Never guesses and proceeds anyway.** The case of an older Lumi opening a DB a newer Lumi created."""
     path = tmp_path / "events.db"
     db = Database.open(path)
     with db.transaction() as conn:

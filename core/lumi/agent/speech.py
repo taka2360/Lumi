@@ -1,23 +1,25 @@
-"""PlaybackScheduler — 文単位 TTS の先読み並列生成 + 順序保証再生。
+"""PlaybackScheduler — parallel pre-generation of sentence-level TTS + order-preserving playback.
 
-設計 → docs/architecture/audio.md §6（`agent/` に置く理由もそこ）
+Design → docs/architecture/audio.md §6 (also explains why this lives under `agent/`)
 
 ```
-文 ─┬→ [TTS 生成 タスク] ─┐
-    ├→ [TTS 生成 タスク] ─┼→ FIFO キュー ─→ [再生ループ] ─→ SpeakerPlayback
-    └→ [TTS 生成 タスク] ─┘   （順序保証）      + stage.speech.started
+sentence ─┬→ [TTS generation task] ─┐
+          ├→ [TTS generation task] ─┼→ FIFO queue ─→ [playback loop] ─→ SpeakerPlayback
+          └→ [TTS generation task] ─┘  (order preserved)  + stage.speech.started
 ```
 
-## なぜ並列生成と順序保証の両方が要るのか
+## Why both parallel generation and order preservation are needed
 
-第1文の生成完了を待ってから第2文を始めると、**文の切れ目で必ず間が空く**。
-一方、**短い文の方が先に生成完了する**ので、到着順に再生すると文が入れ替わる。
-だから「生成は並列、再生は順序」になる。
+Waiting for the first sentence to finish generating before starting the second **always
+leaves a gap between sentences**. On the other hand, **shorter sentences finish generating
+first**, so playing them in arrival order would scramble sentence order.
+Hence "generate in parallel, play in order."
 
-## 中断
+## Interruption
 
-**生成中のタスクを破棄し、再生中のバッファを即ミュートする。生成完了を待たない。**
-`abort()` はこの順で行う（ミュートが先。ユーザーが体感するのはそこだけ）。
+**Discard in-progress generation tasks and mute the playback buffer immediately. Don't wait
+for generation to finish.**
+`abort()` does this in that order (mute first — that's the only part the user actually feels).
 """
 
 from __future__ import annotations
@@ -39,20 +41,20 @@ from lumi.transport.protocol import Role
 
 log = lumi_logging.get_logger(__name__)
 
-#: 発話の開始と終了（Core → Stage）。契約 → docs/interfaces/renderer.md
+#: Speech start and end (Core → Stage). Contract → docs/interfaces/renderer.md
 METHOD_SPEECH_STARTED: Final = "stage.speech.started"
 METHOD_SPEECH_ENDED: Final = "stage.speech.ended"
 
-#: 同時に走らせる TTS 生成の数〔Provisional〕。docs/architecture/audio.md §6
+#: Number of TTS generations to run concurrently [Provisional]. docs/architecture/audio.md §6
 MAX_PARALLEL: Final = 4
 
-#: 次の文をリングに書き始める前倒し量。**文と文の間に隙間を作らないため**。
-#: リングが順序を保証するので、早く書いても音は入れ替わらない
+#: How far ahead of time to start writing the next sentence into the ring. **Keeps no gap between sentences**.
+#: Since the ring preserves order, writing early doesn't scramble the audio
 LEAD_S: Final = 0.05
 
 
 class StageNotifier(Protocol):
-    """`WsServer.notify` と同じ形。**テストで差し替えられるようにするため。**"""
+    """Same shape as `WsServer.notify`. **Exists so tests can substitute it.**"""
 
     async def notify(
         self, role: Role, method: str, payload: dict[str, Any] | None = None
@@ -61,7 +63,7 @@ class StageNotifier(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class SpeechOutcome:
-    """**喋れなかったことを黙って捨てない。**"""
+    """**Never silently discard the fact that something couldn't be spoken.**"""
 
     spoken: int
     failed: int
@@ -76,7 +78,7 @@ class _Slot:
 
 
 class PlaybackScheduler:
-    """1回の発話（Activity 1つ分）に対応する。**使い捨て。**"""
+    """Corresponds to one utterance (one Activity). **Single-use.**"""
 
     __slots__ = (
         "_aborted",
@@ -121,7 +123,7 @@ class PlaybackScheduler:
         self._started = False
 
     def speak(self, text: str) -> None:
-        """1文を積む。**待たない。** 生成は裏で並列に走る。"""
+        """Queue one sentence. **Non-blocking.** Generation runs in parallel in the background."""
         if self._aborted:
             return
         slot = _Slot(index=self._total, text=text, audio=asyncio.get_running_loop().create_future())
@@ -136,7 +138,7 @@ class PlaybackScheduler:
             self._player = asyncio.create_task(self._play_loop(), name="playback")
 
     async def finish(self) -> SpeechOutcome:
-        """もう文は来ない。**最後の音が鳴り終わるまで待つ。**"""
+        """No more sentences will come. **Wait until the last sound finishes playing.**"""
         self._queue.put_nowait(None)
         if self._player is not None:
             await self._player
@@ -145,16 +147,16 @@ class PlaybackScheduler:
         return SpeechOutcome(spoken=self._spoken, failed=self._failed, aborted=self._aborted)
 
     async def abort(self) -> None:
-        """**barge-in の出口。** ミュートが先。生成完了を待たない。"""
+        """**The barge-in exit point.** Mute first. Don't wait for generation to finish."""
         if self._aborted:
             return
         self._aborted = True
 
-        # 1. 音を止める（同期。ここだけがユーザーの体感に効く）
+        # 1. Stop sound (synchronous. This is the only part the user actually feels)
         self._playback.mute()
         self._playback.clear()
 
-        # 2. 生成中のタスクを捨てる
+        # 2. Discard in-progress generation tasks
         for task in list(self._synth):
             task.cancel()
         if self._player is not None:
@@ -166,7 +168,7 @@ class PlaybackScheduler:
         await self._notify_ended()
         log.info("speech.aborted", spoken=self._spoken, pending=self._total - self._spoken)
 
-    # ── 生成 ──────────────────────────────────────────────
+    # ── Generation ──────────────────────────────────────────────
 
     async def _synthesize(self, slot: _Slot) -> None:
         async with self._semaphore:
@@ -176,14 +178,14 @@ class PlaybackScheduler:
             try:
                 audio = await self._tts.synthesize(slot.text, self._voice, self._cancel_token)
             except (ProviderFailed, ProviderUnavailable) as error:
-                # **1文が喋れなかったことを残す。** 黙って飛ばさない
+                # **Record that this sentence couldn't be spoken.** Don't silently skip it
                 log.warning("speech.synthesis_failed", index=slot.index, error=str(error))
                 self._failed += 1
                 _resolve(slot.audio, None)
             else:
                 _resolve(slot.audio, audio)
 
-    # ── 再生 ──────────────────────────────────────────────
+    # ── Playback ──────────────────────────────────────────────
 
     async def _play_loop(self) -> None:
         while True:
@@ -204,8 +206,8 @@ class PlaybackScheduler:
             return
 
         if not self._started:
-            # **最初の1文の直前でミュートを解いている。**
-            # ここより早く解くと、直前の barge-in で立てたミュートを取り消してしまう
+            # **Unmute right before the first sentence.**
+            # Unmuting any earlier would cancel a mute set by a preceding barge-in
             self._playback.unmute()
             self._started = True
 
@@ -215,9 +217,9 @@ class PlaybackScheduler:
         await asyncio.sleep(max(0.0, duration_s - LEAD_S))
 
     def _to_playback(self, wav_bytes: bytes) -> tuple[Samples, float]:
-        """エンジンの WAV を**出力ストリームの形**に直す。
+        """Convert the engine's WAV into **the output stream's format**.
 
-        **エンジンの出力を信用しない**（Invariant 3）。16bit 以外は明示的に失敗させる。
+        **Don't trust the engine's output** (Invariant 3). Fail explicitly on anything but 16-bit.
         """
         wav = decode_wav(wav_bytes)
         if wav.sample_width != 2:
@@ -228,23 +230,23 @@ class PlaybackScheduler:
         mono = resample(mono, wav.sample_rate, plan.samplerate)
         return to_interleaved(mono, plan.channels), len(mono) / plan.samplerate
 
-    # ── Stage への通知 ────────────────────────────────────
+    # ── Notifying the Stage ────────────────────────────────────
 
     async def _notify_started(self, text: str, audio: SpeechAudio) -> None:
         payload: dict[str, Any] = {"text": text}
         if audio.timeline is not None:
             payload.update(audio.timeline.to_payload())
-        # **タイムラインが無ければビセームを送らない**（口は閉じたまま）。
-        # でたらめな時間で動かすより動かさない → docs/interfaces/renderer.md
+        # **Don't send visemes if there's no timeline** (mouth stays closed).
+        # Not moving is better than moving on bogus timing → docs/interfaces/renderer.md
         await self._notifier.notify(Role.STAGE, METHOD_SPEECH_STARTED, payload)
 
     async def _notify_ended(self) -> None:
-        """**必ず送る。** ここを通らないと Stage の口が開きっぱなしになる。"""
+        """**Always send this.** Skipping it leaves the Stage's mouth stuck open."""
         if self._started:
             await self._notifier.notify(Role.STAGE, METHOD_SPEECH_ENDED, {})
 
 
 def _resolve(future: asyncio.Future[SpeechAudio | None], value: SpeechAudio | None) -> None:
-    """既にキャンセルされている future に set_result しない。"""
+    """Don't call set_result on a future that's already been cancelled."""
     if not future.done():
         future.set_result(value)

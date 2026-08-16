@@ -1,16 +1,16 @@
-"""マイク入力と VAD スレッド。
+"""Microphone input and the VAD thread.
 
-設計 → docs/architecture/audio.md §3
+Design → docs/architecture/audio.md §3
 
 ```
-[audio callback]  リングに write するだけ        推論しない・確保しない・ロックしない
-[VAD スレッド]    read → リサンプル → 推論 → 判定  ★ ここで音が止まる
-[asyncio]         Activity 調停・STT             遅くてよい
+[audio callback]  Only writes to the ring        no inference, no allocation, no locking
+[VAD thread]      read → resample → infer → decide  * sound stops here
+[asyncio]         Activity arbitration / STT       can be slow
 ```
 
-**「音が止まる」は VAD スレッドが同期的に行い、Arbiter を経由しない。**
-Activity の状態遷移ではないので Invariant 4 の対象外である
-（docs/contracts/state-machines.md / ADR-018）。
+**"Sound stopping" is done synchronously by the VAD thread and bypasses the Arbiter.**
+It's not an Activity state transition, so it's out of scope for Invariant 4
+(docs/contracts/state-machines.md / ADR-018).
 """
 
 from __future__ import annotations
@@ -37,30 +37,30 @@ from lumi.audio.vad import (
 
 log = lumi_logging.get_logger(__name__)
 
-#: 入力リングの長さ〔Provisional〕。**溢れるより長く持つ**（VAD が一時的に遅れても失わない）
+#: Input ring length [Provisional]. **Kept long rather than risk overflow** (so a temporary VAD delay doesn't lose data)
 CAPTURE_RING_SECONDS: Final = 8.0
 
-#: 最初のフレームが来るまでの猶予。**`open()` の成功では「聞けている」と言えない**
-#: （無効化されたエンドポイントは開けるのにフレームが来ない → Phase 0 実測）
+#: Grace period before the first frame arrives. **A successful `open()` doesn't mean "listening."**
+#: (A disabled endpoint can open but never deliver frames → observed in Phase 0)
 FIRST_FRAME_TIMEOUT_S: Final = 3.0
 
-#: リングが空のときに VAD スレッドが眠る時間。フレーム長（32 ms）より十分短く
+#: How long the VAD thread sleeps when the ring is empty. Well under the frame length (32 ms)
 _IDLE_SLEEP_S: Final = 0.004
 
-#: 発話区間の上限〔Provisional〕。**無限に貯めない**（喋り続ける環境音で RAM を食う）
+#: Cap on speech segment length [Provisional]. **Never buffer indefinitely** (continuous ambient noise would eat RAM)
 MAX_SEGMENT_SECONDS: Final = 30.0
 
 
 class CaptureUnavailable(RuntimeError):
-    """開けない / フレームが来ない。**「聞いているつもりで無音を聞き続ける」を作らない。**"""
+    """Fails to open / never receives a frame. **Never end up "thinking it's listening while hearing nothing."**"""
 
 
-#: VAD からの通知。`audio` は SPEECH_ENDED のときだけ入る
+#: Notification from VAD. `audio` is only populated for SPEECH_ENDED
 VadListener = Callable[[VadEvent, Samples | None], None]
 
 
 class MicrophoneCapture:
-    """入力ストリーム。**コールバックはリングに書くだけ。**"""
+    """Input stream. **The callback only writes to the ring.**"""
 
     __slots__ = ("_first_frame", "_overflows", "_plan", "_ring", "_stream")
 
@@ -69,8 +69,8 @@ class MicrophoneCapture:
         capacity = int(plan.samplerate * CAPTURE_RING_SECONDS)
         self._ring = RingBuffer(capacity)
         self._first_frame = threading.Event()
-        #: PortAudio が報告したオーバーフロー回数。**コールバックでは数えるだけ**
-        #: （ログ I/O は締切違反）。読むのは VAD スレッドと停止時
+        #: Overflow count reported by PortAudio. **The callback only increments it**
+        #: (log I/O would violate the deadline). Read by the VAD thread and at stop time
         self._overflows = 0
         self._stream: Any = None
 
@@ -98,14 +98,14 @@ class MicrophoneCapture:
             raise CaptureUnavailable(f"入力を開けない: {error}") from error
 
     def _callback(self, indata: Any, frames: int, time_info: Any, status: Any) -> None:
-        """**リアルタイム制約下。** 推論しない・確保しない・ロックしない。
+        """**Runs under real-time constraints.** No inference, no allocation, no locking.
 
-        `to_mono` は多チャンネルのときだけ確保する。単チャンネル（既定）では
-        `reshape` のビューだけで済む。
+        `to_mono` only allocates for multi-channel input. For single channel (the default),
+        a `reshape` view is enough.
         """
         del frames, time_info
         if status:
-            # オーバーフロー等。**握りつぶさないが、ここでログを書かない**（I/O は締切違反）
+            # Overflow, etc. **Not swallowed, but no log write happens here** (I/O would violate the deadline)
             self._overflows += 1
         samples = np.asarray(indata, dtype=np.float32).reshape(-1)
         if self._plan.channels > 1:
@@ -115,10 +115,10 @@ class MicrophoneCapture:
             self._first_frame.set()
 
     def wait_until_open(self, timeout: float = FIRST_FRAME_TIMEOUT_S) -> None:
-        """**最初のフレームが届いて初めて「聞けている」と扱う。**
+        """**Only counted as "listening" once the first frame actually arrives.**
 
-        `open()` は無効化されたエンドポイントでも成功する（Phase 0 実測）。
-        届かなければ**明示的に失敗させる。**
+        `open()` succeeds even on a disabled endpoint (observed in Phase 0).
+        If nothing arrives, **fail explicitly.**
         """
         if not self._first_frame.wait(timeout):
             raise CaptureUnavailable(
@@ -135,26 +135,26 @@ class MicrophoneCapture:
             self._stream.close()
             self._stream = None
         if self._overflows or self._ring.dropped:
-            # **黙って劣化していないかを、終わるときに必ず見る**
+            # **Always check for silent degradation when stopping**
             log.warning("capture.lossy", overflows=self._overflows, dropped=self._ring.dropped)
 
 
 class VadWorker:
-    """**専用 OS スレッド。** asyncio を経由しない。
+    """**A dedicated OS thread.** Never goes through asyncio.
 
-    ここが「すぐ黙る」を担当する。asyncio に渡すのは、その後の
-    「Activity を止める」「STT にかける」という**遅くてよい仕事**だけ。
+    This is what handles "go silent immediately." All that gets handed to asyncio is the
+    subsequent, **can-be-slow work**: "stop the Activity," "run STT."
 
-    ## ミュートを戻すのは2経路ある
+    ## Two paths revert the mute
 
-    | 経路 | いつ | 誰が |
+    | Path | When | Who |
     |---|---|---|
-    | 誤爆からの復帰 | `false_trigger_ms` 経過 | VAD スレッド（自動） |
-    | **`resume()`** | 発話を処理し終えて次を喋る直前 | **asyncio 側** |
+    | Recovery from a false trigger | after `false_trigger_ms` elapses | VAD thread (automatic) |
+    | **`resume()`** | right before speaking next, after handling an utterance | **the asyncio side** |
 
-    後者が無いと、**barge-in は1回しか効かない。** 区間が確定したミュートは
-    誤爆ではないので自動では戻らず、`muted` が立ったままだと次の
-    `MUTE_REQUESTED` が発火しない（`SpeechSegmenter.feed` の (a)）。
+    Without the latter, **barge-in only works once.** A mute from a confirmed segment
+    isn't a false trigger, so it doesn't revert automatically, and the next
+    `MUTE_REQUESTED` won't fire while `muted` stays set (path (a) of `SpeechSegmenter.feed`).
     """
 
     __slots__ = (
@@ -191,8 +191,8 @@ class VadWorker:
         self._is_playing = is_playing or (lambda: False)
         self._pending: Samples = np.zeros(0, dtype=np.float32)
         self._stop = threading.Event()
-        #: asyncio 側からの「ミュートを戻してよい」。**Event 越しに渡す**
-        #: （`SpeechSegmenter` を別スレッドから直接触らない）
+        #: The asyncio side's "OK to revert the mute" signal. **Passed via an Event**
+        #: (never touch `SpeechSegmenter` directly from another thread)
         self._resume = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -209,7 +209,7 @@ class VadWorker:
             self._thread = None
 
     def _loop(self) -> None:
-        # デバイスのレートで、16 kHz の1窓に相当する量ずつ読む
+        # Read at the device rate, in chunks equal to one 16 kHz window's worth
         chunk = max(1, WINDOW_SAMPLES * self._source_rate // SAMPLE_RATE)
         while not self._stop.is_set():
             raw = self._ring.read(chunk)
@@ -227,10 +227,10 @@ class VadWorker:
                 self._process(window, read_at)
 
     def resume(self) -> None:
-        """**次の barge-in を受けられる状態に戻す。** asyncio 側から呼ぶ。
+        """**Resets to a state that can accept the next barge-in.** Called from the asyncio side.
 
-        `Event` を立てるだけで、実際の解除は VAD スレッドが行う。
-        `SpeechSegmenter` の状態を2つのスレッドから書かないため。
+        Only sets the `Event`; the actual clearing is done by the VAD thread.
+        This keeps `SpeechSegmenter`'s state from being written by two threads.
         """
         self._resume.set()
 
@@ -246,7 +246,7 @@ class VadWorker:
 
         for event in events:
             if event is VadEvent.MUTE_REQUESTED:
-                # ★ **critical path。** ここで音が止まる（同期・Arbiter を経由しない）
+                # * **critical path.** Sound stops here (synchronous, bypasses the Arbiter)
                 self._mute_flag.set()
                 log.info(
                     "vad.mute",
@@ -255,7 +255,7 @@ class VadWorker:
                 )
                 self._listener(event, None)
             elif event is VadEvent.FALSE_TRIGGER:
-                # **誤爆だった。戻す。** これがあるからミュート閾値を攻められる
+                # **It was a false trigger. Revert.** This is what lets the mute threshold be pushed aggressively
                 self._mute_flag.clear()
                 log.info("vad.false_trigger")
                 self._listener(event, None)
@@ -267,7 +267,7 @@ class VadWorker:
 
 
 def _clamp(audio: Samples) -> Samples:
-    """**無限に長い区間を STT に渡さない。** 末尾を優先して切る。"""
+    """**Never pass an unboundedly long segment to STT.** Truncate, keeping the tail."""
     limit = int(SAMPLE_RATE * MAX_SEGMENT_SECONDS)
     if len(audio) <= limit:
         return audio

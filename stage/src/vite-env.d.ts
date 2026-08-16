@@ -2,7 +2,7 @@
 
 declare global {
   interface Window {
-    /** Tauri 2 が初期化スクリプトで注入する。ブラウザで開いたときは undefined。 */
+    /** Injected by Tauri 2's initialization script. `undefined` when opened in a browser. */
     isTauri?: boolean;
   }
 }

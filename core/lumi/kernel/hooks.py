@@ -1,12 +1,12 @@
-"""Hook — 固定セット。同期的・順序保証あり・veto 可能。
+"""Hook — a fixed set. Synchronous, order-guaranteed, can veto.
 
-一覧の唯一の定義場所 → docs/contracts/event-model.md「Hook」
+Single source of definition for the list → docs/contracts/event-model.md "Hook"
 
-**Hook は観測と拒否はできるが、任意の状態書き換えはできない**（Invariant 6）。
-戻り値を `Continue` / `Veto` に限っているのがその実装であり、
-「状態を返して Core がそれを適用する」設計にはしない。
+**A Hook can observe and refuse, but never rewrite state arbitrarily** (Invariant 6).
+Limiting the return value to `Continue` / `Veto` is what implements this; the design
+never lets a Hook "return state for Core to apply."
 
-**このセットを増やすには ADR を要求する。**
+**Growing this set requires an ADR.**
 """
 
 from __future__ import annotations
@@ -31,34 +31,34 @@ class HookName(StrEnum):
     ON_APP_SHUTDOWN = "on_app_shutdown"
 
 
-#: **veto してよいのは `before_tool` だけ。** 他で拒否されても Core は止まらない
+#: **Only `before_tool` may veto.** A refusal anywhere else doesn't stop Core
 VETOABLE: Final[frozenset[HookName]] = frozenset({HookName.BEFORE_TOOL})
 
 
 @dataclass(frozen=True, slots=True)
 class Continue:
-    """通してよい。"""
+    """OK to proceed."""
 
 
 @dataclass(frozen=True, slots=True)
 class Veto:
-    """止める。**理由は必須**（黙って止めない）。"""
+    """Stops it. **A reason is required** (never stops silently)."""
 
     reason: str
 
 
 HookOutcome = Continue | Veto
 
-#: payload は読み取り専用。Hook が書き換えたものを Core が使う経路を作らない
+#: `payload` is read-only. Never build a path where Core uses something a Hook rewrote
 HookHandler = Callable[[Mapping[str, Any]], Awaitable[HookOutcome]]
 
 
 class HookContractError(RuntimeError):
-    """veto できない Hook が `Veto` を返した。**実装ミスとして落とす。**"""
+    """A Hook that can't veto returned `Veto`. **Treated as an implementation bug.**"""
 
 
 class HookRegistry:
-    """登録順に、**直列で** await する。並行実行しない（順序保証があるため）。"""
+    """Awaited **serially**, in registration order. Never run concurrently (order is guaranteed)."""
 
     __slots__ = ("_handlers",)
 
@@ -69,7 +69,7 @@ class HookRegistry:
         self._handlers.setdefault(name, []).append(handler)
 
     async def run(self, name: HookName, payload: Mapping[str, Any]) -> HookOutcome:
-        """1つでも `Veto` を返したら、**そこで止めて後続を呼ばない。**"""
+        """If even one returns `Veto`, **stops right there and never calls the rest.**"""
         for handler in self._handlers.get(name, []):
             outcome = await handler(payload)
             if isinstance(outcome, Veto):

@@ -1,26 +1,27 @@
 /**
- * Stage のストア。**Core が `stage.*` で配ったものだけ**を持つ。
+ * The Stage's store. **Holds only what Core has broadcast via `stage.*`.**
  *
- * > 判定基準: Stage のストアから読める値は、すべて Core が配信したものであるべき。
- * > Stage が自分で計算して状態を作っていたら、それはロジックが漏れている。
+ * > The criterion: every value readable from the Stage's store should be something
+ * > Core broadcast. If the Stage is computing its own state, logic has leaked in.
  * > → docs/architecture/ui.md §2
  *
- * 例外は `connected`（WS が繋がっているか）と `prompt`（Core に聞かれている最中か）。
- * どちらも**接続そのものの状態**であり、Lumi の判断ではない。
+ * The exceptions are `connected` (whether the WS is connected) and `prompt`
+ * (whether Core is currently asking something). Both are **the state of the
+ * connection itself**, not a judgment Lumi makes.
  */
 
 import { create } from "zustand";
 
 import type { VisemeTimeline } from "../character/lipsync";
 
-/** エンジン**プロセス**の状態。導入の状態（`TtsSetupState`）とは別の軸。 */
+/** The state of the engine **process**. A separate axis from installation state (`TtsSetupState`). */
 export type EngineRuntime = "stopped" | "starting" | "ready" | "failed";
 
 /**
- * 起動フェーズ。**キャラクターを出してよいかは Core が決める。**
+ * The boot phase. **Core decides whether the character may be shown.**
  *
- * 定義 → docs/architecture/ui.md「起動フェーズ」。
- * Stage はこれを見て画面を切り替えるだけで、**自分では判断しない**。
+ * Defined in → docs/architecture/ui.md "Boot phases".
+ * The Stage only switches screens based on this — **it never judges on its own**.
  */
 export type BootPhase = "setup" | "installing" | "starting" | "ready";
 
@@ -32,7 +33,7 @@ export type TtsSetupState =
   | "installed"
   | "failed";
 
-/** Core の `TtsSetup.to_payload()` と同じ形（core/lumi/setup/state.py）。 */
+/** Same shape as Core's `TtsSetup.to_payload()` (core/lumi/setup/state.py). */
 export interface TtsSetupSnapshot {
   boot: BootPhase;
   state: TtsSetupState;
@@ -45,18 +46,18 @@ export interface TtsSetupSnapshot {
   runtime: EngineRuntime;
 }
 
-/** 発話中であることと、その口のタイムライン。**時刻は Stage の時計で進む。** */
+/** That speech is in progress, and its mouth timeline. **Time advances on the Stage's own clock.** */
 export interface Speech {
   text: string;
   timeline: VisemeTimeline;
-  /** 受け取った時刻（`performance.now()`）。 */
+  /** The time it was received (`performance.now()`). */
   startedAtMs: number;
 }
 
 export interface SetupPrompt {
-  /** 失敗のあとの再提案か。 */
+  /** Whether this is a re-prompt after a failure. */
   retry: boolean;
-  /** 直前の失敗理由（`retry` のときだけ入る）。 */
+  /** The previous failure reason (only populated when `retry`). */
   reason: string | null;
 }
 
@@ -72,7 +73,7 @@ interface StageState {
 }
 
 const UNKNOWN_TTS: TtsSetupSnapshot = {
-  // **繋がる前はまだ何も出さない。** Core が `ready` と言うまでキャラクターは出さない。
+  // **Shows nothing before connecting.** The character never appears until Core says `ready`.
   boot: "starting",
   state: "unknown",
   engine_name: null,
@@ -96,10 +97,11 @@ export const useStageStore = create<StageState>((set) => ({
 }));
 
 /**
- * 線上に出る値。**正は `docs/contracts/wire.json`**（→ ADR-022）。
+ * Values that go on the wire. **`docs/contracts/wire.json` is authoritative** (→ ADR-022).
  *
- * 型（`TtsSetupState` など）は実行時に消えるので、**受け取った値を照合するには
- * 実体の配列が要る**。並びは Core の enum の宣言順（状態が進む順）に合わせる。
+ * Types (`TtsSetupState`, etc.) vanish at runtime, so **checking a received value
+ * against them needs an actual array**. The order matches Core's enum declaration
+ * order (the order states progress).
  */
 export const TTS_SETUP_STATES: readonly TtsSetupState[] = [
   "unknown",
@@ -112,12 +114,12 @@ export const TTS_SETUP_STATES: readonly TtsSetupState[] = [
 export const ENGINE_RUNTIMES: readonly EngineRuntime[] = ["stopped", "starting", "ready", "failed"];
 export const BOOT_PHASES: readonly BootPhase[] = ["setup", "installing", "starting", "ready"];
 
-/** Core から来た payload を型に落とす。**知らない値は unknown 扱い**（勝手に補完しない）。 */
+/** Coerces a payload from Core into the type. **Unknown values are treated as unknown** (never guessed at). */
 export function toTtsSnapshot(payload: Record<string, unknown>): TtsSetupSnapshot {
   const state = payload.state;
   return {
-    // **知らないフェーズを `ready` に丸めない。** 丸めると、準備できていないのに
-    // キャラクターが出る（fail-closed で `starting` = ローディングに倒す）。
+    // **Never rounds an unknown phase to `ready`.** Rounding it would show the
+    // character before it's ready (fail-closed to `starting` = loading instead).
     boot: BOOT_PHASES.find((candidate) => candidate === payload.boot) ?? "starting",
     state: TTS_SETUP_STATES.find((candidate) => candidate === state) ?? "unknown",
     runtime: ENGINE_RUNTIMES.find((candidate) => candidate === payload.runtime) ?? "stopped",

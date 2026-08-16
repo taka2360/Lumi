@@ -1,27 +1,27 @@
-"""Crash Recovery の**語彙と型**。
+"""The **vocabulary and types** for Crash Recovery.
 
-設計 → docs/architecture/recovery.md
+Design → docs/architecture/recovery.md
 
-> **Phase 1 では記録するだけ。復旧ロジックは書かない**（Phase 4a）。
+> **Phase 1 only records these. No recovery logic is written yet** (Phase 4a).
 
-語彙を先に固定するのは、後から入れると全 Command / Tool のシグネチャと
-全実行経路に手を入れることになり、事実上の書き直しになるため。
+The vocabulary is fixed up front because adding it later would mean touching every
+Command / Tool signature and every execution path — effectively a rewrite.
 
-## 3段記録
+## Three-stage recording
 
 ```
-INTENT_RECORDED     Policy を通過し、bind/verify も済んだ。これから execute する
+INTENT_RECORDED     Passed Policy, bind/verify done too. About to execute
        ↓
-EXECUTION_STARTED   execute に入った
+EXECUTION_STARTED   Entered execute
        ↓
-EXECUTION_CONFIRMED 結果を受け取り、永続化した
+EXECUTION_CONFIRMED Result received and persisted
 ```
 
-**`INTENT_RECORDED` があって `CONFIRMED` / `ABORTED` が無いものが「未確定」。**
+**Anything with `INTENT_RECORDED` but no `CONFIRMED` / `ABORTED` is "unresolved."**
 
-`INTENT_RECORDED` だけなら**実行されていない可能性が高い**（再実行してよい）。
-`STARTED` があるなら**実行された可能性がある**（再実行してはいけない）。
-この区別が無いと、復旧が保守的すぎて使えなくなる。
+With only `INTENT_RECORDED`, **it likely never executed** (safe to re-run).
+With `STARTED` present, **it may have executed** (must not re-run).
+Without this distinction, recovery would be too conservative to be usable.
 """
 
 from __future__ import annotations
@@ -36,19 +36,19 @@ from lumi.kernel.ids import ActivityId, CorrelationId
 
 
 class ToolLifecycleEvent(StrEnum):
-    """`stream_key = activity:<id>` に属するので順序が保証される。"""
+    """Belongs to `stream_key = activity:<id>`, so ordering is guaranteed."""
 
     INTENT_RECORDED = "ToolIntentRecorded"
     EXECUTION_STARTED = "ToolExecutionStarted"
     EXECUTION_CONFIRMED = "ToolExecutionConfirmed"
-    #: 明示的に中断した（結果は無い）
+    #: Explicitly aborted (no result)
     EXECUTION_ABORTED = "ToolExecutionAborted"
-    #: intent あり confirm なし。**「失敗」ではない。結果が不明**
+    #: Has intent but no confirmation. **Not a "failure." Outcome unknown**
     EXECUTION_UNKNOWN = "ToolExecutionUnknown"
 
 
 def digest(value: str) -> str:
-    """ログと監査に残す用のダイジェスト。**生の値を残さない**ため。"""
+    """A digest for logs and audit records. **So the raw value is never kept.**"""
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
@@ -61,12 +61,13 @@ def idempotency_key(
 ) -> str:
     """`hash(activity_id, tool_name, security_scope, args_digest)`
 
-    **生の引数ではなく、正規化後の対象（`SecurityScope.canonical`）を含める。**
-    生の引数だと `~/a/../b` と `~/b` が別の操作に見えてしまい、
-    「同じ操作か」の判定が壊れる。
+    **Includes the normalized target (`SecurityScope.canonical`), not the raw argument.**
+    With raw arguments, `~/a/../b` and `~/b` would look like different operations,
+    breaking "is this the same operation."
 
-    `SecurityScope` 型そのものは受け取らない。**kernel は permission を知らない**
-    （依存の向き。docs/architecture/core.md §4）ので、正規化済みの文字列を受け取る。
+    The `SecurityScope` type itself is never accepted here. **The kernel knows
+    nothing about permission** (dependency direction, docs/architecture/core.md §4),
+    so it takes the already-normalized string instead.
     """
     joined = "\x1f".join((str(activity_id), tool_name, security_scope_canonical, args_digest))
     return digest(joined)
@@ -82,11 +83,12 @@ def tool_lifecycle_draft(
     causation_id: str | None = None,
     extra: Mapping[str, Any] | None = None,
 ) -> DomainEventDraft:
-    """3段記録の DomainEvent を作る。
+    """Builds the DomainEvent for the three-stage recording.
 
-    **payload に生の引数も結果も入れない。** 入れるのはダイジェストと識別子だけ
-    （docs/architecture/permission.md §7 の `raw_input_digest` と同じ考え方）。
-    履歴は消しにくいので、消したくなるものを最初から入れない。
+    **Never puts raw arguments or results into the payload.** Only digests and
+    identifiers go in (the same idea as `raw_input_digest` in
+    docs/architecture/permission.md §7). History is hard to erase, so nothing that
+    might later need erasing goes in to begin with.
     """
     payload: dict[str, Any] = {
         "tool": tool_name,

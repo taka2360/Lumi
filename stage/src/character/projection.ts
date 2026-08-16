@@ -1,24 +1,26 @@
 /**
- * 3D の当たり判定領域を画面上の矩形に落とす — **純粋関数**。
+ * Projects the 3D hit region onto an on-screen rectangle — **pure functions**.
  *
- * Shell に渡すのは「キャラクターが画面のどこに居るか」だけ。
- * three.js に依存しない形（NDC の点列）で受け取るので、レンダラを起動せずにテストできる。
+ * The only thing passed to Shell is "where on screen the character is."
+ * Received in a form independent of three.js (a list of NDC points), so it's
+ * testable without starting the renderer.
  */
 
 import type { CssRect } from "../platform/geometry";
 
 export interface NdcPoint {
-  /** -1（左）〜 +1（右） */
+  /** -1 (left) to +1 (right) */
   x: number;
-  /** -1（下）〜 +1（上） */
+  /** -1 (bottom) to +1 (top) */
   y: number;
 }
 
 /**
- * NDC の点列を囲む画面矩形（CSS ピクセル）を求める。
+ * Computes the on-screen rectangle (CSS pixels) enclosing the NDC points.
  *
- * 点が無いときは `null`。**「領域なし」と「原点にゼロサイズの領域」を区別する**
- * （前者はクリックスルー維持、後者は 1px の当たり判定になってしまう）。
+ * `null` when there are no points. **Distinguishes "no region" from "a
+ * zero-size region at the origin"** (the former keeps click-through, the latter
+ * would become a 1px hit region).
  */
 export function screenRectFromNdcPoints(
   points: readonly NdcPoint[],
@@ -36,7 +38,7 @@ export function screenRectFromNdcPoints(
 
   for (const point of points) {
     const screenX = ((point.x + 1) / 2) * width;
-    // NDC の y は上が +1。画面座標は下向きが正なので反転する。
+    // NDC's y has +1 at the top. Screen coordinates are positive downward, so it's flipped.
     const screenY = ((1 - point.y) / 2) * height;
     minX = Math.min(minX, screenX);
     maxX = Math.max(maxX, screenX);
@@ -44,7 +46,7 @@ export function screenRectFromNdcPoints(
     maxY = Math.max(maxY, screenY);
   }
 
-  // ウィンドウの外にはみ出した分は落とす（Shell はクライアント座標で判定するため）。
+  // Clips anything spilling outside the window (Shell judges by client coordinates).
   const left = Math.max(0, minX);
   const top = Math.max(0, minY);
   const right = Math.min(width, maxX);
@@ -56,7 +58,7 @@ export function screenRectFromNdcPoints(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-/** 矩形が実質的に変わったか。**変わっていなければ IPC を出さない。** */
+/** Whether the rectangle changed meaningfully. **No IPC is sent if it didn't.** */
 export function hasMovedEnough(
   previous: CssRect | null,
   next: CssRect | null,

@@ -1,6 +1,6 @@
-"""Provider 基盤と各実装。**LLM も外部エンジンも呼ばない**（HTTP を差し替える）。
+"""The Provider foundation and its implementations. **Calls neither an LLM nor an external engine** (HTTP is substituted).
 
-docs/interfaces/provider.md のテスト表 1〜6 / 8。
+docs/interfaces/provider.md test table 1-6 / 8.
 """
 
 from __future__ import annotations
@@ -104,12 +104,12 @@ async def test_registry_loads_on_first_get() -> None:
     await registry.get(ProviderKind.LLM)
     await registry.get(ProviderKind.LLM)
 
-    # **`load` は冪等。** 2回目は呼ばれない
+    # **`load` is idempotent.** Not called a second time
     assert provider.loads == 1
 
 
 def test_registry_refuses_an_unregistered_kind() -> None:
-    """**黙って劣化しない。** 「なぜか喋らない」を作らない。"""
+    """**Never silently degrades.** Never produces an unexplained "why isn't it speaking."""
     with pytest.raises(ProviderNotConfigured):
         ProviderRegistry().peek(ProviderKind.TTS)
 
@@ -126,14 +126,14 @@ def test_registry_reports_only_the_selected_attributions() -> None:
 
 
 async def test_ollama_not_running_is_unavailable() -> None:
-    """**「入っていない」ではない。** ユーザーに求めるのは「起動」。"""
+    """**Not "not installed."** What's asked of the user is "start it."""
     with pytest.raises(ProviderUnavailable) as error:
         await ollama_with().load()
     assert error.value.reason == "ollama_not_running"
 
 
 async def test_ollama_without_the_model_is_not_configured() -> None:
-    """**`ollama pull` を案内すべき状態。** 起動を促すのは嘘になる。"""
+    """**The state where `ollama pull` should be suggested.** Prompting to start it would be a lie."""
     with pytest.raises(ProviderNotConfigured) as error:
         await ollama_with(version={"version": "0.5.0"}, tags={"models": []}).load()
     assert error.value.reason == "model_missing"
@@ -174,7 +174,7 @@ async def test_ollama_streams_text_and_finishes() -> None:
 
 
 async def test_ollama_separates_reasoning_from_text() -> None:
-    """**思考は TTS に流さない。** 型で分けておけば、後段が取り違えられない。"""
+    """**Reasoning is never routed to TTS.** Keeping it a separate type means downstream code can't mix it up."""
     provider = ollama_with(
         version={"version": "0.5.0"},
         tags={"models": [{"name": "qwen3:8b"}]},
@@ -244,7 +244,7 @@ async def test_ollama_parses_tool_calls() -> None:
 
 
 async def test_ollama_stops_when_the_token_fires() -> None:
-    """**cooperative。** 次のチェックポイントで抜ける。"""
+    """**cooperative.** Exits at the next checkpoint."""
     provider = ollama_with(
         version={"version": "0.5.0"},
         tags={"models": [{"name": "qwen3:8b"}]},
@@ -269,7 +269,7 @@ async def test_ollama_stops_when_the_token_fires() -> None:
 
 
 async def test_ollama_reports_a_broken_stream_as_an_event() -> None:
-    """**接続後の失敗は例外にしない。** もう喋ってしまっている分と整合が取れなくなる。"""
+    """**A failure after connecting is never raised as an exception.** It couldn't stay consistent with what's already been spoken."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/chat":
@@ -306,9 +306,9 @@ def empty_model_dir(tmp_path: Path) -> Iterator[Path]:
 
 
 async def test_missing_stt_model_fails_loudly(empty_model_dir: Path) -> None:
-    """**ライブラリに勝手にダウンロードさせない**（ADR-023）。
+    """**Never lets the library download on its own** (ADR-023).
 
-    無ければ「取得してください」と言える状態で止まる。
+    If missing, it stops in a state that can say "please fetch it."
     """
     provider = FasterWhisperProvider("tiny", empty_model_dir)
     with pytest.raises(ProviderNotConfigured) as error:
@@ -324,26 +324,27 @@ async def test_transcribe_before_load_is_refused(empty_model_dir: Path) -> None:
 
 
 def test_stt_stays_off_the_gpu(empty_model_dir: Path) -> None:
-    """**GPU は LLM に全振りする**（DESIGN.md §7）。"""
+    """**The GPU is dedicated entirely to the LLM** (DESIGN.md §7)."""
     hint = FasterWhisperProvider("tiny", empty_model_dir).resource_hint()
     assert hint.device_pref is DevicePref.CPU_ONLY
     assert hint.vram_estimate_mb == 0
 
 
 def test_faster_whisper_download_is_disabled_in_code() -> None:
-    """`local_files_only=True` が消えていないこと。**これが消えると黙って通信し始める。**"""
+    """`local_files_only=True` hasn't been removed. **Removing it would make it silently start communicating.**"""
     source = Path(FasterWhisperProvider.__module__.replace(".", "/") + ".py")
     text = (Path(__file__).resolve().parents[1] / source).read_text(encoding="utf-8")
     assert "local_files_only=True" in text
 
 
-# ── Ollama の検出（Provider ではなく setup の担当）──────────────
+# ── Detecting Ollama (setup's job, not the Provider's) ──────────────
 
 
 async def test_detect_returns_none_when_ollama_is_absent(monkeypatch: pytest.MonkeyPatch) -> None:
-    """**「入っていない」を Provider ではなく検出が決める。**
+    """**Detection, not the Provider, decides "not installed."**
 
-    ポートを実際に叩かない（開発機で Ollama が動いていても結果が変わらないように）。
+    Never actually probes the port (so the result stays the same even if Ollama
+    happens to be running on the dev machine).
     """
 
     async def closed(port: int, *, host: str = "127.0.0.1") -> bool:

@@ -1,28 +1,28 @@
-"""Ollama。**Lumi は起動もインストールもしない**（ADR-023）。
+"""Ollama. **Lumi neither starts nor installs it** (ADR-023).
 
-決定 → ADR-023 / 状態 → docs/architecture/setup.md §2b
+Decision → ADR-023 / State → docs/architecture/setup.md §2b
 
-## 誰が何を判定するか
+## Who decides what
 
-| 判定 | 誰が | 結果 |
+| Check | Who | Result |
 |---|---|---|
-| Ollama が**入っているか** | `lumi.setup.detect`（実行ファイルを探す） | `not_configured` |
-| Ollama が**動いているか** | ここ（HTTP） | `ProviderUnavailable` |
-| モデルが**あるか** | ここ（`/api/tags`） | `ProviderNotConfigured("model_missing")` |
+| Is Ollama **installed** | `lumi.setup.detect` (looks for the executable) | `not_configured` |
+| Is Ollama **running** | here (HTTP) | `ProviderUnavailable` |
+| Does the model **exist** | here (`/api/tags`) | `ProviderNotConfigured("model_missing")` |
 
-Provider は HTTP しか見ないので「入っていない」と「起動していない」を区別できない。
-**区別は setup 側が持つ**（→ ユーザーへの案内が変わる）。
+The Provider only sees HTTP, so it can't distinguish "not installed" from "not running."
+**That distinction belongs to the setup side** (→ it changes the guidance shown to the user).
 
-## 宛先は 127.0.0.1 に固定する。ポートだけ設定できる
+## The destination is pinned to 127.0.0.1. Only the port is configurable
 
-TTS（`aivisspeech.py`）と同じ理由である。**ホストを差し替えられるようにすると、
-「Lumi が任意のサーバに会話内容を送る機能」になる。**
+Same reason as TTS (`aivisspeech.py`). **Making the host swappable would turn this into
+"a feature where Lumi sends conversation content to an arbitrary server."**
 
-ADR-023 は「検出できないケースは設定で明示的に指定させる」としているが、
-それで足りるのは**ポート**までである。リモートの推論サーバを使いたい場合は
-ホストを可変にするのではなく、**別の `LLMProvider` を足す**
-（クラウド LLM と同じ枠組み。DESIGN.md §1 の Network-optional）。
-そうすれば「外部へ送っている」ことが Provider の選択として画面に出る。
+ADR-023 says "cases that can't be auto-detected should be set explicitly in config,"
+but that only covers the **port**. If a remote inference server is wanted, the fix
+isn't making the host variable — it's **adding a separate `LLMProvider`**
+(the same framework as a cloud LLM. Network-optional from DESIGN.md §1).
+That way "sending to the outside" shows up on screen as a Provider choice.
 """
 
 from __future__ import annotations
@@ -58,19 +58,19 @@ from lumi.tools.base import ToolDescriptor
 
 log = lumi_logging.get_logger(__name__)
 
-#: **設定にしない。** 変えたいなら Provider ごと差し替える
+#: **Not a setting.** To change it, swap the whole Provider
 HOST: Final = "127.0.0.1"
 DEFAULT_PORT: Final = 11434
 
-#: 生存確認。**長く待たない**（起動していないことを素早く確定させる）
+#: Liveness probe. **Don't wait long** (quickly confirm it isn't running)
 PROBE_TIMEOUT_S: Final = 2.0
-#: ストリームの待ち時間。初トークンまでの SLO は 0.28s だが、
-#: 初回のモデルロードは数十秒かかる。**無限には待たない**
+#: Stream wait time. The SLO for first token is 0.28s, but the first model load can
+#: take tens of seconds. **Never wait forever**
 STREAM_TIMEOUT_S: Final = 120.0
 
 
 class OllamaProvider:
-    """`LLMProvider` の実装。"""
+    """Implementation of `LLMProvider`."""
 
     kind = ProviderKind.LLM
 
@@ -87,16 +87,16 @@ class OllamaProvider:
         self._model = model
         self._base = f"http://{HOST}:{port}"
         self._loaded = False
-        #: テストから HTTP を差し替えるための窓口。**本番では None**
+        #: Hook for tests to substitute HTTP. **`None` in production**
         self._transport = transport
 
     def _client(self, timeout: float) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=timeout, transport=self._transport)
 
-    # ── ライフサイクル ────────────────────────────────────
+    # ── Lifecycle ────────────────────────────────────
 
     async def load(self) -> None:
-        """**冪等。** 繋がることとモデルがあることを確かめるだけ（重みは Ollama が持つ）。"""
+        """**Idempotent.** Only confirms connectivity and that the model exists (weights live in Ollama)."""
         if self._loaded:
             return
 
@@ -108,7 +108,7 @@ class OllamaProvider:
 
         models = await self._models()
         if not self._has_model(models):
-            # **「入っていない」ではなく「モデルが無い」。** 案内すべき行動が違う
+            # **Not "not installed" — "the model is missing."** The action to guide the user toward differs
             raise ProviderNotConfigured(
                 "model_missing", f"{self._model} が見つからない。`ollama pull {self._model}`"
             )
@@ -117,18 +117,18 @@ class OllamaProvider:
         log.info("llm.loaded", provider=self.id, version=version)
 
     async def unload(self) -> None:
-        """**Ollama のプロセスには触らない**（ADR-023）。手放すのは Lumi 側の状態だけ。"""
+        """**Never touches the Ollama process** (ADR-023). Only releases Lumi's own state."""
         self._loaded = False
 
     def is_loaded(self) -> bool:
         return self._loaded
 
     def resource_hint(self) -> ResourceHint:
-        """**別プロセスなので Lumi の VRAM 予算の外にある。**
+        """**A separate process, so it's outside Lumi's VRAM budget.**
 
-        実際には Ollama が GPU を使うが、それを Lumi の
-        `ModelResourceManager`（Phase 5）が管理することはできない。
-        `vram_estimate_mb=0` は「使わない」ではなく「**Lumi は数えない**」の意味である。
+        Ollama does use the GPU in practice, but Lumi's `ModelResourceManager`
+        (Phase 5) has no way to manage it. `vram_estimate_mb=0` means
+        "**Lumi doesn't count it**," not "it uses none."
         """
         return ResourceHint(
             device_pref=DevicePref.EXTERNAL_PROCESS,
@@ -146,7 +146,7 @@ class OllamaProvider:
             homepage_url="https://ollama.com",
         )
 
-    # ── 推論 ──────────────────────────────────────────────
+    # ── Inference ──────────────────────────────────────────────
 
     async def stream(
         self,
@@ -179,7 +179,7 @@ class OllamaProvider:
 
                 async for line in response.aiter_lines():
                     if cancel_token.is_set:
-                        # **cooperative。** ここで抜けると `with` が接続を閉じる
+                        # **cooperative.** Breaking out here lets the `with` block close the connection
                         log.info("llm.cancelled", reason=cancel_token.reason)
                         return
                     if not line.strip():
@@ -189,13 +189,13 @@ class OllamaProvider:
                         if isinstance(event, Finish):
                             return
         except httpx.HTTPError as error:
-            # ストリームが始まったあとの切断も含む。**黙って終わらせない**
+            # Includes disconnects after the stream has started. **Never let it end silently**
             yield LLMFailure(message=str(error))
 
-    # ── 内部 ──────────────────────────────────────────────
+    # ── Internal ──────────────────────────────────────────────
 
     async def _version(self) -> str | None:
-        """起動していなければ `None`（**例外にしない**。ポーリングに使うため）。"""
+        """`None` if not running (**not raised as an exception** — used for polling)."""
         try:
             async with self._client(PROBE_TIMEOUT_S) as client:
                 response = await client.get(f"{self._base}/api/version")
@@ -220,7 +220,7 @@ class OllamaProvider:
         return [str(m.get("name", "")) for m in models if isinstance(m, dict)]
 
     def _has_model(self, models: Sequence[str]) -> bool:
-        """`qwen3:8b` と `qwen3:8b` / タグ省略（`qwen3`）の両方を拾う。"""
+        """Matches both an exact `qwen3:8b` and the tag-less form (`qwen3`)."""
         wanted = self._model
         for name in models:
             if name == wanted or name.split(":")[0] == wanted.split(":")[0]:
@@ -247,9 +247,10 @@ def _tool_payload(tool: ToolDescriptor) -> dict[str, Any]:
 
 
 def _parse_line(line: str) -> list[LLMEvent]:
-    """NDJSON の1行を 0個以上のイベントにする。
+    """Turns one line of NDJSON into zero or more events.
 
-    **壊れた行で落ちない。** 1行読めなかっただけで会話全体を失う方が悪い。
+    **Never crash on a malformed line.** Losing the whole conversation over one
+    unreadable line would be worse.
     """
     try:
         chunk = json.loads(line)
@@ -295,7 +296,7 @@ def _tool_calls(raw: Any) -> list[LLMEvent]:
             continue
         arguments = function.get("arguments")
         if isinstance(arguments, str):
-            # 実装によっては JSON 文字列で来る。**読めなければ捨てる**（推測で埋めない）
+            # Some implementations send this as a JSON string. **Discard if unreadable** (never fill in a guess)
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError:

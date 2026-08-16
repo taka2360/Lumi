@@ -1,6 +1,6 @@
-"""Policy の `decide()`。**docs/architecture/permission.md のテスト表 1〜4。**
+"""Policy's `decide()`. **docs/architecture/permission.md test table 1-4.**
 
-`decide()` は純粋関数なので、**DB もイベントループも要らない。**
+`decide()` is a pure function, so **it needs neither a DB nor an event loop.**
 """
 
 from __future__ import annotations
@@ -36,7 +36,7 @@ def grant(scope: SecurityScope = SCOPE, *, uses: int | None = None) -> Grant:
     )
 
 
-# ── actor による昇格 ─────────────────────────────────────────
+# ── Escalation by actor ─────────────────────────────────────────
 
 
 def test_self_initiated_l2_becomes_ask() -> None:
@@ -45,12 +45,12 @@ def test_self_initiated_l2_becomes_ask() -> None:
 
 @pytest.mark.parametrize("risk", [Risk.L3, Risk.L4])
 def test_self_initiated_l3_and_above_is_denied(risk: Risk) -> None:
-    """**「厳しくなる」のではなく「できない」。**"""
+    """**Not "gets stricter" — "cannot be done."**"""
     assert decide(risk, Actor.SELF_INITIATED, TrustLevel.TRUSTED, None) is Decision.DENY
 
 
 def test_escalation_is_an_explicit_mapping() -> None:
-    """「1段上がる」という説明は L3 で表と矛盾したため撤回した。"""
+    """The "bumps up by one level" description was retracted because it contradicted the table at L3."""
     assert escalate_for_self_initiated(Risk.L2) is Risk.L3
     assert escalate_for_self_initiated(Risk.L3) is Risk.DENIED
     assert escalate_for_self_initiated(Risk.L4) is Risk.DENIED
@@ -58,7 +58,7 @@ def test_escalation_is_an_explicit_mapping() -> None:
 
 @pytest.mark.parametrize("risk", [Risk.L1, Risk.L2, Risk.L3, Risk.L4])
 def test_system_actor_is_l0_only(risk: Risk) -> None:
-    """**Job と idle は L0 のみ**（ADR-018）。"""
+    """**Job and idle are L0 only** (ADR-018)."""
     assert decide(risk, Actor.SYSTEM, TrustLevel.TRUSTED, None) is Decision.DENY
 
 
@@ -70,19 +70,19 @@ def test_scheduled_is_treated_like_user_initiated() -> None:
     assert decide(Risk.L1, Actor.SCHEDULED, TrustLevel.TRUSTED, None) is Decision.ALLOW
 
 
-# ── provenance 昇格 ─────────────────────────────────────────
+# ── Provenance escalation ─────────────────────────────────────────
 
 
 def test_tainted_context_escalates_l3_to_ask() -> None:
-    """「Web ページを読んだあと、その内容に誘導されてファイルを消す」を防ぐ。"""
+    """Prevents "reading a web page, then being steered by its content into deleting a file."""
     assert decide(Risk.L3, Actor.USER_INITIATED, TrustLevel.TAINTED, None) is Decision.ASK
 
 
 def test_provenance_rule_looks_at_effective_risk() -> None:
-    """**`base_risk=L2` + `self_initiated` + `TAINTED` が `ask`。**
+    """**`base_risk=L2` + `self_initiated` + `TAINTED` results in `ask`.**
 
-    `base_risk` を見ていたら L2 < L3 で不発火になる。
-    **順序（actor 昇格が先）が守られていることの確認。**
+    Looking at `base_risk` would never fire this since L2 < L3.
+    **Confirms the order (actor escalation first) is honored.**
     """
     decision, rule = decide_with_rule(Risk.L2, Actor.SELF_INITIATED, TrustLevel.TAINTED, None)
     assert decision is Decision.ASK
@@ -97,7 +97,7 @@ def test_tainted_does_not_escalate_below_l3() -> None:
 
 
 def test_l4_asks_even_with_a_grant() -> None:
-    """**L4 は Grant があっても毎回聞く。**"""
+    """**L4 always asks, even with a Grant.**"""
     assert decide(Risk.L4, Actor.USER_INITIATED, TrustLevel.TRUSTED, grant()) is Decision.ASK
 
 
@@ -110,7 +110,7 @@ def test_l2_without_a_grant_asks() -> None:
 
 
 def test_a_grant_does_not_apply_to_another_scope() -> None:
-    """**「近い」では通さない**（fail-closed）。"""
+    """**"Close enough" never passes** (fail-closed)."""
     store = GrantStore()
     store.add(grant())
     other = SecurityScope(lane=ScopeLane.FS, canonical="C:\\work\\b.txt")
@@ -140,16 +140,16 @@ def test_remaining_uses_are_consumed() -> None:
     assert store.find("fs.write", SCOPE, NOW) is None
 
 
-# ── 契約そのもの ────────────────────────────────────────────
+# ── The contract itself ────────────────────────────────────────────
 
 
 def test_decide_takes_exactly_four_arguments() -> None:
-    """**LLM の理由文・Tool の自己申告が届かないことを、シグネチャで保証する**（Invariant 1）。"""
+    """**Guarantees at the signature level that an LLM's stated reasoning or a Tool's self-report never arrives** (Invariant 1)."""
     parameters = list(inspect.signature(decide).parameters)
     assert parameters == ["base_risk", "actor", "effective_trust", "grant"]
 
 
 def test_decide_is_pure() -> None:
-    """同じ引数なら常に同じ答え。`policy_version` の意味がここに懸かっている。"""
+    """Same arguments always give the same answer. What `policy_version` means depends on this."""
     args = (Risk.L2, Actor.SELF_INITIATED, TrustLevel.TAINTED, None)
     assert decide(*args) is decide(*args) is Decision.ASK

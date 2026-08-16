@@ -1,6 +1,6 @@
-"""取得と検証。**ネットワークに出ない**（httpx の MockTransport を使う）。
+"""Fetching and verification. **Never touches the network** (uses httpx's MockTransport).
 
-docs/architecture/setup.md §8 のテスト表を実装する。
+Implements the test table from docs/architecture/setup.md §8.
 """
 
 from __future__ import annotations
@@ -93,7 +93,7 @@ class TestDownload:
     async def test_stops_when_the_body_is_larger_than_pinned(self, tmp_path: Path) -> None:
         artifact = artifact_for(size=10)
 
-        # content-length を付けずに大きい本文を返す（途中で打ち切れること）
+        # Returns an oversized body without content-length (must be cut off mid-stream)
         def handler(_: httpx.Request) -> httpx.Response:
             return httpx.Response(200, content=PAYLOAD, headers={"transfer-encoding": "chunked"})
 
@@ -149,10 +149,11 @@ class TestDownload:
 
 
 def make_archive(path: Path, *, with_executable: bool) -> None:
-    """展開できる書庫を作る。
+    """Creates an archive that can be extracted.
 
-    bsdtar は zip も 7z も読めるので、**テストでは作れる形式（zip）を使う**。
-    確かめたいのは「展開して実行体を見つけて確定する」経路であって、圧縮形式ではない。
+    bsdtar can read both zip and 7z, so **the test uses a format it can actually
+    create (zip)**. What's being verified is the "extract, find the executable, and
+    commit" path — not the compression format.
     """
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("TestEngine/README.txt", "hello")
@@ -172,7 +173,7 @@ def fake_download(
         if error is not None:
             raise error
         assert archive_source is not None
-        # テストの中の小さなコピー。ここは to_thread に逃がす価値がない。
+        # A small copy inside a test. Not worth offloading to to_thread here.
         await asyncio.to_thread(shutil.copyfile, archive_source, destination)
 
     return _fake
@@ -236,7 +237,7 @@ class TestInstall:
 
         first = await install_engine(artifact_for(), engines)
 
-        # 2回目は取得しない（_download を呼ぶと例外になる細工をしておく）
+        # The second time never fetches (rigged so calling _download raises)
         monkeypatch.setattr(
             install_module,
             "_download",
@@ -248,7 +249,7 @@ class TestInstall:
     async def test_fails_explicitly_without_tar(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """**別の手段を探さない。** 展開できないなら失敗する。"""
+        """**No alternative is sought.** Fails if extraction isn't possible."""
         source = tmp_path / "engine.zip"
         make_archive(source, with_executable=True)
         monkeypatch.setattr(install_module, "_download", fake_download(archive_source=source))
@@ -261,14 +262,14 @@ class TestInstall:
 
 
 class TestNetworkOptional:
-    """**ユーザーが選ぶまで外部通信しない**（docs/architecture/setup.md 原則1）。
+    """**No external communication until the user chooses to** (docs/architecture/setup.md Principle 1).
 
-    静的検査。「呼ばれなければ通信しない」ことをコードの形で保証する
-    （.claude/rules/tests.md「静的検査もテストである」）。
+    A static check. Guarantees "no communication unless called" in code form
+    (.claude/rules/tests.md "static checks are tests too").
     """
 
-    #: HTTP クライアントを持ってよいモジュールと、その理由。
-    #: **増やすときは「いつ・どこへ通信するか」を必ず書く。**
+    #: Modules allowed to hold an HTTP client, and why.
+    #: **When adding one, always write down "when and where it communicates."**
     ALLOWED_HTTP: ClassVar[dict[str, str]] = {
         "setup/install.py": "エンジンの取得。ユーザーが選んだときだけ呼ばれる",
         "providers/tts/aivisspeech.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
@@ -288,9 +289,10 @@ class TestNetworkOptional:
         )
 
     def test_the_engine_client_only_talks_to_localhost(self) -> None:
-        """エンジンの宛先を**設定可能にしない**。
+        """The engine's destination is **never made configurable**.
 
-        可能にすると「Lumi が任意のサーバに読み上げテキストを送る機能」になる。
+        Making it configurable would turn this into "a feature where Lumi sends
+        text to be read aloud to an arbitrary server."
         """
         module = Path(aivisspeech.__file__)
         urls = re.findall(r"https?://[^\"']*", module.read_text(encoding="utf-8"))
@@ -299,7 +301,7 @@ class TestNetworkOptional:
         assert aivisspeech.HOST == "127.0.0.1"
 
     def test_the_llm_client_only_talks_to_localhost(self) -> None:
-        """**会話の内容を外に出さない。** リモート推論は別 Provider として足す（ADR-023）。"""
+        """**Conversation content never leaves the machine.** Remote inference is added as a separate Provider (ADR-023)."""
         module = Path(ollama.__file__)
         urls = re.findall(r"https?://[^\"']*", module.read_text(encoding="utf-8"))
         assert urls, "URL の組み立て方が変わった。このテストを見直すこと"

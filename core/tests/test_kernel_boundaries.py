@@ -1,14 +1,14 @@
-"""静的検査。**これもテストである**（.claude/rules/tests.md）。
+"""Static checks. **These are tests too** (.claude/rules/tests.md).
 
-grep と AST で足りるものは、実行時の仕組みを作らずにここで縛る。
+Anything grep and AST can cover is enforced here instead of building runtime machinery.
 
-| 検査 | 根拠 |
+| Check | Basis |
 |---|---|
-| `kernel/` が他モジュールに依存しない | docs/architecture/core.md §4 |
-| 状態遷移を実行するのは Arbiter だけ | docs/contracts/state-machines.md |
-| `_foreground` への代入は Arbiter だけ | .claude/rules/kernel.md |
-| `DomainEvent` を作るのは EventBus だけ | docs/contracts/event-model.md テスト6 |
-| `trust_level = TRUSTED` の書き込み箇所 | docs/contracts/provenance.md テスト5 |
+| `kernel/` depends on no other module | docs/architecture/core.md §4 |
+| Only the Arbiter executes state transitions | docs/contracts/state-machines.md |
+| Only the Arbiter assigns `_foreground` | .claude/rules/kernel.md |
+| Only the EventBus constructs `DomainEvent` | docs/contracts/event-model.md test 6 |
+| Where `trust_level = TRUSTED` is written | docs/contracts/provenance.md test 5 |
 """
 
 from __future__ import annotations
@@ -19,8 +19,8 @@ from pathlib import Path
 LUMI = Path(__file__).resolve().parents[1] / "lumi"
 KERNEL = LUMI / "kernel"
 
-#: `kernel/` が import してよい lumi 配下のモジュール（前方一致）。
-#: **増やすときは docs/architecture/core.md §4 の例外表も直す。**
+#: Modules under lumi that `kernel/` may import (prefix match).
+#: **When adding one, also update docs/architecture/core.md §4's exception table.**
 KERNEL_ALLOWED_PREFIXES = ("lumi.kernel.", "lumi.provenance", "lumi.logging")
 
 
@@ -29,7 +29,7 @@ def lumi_sources() -> list[Path]:
 
 
 def imported_names(path: Path) -> set[str]:
-    """`from lumi import logging` を `lumi.logging` として拾う。"""
+    """Picks up `from lumi import logging` as `lumi.logging`."""
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -41,9 +41,10 @@ def imported_names(path: Path) -> set[str]:
 
 
 def test_kernel_does_not_depend_on_other_modules() -> None:
-    """**kernel は型と調停だけを持ち、具体的な能力を知らない。**
+    """**The kernel holds only types and arbitration; it knows nothing about concrete capabilities.**
 
-    永続化のような「外の世界」は Protocol で受け取る。実装は kernel の外にある。
+    "Outside world" concerns like persistence are received through a Protocol. The
+    implementation lives outside the kernel.
     """
     offenders: list[str] = []
     for source in sorted(KERNEL.rglob("*.py")):
@@ -56,7 +57,7 @@ def test_kernel_does_not_depend_on_other_modules() -> None:
 
 
 def test_storage_may_depend_on_kernel_but_not_the_reverse() -> None:
-    """依存の向きは `storage → kernel`。"""
+    """The dependency direction is `storage → kernel`."""
     for source in sorted(KERNEL.rglob("*.py")):
         assert not any(name.startswith("lumi.storage") for name in imported_names(source)), (
             source.name
@@ -64,7 +65,7 @@ def test_storage_may_depend_on_kernel_but_not_the_reverse() -> None:
 
 
 def test_only_the_arbiter_applies_state_transitions() -> None:
-    """`Activity._apply` を呼ぶのは Arbiter だけ（定義は activity.py）。"""
+    """Only the Arbiter calls `Activity._apply` (defined in activity.py)."""
     callers = [
         source.relative_to(LUMI).as_posix()
         for source in lumi_sources()
@@ -74,7 +75,7 @@ def test_only_the_arbiter_applies_state_transitions() -> None:
 
 
 def test_only_the_arbiter_assigns_the_foreground() -> None:
-    """`_foreground` への代入が散ると、Invariant 4 を1箇所で守れなくなる。"""
+    """If assignments to `_foreground` were scattered, Invariant 4 couldn't be upheld in one place."""
     writers = [
         source.relative_to(LUMI).as_posix()
         for source in lumi_sources()
@@ -84,10 +85,10 @@ def test_only_the_arbiter_assigns_the_foreground() -> None:
 
 
 def test_only_the_event_module_constructs_domain_events() -> None:
-    """**`sequence_id` を持つ `DomainEvent` を組み立てるのは EventBus だけ。**
+    """**Only the EventBus constructs a `DomainEvent` carrying a `sequence_id`.**
 
-    発行者は `DomainEventDraft` しか作れない（型で塞いである）。
-    ここでは「実際に組み立てている場所」が1つであることを確かめる。
+    A publisher can only construct a `DomainEventDraft` (blocked at the type level).
+    This confirms there's exactly one place actually doing the constructing.
     """
     builders = [
         source.relative_to(LUMI).as_posix()
@@ -98,9 +99,9 @@ def test_only_the_event_module_constructs_domain_events() -> None:
 
 
 def test_permission_does_not_depend_on_tools() -> None:
-    """依存の向きは `tools → permission`。**Kernel が個別ツールを知らない**（Invariant 1）。
+    """The dependency direction is `tools → permission`. **The Kernel knows nothing about individual tools** (Invariant 1).
 
-    知り始めると、ツールを1つ足すたびに Permission Kernel が変わる。
+    If it started knowing, the Permission Kernel would change every time a tool is added.
     """
     for source in sorted((LUMI / "permission").rglob("*.py")):
         assert not any(name.startswith("lumi.tools") for name in imported_names(source)), (
@@ -109,10 +110,10 @@ def test_permission_does_not_depend_on_tools() -> None:
 
 
 def test_tools_do_not_call_the_permission_kernel() -> None:
-    """**Tool が自分で authorize すると、実装ミスがそのまま権限バイパスになる**（Invariant 1）。
+    """**If a Tool authorized itself, an implementation mistake would become a permission bypass directly** (Invariant 1).
 
-    Tool が import してよいのは型（`PermissionSpec` / `SecurityScope` など）だけで、
-    判断する側（`PermissionKernel` / `decide` / `GrantStore`）には触れない。
+    A Tool may only import types (`PermissionSpec` / `SecurityScope`, etc); it never
+    touches the decision-making side (`PermissionKernel` / `decide` / `GrantStore`).
     """
     forbidden = {
         "lumi.permission.kernel.PermissionKernel",
@@ -122,12 +123,12 @@ def test_tools_do_not_call_the_permission_kernel() -> None:
     }
     for source in sorted((LUMI / "tools").rglob("*.py")):
         if source.name == "registry.py":
-            continue  # Registry は Kernel を呼ぶ側（そこが唯一の経路）
+            continue  # The Registry is the caller of the Kernel (the sole path)
         assert not (imported_names(source) & forbidden), source.name
 
 
 def test_tools_do_not_implement_the_verifiers() -> None:
-    """`canonicalize` / `verify` を Tool 側に実装すると、**Tool を信頼することになる。**"""
+    """Implementing `canonicalize` / `verify` on the Tool side **would mean trusting the Tool.**"""
     for source in sorted((LUMI / "tools").rglob("*.py")):
         text = source.read_text(encoding="utf-8")
         assert "def canonicalize(" not in text, source.name
@@ -135,7 +136,7 @@ def test_tools_do_not_implement_the_verifiers() -> None:
 
 
 def test_only_the_registry_executes_tools() -> None:
-    """`ToolRegistry.invoke` 以外から `Tool.execute` を呼ばない（Invariant 2）。"""
+    """`Tool.execute` is never called from anywhere but `ToolRegistry.invoke` (Invariant 2)."""
     callers = [
         source.relative_to(LUMI).as_posix()
         for source in lumi_sources()
@@ -145,10 +146,10 @@ def test_only_the_registry_executes_tools() -> None:
 
 
 def test_only_decide_returns_a_decision() -> None:
-    """**`Decision` を返す関数は `decide()` ひとつだけ**（.claude/rules/00-invariants.md）。
+    """**The only function returning a `Decision` is `decide()`** (.claude/rules/00-invariants.md).
 
-    `decide_with_rule` は `tuple[Decision, str]` を返すので、この検査には掛からない。
-    2つ目の「判断する関数」が生えていないことを、戻り値の型で見張る。
+    `decide_with_rule` returns `tuple[Decision, str]`, so it doesn't trip this check.
+    Watches for a second "decision-making function" sprouting up, by return type.
     """
     offenders: list[str] = []
     for source in lumi_sources():
@@ -163,10 +164,10 @@ def test_only_decide_returns_a_decision() -> None:
 
 
 def test_the_audit_log_is_append_only() -> None:
-    """**Phase 1 の append-only は「コードベースに `DELETE` / `UPDATE` が無い」こと。**
+    """**Phase 1's append-only means "no `DELETE` / `UPDATE` exists anywhere in the codebase."**
 
-    OS 管理者権限からの改竄は防げない。**それは脅威モデル外であり、防げると書かない。**
-    hash chain による**検出**は Phase 4a。
+    Tampering from OS admin privileges can't be prevented. **That's outside the
+    threat model, and this never claims otherwise.** **Detection** via a hash chain is Phase 4a.
     """
     for source in lumi_sources():
         text = source.read_text(encoding="utf-8").upper()
@@ -175,14 +176,15 @@ def test_the_audit_log_is_append_only() -> None:
 
 
 def test_trust_level_trusted_is_only_written_where_allowed() -> None:
-    """**自動昇格の実装を作らない**（Invariant 7 / provenance.md テスト5）。
+    """**No automatic-escalation implementation is ever built** (Invariant 7 / provenance.md test 5).
 
-    許されるのは2箇所だけ:
-    1. ユーザーの直接入力を受け取るハンドラ → `Session.record_user_utterance`
-    2. 記憶 UI のユーザー確認ハンドラ（**Phase 2。まだ存在しない**）
+    Exactly two places are allowed:
+    1. The handler that receives direct user input → `Session.record_user_utterance`
+    2. The memory UI's user-confirmation handler (**Phase 2. Doesn't exist yet**)
 
-    **増やすときは、そこが本当にユーザーの意思表示かを見直すこと。**
-    「STT の結果だから」「要約したから」は理由にならない。
+    **When adding one, re-examine whether it's genuinely an expression of the user's
+    intent.** "Because it's an STT result" or "because it was summarized" are not
+    valid reasons.
     """
     allowed = {"agent/session.py"}
     writers = {

@@ -1,7 +1,7 @@
-"""Permission — **権限判断の唯一の所有者。**
+"""Permission — **the sole owner of permission decisions.**
 
-`Canonicalizer` / `BindVerifier` / `ResultVerifier` をここに置いているのは、
-**所有者を物理的に明示するため**（docs/interfaces/tool.md）。`tools/` には置かない。
+`Canonicalizer` / `BindVerifier` / `ResultVerifier` live here so that
+**ownership is made physically explicit** (docs/interfaces/tool.md). Never in `tools/`.
 
-依存の向き: `tools → permission → kernel`。**逆はしない。**
+Dependency direction: `tools → permission → kernel`. **Never the reverse.**
 """

@@ -1,4 +1,4 @@
-"""Agent — Attention Arbiter の下で「会話」を回す層。
+"""Agent — the layer that runs "conversation" under the Attention Arbiter.
 
-設計 → docs/architecture/agent.md
+Design → docs/architecture/agent.md
 """

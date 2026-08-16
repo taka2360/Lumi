@@ -1,10 +1,10 @@
 /**
- * プレースホルダのキャラクター。
+ * The placeholder character.
  *
- * **VRM が配置されていないときに、黙って何も出さないのを避けるためのもの**
- * （docs/licensing.md §7 の未確認 #5 が解消して既定モデルが決まるまでの間）。
- * 統合点（`CharacterModel`）は本番の VRM と同じなので、差し替えは `loadCharacter` の
- * 分岐1行で済む。
+ * **Exists so nothing is silently shown when no VRM is placed**
+ * (until docs/licensing.md §7's open item #5 is resolved and a default model is
+ * decided). The integration point (`CharacterModel`) is the same as the
+ * production VRM, so swapping it out is a one-line branch in `loadCharacter`.
  */
 
 import {
@@ -51,14 +51,14 @@ export function createPlaceholder(): CharacterModel {
     body.add(leg);
   }
 
-  // 目。VRM が来るまで「こちらを見ている」ことだけ表現する。
+  // Eyes. Until the VRM arrives, only expresses "looking this way."
   for (const side of [-1, 1]) {
     const eye = new Mesh(new SphereGeometry(0.028, 16, 12), accent);
     eye.position.set(side * 0.06, 1.36, 0.145);
     body.add(eye);
   }
 
-  // 口。**リップシンクが動いていることが目で分かる**必要がある（Phase 0 の検証手順 6）。
+  // Mouth. **Needs to be visibly clear that lip sync is working** (Phase 0 verification step 6).
   const mouth = new Mesh(new SphereGeometry(0.032, 20, 14), accent);
   mouth.position.set(0, 1.28, 0.15);
   mouth.scale.set(1.0, 0.12, 0.5);
@@ -76,8 +76,9 @@ export function createPlaceholder(): CharacterModel {
       body.scale.setScalar(pose.breathScale);
     },
     applyMouth(weights: MouthWeights) {
-      // 開き具合と横幅の2つだけで近似する。プレースホルダなので忠実さは要らないが、
-      // **母音ごとに違う形になる**ことは見えた方がよい。
+      // Approximated with just two values: openness and width. Being a
+      // placeholder, fidelity isn't needed, but it should still be visible that
+      // **each vowel produces a different shape**.
       const open = Math.max(weights.A, weights.E, weights.I, weights.O, weights.U);
       const wide = Math.max(weights.I, weights.E);
       const round = Math.max(weights.U, weights.O);

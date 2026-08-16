@@ -1,4 +1,4 @@
-"""Command と Hook。**docs/contracts/event-model.md「Command」「Hook」。**"""
+"""Command and Hook. **docs/contracts/event-model.md "Command" "Hook".**"""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ def command(command_type: str = "Speak", key: str | None = None) -> Command:
 
 
 async def test_command_returns_a_value() -> None:
-    """**Command は結果を持つ。** 結果が要らないなら Event にする。"""
+    """**A Command has a result.** Use an Event if no result is needed."""
     bus = CommandBus()
 
     async def handler(cmd: Command) -> str:
@@ -46,13 +46,13 @@ async def test_command_returns_a_value() -> None:
 
 
 async def test_unknown_command_is_an_error() -> None:
-    """**推測で処理しない。**"""
+    """**Never guessed at.**"""
     with pytest.raises(UnknownCommand):
         await CommandBus().dispatch(command("Nope"))
 
 
 def test_a_type_can_only_have_one_handler() -> None:
-    """「単一ハンドラに配送される」が壊れると、どちらが動いたか分からなくなる。"""
+    """If "dispatched to a single handler" broke, there'd be no way to tell which one ran."""
     bus = CommandBus()
 
     async def handler(cmd: Command) -> None:
@@ -64,7 +64,7 @@ def test_a_type_can_only_have_one_handler() -> None:
 
 
 async def test_side_effecting_command_requires_an_idempotency_key() -> None:
-    """**Crash Recovery（Phase 4a）の前提を Phase 1 で塞いでおく。**"""
+    """**Closes off, starting in Phase 1, a precondition Crash Recovery (Phase 4a) needs.**"""
     bus = CommandBus()
 
     async def handler(cmd: Command) -> None:
@@ -99,7 +99,7 @@ async def test_hooks_run_in_registration_order() -> None:
 
 
 async def test_before_tool_veto_stops_the_rest() -> None:
-    """**`before_tool` の veto がツール実行を止める**（event-model.md テスト10 の Kernel 側）。"""
+    """**A `before_tool` veto stops tool execution** (the Kernel side of event-model.md test 10)."""
     registry = HookRegistry()
     reached: list[str] = []
 
@@ -121,7 +121,7 @@ async def test_before_tool_veto_stops_the_rest() -> None:
 
 
 async def test_veto_from_a_non_vetoable_hook_is_a_contract_error() -> None:
-    """**veto できる Hook は `before_tool` だけ。** 他で拒否されても Core は止まらない。"""
+    """**`before_tool` is the only Hook that can veto.** A refusal anywhere else doesn't stop Core."""
     registry = HookRegistry()
 
     async def veto(payload: Mapping[str, Any]) -> Veto:

@@ -1,6 +1,6 @@
-"""ドリフト推定（純粋関数）。合成した系列で検証する。
+"""Drift estimation (pure functions). Verified against synthetic sequences.
 
-設計 → docs/decisions/ADR-020-split-audio-streams.md
+Design → docs/decisions/ADR-020-split-audio-streams.md
 """
 
 from __future__ import annotations
@@ -15,9 +15,10 @@ BLOCK_S = 512 / 48000
 def series(
     ppm: float, count: int = 4000, jitter_ms: float = 0.0, seed: int = 7
 ) -> list[tuple[float, float]]:
-    """実時間に対して `ppm` だけ速いストリームの系列を作る。
+    """Builds a stream sequence running `ppm` faster than wall-clock time.
 
-    `jitter_ms` はコールバックの先読み量の揺れ（**実測では 3 ms 程度**）。
+    `jitter_ms` is the jitter in the callback's look-ahead amount (**observed at
+    around 3 ms**).
     """
     rng = random.Random(seed)
     out = []
@@ -42,10 +43,11 @@ class TestEstimate:
         assert abs(estimate.ppm) < 1.0
 
     def test_jitter_shows_up_in_the_residual(self) -> None:
-        """**残差が ppm の信頼度を伝える。**
+        """**The residual conveys how much to trust the ppm.**
 
-        コールバックの先読み量の揺れ（実測 3 ms 程度）は傾きを不確かにする。
-        残差を返すのは、**その ppm をどこまで信じてよいかを呼び出し側が判断できるようにするため**。
+        Jitter in the callback's look-ahead amount (observed at around 3 ms) makes
+        the slope uncertain. The residual is returned so **the caller can judge how
+        far to trust that ppm value**.
         """
         estimate = estimate_drift(series(50.0, jitter_ms=3.0))
         assert estimate is not None
@@ -53,10 +55,11 @@ class TestEstimate:
         assert abs(estimate.ppm - 50.0) < 20.0
 
     def test_measuring_longer_resolves_smaller_drift(self) -> None:
-        """**分解能は測定時間で決まる。**
+        """**Resolution is determined by how long the measurement runs.**
 
-        同じ揺れでも長く測れば傾きは締まる。「2 ppm だった」と言えるかどうかは
-        測定時間次第であり、短い測定で小さい ppm を主張してはいけない。
+        Given the same jitter, measuring longer tightens the slope. Whether "it was
+        2 ppm" can be claimed depends on the measurement duration, and a short
+        measurement should never claim a small ppm value.
         """
         short = estimate_drift(series(50.0, jitter_ms=3.0, count=2000))
         long = estimate_drift(series(50.0, jitter_ms=3.0, count=20000))
@@ -65,7 +68,7 @@ class TestEstimate:
         assert abs(long.ppm - 50.0) < 3.0
 
     def test_startup_transient_is_excluded(self) -> None:
-        """開始直後のバッファ充填を含めると傾きが立つ。**後半だけを使う。**"""
+        """Including buffer-filling right after start produces a spurious slope. **Only the second half is used.**"""
         samples = series(0.0)
         warmed = [(wall, stream + min(wall, 0.5) * 0.2) for wall, stream in samples]
         estimate = estimate_drift(warmed)
@@ -83,7 +86,7 @@ class TestRefusesToGuess:
 
 class TestRelative:
     def test_relative_is_the_difference(self) -> None:
-        """AEC を壊すのは実時間とのずれではなく、**入出力どうしのずれ**。"""
+        """What breaks AEC isn't drift from wall-clock time — it's **drift between input and output**."""
         capture = estimate_drift(series(100.0))
         playback = estimate_drift(series(98.0))
         assert capture is not None and playback is not None

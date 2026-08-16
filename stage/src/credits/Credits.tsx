@@ -1,11 +1,11 @@
 /**
- * クレジットとライセンスの画面（トレイ → クレジット）。
+ * The credits and licenses screen (tray → credits).
  *
- * 設計 → docs/licensing.md §6 / docs/architecture/ui.md
+ * Design → docs/licensing.md §6 / docs/architecture/ui.md
  *
- * **この画面は Core にも外部にも接続しない。** ライセンス文書の提示は Lumi の
- * 動作状態と無関係な義務であり、Core が落ちていても読めなければならない。
- * したがってここから `../core/*` を import しない。
+ * **This screen connects neither to Core nor externally.** Presenting license
+ * documents is an obligation independent of Lumi's runtime state, and must be
+ * readable even if Core is down. So nothing here imports `../core/*`.
  */
 
 import {

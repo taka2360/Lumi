@@ -1,4 +1,4 @@
-"""TTS セットアップ状態と「もう聞いたか」の記録。"""
+"""TTS setup state and the record of "was it already asked."""
 
 from __future__ import annotations
 
@@ -27,7 +27,7 @@ class TestTtsSetup:
             assert not TtsSetup(state=state).usable
 
     def test_failure_carries_a_reason(self) -> None:
-        """**「取得しなかった」と「失敗した」を区別する。**"""
+        """**Distinguishes "never fetched" from "failed."**"""
         failed = TtsSetup(state=TtsSetupState.FAILED, reason="hash_mismatch")
         payload = failed.to_payload()
         assert payload["state"] == "failed"
@@ -39,7 +39,7 @@ class TestTtsSetup:
 
 
 class TestBootPhase:
-    """**キャラクターを出してよいかを決める純粋関数**（docs/architecture/ui.md）。"""
+    """**A pure function that decides whether the character may be shown** (docs/architecture/ui.md)."""
 
     def test_waiting_for_the_user(self) -> None:
         setup = TtsSetup(state=TtsSetupState.NOT_CONFIGURED)
@@ -54,10 +54,11 @@ class TestBootPhase:
         assert boot_phase(setup, prompting=False) is BootPhase.STARTING
 
     def test_an_engine_that_has_not_been_started_yet_is_not_ready(self) -> None:
-        """**キャラクターを出してから引っ込めない。**
+        """**Never shows the character only to pull it back.**
 
-        使えるエンジンがあるなら、これから起動する。まだ止まっているだけで
-        `READY` にすると、Stage がキャラクターを出した直後に起動が始まって消える。
+        If a usable engine exists, it's about to start. It's just not running yet;
+        marking it `READY` would make the Stage show the character only for startup
+        to begin and make it vanish right after.
         """
         for state in (TtsSetupState.INSTALLED, TtsSetupState.DETECTED):
             setup = TtsSetup(state=state, runtime=EngineRuntime.STOPPED)
@@ -68,15 +69,15 @@ class TestBootPhase:
         assert boot_phase(setup, prompting=False) is BootPhase.READY
 
     def test_declining_the_download_still_shows_the_character(self) -> None:
-        """**喋れないことと、Lumi が起動していないことは別。**
+        """**Being unable to speak and Lumi not having started are different things.**
 
-        取得しない選択をしたユーザーを、ローディング画面に閉じ込めない。
+        A user who chose not to fetch is never trapped on a loading screen.
         """
         setup = TtsSetup(state=TtsSetupState.NOT_CONFIGURED)
         assert boot_phase(setup, prompting=False) is BootPhase.READY
 
     def test_a_failure_still_shows_the_character(self) -> None:
-        """**キャラクターを人質にしない。** 壊れていることは別の場所が言う。"""
+        """**The character is never held hostage.** Something being broken is reported elsewhere."""
         setup = TtsSetup(state=TtsSetupState.FAILED, reason="hash_mismatch")
         assert boot_phase(setup, prompting=False) is BootPhase.READY
 

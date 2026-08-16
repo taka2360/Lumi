@@ -1,18 +1,19 @@
-"""AudioIO — 3層の組み立て。
+"""AudioIO — assembles the 3 layers.
 
-設計 → docs/architecture/audio.md §2
+Design → docs/architecture/audio.md §2
 
 ```
 capture stream ─┐
-                ├→ [VAD スレッド] ─┬→ mute_flag（同期。★ここで音が止まる）
-playback stream ┘                  └→ asyncio キュー（Activity 調停・STT）
+                ├→ [VAD thread] ─┬→ mute_flag (synchronous. * sound stops here)
+playback stream ┘                └→ asyncio queue (Activity arbitration / STT)
 ```
 
-**入出力は別ストリームで開く**（ADR-020）。duplex の可否はユーザーの機材が決めてしまい、
-設計で担保できないものを barge-in の土台にはできない。
+**Input and output are opened as separate streams** (ADR-020). Whether duplex is
+possible is up to the user's hardware, and barge-in can't be built on something the
+design can't guarantee.
 
-**入力デバイスが1つも無いことは正常な状態。** Lumi は起動し、
-「音声入力が無い」ことを明示する（TTS 未セットアップと同じ扱い）。
+**Having zero input devices is a normal state.** Lumi starts up and explicitly reports
+"no voice input" (treated the same as TTS not being set up).
 """
 
 from __future__ import annotations
@@ -32,15 +33,15 @@ from lumi.audio.vad import SileroVad, VadEvent, VadParams
 
 log = lumi_logging.get_logger(__name__)
 
-#: asyncio 側が詰まったときに溜める上限。**溢れたら古いものを捨てる**
-#: （最新の発話の方が価値があり、無限に積むと遅延が増え続ける）
+#: Cap on how much to buffer when the asyncio side is backed up. **Drop the oldest on overflow**
+#: (the most recent utterance is the valuable one; queuing forever only grows latency)
 EVENT_QUEUE_SIZE: Final = 32
 
 VadNotification = tuple[VadEvent, Samples | None]
 
 
 class AudioIO:
-    """**組み立てるだけ。** 判断は Reactive Loop（asyncio 側）が行う。"""
+    """**Wiring only.** Decisions are made by the Reactive Loop (on the asyncio side)."""
 
     __slots__ = (
         "_capture",
@@ -78,7 +79,7 @@ class AudioIO:
         return self._playback
 
     async def start(self, *, vad: SileroVad | None = None) -> None:
-        """**開通するまでを start と呼ぶ。** 開けただけでは「聞けている」と言わない。"""
+        """**"start" means until the connection is actually up.** Just opening it doesn't mean "listening."""
         self._loop = asyncio.get_running_loop()
 
         if self._playback is not None:
@@ -108,20 +109,20 @@ class AudioIO:
         )
 
     def resume_listening(self) -> None:
-        """**次の barge-in を受けられる状態に戻す。**
+        """**Resets to a state that can accept the next barge-in.**
 
-        区間が確定したミュートは誤爆ではないので自動では戻らない。
-        呼ばないと **barge-in が1回しか効かない**（`VadWorker.resume`）。
+        A mute from a confirmed segment isn't a false trigger, so it doesn't revert
+        automatically. Without calling this, **barge-in only works once** (`VadWorker.resume`).
         """
         if self._vad_worker is not None:
             self._vad_worker.resume()
 
     def _is_playing(self) -> bool:
-        """**EchoGuard L1 の入力。** 再生中は閾値を上げる（抑制はしない）。"""
+        """**Input to EchoGuard L1.** Raises the threshold during playback (never suppresses)."""
         return self._playback is not None and self._playback.is_active()
 
     def _notify(self, event: VadEvent, audio: Samples | None) -> None:
-        """**VAD スレッドから呼ばれる。** asyncio に渡すだけで、ここでは何も待たない。"""
+        """**Called from the VAD thread.** Just hands off to asyncio; nothing is awaited here."""
         loop = self._loop
         if loop is None:
             return
@@ -131,7 +132,7 @@ class AudioIO:
         try:
             self._events.put_nowait((event, audio))
         except asyncio.QueueFull:
-            # **最新を優先する。** 古い通知を捨てて、今の発話を通す
+            # **Prioritize the latest.** Drop the old notification to let the current utterance through
             log.warning("audio.event_queue_full")
             with suppress(asyncio.QueueEmpty):
                 self._events.get_nowait()
@@ -139,7 +140,7 @@ class AudioIO:
                 self._events.put_nowait((event, audio))
 
     async def events(self) -> AsyncIterator[VadNotification]:
-        """asyncio 側の入口。**`_drain_events`（docs/architecture/audio.md §3）に対応する。**"""
+        """The entry point on the asyncio side. **Corresponds to `_drain_events` (docs/architecture/audio.md §3).**"""
         while True:
             yield await self._events.get()
 

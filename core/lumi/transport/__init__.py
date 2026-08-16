@@ -1,5 +1,5 @@
-"""Core の通信層。
+"""Core's communication layer.
 
-Core が**ハブ**である。Shell も Stage も Extension も Core のクライアントとして接続する
-（docs/architecture/core.md §2）。
+Core is **the hub.** Shell, Stage, and Extensions all connect as clients of Core
+(docs/architecture/core.md §2).
 """

@@ -1,6 +1,7 @@
-"""初回セットアップの進行。**WS も HTTP も使わない**（サーバは差し替える）。
+"""First-run setup's flow. **Uses neither WS nor HTTP** (the server is substituted).
 
-docs/architecture/setup.md §8 のテスト 2 / 11 と、実測で見つかった競合の再発防止。
+Tests 2 / 11 from docs/architecture/setup.md §8, plus a regression test for a race
+condition found in practice.
 """
 
 from __future__ import annotations
@@ -22,7 +23,7 @@ from lumi.transport.server import WsServer
 
 
 class FakeServer:
-    """`WsServer` のうち Coordinator が使う2つだけを持つ。"""
+    """Holds only the two methods of `WsServer` that the Coordinator uses."""
 
     def __init__(self, answers: list[str | None]) -> None:
         self.notifications: list[dict[str, Any]] = []
@@ -39,7 +40,7 @@ class FakeServer:
         method: str,
         payload: dict[str, Any] | None = None,
         *,
-        timeout: float = 0.0,  # noqa: ASYNC109 — WsServer と同じ形にするため
+        timeout: float = 0.0,  # noqa: ASYNC109 — to match WsServer's shape
     ) -> Result:
         del role, timeout
         self.invocations.append((method, payload or {}))
@@ -85,7 +86,7 @@ def states_of(server: FakeServer) -> list[str]:
 
 
 def boots_of(server: FakeServer) -> list[str]:
-    """配信された起動フェーズの列。**Stage が実際に見る順序**（docs/architecture/ui.md）。"""
+    """The sequence of broadcast boot phases. **The order the Stage actually sees** (docs/architecture/ui.md)."""
     return [item["boot"] for item in server.notifications if item["method"] == "stage.setup.state"]
 
 
@@ -119,7 +120,7 @@ class TestPrompt:
     async def test_asks_even_when_the_stage_connects_before_detection_finishes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """**実測で起きた競合。** Stage の接続が検出より先に来ても尋ねること。"""
+        """**A race condition observed in practice.** Must ask even if the Stage connects before detection finishes."""
         started = asyncio.Event()
 
         async def slow_detect(_env: Any) -> list[DetectedEngine]:
@@ -133,7 +134,7 @@ class TestPrompt:
 
         initializing = asyncio.create_task(coordinator.initialize())
         await started.wait()
-        # 検出が終わる前に Stage が繋がる
+        # The Stage connects before detection finishes
         connected = asyncio.create_task(coordinator.on_stage_connected())
         await asyncio.gather(initializing, connected)
 
@@ -142,7 +143,7 @@ class TestPrompt:
     async def test_skipping_keeps_lumi_running_and_visible(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """取得しない選択でも起動する。**状態は「未設定」として明示される。**"""
+        """Starts even when the choice is not to fetch. **State is explicitly reported as "not configured."**"""
         no_engines(monkeypatch)
         server = FakeServer(["skip"])
         coordinator = SetupCoordinator(server.as_server(), {})
@@ -168,7 +169,7 @@ class TestPrompt:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         no_engines(monkeypatch)
-        server = FakeServer([])  # 答えが返らない → TimeoutError
+        server = FakeServer([])  # No answer comes back → TimeoutError
         coordinator = SetupCoordinator(server.as_server(), {})
 
         await coordinator.initialize()
@@ -192,7 +193,7 @@ class TestPrompt:
         assert len(server.invocations) == 2, "失敗したら一度は聞き直す"
         assert server.invocations[1][1]["retry"] is True
         assert server.invocations[1][1]["reason"] == "network_unreachable"
-        # **失敗は「まだ試していない」に戻さない。**
+        # **A failure never reverts to "not yet attempted."**
         assert coordinator.state.state is TtsSetupState.FAILED
         assert coordinator.state.reason == "network_unreachable"
         assert states_of(server)[-1] == "failed"
@@ -213,7 +214,7 @@ class TestPrompt:
         await coordinator.on_stage_connected()
 
         assert coordinator.state.state is TtsSetupState.INSTALLED
-        # 尋ね始めと答え終わりでも配るので、同じ状態が続けて並ぶ。
+        # Also broadcast when asking starts and when answering ends, so the same state repeats in a row.
         assert states_of(server) == [
             "not_configured",
             "not_configured",
@@ -222,9 +223,10 @@ class TestPrompt:
             "installed",
             "installed",
         ]
-        # **Stage から見える遷移。** 質問 → 取得中 → エンジン起動、と一方向に進む。
-        # **`installing` の後に `setup` へ戻らない**（戻ると質問画面が一瞬ちらつく）。
-        # 取得直後は `starting`。**`ready` にするとキャラクターが出てすぐ引っ込む。**
+        # **The transition as seen by the Stage.** Progresses one-way: question →
+        # fetching → engine starting.
+        # **Never returns to `setup` after `installing`** (returning would flash the question screen).
+        # Right after fetching it's `starting`. **Marking it `ready` would show the character only to pull it back.**
         assert boots_of(server) == [
             "ready",
             "ready",
@@ -237,12 +239,13 @@ class TestPrompt:
     async def test_progress_keeps_the_installing_phase(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """取得中の進捗は **`boot=installing` のまま**配られる。
+        """Progress during fetching is broadcast **while staying at `boot=installing`**.
 
-        進捗の配信が `_broadcast` を迂回していたため、`_prompting`（この処理に
-        入っているか）を `_awaiting_answer`（いま質問が出ているか）と取り違え、
-        取得中ずっと `boot=setup` が流れていた。Stage 側は `installing` 以外を
-        「準備しています…」に落とすので、**200MB の取得中に進捗が出ない。**
+        Progress broadcasts had been bypassing `_broadcast`, which confused
+        `_prompting` (is this sequence in progress) with `_awaiting_answer` (is a
+        question currently shown), streaming `boot=setup` for the entire fetch. The
+        Stage falls back to "preparing…" for anything other than `installing`, so
+        **no progress showed during the 200MB fetch.**
         """
         no_engines(monkeypatch)
         server = FakeServer(["install"])
@@ -265,7 +268,7 @@ class TestPrompt:
             if item["method"] == "stage.setup.state" and item["state"] == "installing"
         ]
         assert [item["progress"] for item in installing] == [0.0, 0.25, 0.5, 1.0]
-        # **1つでも `setup` に戻ったら質問画面がちらつく。**
+        # **If even one broadcast returned to `setup`, the question screen would flash.**
         assert {item["boot"] for item in installing} == {"installing"}
 
 
@@ -273,7 +276,7 @@ class TestManagedEngine:
     async def test_an_engine_lumi_installed_reports_installed_not_detected(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """**「Lumi が入れた」と「ユーザーが入れていた」は違う状態**（setup.md §2）。"""
+        """**"Lumi installed it" and "the user had already installed it" are different states** (setup.md §2)."""
 
         async def detect(_env: Any) -> list[DetectedEngine]:
             return [

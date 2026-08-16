@@ -1,8 +1,8 @@
-"""Kernel が扱う ID の型。
+"""ID types the Kernel deals with.
 
-**`NewType` にしてある。** `str` をそのまま渡すと型検査で落ちる。
-`ActivityId` を期待する場所に `JobId` を渡す、といった取り違えは
-実行時には気づけない（どちらも hex 文字列に見える）ため、ここで塞ぐ。
+**Wrapped as `NewType`.** Passing a plain `str` fails the type checker.
+A mix-up — passing a `JobId` where an `ActivityId` is expected, for example — can't be
+caught at runtime (both look like hex strings), so this closes that gap here instead.
 """
 
 from __future__ import annotations
@@ -15,7 +15,7 @@ JobId = NewType("JobId", str)
 EventId = NewType("EventId", str)
 CommandId = NewType("CommandId", str)
 
-#: 一連の処理を跨いで追跡する ID。ログ・監査・DomainEvent が共有する。
+#: The ID tracked across a chain of processing. Shared by logs, audit, and DomainEvents.
 CorrelationId = NewType("CorrelationId", str)
 
 

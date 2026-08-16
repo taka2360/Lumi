@@ -1,34 +1,35 @@
-//! ウィンドウ契約 — **純粋関数**。
+//! The window contract — **pure functions**.
 //!
-//! Tauri に依存しないので、ウィンドウを開かずにユニットテストできる
-//! （docs/architecture/ui.md「ウィンドウ設定を純粋関数に切り出す」）。
+//! Doesn't depend on Tauri, so it can be unit-tested without opening a
+//! window (docs/architecture/ui.md "Extract window settings into pure functions").
 //!
-//! ここには「どう見えるべきか」しか書かない。**AI の判断は一切入らない**
-//! （`shell.*` は絶対に AI の判断を運ばない → docs/architecture/core.md §3）。
+//! Only "how it should look" lives here. **No AI judgment enters at all**
+//! (`shell.*` never carries AI judgment → docs/architecture/core.md §3).
 
-/// ウィンドウ一覧 → docs/architecture/ui.md §1
+/// Window list → docs/architecture/ui.md §1
 ///
-/// Phase 0 で作るのは `Stage` と `Credits` だけ。`Permission` は Phase 4a だが、
-/// **保護対象の判定（Invariant 8）に必要なので label だけ先に確定させる**。
-// Permission は Phase 4a、Settings は Phase 1 で生成する。
-// label と保護対象の判定は先に確定させておく必要があるため、未使用の警告だけ抑える。
+/// Phase 0 only builds `Stage` and `Credits`. `Permission` is Phase 4a, but
+/// **its label is fixed early since it's needed for the protected-target
+/// check (Invariant 8).**
+// Permission is generated in Phase 4a, Settings in Phase 1.
+// The label and protected-target check need to be fixed early, so only the unused-code warning is suppressed.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowKind {
-    /// キャラクター本体。透過 / 最前面 / クリックスルー / 非フォーカス。
+    /// The character itself. Transparent / always-on-top / click-through / unfocused.
     Stage,
-    /// クレジット表示（トレイ → クレジット）。通常ウィンドウ。
+    /// The credits display (tray → credits). A normal window.
     Credits,
-    /// 権限プロンプト。フォーカス必須 / Invariant 8 の保護対象。実装は Phase 4a。
+    /// The permission prompt. Must be focused / protected under Invariant 8. Implemented in Phase 4a.
     Permission,
-    /// 設定。通常ウィンドウ。実装は Phase 1。
+    /// Settings. A normal window. Implemented in Phase 1.
     Settings,
 }
 
 impl WindowKind {
-    /// 全種別。**label との対応をここ1箇所から導く**ので、
-    /// 種別を足したときに `from_label` を直し忘れることがない。
-    /// 並びと値の正は `docs/contracts/wire.json`（→ ADR-022）。
+    /// Every variant. **The mapping to labels is derived from this single
+    /// place**, so adding a variant can never leave `from_label` un-updated.
+    /// The authoritative order and values live in `docs/contracts/wire.json` (→ ADR-022).
     pub const ALL: [WindowKind; 4] =
         [WindowKind::Stage, WindowKind::Credits, WindowKind::Permission, WindowKind::Settings];
 
@@ -41,40 +42,42 @@ impl WindowKind {
         }
     }
 
-    /// **保護対象ウィンドウ**（docs/contracts/security-boundaries.md B3 / Invariant 8）。
+    /// **A protected window** (docs/contracts/security-boundaries.md B3 / Invariant 8).
     ///
-    /// `os.input.*` / `os.capture.*` の対象になってはならないウィンドウ。
-    /// **設定で無効化できない**ので、ここはハードコードのままにする。
+    /// A window that must never be a target of `os.input.*` / `os.capture.*`.
+    /// **Can't be disabled via settings**, so this stays hardcoded.
     ///
-    /// docs が列挙しているのは「権限プロンプト / メインウィンドウ / 設定」だが、
-    /// ここでは **Lumi 自身のウィンドウをすべて**保護対象にする。
-    /// 理由は2つ。(a) AIRI から借りる運用知見「自分自身を deny リストに入れる」、
-    /// (b) 新しいウィンドウ種別を足したときに**既定で保護される**（fail-closed）。
-    /// 保護しない窓を作りたくなったら、そのときに明示的に例外を書く。
+    /// The docs list "permission prompt / main window / settings," but here
+    /// **every one of Lumi's own windows** is treated as protected. Two
+    /// reasons: (a) the operational lesson borrowed from AIRI, "put yourself
+    /// on your own deny list," and (b) adding a new window kind is
+    /// **protected by default** (fail-closed). If an unprotected window is
+    /// ever wanted, write the exception explicitly at that point.
     ///
-    /// 呼び出し側は `os_command::validate` の `os.input.*` / `os.capture.*` 分岐
-    /// （Phase 4c）。それまではテストからしか呼ばれないので、未使用の警告だけ抑える。
-    /// **impl 全体ではなくここだけに付ける**（他が死んだときに気づけなくなる）。
+    /// The caller is the `os.input.*` / `os.capture.*` branch of
+    /// `os_command::validate` (Phase 4c). Until then it's only called from
+    /// tests, so only the unused-code warning is suppressed.
+    /// **Attached only here, not to the whole impl** (otherwise it would hide the warning if something else dies).
     #[allow(dead_code)]
     pub const fn is_protected(self) -> bool {
         true
     }
 
-    /// **`label()` の逆写像を手で書かない。** 2つの match を並べると、
-    /// 種別を足したときに片方だけ直して、その窓が `os.*` から見えなくなる。
+    /// **Never hand-write the inverse of `label()`.** Two parallel `match`
+    /// expressions risk updating only one when a variant is added, leaving that window invisible to `os.*`.
     pub fn from_label(label: &str) -> Option<Self> {
         Self::ALL.into_iter().find(|kind| kind.label() == label)
     }
 }
 
-/// Core / 設定から与えられる Stage ウィンドウの構成。
+/// The Stage window configuration, supplied by Core / settings.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct StageConfig {
     pub width: f64,
     pub height: f64,
-    /// 前回終了時の位置。無ければ Shell 側で既定位置に置く。
+    /// Position at last exit. Falls back to a default position on the Shell side if absent.
     pub position: Option<(f64, f64)>,
-    /// 画面共有に映さない（AIRI から借りる運用知見: コンテンツ保護）。
+    /// Excludes it from screen sharing (an operational lesson borrowed from AIRI: content protection).
     pub content_protection: bool,
 }
 
@@ -84,8 +87,8 @@ impl Default for StageConfig {
     }
 }
 
-/// ウィンドウ生成の仕様。`PlatformShell.createWindow(spec)` に対応する
-/// （docs/interfaces/shell.md）。Electron 実装でも同じ仕様を解釈できるようにする。
+/// The window-creation spec. Corresponds to `PlatformShell.createWindow(spec)`
+/// (docs/interfaces/shell.md). Kept interpretable by an Electron implementation as well.
 #[derive(Debug, Clone, PartialEq)]
 pub struct WindowSpec {
     pub label: &'static str,
@@ -99,15 +102,15 @@ pub struct WindowSpec {
     pub skip_taskbar: bool,
     pub resizable: bool,
     pub shadow: bool,
-    /// 表示時にフォーカスを奪わない（`showInactive` 相当）。
+    /// Doesn't steal focus when shown (equivalent to `showInactive`).
     pub focused: bool,
     pub visible: bool,
     pub content_protected: bool,
-    /// 生成直後にクリックスルーにするか。
+    /// Whether to make it click-through immediately after creation.
     pub click_through: bool,
 }
 
-/// Stage ウィンドウの仕様を決める。**純粋関数**。
+/// Decides the Stage window's spec. **A pure function.**
 pub fn compute_stage_window_options(cfg: &StageConfig) -> WindowSpec {
     WindowSpec {
         label: WindowKind::Stage.label(),
@@ -119,35 +122,37 @@ pub fn compute_stage_window_options(cfg: &StageConfig) -> WindowSpec {
         decorations: false,
         always_on_top: true,
         skip_taskbar: true,
-        // 枠が無いので OS のリサイズハンドルは出ないが、**Lumi 自身が大きさを変える**
-        // （キャラクターの上でホイール → `shell_window_scale`）。
-        // `false` のままだと環境によって `set_size` が効かない可能性があるため合わせておく。
+        // Frameless, so no OS resize handle appears, but **Lumi resizes
+        // itself** (mouse wheel over the character → `shell_window_scale`).
+        // Left as `true` because leaving it `false` may keep `set_size` from working on some environments.
         resizable: true,
         shadow: false,
-        // 表示時にフォーカスを奪わない。奪うと、ユーザーが作業中のウィンドウから
-        // 入力先が飛ぶ（常駐キャラクターとして最も嫌われる挙動）。
+        // Doesn't steal focus when shown. Stealing it would yank input away
+        // from whatever window the user is working in (the most hated
+        // behavior for a desktop mascot).
         focused: false,
         visible: true,
         content_protected: cfg.content_protection,
-        // 既定はクリックスルー。カーソルがキャラクター領域に入った時だけ解除する。
+        // Click-through by default. Released only once the cursor enters the character region.
         click_through: true,
     }
 }
 
-/// Stage ウィンドウの大きさの下限・上限（物理ピクセル）。
+/// The lower and upper bounds on the Stage window's size (physical pixels).
 ///
-/// **Stage は信頼されていない**（B1 / B2）。倍率を受け取ってここでクランプする。
-/// 絶対値を受け取る API にすると、Stage が画面外の大きさや 1 ピクセルを要求できる。
+/// **The Stage isn't trusted** (B1 / B2). It hands over a scale factor,
+/// which is clamped here. An API that took an absolute size would let the
+/// Stage request an off-screen size or a single pixel.
 pub const MIN_STAGE_SIZE: f64 = 160.0;
 pub const MAX_STAGE_SIZE: f64 = 4000.0;
 
-/// 倍率をかけた後の大きさを決める。**純粋関数**（docs/architecture/ui.md）。
+/// Decides the size after applying the scale factor. **A pure function** (docs/architecture/ui.md).
 ///
-/// 縦横比を保つ。片方だけが上限・下限に当たると形が崩れるので、
-/// **先に倍率をクランプしてから掛ける**。
+/// Preserves the aspect ratio. If only one side hits its bound, the shape
+/// distorts, so **the factor is clamped first, then applied.**
 pub fn compute_scaled_size(width: f64, height: f64, factor: f64) -> (f64, f64) {
     if !factor.is_finite() || factor <= 0.0 || !width.is_finite() || !height.is_finite() {
-        // 壊れた値を渡されたら**変えない**（fail-closed）。
+        // **Leaves it unchanged** if given a broken value (fail-closed).
         return (width, height);
     }
     let longest = width.max(height);
@@ -155,15 +160,16 @@ pub fn compute_scaled_size(width: f64, height: f64, factor: f64) -> (f64, f64) {
     if shortest <= 0.0 {
         return (width, height);
     }
-    // 倍率の許される範囲。短い辺が下限を、長い辺が上限を決める。
+    // The allowed range for the factor. The shorter side sets the lower bound, the longer side the upper bound.
     let lowest = MIN_STAGE_SIZE / shortest;
     let highest = MAX_STAGE_SIZE / longest;
-    // 極端な縦横比で両立しないときは、**上限を優先する**（画面外に出さない方が害が小さい）。
+    // When an extreme aspect ratio makes both bounds incompatible, **the
+    // upper bound wins** (staying on-screen does less harm).
     let clamped = if lowest > highest { highest } else { factor.clamp(lowest, highest) };
     (width * clamped, height * clamped)
 }
 
-/// ウィンドウを置ける領域（**論理ピクセル**。タスクバーを除いた作業領域）。
+/// The area a window can be placed in (**logical pixels**; the work area excluding the taskbar).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ScreenArea {
     pub x: f64,
@@ -172,57 +178,60 @@ pub struct ScreenArea {
     pub height: f64,
 }
 
-/// 画面の高さに対するキャラクターウィンドウの高さの比。
+/// The ratio of the character window's height to the screen's height.
 ///
-/// 1440p で 720px（従来の既定値）、1080p で 540px になる。
-/// **画面が変わっても見え方が変わらない**ようにするための比率。
+/// Works out to 720px at 1440p (the previous default) and 540px at 1080p.
+/// A ratio chosen so **the look stays consistent across different screens.**
 const STAGE_HEIGHT_RATIO: f64 = 0.3;
 
-/// 縦横比（幅 ÷ 高さ）。立ち姿のキャラクターなので縦長。
+/// The aspect ratio (width ÷ height). Portrait, since the character stands upright.
 const STAGE_ASPECT: f64 = 2.0 / 3.0;
 
-/// 右端との余白。少し内側に置く。
+/// The margin from the right edge. Placed slightly inward.
 const STAGE_MARGIN_RIGHT: f64 = 16.0;
 
-/// 下端との余白は **0**。作業領域の下端 = タスクバーの上端に**接地させる**。
+/// The margin from the bottom edge is **0**. **Grounds it** on the work
+/// area's bottom edge = the taskbar's top edge.
 ///
-/// ここを空けるとキャラクターが宙に浮いて見える。デスクトップに住んでいるものは、
-/// 床の上に立っている方が自然である。
+/// Leaving a gap here makes the character look like it's floating. Something
+/// that lives on the desktop looks more natural standing on the floor.
 const STAGE_MARGIN_BOTTOM: f64 = 0.0;
 
-/// 既定の大きさと位置を決める。**純粋関数**（docs/architecture/ui.md）。
+/// Decides the default size and position. **A pure function** (docs/architecture/ui.md).
 ///
-/// **右下に置く。** デスクトップの右下は、常駐するものが伝統的に居る場所であり、
-/// 作業領域（タスクバーを除いた範囲）の右下なら、タスクバーに隠れない。
+/// **Placed bottom-right.** The bottom-right of the desktop is where
+/// resident things have traditionally lived, and the bottom-right of the
+/// work area (excluding the taskbar) is never hidden by the taskbar.
 pub fn compute_stage_placement(area: ScreenArea) -> StageConfig {
     let height = (area.height * STAGE_HEIGHT_RATIO).clamp(MIN_STAGE_SIZE, MAX_STAGE_SIZE);
     let width = (height * STAGE_ASPECT).clamp(MIN_STAGE_SIZE, MAX_STAGE_SIZE);
-    // 画面より大きくなったら、はみ出させずに左上へ寄せる（小さい画面での fail-safe）。
+    // If it would be larger than the screen, pulls it toward the top-left
+    // instead of letting it overflow (a fail-safe for small screens).
     let x = (area.x + area.width - width - STAGE_MARGIN_RIGHT).max(area.x);
     let y = (area.y + area.height - height - STAGE_MARGIN_BOTTOM).max(area.y);
     StageConfig { width, height, position: Some((x, y)), content_protection: false }
 }
 
-/// ウィンドウを掴んで動かす（`shell.*`）。**座標は OS が決める。**
+/// Grabs and moves the window (`shell.*`). **The OS decides the coordinates.**
 ///
-/// Stage に座標を計算させない。`setPosition` を露出すると、Stage が
-/// 画面外へウィンドウを追い出せる（docs/interfaces/shell.md）。
+/// The Stage is never allowed to compute coordinates. Exposing `setPosition`
+/// would let the Stage push the window off-screen (docs/interfaces/shell.md).
 #[tauri::command]
 pub fn shell_window_drag_start(window: tauri::WebviewWindow) -> Result<(), String> {
     require_stage(&window)?;
     window.start_dragging().map_err(|error| error.to_string())
 }
 
-/// 拡大縮小したときの左上の位置。**右下の角を固定する**。**純粋関数**。
+/// The top-left position after scaling. **Anchors the bottom-right corner.** **A pure function.**
 ///
-/// 既定でウィンドウは画面の右下に居る（`compute_stage_placement`）。
-/// 左上を固定して拡大すると、キャラクターが画面の外へはみ出していく。
-/// 立っているものは足元が動かない方が自然でもある。
+/// By default the window sits bottom-right on screen (`compute_stage_placement`).
+/// Anchoring the top-left instead while scaling up would push the character
+/// off-screen. It's also more natural for something standing to keep its feet planted.
 pub fn anchor_bottom_right(position: (f64, f64), old: (f64, f64), new: (f64, f64)) -> (f64, f64) {
     (position.0 + old.0 - new.0, position.1 + old.1 - new.1)
 }
 
-/// ウィンドウの大きさを倍率で変える（`shell.*`）。**クランプは Shell 側**。
+/// Resizes the window by a scale factor (`shell.*`). **Clamping happens on the Shell side.**
 #[tauri::command]
 pub fn shell_window_scale(window: tauri::WebviewWindow, factor: f64) -> Result<(), String> {
     require_stage(&window)?;
@@ -241,8 +250,9 @@ pub fn shell_window_scale(window: tauri::WebviewWindow, factor: f64) -> Result<(
         .map_err(|error| error.to_string())
 }
 
-/// **Stage 以外のウィンドウには効かせない。** クレジットや権限プロンプトの
-/// 大きさをキャラクターの操作で変えられる理由がない（Shell は「拒否」を持つ）。
+/// **Never lets this take effect on windows other than the Stage.** There's
+/// no reason character controls should resize credits or the permission
+/// prompt (Shell holds "rejection").
 fn require_stage(window: &tauri::WebviewWindow) -> Result<(), String> {
     match WindowKind::from_label(window.label()) {
         Some(WindowKind::Stage) => Ok(()),
@@ -253,10 +263,10 @@ fn require_stage(window: &tauri::WebviewWindow) -> Result<(), String> {
     }
 }
 
-/// クレジットウィンドウの仕様を決める。**純粋関数**。
+/// Decides the credits window's spec. **A pure function.**
 ///
-/// クレジットは Phase 0 の必須項目（docs/licensing.md §6）。
-/// 「少し探せばわかる場所」に置く必要があるため、トレイメニューから開く通常ウィンドウにする。
+/// Credits are a required Phase 0 item (docs/licensing.md §6). They need to
+/// live somewhere "findable with a bit of effort," so it's a normal window opened from the tray menu.
 pub fn compute_credits_window_options() -> WindowSpec {
     WindowSpec {
         label: WindowKind::Credits.label(),
@@ -277,18 +287,19 @@ pub fn compute_credits_window_options() -> WindowSpec {
     }
 }
 
-/// 画面上の点（物理ピクセル）。
+/// A point on screen (physical pixels).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
 }
 
-/// キャラクターの当たり判定領域。Stage が VRM の描画結果から算出して Shell に渡す
-/// （docs/architecture/ui.md「ホバー検知の実装方針」）。
+/// The character's hit-test region. Computed by the Stage from the VRM's
+/// render output and handed to Shell (docs/architecture/ui.md "Hover
+/// detection implementation approach").
 ///
-/// 座標は **Stage ウィンドウのクライアント座標**（左上原点・物理ピクセル）。
-/// ウィンドウ位置との合成は呼び出し側が行う。
+/// Coordinates are in the **Stage window's client coordinates** (top-left
+/// origin, physical pixels). Combining it with the window position is the caller's job.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct HitRegion {
     pub rects: Vec<HitRect>,
@@ -313,19 +324,20 @@ impl HitRegion {
         self.rects.iter().any(|r| r.contains(p))
     }
 
-    /// 領域が空 = まだ Stage から届いていない、または描画するものが無い。
+    /// An empty region = either nothing has arrived from the Stage yet, or there's nothing to render.
     pub fn is_empty(&self) -> bool {
         self.rects.is_empty()
     }
 }
 
-/// クリックスルーを解除すべきか。**純粋関数**。
+/// Whether click-through should be released. **A pure function.**
 ///
-/// `true` = クリックスルーする（マウスイベントを無視して背後のウィンドウに通す）。
+/// `true` = click-through (ignores mouse events and passes them to the window behind).
 ///
-/// **領域が未設定のときはクリックスルーする**（fail-open ではなく fail-safe 側）。
-/// ここで fail-closed（クリックを掴む）に倒すと、Stage が壊れた瞬間に
-/// デスクトップ全体がクリックできなくなる。**ユーザーが PC を操作できなくなる方が危険**。
+/// **Click-through when the region is unset** (the fail-safe side, not
+/// fail-open). Falling to fail-closed (grabbing clicks) here would make the
+/// entire desktop unclickable the instant the Stage breaks. **The user being
+/// unable to operate their PC is the more dangerous outcome.**
 pub fn decide_click_through(cursor: Point, region: &HitRegion) -> bool {
     if region.is_empty() {
         return true;
@@ -333,7 +345,7 @@ pub fn decide_click_through(cursor: Point, region: &HitRegion) -> bool {
     !region.contains(cursor)
 }
 
-/// カーソルの滞在状態。`shell.hover.state` として Stage に通知する。
+/// The cursor's dwell state. Notified to the Stage as `shell.hover.state`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum HoverState {
@@ -341,10 +353,10 @@ pub enum HoverState {
     Inside,
 }
 
-/// ホバー状態の遷移。**純粋関数**。
+/// The hover-state transition. **A pure function.**
 ///
-/// 前回と同じなら `None` を返す。**変化したときだけ IPC を出す**ため
-/// （60Hz でポーリングするので、毎回送ると `shell.*` の 1ms 予算を食い潰す）。
+/// Returns `None` if unchanged from last time. **IPC is only emitted on a
+/// change**, since polling at 60Hz would eat through `shell.*`'s 1ms budget if sent every cycle.
 pub fn decide_hover_transition(
     cursor: Point,
     region: &HitRegion,
@@ -364,7 +376,7 @@ pub fn decide_hover_transition(
 
 #[cfg(test)]
 mod tests {
-    // テストは panic してよい場所なので unwrap を許す。
+    // Tests are allowed to panic, so unwrap is permitted here.
     #![allow(clippy::unwrap_used)]
 
     use super::*;
@@ -374,7 +386,7 @@ mod tests {
     }
 
     fn full_hd() -> ScreenArea {
-        // 1080p でタスクバー 48px を除いた作業領域。
+        // The work area at 1080p, excluding the 48px taskbar.
         ScreenArea { x: 0.0, y: 0.0, width: 1920.0, height: 1032.0 }
     }
 
@@ -382,9 +394,9 @@ mod tests {
     fn the_window_starts_in_the_bottom_right() {
         let placement = compute_stage_placement(full_hd());
         let (x, y) = placement.position.unwrap();
-        // 右端・下端から余白のぶんだけ内側。**作業領域の外に出さない。**
+        // Inset from the right and bottom edges by the margin. **Never overflows the work area.**
         assert!((x + placement.width + STAGE_MARGIN_RIGHT - 1920.0).abs() < 1e-9);
-        // **下端は作業領域にぴったり。** 浮くとキャラクターが宙に立って見える。
+        // **The bottom edge sits flush with the work area.** Floating would make the character look airborne.
         assert!((y + placement.height - 1032.0).abs() < 1e-9);
     }
 
@@ -394,13 +406,13 @@ mod tests {
         let large =
             compute_stage_placement(ScreenArea { x: 0.0, y: 0.0, width: 2560.0, height: 1392.0 });
         assert!(large.height > small.height);
-        // 縦横比は画面によらず一定。
+        // The aspect ratio stays constant regardless of screen size.
         assert!((small.width / small.height - large.width / large.height).abs() < 1e-9);
     }
 
     #[test]
     fn a_second_monitor_offset_is_respected() {
-        // 左に別のモニタがある場合、作業領域の原点は 0 ではない。
+        // When another monitor sits to the left, the work area's origin isn't 0.
         let placement = compute_stage_placement(ScreenArea {
             x: -1920.0,
             y: 0.0,
@@ -427,7 +439,7 @@ mod tests {
 
     #[test]
     fn scaling_stops_at_the_lower_bound() {
-        // **Stage が窓を消せてはいけない。** 短い辺が下限で止まる。
+        // **The Stage must never be able to make the window disappear.** The shorter side stops at the lower bound.
         let (w, h) = compute_scaled_size(480.0, 720.0, 0.01);
         assert_eq!(w, MIN_STAGE_SIZE);
         assert!((h - MIN_STAGE_SIZE * 1.5).abs() < 1e-9);
@@ -435,7 +447,7 @@ mod tests {
 
     #[test]
     fn scaling_stops_at_the_upper_bound() {
-        // **画面外まで広げられてはいけない。** 長い辺が上限で止まる。
+        // **Must never be enlarged past the screen.** The longer side stops at the upper bound.
         let (w, h) = compute_scaled_size(480.0, 720.0, 100.0);
         assert_eq!(h, MAX_STAGE_SIZE);
         assert!(w < MAX_STAGE_SIZE);
@@ -443,7 +455,7 @@ mod tests {
 
     #[test]
     fn growing_keeps_the_bottom_right_corner() {
-        // 右下に居るキャラクターが、拡大のたびに画面外へ出ていかない。
+        // A character sitting bottom-right shouldn't drift off-screen every time it's enlarged.
         let position = (2072.0, 672.0);
         let old = (464.0, 696.0);
         let new = (584.0, 877.0);
@@ -455,7 +467,7 @@ mod tests {
 
     #[test]
     fn a_broken_factor_changes_nothing() {
-        // fail-closed。**壊れた値で窓を壊さない。**
+        // fail-closed. **Never lets a broken value break the window.**
         for factor in [0.0, -1.0, f64::NAN, f64::INFINITY] {
             assert_eq!(compute_scaled_size(480.0, 720.0, factor), (480.0, 720.0));
         }
@@ -500,14 +512,14 @@ mod tests {
         assert!(!decide_click_through(Point { x: 120.0, y: 230.0 }, &r));
         assert!(decide_click_through(Point { x: 99.0, y: 230.0 }, &r));
         assert!(decide_click_through(Point { x: 120.0, y: 199.0 }, &r));
-        // 右端・下端は排他（隣接矩形との二重判定を避ける）
+        // The right and bottom edges are exclusive (avoids double-counting with an adjacent rect)
         assert!(decide_click_through(Point { x: 150.0, y: 230.0 }, &r));
         assert!(decide_click_through(Point { x: 120.0, y: 260.0 }, &r));
     }
 
     #[test]
     fn click_through_stays_on_when_region_is_unknown() {
-        // Stage が落ちていてもデスクトップを操作できること
+        // The desktop must remain operable even if the Stage is down
         let empty = HitRegion::default();
         assert!(decide_click_through(Point { x: 120.0, y: 230.0 }, &empty));
     }
@@ -536,7 +548,7 @@ mod tests {
             assert!(kind.is_protected(), "{} が保護対象から漏れている", kind.label());
         }
         assert_eq!(WindowKind::from_label("permission"), Some(WindowKind::Permission));
-        // Lumi 以外のウィンドウは保護対象ではない（そもそも判定に載らない）
+        // A window that isn't Lumi's own is never protected (it doesn't even enter the check)
         assert_eq!(WindowKind::from_label("unknown"), None);
     }
 }

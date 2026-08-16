@@ -1,24 +1,26 @@
-"""監査ログ — **決定内容にかかわらず全件記録する。**
+"""Audit log — **records every entry regardless of the decision.**
 
-スキーマと根拠 → docs/architecture/permission.md §7
+Schema and rationale → docs/architecture/permission.md §7
 
-## append-only の正確な意味
+## What append-only precisely means
 
-> **「Lumi の全 Tool 経路から改竄・削除できない」という意味である。**
+> **It means "cannot be tampered with or deleted through any of Lumi's Tool paths."**
 
-OS 管理者権限を持つ別プロセスからの改竄は防げない。**それは脅威モデル外であり、
-防げると書かない**（docs/contracts/security-boundaries.md）。
+Tampering from a separate process with OS admin rights can't be prevented. **That's
+outside the threat model, and this never claims otherwise**
+(docs/contracts/security-boundaries.md).
 
-| Phase | 実装 |
+| Phase | Implementation |
 |---|---|
-| **1** | Tool 経路からの到達不能性。**`DELETE` / `UPDATE` がコードベースに存在しない** |
-| 4a | hash chain（`prev_hash` / `record_hash`）。改竄の**検出**（防止ではない） |
+| **1** | Unreachable via any Tool path. **No `DELETE` / `UPDATE` exists anywhere in the codebase** |
+| 4a | Hash chain (`prev_hash` / `record_hash`). **Detects** tampering (doesn't prevent it) |
 
-## なぜ digest を残すのか
+## Why digests are kept
 
-正規化前（`raw_input_digest`）と後（`security_scope_json`）の両方を残すと、
-**「正規化が正しかったか」を後から検証できる。** ダイジェストにするのは、
-機密情報をログに残さないため。
+Keeping both the pre-normalization digest (`raw_input_digest`) and the post-
+normalization value (`security_scope_json`) makes it possible to **later verify
+whether normalization was correct.** Digests are used instead of raw values so secrets
+never end up in the log.
 """
 
 from __future__ import annotations
@@ -36,20 +38,20 @@ from lumi.provenance import ProvenanceClass, TrustLevel
 
 @dataclass(frozen=True, slots=True)
 class AuditRecord:
-    """**不変。** 監査記録が書き換えられるなら、それは監査ではない。"""
+    """**Immutable.** If an audit record could be rewritten, it wouldn't be an audit."""
 
     ts: datetime
     actor: Actor
     activity_id: ActivityId
     correlation_id: CorrelationId
     capability: str
-    #: 正規化**後**の対象
+    #: The target **after** normalization
     security_scope_json: str
-    #: 正規化**前**の入力のダイジェスト（生の値は残さない）
+    #: Digest of the input **before** normalization (the raw value is never kept)
     raw_input_digest: str
     decision: Decision
     reason: str
-    #: **必須。** Policy は将来変わる。当時のルールが分からないと「なぜ許可したか」に答えられない
+    #: **Required.** Policy changes over time. Without knowing the rule in effect at the time, "why was this allowed" can't be answered
     policy_version: str
     policy_rule_id: str
     tool: str
@@ -61,6 +63,6 @@ class AuditRecord:
 
 
 class AuditLog(Protocol):
-    """実装は `lumi.storage.audit`（依存の向きを逆にするための Protocol）。"""
+    """Implemented by `lumi.storage.audit` (a Protocol to invert the dependency direction)."""
 
     async def append(self, record: AuditRecord) -> None: ...

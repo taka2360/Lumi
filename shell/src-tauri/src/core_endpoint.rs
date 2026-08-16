@@ -1,11 +1,11 @@
-//! Stage に Core への接続先を教える（`shell.*`）。
+//! Tells the Stage where to connect to Core (`shell.*`).
 //!
-//! **Stage には Stage 用の token しか渡さない。**
-//! 共有すると、乗っ取られた Stage が `role: "shell"` を名乗って `os.*` を横取りできる
-//! （docs/contracts/security-boundaries.md B2 / B3）。
+//! **Only the Stage-specific token is ever handed to the Stage.**
+//! Sharing it would let a compromised Stage claim `role: "shell"` and hijack
+//! `os.*` (docs/contracts/security-boundaries.md B2 / B3).
 //!
-//! ポート番号は Core が起動してから決まる（Core の stdout から届く）。
-//! まだ分からないうちは `None` を返し、決まったらイベントで知らせる。
+//! The port number is only decided once Core has started (it arrives via Core's
+//! stdout). `None` is returned while it's still unknown, and an event announces it once decided.
 
 use serde::Serialize;
 use tauri::{AppHandle, Emitter as _, Manager as _, State};
@@ -13,14 +13,14 @@ use tokio::sync::watch;
 
 use crate::window::WindowKind;
 
-/// ポートが決まった / 変わったことを Stage に伝えるイベント名。
-/// （Tauri のイベント名にドットは使えないので `.` を `:` にしてある）
+/// The event name that tells the Stage the port was decided / changed.
+/// (Tauri event names can't contain dots, so `.` is replaced with `:`)
 pub(crate) const EVENT_CORE_ENDPOINT: &str = "shell:core:endpoint";
 
 #[derive(Clone, Serialize)]
 pub struct CoreEndpoint {
     pub port: u16,
-    /// **Stage 用の token。** Shell 用は絶対にここに入れない。
+    /// **The Stage-specific token.** The Shell one must never go here.
     pub token: String,
 }
 
@@ -40,13 +40,13 @@ impl CoreEndpointState {
     }
 }
 
-/// `shell.core.endpoint` — Stage が Core に繋ぐための情報を取りに来る。
+/// `shell.core.endpoint` — the Stage fetches what it needs to connect to Core.
 #[tauri::command]
 pub fn shell_core_endpoint(state: State<'_, CoreEndpointState>) -> Option<CoreEndpoint> {
     state.snapshot()
 }
 
-/// ポートが決まったら Stage に知らせる。**Stage を待たせない**ための通知。
+/// Notifies the Stage once the port is decided. A notification **so the Stage never has to wait**.
 pub fn spawn_endpoint_notifier(app: AppHandle, mut port: watch::Receiver<Option<u16>>) {
     tauri::async_runtime::spawn(async move {
         while port.changed().await.is_ok() {

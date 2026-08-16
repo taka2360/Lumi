@@ -1,6 +1,7 @@
-"""TTS セットアップ状態。状態機械の定義は docs/architecture/setup.md §2。
+"""TTS setup state. The state machine is defined in docs/architecture/setup.md §2.
 
-**「取得しなかった」と「試して失敗した」を混ぜない。** ユーザーに要求する行動が違う。
+**"Never fetched" and "tried and failed" are never mixed together.** What's asked of
+the user differs.
 """
 
 from __future__ import annotations
@@ -13,72 +14,74 @@ from typing import Any
 
 
 class TtsSetupState(StrEnum):
-    #: まだ調べていない。
+    #: Not checked yet.
     UNKNOWN = "unknown"
-    #: 使えるエンジンが無く、ユーザーはまだ取得を選んでいない。
+    #: No usable engine, and the user hasn't yet chosen to fetch one.
     NOT_CONFIGURED = "not_configured"
-    #: ユーザーが別途インストールしたエンジンを見つけた。
+    #: Found an engine the user installed separately.
     DETECTED = "detected"
-    #: 取得中。
+    #: Currently fetching.
     INSTALLING = "installing"
-    #: Lumi が入れたエンジンが使える。
+    #: An engine Lumi installed is usable.
     INSTALLED = "installed"
-    #: 取得を試みて失敗した。**未設定に戻さない。**
+    #: Attempted to fetch and failed. **Never reverts to not-configured.**
     FAILED = "failed"
 
 
 class EngineRuntime(StrEnum):
-    """エンジン**プロセス**の状態。導入の状態（`TtsSetupState`）とは別の軸。
+    """The state of the engine **process**. A separate axis from the installation
+    state (`TtsSetupState`).
 
-    docs/architecture/setup.md「導入の状態と、プロセスの状態を混ぜない」
+    docs/architecture/setup.md "Never mix installation state and process state"
 
-    1つの enum に混ぜると「入っているのに起動できない」を表現できず、
-    ユーザーに「取得してください」と嘘の案内をすることになる。
+    Mixing these into one enum would make it impossible to express "installed but
+    can't start," and would tell the user the false "please fetch it" guidance.
     """
 
-    #: 起動していない。
+    #: Not running.
     STOPPED = "stopped"
-    #: 起動中。まだ応答しない（初回はエンジン自身のモデル取得で数分かかる）。
+    #: Starting up. Not yet responding (the first run can take minutes as the engine fetches its own model).
     STARTING = "starting"
-    #: 喋れる。
+    #: Can speak.
     READY = "ready"
-    #: 入っているのに起動できない = **壊れている**。
+    #: Installed but won't start = **broken**.
     FAILED = "failed"
 
 
 class BootPhase(StrEnum):
-    """起動のどこまで進んだか。**キャラクターを出してよいかを Core が決める。**
+    """How far startup has progressed. **Core decides when it's okay to show the character.**
 
-    定義 → docs/architecture/ui.md「起動フェーズ」
+    Defined in → docs/architecture/ui.md "Boot phases"
 
-    立っているのに反応しないキャラクターは**壊れて見える**。エンジンの取得に数分、
-    起動に十数秒かかる間は、代わりに何が起きているかを出す。
+    A character that's standing there but unresponsive **looks broken.** While the
+    engine takes minutes to fetch and a dozen-odd seconds to start, something
+    showing what's actually happening is displayed instead.
     """
 
-    #: ユーザーの選択を待っている。
+    #: Waiting for the user's choice.
     SETUP = "setup"
-    #: エンジンを取得中。
+    #: Fetching the engine.
     INSTALLING = "installing"
-    #: エンジンのプロセスを起動中。
+    #: Starting the engine's process.
     STARTING = "starting"
-    #: **キャラクターを出してよい。**
+    #: **The character may be shown.**
     READY = "ready"
 
 
 @dataclass(frozen=True, slots=True)
 class TtsSetup:
-    """Stage に配る状態。Stage は**表示するだけ**。"""
+    """The state distributed to the Stage. The Stage **only displays it.**"""
 
     state: TtsSetupState
     engine_name: str | None = None
     version: str | None = None
     port: int | None = None
     executable: str | None = None
-    #: 失敗の理由。`FAILED` のときだけ入る。**黙って劣化させないための文言**。
+    #: The reason for the failure. Only populated for `FAILED`. **The wording that prevents silent degradation.**
     reason: str | None = None
-    #: 取得の進捗（0.0-1.0）。`INSTALLING` のときだけ入る。
+    #: Fetch progress (0.0-1.0). Only populated for `INSTALLING`.
     progress: float | None = None
-    #: エンジン**プロセス**の状態。導入の状態とは独立に動く。
+    #: The state of the engine **process**. Moves independently of installation state.
     runtime: EngineRuntime = EngineRuntime.STOPPED
 
     def to_payload(self, *, prompting: bool = False) -> dict[str, Any]:
@@ -96,41 +99,43 @@ class TtsSetup:
 
     @property
     def usable(self) -> bool:
-        """このまま喋れるか。"""
+        """Whether it can speak as-is."""
         return self.state in (TtsSetupState.DETECTED, TtsSetupState.INSTALLED)
 
 
 def boot_phase(setup: TtsSetup, *, prompting: bool) -> BootPhase:
-    """起動フェーズを決める。**純粋関数**（docs/architecture/ui.md）。
+    """Decides the boot phase. **A pure function** (docs/architecture/ui.md).
 
-    **待たせてよいのは「これから使えるようになる」ときだけ。**
-    取得しない選択も、取得の失敗も `READY` にする。喋れないことと、
-    Lumi が起動していないことは別であり、**キャラクターを人質にしない**。
+    **The user is only made to wait when "this is about to become usable."**
+    Choosing not to fetch, and a failed fetch, both resolve to `READY`. Being unable
+    to speak and Lumi not having started are different things — **the character is
+    never held hostage.**
     """
     if prompting:
         return BootPhase.SETUP
     if setup.state is TtsSetupState.INSTALLING:
         return BootPhase.INSTALLING
     if setup.usable and setup.runtime in (EngineRuntime.STOPPED, EngineRuntime.STARTING):
-        # **まだ起動していないだけで、これから起動する。**
-        # ここを READY にすると、キャラクターが一瞬出てから引っ込む（実測で踏んだ）。
+        # **It just hasn't started yet — it's about to.**
+        # Marking this READY would make the character flash in and then vanish (hit this in practice).
         return BootPhase.STARTING
     return BootPhase.READY
 
 
 @dataclass(frozen=True, slots=True)
 class SetupAnswers:
-    """初回セットアップで**もう聞いたこと**。
+    """What's **already been asked** during first-run setup.
 
-    汎用の設定ストアにしない（設定の保存形式は roadmap 未確定事項 #9 / Phase 1）。
-    ここが持つのは「TTS の取得を尋ねて答えをもらったか」だけ。
+    Not a general-purpose settings store (the settings storage format is roadmap
+    open item #9 / Phase 1). All this holds is whether "the TTS-fetch question was
+    asked and answered."
     """
 
     tts_prompt_answered: bool = False
 
     @classmethod
     def load(cls, path: Path) -> SetupAnswers:
-        """読めなければ「まだ聞いていない」として扱う（壊れたファイルで起動を止めない）。"""
+        """Treated as "not yet asked" if unreadable (a corrupted file never blocks startup)."""
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):

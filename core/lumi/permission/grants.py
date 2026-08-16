@@ -1,17 +1,19 @@
-"""Grant — スコープ付きトークン。**ブール値ではない。**
+"""Grant — a scoped token. **Not a boolean.**
 
-設計 → docs/architecture/permission.md §5
+Design → docs/architecture/permission.md §5
 
-これで表現できること:
+What this can express:
 
-- 「このセッション中、`C:\\Users\\yuasa\\Projects` 以下は読んでいい」
-- 「この URL に1回だけアクセスしていい」
-- 「今日いっぱい、このフォルダに書いていい」
+- "For this session, reading is allowed under `C:\\Users\\yuasa\\Projects`"
+- "This URL may be accessed exactly once"
+- "Writing to this folder is allowed for the rest of today"
 
-> **UI に「全部許可」を置かない。** 置いた瞬間に、ユーザーは必ずそれを選ぶ。
+> **Never put "allow everything" in the UI.** The instant it's an option, the user
+> will always pick it.
 
-**Phase 1 では Grant は作られない**（L0 のツールしか無く、`ask` に到達しない）。
-経路と型だけを本番と同じにしておく。UI と発行は Phase 4a。
+**No Grant is ever created in Phase 1** (there are only L0 tools, so `ask` is never
+reached). Only the path and the types are kept identical to production. The UI and
+issuance land in Phase 4a.
 """
 
 from __future__ import annotations
@@ -29,12 +31,12 @@ GrantId = NewType("GrantId", str)
 class Grant:
     id: GrantId
     capability: str
-    #: **正規化済み。** 生の入力に対して発行しない
+    #: **Already normalized.** Never issued against raw input
     security_scope: SecurityScope
     granted_at: datetime
     expires_at: datetime | None = None
     remaining_uses: int | None = None
-    #: **`user` 以外に値がない。** Lumi が自分に権限を与える経路を作らない
+    #: **No value other than `user`.** Never build a path for Lumi to grant itself permission
     granted_by: Literal["user"] = "user"
 
     def is_valid_at(self, now: datetime) -> bool:
@@ -44,10 +46,10 @@ class Grant:
 
 
 class GrantStore:
-    """**Tool から Grant を作ることも消すこともできない**（docs/contracts/authority-matrix.md）。
+    """**A Tool can neither create nor remove a Grant** (docs/contracts/authority-matrix.md).
 
-    ここに `add` があるのは、Phase 4a の権限プロンプト UI が呼ぶため。
-    **Tool 実装が `GrantStore` を import していないことを静的検査で縛る。**
+    `add` exists here because Phase 4a's permission-prompt UI calls it.
+    **Static checks enforce that no Tool implementation ever imports `GrantStore`.**
     """
 
     __slots__ = ("_grants",)
@@ -59,7 +61,7 @@ class GrantStore:
         self._grants[grant.id] = grant
 
     def find(self, capability: str, scope: SecurityScope, now: datetime) -> Grant | None:
-        """**scope が一致するものだけ。** 「近い」では通さない（fail-closed）。"""
+        """**Only an exact scope match.** "Close enough" never passes (fail-closed)."""
         for grant in self._grants.values():
             if grant.capability != capability:
                 continue
@@ -70,7 +72,7 @@ class GrantStore:
         return None
 
     def consume(self, grant_id: GrantId) -> None:
-        """**減算する形でのみ変更される。**"""
+        """**Only ever mutated by decrementing.**"""
         grant = self._grants.get(grant_id)
         if grant is None or grant.remaining_uses is None:
             return

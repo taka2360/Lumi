@@ -1,9 +1,10 @@
-"""構造化ログ。
+"""Structured logging.
 
-Phase 0 の時点では「Shell が stdout/stderr をログに落とす」（docs/interfaces/shell.md）ため、
-既定では 1 行 1 JSON を stdout に吐く。人が直接読むとき（開発時）だけ色つきに切り替える。
+As of Phase 0, "Shell captures stdout/stderr into logs" (docs/interfaces/shell.md), so
+one JSON object per line is written to stdout by default. Color output only kicks in
+when a human is reading it directly (dev time).
 
-SLO 計測（p50/p95/p99、unaccounted_ms）は Phase 1。ここでは経路だけ用意する。
+SLO measurement (p50/p95/p99, unaccounted_ms) is Phase 1. Only the plumbing is set up here.
 """
 
 from __future__ import annotations
@@ -16,10 +17,10 @@ import structlog
 
 
 def configure(*, level: str = "INFO", console: bool | None = None) -> None:
-    """structlog を初期化する。プロセス起動時に一度だけ呼ぶ。
+    """Initializes structlog. Called exactly once at process startup.
 
-    console=None のとき、stdout が TTY なら人間向け、そうでなければ JSON にする。
-    Shell のサイドカーとして起動された場合はパイプなので JSON になる。
+    When `console=None`, output is human-readable if stdout is a TTY, otherwise JSON.
+    When launched as Shell's sidecar, stdout is a pipe, so it becomes JSON.
     """
     if console is None:
         console = sys.stdout.isatty()

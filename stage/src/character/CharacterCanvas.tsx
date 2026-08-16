@@ -1,10 +1,10 @@
 /**
- * キャラクターの描画ホスト。
+ * The character's rendering host.
  *
- * - 透過背景（Stage は透過ウィンドウ。**背景を塗らない**）
- * - アイドルモーションでループ
- * - 描画結果から当たり判定領域を算出して Shell に渡す
- *   （docs/architecture/ui.md「ホバー検知の実装方針」）
+ * - Transparent background (the Stage is a transparent window. **Never paints a background**)
+ * - Loops on idle motion
+ * - Computes the hit region from the render output and hands it to Shell
+ *   (docs/architecture/ui.md "Hover-detection implementation approach")
  */
 
 import { useEffect, useRef } from "react";
@@ -25,7 +25,7 @@ import { loadCharacter } from "./loadCharacter";
 import { hasMovedEnough, type NdcPoint, screenRectFromNdcPoints } from "./projection";
 import type { CharacterKind } from "./types";
 
-/** 当たり判定の再計算間隔（フレーム）。毎フレーム bounding box を取り直すのは高い。 */
+/** Recomputation interval for the hit region (in frames). Recomputing the bounding box every frame is expensive. */
 const BOUNDS_RECOMPUTE_INTERVAL = 10;
 
 export interface CharacterStatus {
@@ -38,7 +38,7 @@ export function CharacterCanvas({
   onBounds,
 }: {
   onStatus?: (status: CharacterStatus) => void;
-  /** 画面上でキャラクターが占めている矩形。**当たり判定の材料**（判定は Shell 側）。 */
+  /** The on-screen rectangle the character occupies. **The material for hit-testing** (the test itself runs in Shell). */
   onBounds?: (rect: CssRect | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -103,8 +103,8 @@ export function CharacterCanvas({
         const delta = Math.min((now - previousTime) / 1000, 0.1);
         previousTime = now;
 
-        // **口を先に決めてから update する。** VRM は update の中で表情を反映するので、
-        // 順序を逆にすると1フレーム遅れる。
+        // **Decides the mouth before calling update.** VRM applies expressions
+        // inside update, so reversing the order would lag by one frame.
         const speech = useStageStore.getState().speech;
         const target = speech ? visemeAt(speech.timeline, now - speech.startedAtMs) : null;
         mouth = advanceMouth(mouth, target, delta);
@@ -146,8 +146,8 @@ export function CharacterCanvas({
       observer.disconnect();
       disposeModel?.();
       renderer.dispose();
-      // **消えたことを伝える。** 伝えないと、キャラクターが居ない場所の
-      // 当たり判定が残り、そこだけクリックスルーが効かなくなる。
+      // **Reports that it disappeared.** Without this, a hit region would linger
+      // where the character no longer is, and click-through would stop working there.
       onBounds?.(null);
     };
   }, [onStatus, onBounds]);

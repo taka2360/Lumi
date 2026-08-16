@@ -1,8 +1,8 @@
 /**
- * `PlatformShell` の Tauri 実装。
+ * The Tauri implementation of `PlatformShell`.
  *
- * **Tauri に依存するコードはこのファイルだけ**にする。Electron へ退避するときに
- * 差し替えるのはここ1枚（docs/interfaces/shell.md）。
+ * **Code depending on Tauri lives only in this file.** If ever migrating to
+ * Electron, this is the only file that needs replacing (docs/interfaces/shell.md).
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -11,22 +11,23 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import type { Disposable, HitRect, HoverState, PlatformShell } from "./PlatformShell";
 
 /**
- * Shell の `shell.*` allowlist に登録されているコマンド名。
+ * Command names registered in Shell's `shell.*` allowlist.
  *
- * **正は `docs/contracts/wire.json`**（→ ADR-022）。ただし Shell 側の実体は
- * `#[tauri::command]` が付いた**関数名**なので、突き合わせは Stage の片側だけである
- * （Shell で関名を変えてもテストは落ちない → docs/contracts/wire.md §4）。
+ * **`docs/contracts/wire.json` is authoritative** (→ ADR-022). But the actual
+ * entity on the Shell side is the **function name** annotated with
+ * `#[tauri::command]`, so cross-checking only happens on the Stage side (renaming
+ * the function in Shell doesn't fail any test → docs/contracts/wire.md §4).
  */
 export const CMD_SET_HIT_REGION = "shell_hit_region_set";
 export const CMD_DRAG_START = "shell_window_drag_start";
 export const CMD_SCALE = "shell_window_scale";
 
 /**
- * ホバー状態の通知イベント名。
+ * The event name for hover-state notifications.
  *
- * docs では `shell.hover.state` と書くが、**Tauri のイベント名にドットは使えない**
- * （英数字と `-` `/` `:` `_` のみ）。`.` を `:` に置き換えたものが線上の名前。
- * 対応する Shell 側の定数は `shell/src-tauri/src/hover.rs`。
+ * The docs write this as `shell.hover.state`, but **Tauri event names can't
+ * contain dots** (only alphanumerics and `-` `/` `:` `_`). The wire name replaces
+ * `.` with `:`. The corresponding constant on the Shell side is in `shell/src-tauri/src/hover.rs`.
  */
 export const EVENT_HOVER_STATE = "shell:hover:state";
 
@@ -54,7 +55,7 @@ export function createTauriPlatformShell(): PlatformShell {
   };
 }
 
-/** Tauri の中で動いているか。ブラウザで `vite dev` を開いたときは false になる。 */
+/** Whether this is running inside Tauri. False when opened in a browser via `vite dev`. */
 export function isTauri(): boolean {
   return "isTauri" in window && window.isTauri === true;
 }

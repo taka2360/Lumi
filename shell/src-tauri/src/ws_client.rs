@@ -1,10 +1,11 @@
-//! Core への WS 接続。**Core → Shell の `os.*` を受けて実行する側**（B3 の適用点）。
+//! The WS connection to Core. **The side that receives and executes Core → Shell's `os.*`** (where B3 is applied).
 //!
-//! Core がハブなので、listen するのは Core。Shell は接続しにいく
-//! （docs/architecture/core.md §7 起動シーケンス）。
+//! Core is the hub, so Core is the one that listens; Shell connects to it
+//! (docs/architecture/core.md §7 startup sequence).
 //!
-//! **受け取った要求をそのまま実行しない。** `os_command::validate` を必ず通す。
-//! 拒否は握りつぶさずログに残す（roadmap Phase 0 検証手順 9）。
+//! **A received request is never executed as-is.** It always passes through
+//! `os_command::validate`. Rejections are logged, never swallowed
+//! (roadmap Phase 0 verification step 9).
 
 use std::time::Duration;
 
@@ -17,13 +18,13 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::os_command::{validate, OsCommand};
 
-/// Core と同じ値を使う（core/lumi/transport/protocol.py の `PROTOCOL_VERSION`）。
+/// Uses the same value as Core (`PROTOCOL_VERSION` in core/lumi/transport/protocol.py).
 pub(crate) const PROTOCOL_VERSION: u64 = 1;
 
-/// 接続に失敗したときの再試行間隔。
+/// The retry interval after a failed connection.
 const RECONNECT_DELAY: Duration = Duration::from_millis(500);
 
-/// Core から届いた 1 通。**検証前**の生の形。
+/// A single message from Core. Raw, **pre-validation** form.
 #[derive(Debug, Clone, PartialEq)]
 pub struct IncomingCommand {
     pub id: String,
@@ -31,10 +32,10 @@ pub struct IncomingCommand {
     pub payload: Value,
 }
 
-/// command の封筒を解釈する。**純粋関数**。
+/// Parses a command envelope. **A pure function.**
 ///
-/// Phase 0 で Shell が受理するのは `command` だけ。
-/// Core からの他の kind（`welcome` を除く）は受け取らない。
+/// In Phase 0, `command` is the only kind Shell accepts.
+/// Other kinds from Core (besides `welcome`) are not accepted.
 pub fn parse_command(raw: &str) -> Result<IncomingCommand, String> {
     let value: Value = serde_json::from_str(raw).map_err(|e| format!("JSON ではない: {e}"))?;
     if value.get("v").and_then(Value::as_u64) != Some(PROTOCOL_VERSION) {
@@ -62,13 +63,13 @@ fn error_result(id: &str, reason: &str) -> String {
         .to_string()
 }
 
-/// 接続の維持を開始する。ポートは Core の stdout から届く。
+/// Starts maintaining the connection. The port arrives via Core's stdout.
 pub fn start(app: AppHandle, token: String, mut port_rx: watch::Receiver<Option<u16>>) {
     tauri::async_runtime::spawn(async move {
         loop {
             let port = *port_rx.borrow_and_update();
             let Some(port) = port else {
-                // Core がまだ listen していない。次の変化を待つ。
+                // Core isn't listening yet. Waits for the next change.
                 if port_rx.changed().await.is_err() {
                     return;
                 }
@@ -111,7 +112,7 @@ async fn run_connection(app: &AppHandle, token: &str, port: u16) -> Result<(), S
         let response = match parse_command(&raw) {
             Ok(command) => handle(app, &command),
             Err(reason) => {
-                // 相関 ID が取れないので返せない。**ログには必ず残す。**
+                // No correlation ID is available, so nothing can be returned. **Always logged.**
                 log::warn!("os.command.malformed reason={reason}");
                 continue;
             }
@@ -121,7 +122,7 @@ async fn run_connection(app: &AppHandle, token: &str, port: u16) -> Result<(), S
     Ok(())
 }
 
-/// 検証 → 実行。**検証を通らなかったものは実行に到達しない。**
+/// Validate → execute. **Anything that fails validation never reaches execution.**
 fn handle(app: &AppHandle, command: &IncomingCommand) -> String {
     match validate(&command.method, &command.payload) {
         Err(rejection) => {
@@ -163,7 +164,7 @@ fn execute(app: &AppHandle, command: &OsCommand) -> Result<Value, String> {
 
 #[cfg(test)]
 mod tests {
-    // テストは panic してよい場所なので unwrap を許す。
+    // Tests are allowed to panic, so unwrap is permitted here.
     #![allow(clippy::unwrap_used)]
 
     use super::*;

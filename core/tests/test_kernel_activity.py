@@ -1,7 +1,7 @@
-"""Activity の priority と状態遷移表。
+"""Activity's priority and state-transition table.
 
-**docs/architecture/agent.md テスト 3b / 3c、docs/contracts/state-machines.md テスト 1e / 4。**
-決定 → ADR-024
+**docs/architecture/agent.md tests 3b / 3c, docs/contracts/state-machines.md tests 1e / 4.**
+Decision → ADR-024
 """
 
 from __future__ import annotations
@@ -46,12 +46,12 @@ def make(kind: ActivityKind, actor: Actor = Actor.USER_INITIATED) -> Activity:
     ],
 )
 def test_priority_follows_the_table(kind: ActivityKind, actor: Actor, expected: int) -> None:
-    """**表が唯一の定義**（docs/architecture/agent.md §1）。"""
+    """**The table is the sole definition** (docs/architecture/agent.md §1)."""
     assert priority_of(kind, actor) == expected
 
 
 def test_conversation_preempts_conversation() -> None:
-    """**barge-in は同一 priority の preempt。** `>` だとここが落ちる。"""
+    """**barge-in is a preempt at equal priority.** This would fail with `>`."""
     current = make(ActivityKind.CONVERSATION)
     assert can_preempt(priority_of(ActivityKind.CONVERSATION, Actor.USER_INITIATED), current)
 
@@ -77,9 +77,9 @@ def test_idle_is_interruptible_at_zero() -> None:
 
 
 def test_proposal_cannot_carry_a_priority() -> None:
-    """**提案者は priority を渡せない**（ADR-024 / Invariant 1）。
+    """**A proposer can never pass in a priority** (ADR-024 / Invariant 1).
 
-    フィールドとして存在しないことを検査する。派生プロパティは読めてよい。
+    Verifies it doesn't exist as a field. Derived properties are fine to read.
     """
     fields = {f.name for f in dataclasses.fields(ActivityProposal)}
     assert "priority" not in fields
@@ -87,13 +87,13 @@ def test_proposal_cannot_carry_a_priority() -> None:
 
 
 def test_idle_starts_running_without_being_proposed() -> None:
-    """**`proposed` / `accepted` を経ない唯一の例外**（state-machines.md）。"""
+    """**The sole exception that skips `proposed` / `accepted`** (state-machines.md)."""
     idle = new_idle_activity(new_correlation_id())
     assert idle.state is ActivityState.RUNNING
 
 
 def test_suspended_is_only_for_idle() -> None:
-    """idle 以外が `suspended` を取れると、Invariant 4 の「running はちょうど1つ」が緩む。"""
+    """If anything other than idle could take `suspended`, Invariant 4's "exactly one running" would loosen."""
     conversation = make(ActivityKind.CONVERSATION)
     conversation._apply(ActivityState.ACCEPTED)
     conversation._apply(ActivityState.RUNNING)
@@ -103,7 +103,7 @@ def test_suspended_is_only_for_idle() -> None:
 
 def test_forbidden_transitions_raise() -> None:
     activity = make(ActivityKind.CONVERSATION)
-    # proposed から直接 running には行けない（accepted を経る）
+    # Can't go directly from proposed to running (must pass through accepted)
     with pytest.raises(InvalidTransition):
         activity._apply(ActivityState.RUNNING)
 

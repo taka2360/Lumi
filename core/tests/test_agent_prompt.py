@@ -1,6 +1,6 @@
-"""PromptAssembly。**docs/architecture/agent.md テスト8**（予算超過時に決定論的に切り落とす）。
+"""PromptAssembly. **docs/architecture/agent.md test 8** (deterministic truncation on budget overflow).
 
-切り落としで汚染が消えないことが、ここで一番大事な性質である。
+The single most important property here is that truncation never makes taint disappear.
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ def session_with(*texts: str) -> Session:
     return session
 
 
-# ── トークン推定 ────────────────────────────────────────────
+# ── Token estimation ────────────────────────────────────────────
 
 
 def test_japanese_costs_about_one_token_per_character() -> None:
@@ -53,11 +53,11 @@ def test_ascii_is_cheaper() -> None:
 
 
 def test_the_estimate_is_deterministic() -> None:
-    """**同じ入力からは同じ数。** ここが揺れると切り落としも揺れる。"""
+    """**The same input always gives the same count.** If this wavered, truncation would too."""
     assert estimate_tokens("Lumi は元気") == estimate_tokens("Lumi は元気")
 
 
-# ── 組み立て ────────────────────────────────────────────────
+# ── Assembly ────────────────────────────────────────────────
 
 
 def test_the_current_utterance_is_last() -> None:
@@ -69,7 +69,7 @@ def test_the_current_utterance_is_last() -> None:
 
 
 def test_the_persona_and_the_protocol_are_in_the_system_message() -> None:
-    """**作法は人格ではない。** Content Pack ではなく Core が持つ。"""
+    """**Conventions aren't persona.** Held by Core, not the Content Pack."""
     prompt = assemble(persona=PERSONA, session=session_with("やあ"))
     system = prompt.messages[0].content
 
@@ -87,11 +87,11 @@ def test_assemble_needs_a_current_utterance() -> None:
         assemble(persona=PERSONA, session=Session())
 
 
-# ── 隔離 ────────────────────────────────────────────────────
+# ── Isolation ────────────────────────────────────────────────────
 
 
 def test_untrusted_blocks_are_isolated() -> None:
-    """書式の定義は docs/contracts/provenance.md。**防御の一枚に過ぎない。**"""
+    """Format defined in docs/contracts/provenance.md. **Only one layer of defense.**"""
     prompt = assemble(persona=PERSONA, session=session_with("読んで"), blocks=[block("怪しい本文")])
     system = prompt.messages[0].content
 
@@ -114,11 +114,11 @@ def test_no_isolation_header_without_blocks() -> None:
     assert ISOLATION_HEADER not in prompt.messages[0].content
 
 
-# ── 予算 ────────────────────────────────────────────────────
+# ── Budget ────────────────────────────────────────────────────
 
 
 def test_old_turns_are_dropped_first() -> None:
-    """切り落とし順序（docs/architecture/agent.md §3）。**古い順に落ちる。**"""
+    """Truncation order (docs/architecture/agent.md §3). **Dropped oldest-first.**"""
     session = session_with("いちばん古い", "ふるい返事", "あたらしい質問")
     prompt = assemble(
         persona=PERSONA,
@@ -137,9 +137,10 @@ def test_old_turns_are_dropped_first() -> None:
 
 
 def test_context_blocks_outlive_old_turns() -> None:
-    """**ツール結果はこのターンの判断材料。** 会話履歴より後に落とす。
+    """**Tool results are input to this turn's decision.** Dropped after conversation history.
 
-    先に落とすと、LLM は自分が呼んだツールの結果を見ないまま次の判断をする。
+    Dropping them first would leave the LLM deciding its next move without seeing
+    the results of tools it called.
     """
     session = session_with("むかしの話", "むかしの返事", "これ何？")
     fixed = estimate_tokens(PERSONA) + estimate_tokens(SPEECH_PROTOCOL)
@@ -157,7 +158,7 @@ def test_context_blocks_outlive_old_turns() -> None:
 
 
 def test_the_persona_and_current_utterance_survive_any_budget() -> None:
-    """**絶対に落とさない2つ。** 落とすと人格が消え、何に答えるか分からなくなる。"""
+    """**The two things that are never dropped.** Dropping either would erase the persona or leave it unclear what's being answered."""
     prompt = assemble(persona=PERSONA, session=session_with("助けて"), budget_tokens=1)
 
     assert prompt.over_budget
@@ -166,7 +167,7 @@ def test_the_persona_and_current_utterance_survive_any_budget() -> None:
 
 
 def test_truncation_is_deterministic() -> None:
-    """同じ入力からは必ず同じプロンプトが出る（スナップショット可能）。"""
+    """The same input always produces the same prompt (snapshottable)."""
 
     def make() -> tuple[Any, ...]:
         return assemble(
@@ -179,14 +180,14 @@ def test_truncation_is_deterministic() -> None:
     assert make() == make()
 
 
-# ── 汚染が消えないこと ★ ────────────────────────────────────
+# ── Taint never disappears * ────────────────────────────────
 
 
 def test_a_dropped_block_still_taints_the_context() -> None:
-    """★ **`block_trust` は「渡された全ブロック」の join。**
+    """* **`block_trust` is the join of "all blocks passed in."**
 
-    載った分だけを見ると、**予算超過で untrusted ブロックが落ちた瞬間に taint が消える。**
-    Invariant 7 が防ごうとしたロンダリング経路そのものである。
+    Looking only at what fit would let **taint vanish the instant an untrusted block
+    drops from budget overflow.** Exactly the laundering path Invariant 7 exists to prevent.
     """
     huge = block("あ" * 5000)
     prompt = assemble(
@@ -200,7 +201,7 @@ def test_a_dropped_block_still_taints_the_context() -> None:
 
 
 def test_assembling_does_not_shrink_the_session() -> None:
-    """**落とすのはプロンプトであって Working Memory ではない。**"""
+    """**What's truncated is the prompt, not Working Memory.**"""
     session = session_with("あ", "い", "う", "え", "お")
     before = len(session.turns)
 

@@ -1,19 +1,20 @@
 /**
- * 初回セットアップと TTS の状態表示。
+ * First-run setup and TTS status display.
  *
- * 設計 → docs/architecture/setup.md
+ * Design → docs/architecture/setup.md
  *
- * **取得する / しない を同等に提示する**（ADR-019 の原則2）。
- * どちらのボタンも同じ大きさ・同じ強さで並べ、片方を灰色にしない。
- * **既定は「取得しない」**（何も押さずに閉じることはできないが、順序は「しない」を先に置く）。
+ * **Presents fetch / don't-fetch as equal choices** (ADR-019 principle 2).
+ * Both buttons are laid out the same size and weight — neither is grayed out.
+ * **The default is "don't fetch"** (there's no way to close without pressing
+ * either, but "don't" is placed first in order).
  *
- * **黙って劣化しない**（原則4）。取得しなかった / 失敗したは、どちらも表示に残る。
+ * **Never silently degrades** (principle 4). Both "didn't fetch" and "failed" stay visible.
  */
 
 import { type TtsSetupSnapshot, useStageStore } from "../core/store";
 import { answerSetupPrompt } from "../core/useCoreConnection";
 
-/** 失敗理由（Core の `SetupError.reason`）を日本語にする。**知らない理由も隠さない。** */
+/** Turns the failure reason (Core's `SetupError.reason`) into display text. **An unrecognized reason is never hidden either.** */
 const FAILURE_TEXT: Record<string, string> = {
   origin_not_allowed: "取得元が想定と違いました",
   redirect_not_allowed: "取得中に想定外の配布元へ転送されました",
@@ -38,9 +39,9 @@ function failureText(reason: string | null): string {
 }
 
 function StatusLine({ tts }: { tts: TtsSetupSnapshot }) {
-  // **プロセスの状態を先に見る。** 「入っているのに起動できない」を
-  // 「入っている」で塗り潰すと、ユーザーは何を直せばよいか分からない
-  // （docs/architecture/setup.md「導入の状態と、プロセスの状態を混ぜない」）。
+  // **Checks the process state first.** Painting over "installed but won't start"
+  // with "installed" would leave the user with no idea what to fix
+  // (docs/architecture/setup.md "Never mix installation state and process state").
   if (tts.runtime === "starting") {
     return (
       <p className="panel__status">
@@ -65,7 +66,7 @@ function StatusLine({ tts }: { tts: TtsSetupSnapshot }) {
         </p>
       );
     case "failed":
-      // **「まだ入れていない」と区別する。** 何が起きたかを出す。
+      // **Distinguished from "not installed yet."** Shows what actually happened.
       return <p className="panel__status panel__status--bad">{failureText(tts.reason)}</p>;
     case "not_configured":
       return (
@@ -129,8 +130,8 @@ export function SetupPanel() {
     settled &&
     (tts.state === "unknown" || tts.state === "installed" || tts.state === "detected")
   ) {
-    // 使える状態と、まだ何も分かっていない状態では、パネルを出さない。
-    // ただし**起動中と起動失敗は出す**（喋らない理由が分からないままにしない）。
+    // The panel is never shown in a usable state, or a state where nothing is known yet.
+    // But **starting and failed-to-start are shown** (never leaves "why isn't it speaking" unexplained).
     return null;
   }
 

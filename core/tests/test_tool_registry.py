@@ -1,9 +1,10 @@
-"""Kernel 実行契約と、登録時の fail-closed。
+"""The Kernel execution contract, and fail-closed at registration time.
 
-**docs/contracts/tool-execution.md テスト 1 / 3〜8。**
-**docs/architecture/permission.md テスト 5 / 13。**
+**docs/contracts/tool-execution.md tests 1 / 3-8.**
+**docs/architecture/permission.md tests 5 / 13.**
 
-> **契約: Policy が検査した対象と、execute が操作した対象は同一でなければならない。**
+> **The contract: the target Policy inspected and the target execute operated on must
+> be identical.**
 """
 
 from __future__ import annotations
@@ -75,7 +76,7 @@ def context(
 
 
 class Recorder:
-    """Stage への送信の代わり。**Tool は WS を知らない。**"""
+    """Stands in for sending to the Stage. **The Tool knows nothing about WS.**"""
 
     def __init__(self) -> None:
         self.sent: list[ExpressionIntent] = []
@@ -84,11 +85,11 @@ class Recorder:
         self.sent.append(intent)
 
 
-# ── 登録時の fail-closed ─────────────────────────────────────
+# ── fail-closed at registration ─────────────────────────────────────
 
 
 def test_registering_without_a_canonicalizer_fails(database: Database) -> None:
-    """**lane に対応する Canonicalizer が無い Tool は登録できない。**"""
+    """**A Tool with no Canonicalizer for its lane cannot be registered.**"""
     empty = ToolRegistry(
         PermissionKernel(GrantStore(), SqliteAuditLog(database)),
         EventBus(SqliteEventStore(database)),
@@ -110,7 +111,7 @@ def test_registering_without_a_bind_verifier_fails(database: Database) -> None:
 
 
 def test_non_cancellable_with_side_effects_needs_l3(registry: ToolRegistry) -> None:
-    """**キャンセルできない副作用を、ユーザー確認なしに起こさせない。**"""
+    """**Never lets an uncancellable side effect happen without user confirmation.**"""
 
     class Risky(SetExpressionTool):
         permission = PermissionSpec(
@@ -126,7 +127,7 @@ def test_non_cancellable_with_side_effects_needs_l3(registry: ToolRegistry) -> N
 
 
 def test_in_core_tool_cannot_claim_a_class_b_lane(registry: ToolRegistry) -> None:
-    """**Handle 契約が成立するのは in-core だけ**（ADR-017）。"""
+    """**The Handle contract only holds in-core** (ADR-017)."""
 
     class Pretender(SetExpressionTool):
         lane = ScopeLane.BROWSER
@@ -136,7 +137,7 @@ def test_in_core_tool_cannot_claim_a_class_b_lane(registry: ToolRegistry) -> Non
 
 
 def test_denied_cannot_be_declared_as_a_risk(registry: ToolRegistry) -> None:
-    """`DENIED` は**実効リスクとしてのみ現れる値**であって、宣言できるものではない。"""
+    """`DENIED` **only ever appears as an effective risk value** — it's not something that can be declared."""
 
     class Impossible(SetExpressionTool):
         permission = PermissionSpec(
@@ -157,7 +158,7 @@ def test_duplicate_names_are_rejected(registry: ToolRegistry) -> None:
         registry.register(SetExpressionTool(Recorder()))
 
 
-# ── Kernel 実行契約 ─────────────────────────────────────────
+# ── The Kernel execution contract ─────────────────────────────────────────
 
 
 async def test_a_l0_tool_runs_through_the_full_path(registry: ToolRegistry) -> None:
@@ -173,7 +174,7 @@ async def test_a_l0_tool_runs_through_the_full_path(registry: ToolRegistry) -> N
 
 
 async def test_canonicalization_failure_is_denied(registry: ToolRegistry) -> None:
-    """**「よく分からないので通す」経路を作らない**（fail-closed）。"""
+    """**No "not sure, so let it through" path is ever built** (fail-closed)."""
     registry.register(SetExpressionTool(Recorder()))
     result = await registry.invoke(
         "character.set_expression", context(), {"target": "someone_else", "emotion": "happy"}
@@ -184,17 +185,18 @@ async def test_canonicalization_failure_is_denied(registry: ToolRegistry) -> Non
 
 
 async def test_bind_verifier_detects_a_lying_tool(registry: ToolRegistry) -> None:
-    """**これが契約の要**（tool-execution.md テスト1）。
+    """**This is the crux of the contract** (tool-execution.md test 1).
 
-    `Tool.bind` は Tool が実装する。**scope とは違う対象の Handle を返したら、
-    `execute` はその対象を操作してしまう。** `BindVerifier` が Kernel 所有なのはこのため。
+    `Tool.bind` is implemented by the Tool. **If it returns a Handle for a target
+    different from its scope, `execute` would operate on that target.** This is why
+    `BindVerifier` is owned by the Kernel.
     """
     executed: list[str] = []
 
     class LyingTool(SetExpressionTool):
         def bind(self, ctx: ToolContext, scope: Any) -> CharacterHandle:
             del ctx, scope
-            # 検査されたのとは**別の対象**を指す Handle を返す
+            # Returns a Handle pointing at a **different target** than what was inspected
             return CharacterHandle(
                 scope=SecurityScope(lane=ScopeLane.CHARACTER, canonical="character:someone_else")
             )
@@ -209,12 +211,12 @@ async def test_bind_verifier_detects_a_lying_tool(registry: ToolRegistry) -> Non
     assert not result.ok
     assert result.error is not None
     assert result.error.code == "bind_failed"
-    # **verify 失敗時に execute が呼ばれない**（tool-execution.md テスト4）
+    # **`execute` is never called when verify fails** (tool-execution.md test 4)
     assert executed == []
 
 
 async def test_system_actor_cannot_use_l1(registry: ToolRegistry) -> None:
-    """Job / idle が L1 以上を呼べないことを、**実行経路で**確認する。"""
+    """Confirms **through the actual execution path** that a Job / idle can't call L1 or above."""
 
     class Elevated(SetExpressionTool):
         permission = PermissionSpec(
@@ -273,14 +275,15 @@ async def test_unknown_tool_is_refused(registry: ToolRegistry) -> None:
     assert result.error.code == "unknown_tool"
 
 
-# ── provenance の付与 ────────────────────────────────────────
+# ── Attaching provenance ────────────────────────────────────
 
 
 async def test_provenance_is_assigned_by_the_kernel(registry: ToolRegistry) -> None:
-    """**Tool は provenance を自己申告できない**（`execute` は `ToolOutcome` を返す）。
+    """**A Tool cannot self-report provenance** (`execute` returns `ToolOutcome`).
 
-    `character` lane の結果は外界の観測ではないので、入力の trust を引き継ぐ。
-    ここを untrusted にすると、**表情を変えるたびにセッションが tainted になる。**
+    A `character` lane result isn't an observation of the outside world, so it
+    inherits the input's trust. Making this untrusted would **taint the session
+    every time an expression changes.**
     """
     registry.register(SetExpressionTool(Recorder()))
     result = await registry.invoke("character.set_expression", context(), {"emotion": "happy"})
@@ -297,13 +300,13 @@ async def test_tainted_input_taints_the_result(registry: ToolRegistry) -> None:
     assert result.trust_level is TrustLevel.TAINTED
 
 
-# ── 監査と3段記録 ───────────────────────────────────────────
+# ── Audit and the three-stage record ───────────────────────────────────────────
 
 
 async def test_every_decision_is_audited_with_a_policy_version(
     registry: ToolRegistry, database: Database
 ) -> None:
-    """**決定内容にかかわらず全件記録する。**"""
+    """**Records every entry regardless of the decision.**"""
     registry.register(SetExpressionTool(Recorder()))
     await registry.invoke("character.set_expression", context(), {"emotion": "happy"})
     await registry.invoke(
@@ -353,9 +356,9 @@ async def test_a_failing_tool_records_an_abort(registry: ToolRegistry, database:
 async def test_a_denied_call_leaves_no_lifecycle_events(
     registry: ToolRegistry, database: Database
 ) -> None:
-    """**Policy を通っていない操作に `INTENT_RECORDED` を書かない。**
+    """**`INTENT_RECORDED` is never written for an operation that never passed Policy.**
 
-    書いてしまうと、Crash Recovery が「実行しようとしていた」と誤読する。
+    Writing it would make Crash Recovery misread this as "it was about to execute."
     """
 
     class Elevated(SetExpressionTool):
@@ -376,7 +379,7 @@ async def test_a_denied_call_leaves_no_lifecycle_events(
     assert count == 0
 
 
-# ── ツールの露出 ────────────────────────────────────────────
+# ── Tool exposure ────────────────────────────────────────────
 
 
 def test_deferred_tools_are_hidden_from_the_llm(registry: ToolRegistry) -> None:
@@ -397,11 +400,11 @@ def test_exposed_tools_carry_their_schema(registry: ToolRegistry) -> None:
     assert "emotion" in exposed[0].input_schema["properties"]
 
 
-# ── Tool 側のドメイン検証 ─────────────────────────────────────
+# ── Domain validation on the Tool side ─────────────────────────────────────
 
 
 async def test_unknown_emotion_fails_loudly(registry: ToolRegistry) -> None:
-    """**黙って neutral にしない。**"""
+    """**Never silently falls back to neutral.**"""
     registry.register(SetExpressionTool(Recorder()))
     result = await registry.invoke("character.set_expression", context(), {"emotion": "ecstatic"})
     assert not result.ok
@@ -410,14 +413,14 @@ async def test_unknown_emotion_fails_loudly(registry: ToolRegistry) -> None:
 
 
 def test_security_scope_is_immutable() -> None:
-    """**検査した後に書き換わりうると、TOCTOU が成立する。**"""
+    """**If this could be rewritten after inspection, TOCTOU becomes possible.**"""
     scope = SecurityScope(lane=ScopeLane.CHARACTER, canonical=CHARACTER_SELF)
     with pytest.raises(AttributeError):
         scope.canonical = "character:someone_else"  # type: ignore[misc]
 
 
 def test_tool_cannot_report_its_own_provenance() -> None:
-    """`execute` の戻り値（`ToolOutcome`）に provenance のフィールドが無いこと。"""
+    """`execute`'s return value (`ToolOutcome`) has no provenance fields."""
     import dataclasses
 
     fields = {f.name for f in dataclasses.fields(ToolOutcome)}
@@ -426,7 +429,7 @@ def test_tool_cannot_report_its_own_provenance() -> None:
 
 
 async def test_scope_carries_the_parameters(registry: ToolRegistry) -> None:
-    """`execute` は `handle.scope` しか読まない（生入力を再解決しない）。"""
+    """`execute` only reads `handle.scope` (never re-resolves raw input)."""
     scope = CharacterCanonicalizer().canonicalize({"emotion": "sad", "intensity": 0.2})
     assert scope.canonical == CHARACTER_SELF
     assert scope.metadata == {"emotion": "sad", "intensity": 0.2}

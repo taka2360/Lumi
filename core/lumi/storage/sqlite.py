@@ -1,25 +1,28 @@
-"""SQLite 接続とマイグレーション。
+"""SQLite connection and migrations.
 
-**Phase 1 で持つのは DomainEvent の永続化だけ。** sqlite-vec / FTS5 / 記憶テーブルは Phase 2。
-先に作らない理由は、記憶のスキーマがプライバシー方針（docs/roadmap.md Phase 2 の 🔴）
-に依存し、方針を決める前に書くと作り直しになるため。
+**Phase 1 only persists DomainEvents.** sqlite-vec / FTS5 / memory tables are Phase 2.
+The reason they aren't built first is that the memory schema depends on the privacy
+policy (docs/roadmap.md Phase 2 🔴), and writing it before that policy is decided
+would mean rebuilding it later.
 
-## Phase 1 で永続化するもの / しないもの
+## What Phase 1 persists / doesn't persist
 
-| する | しない |
+| Persisted | Not persisted |
 |---|---|
-| Kernel の事実（Activity の開始・終了、Tool の3段記録、権限判断） | **発話の本文** |
+| Kernel facts (Activity start/end, the Tool's three-stage recording, permission decisions) | **Utterance text** |
 
-**DomainEvent の payload に発話テキストを入れない。** Phase 1 の Working Memory は
-セッション内のメモリ上にあり、会話の永続化は Phase 2（`contracts/privacy.md` を書いてから）
-始める。ここで先に本文を書き始めると、方針が決まる前に「消し方の分からないログ」が育つ。
+**Utterance text is never put into a DomainEvent's payload.** Phase 1's Working Memory
+lives in in-session memory only; persisting conversation starts in Phase 2 (after
+`contracts/privacy.md` is written). Starting to write utterance text here first would
+grow "a log nobody knows how to delete" before the policy is even decided.
 
-## トランザクション
+## Transactions
 
-`isolation_level=None`（autocommit）にして、**`BEGIN IMMEDIATE` を明示する。**
-Python の暗黙トランザクションは DDL や SELECT の扱いが直感と違い、
-「採番と永続化を同一トランザクションで」（docs/contracts/event-model.md）を
-守れているかがコードから読めなくなる。
+Set to `isolation_level=None` (autocommit), with **`BEGIN IMMEDIATE` made explicit.**
+Python's implicit transaction handling treats DDL and SELECT in ways that don't match
+intuition, and it becomes impossible to tell from the code whether "numbering and
+persistence happen in the same transaction" (docs/contracts/event-model.md) is
+actually honored.
 """
 
 from __future__ import annotations
@@ -35,10 +38,10 @@ from lumi import logging as lumi_logging
 
 log = lumi_logging.get_logger(__name__)
 
-#: このスキーマ版。マイグレーションを足したら **`_MIGRATIONS` の長さと一致する**。
+#: The current schema version. When a migration is added, **this must match `_MIGRATIONS`'s length**.
 SCHEMA_VERSION: Final = 2
 
-#: index 0 を適用するとスキーマ版 1 になる。**既存の要素を書き換えない**（追記のみ）。
+#: Applying index 0 produces schema version 1. **Existing entries are never rewritten** (append-only).
 _MIGRATIONS: Final[tuple[tuple[str, ...], ...]] = (
     (
         """
@@ -58,9 +61,9 @@ _MIGRATIONS: Final[tuple[tuple[str, ...], ...]] = (
         "CREATE INDEX events_by_correlation ON events (correlation_id)",
     ),
     (
-        # 監査ログ。**append-only**（docs/architecture/permission.md §7）。
-        # `prev_hash` / `record_hash` は Phase 4a でマイグレーションとして足す。
-        # 今入れないのは、**使わない列を「将来のために」置かない**ため。
+        # The audit log. **append-only** (docs/architecture/permission.md §7).
+        # `prev_hash` / `record_hash` are added as a migration in Phase 4a.
+        # They aren't added now because **an unused column is never added "for the future."**
         """
         CREATE TABLE audit_log (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -90,15 +93,15 @@ _MIGRATIONS: Final[tuple[tuple[str, ...], ...]] = (
 
 
 class StorageError(RuntimeError):
-    """DB を開けない / スキーマが想定より新しい。**黙って劣化しない。**"""
+    """The DB can't be opened / its schema is newer than expected. **Never silently degrades.**"""
 
 
 class Database:
-    """1本の接続。**書き込みはプロセス内で直列化する。**
+    """A single connection. **Writes are serialized within the process.**
 
-    `check_same_thread=False` にしているのは、ブロッキング I/O を
-    `asyncio.to_thread` に逃がす（イベントループを止めない）ため。
-    その代わり、同時に触られないことを自前のロックで保証する。
+    `check_same_thread=False` is set so blocking I/O can be offloaded to
+    `asyncio.to_thread` (never blocking the event loop). In exchange, a lock
+    guarantees it is never touched concurrently.
     """
 
     __slots__ = ("_conn", "_lock")
@@ -109,7 +112,7 @@ class Database:
 
     @classmethod
     def open(cls, path: Path | str) -> Database:
-        """開いてマイグレーションを適用する。`":memory:"` を渡せばテスト用。"""
+        """Opens the connection and applies migrations. Pass `":memory:"` for testing."""
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         try:
@@ -119,7 +122,7 @@ class Database:
 
         connection.execute("PRAGMA foreign_keys = ON")
         if path != ":memory:":
-            # WAL は :memory: では効かない（エラーにもならない）。
+            # WAL has no effect on `:memory:` (and doesn't error either).
             connection.execute("PRAGMA journal_mode = WAL")
 
         database = cls(connection)
@@ -128,10 +131,11 @@ class Database:
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
-        """`BEGIN IMMEDIATE` 〜 `COMMIT`。失敗したら `ROLLBACK`。
+        """`BEGIN IMMEDIATE` through `COMMIT`. `ROLLBACK` on failure.
 
-        `IMMEDIATE` にするのは、書き込みロックを最初に取るため。
-        遅延取得だと、採番の SELECT と INSERT の間に他の writer が入りうる。
+        `IMMEDIATE` is used to acquire the write lock up front.
+        With lazy acquisition, another writer could slip in between the numbering
+        SELECT and the INSERT.
         """
         with self._lock:
             self._conn.execute("BEGIN IMMEDIATE")
@@ -143,14 +147,14 @@ class Database:
             self._conn.execute("COMMIT")
 
     def migrate(self) -> None:
-        """未適用のマイグレーションを順に当てる。**下げる経路は作らない。**"""
+        """Applies unapplied migrations in order. **No downgrade path exists.**"""
         with self.transaction() as conn:
             conn.execute("CREATE TABLE IF NOT EXISTS _schema_version (version INTEGER NOT NULL)")
             row = conn.execute("SELECT version FROM _schema_version").fetchone()
             current = int(row[0]) if row else 0
 
             if current > SCHEMA_VERSION:
-                # 新しい Lumi が作った DB を古い Lumi で開いた。**推測で動かさない。**
+                # A newer Lumi's DB was opened by an older Lumi. **Never guess and proceed anyway.**
                 raise StorageError(
                     f"DB のスキーマ版 {current} がこの Lumi ({SCHEMA_VERSION}) より新しい"
                 )

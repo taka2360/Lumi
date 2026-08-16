@@ -1,9 +1,11 @@
 /**
- * 座標変換 — **純粋関数**。Shell の実装に依存しないのでそのままテストできる。
+ * Coordinate conversion — **pure functions**. Independent of Shell's
+ * implementation, so it's directly testable.
  *
- * Shell は物理ピクセルで考える（OS のカーソル座標が物理ピクセルだから）。
- * WebView は CSS ピクセルで考える。**変換をここ1箇所に閉じ込める。**
- * 散らすと、混在 DPI のマルチモニタ（未確定事項 #15）で必ず壊れる。
+ * Shell thinks in physical pixels (because the OS's cursor coordinates are
+ * physical pixels). The WebView thinks in CSS pixels. **The conversion is
+ * confined to this one place.** Scattering it would inevitably break on a
+ * mixed-DPI multi-monitor setup (open item #15).
  */
 
 import type { HitRect } from "./PlatformShell";
@@ -15,7 +17,7 @@ export interface CssRect {
   height: number;
 }
 
-/** CSS ピクセルの矩形を、ウィンドウのクライアント座標系の物理ピクセルに変換する。 */
+/** Converts a CSS-pixel rectangle into physical pixels in the window's client coordinate system. */
 export function toPhysicalRect(rect: CssRect, devicePixelRatio: number): HitRect {
   return {
     x: rect.x * devicePixelRatio,
@@ -26,10 +28,10 @@ export function toPhysicalRect(rect: CssRect, devicePixelRatio: number): HitRect
 }
 
 /**
- * 当たり判定に使う矩形へ整える。
+ * Prepares rectangles for use as the hit region.
  *
- * - 面積ゼロの矩形は落とす（Shell 側で判定不能な入力を送らない）
- * - 負のサイズは落とす（`getBoundingClientRect` は返さないが、算出値は返しうる）
+ * - Drops zero-area rectangles (never sends input the Shell side can't judge)
+ * - Drops negative sizes (`getBoundingClientRect` never returns these, but a computed value could)
  */
 export function normalizeHitRects(rects: CssRect[], devicePixelRatio: number): HitRect[] {
   return rects

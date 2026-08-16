@@ -1,5 +1,5 @@
-/* クレジットは**通常のウィンドウ**。Stage と違って背景を塗る（透過ではない）。
-   長い文書なので、読めることだけを優先する。 */
+/* Credits is a **normal window.** Unlike the Stage, it paints a background (not transparent).
+   It's a long document, so readability is the only priority. */
 :root {
   color-scheme: light dark;
   --credits-bg: #ffffff;
@@ -69,7 +69,7 @@ body {
   margin: 4px 0;
   color: var(--credits-muted);
   font-size: 13px;
-  /* URL や長い条件文で横スクロールが出ないようにする。 */
+  /* Keeps a URL or a long license clause from causing horizontal scroll. */
   overflow-wrap: anywhere;
 }
 
@@ -106,8 +106,8 @@ body {
   font-weight: 600;
 }
 
-/* ライセンス全文は**折り返して全部見せる**。省略や高さ固定をしない
-   （読めない状態で置くのは、載せていないのと同じ）。 */
+/* The full license text **wraps and shows everything.** Never truncated or
+   height-clamped (leaving it unreadable is the same as not including it at all). */
 .credits__text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;

@@ -1,21 +1,23 @@
-"""faster-whisper（CTranslate2, int8）。**torch に依存しない**（R1）。
+"""faster-whisper (CTranslate2, int8). **Does not depend on torch** (R1).
 
-決定 → ADR-023 / 設計 → docs/interfaces/provider.md
+Decision → ADR-023 / Design → docs/interfaces/provider.md
 
-## ライブラリの自動ダウンロードを止める
+## Stopping the library's automatic download
 
-`WhisperModel("small")` は、モデルがキャッシュに無ければ **黙って Hugging Face から
-取りに行く。** ユーザーは何も選んでいないし、進捗も出ないし、失敗理由も Lumi の語彙にならない。
+`WhisperModel("small")`, if the model isn't cached, **silently fetches it from Hugging
+Face.** The user hasn't chosen anything, no progress is shown, and the failure reason
+never enters Lumi's vocabulary.
 
-ADR-019 で決めた「同意なしに外部へ取りに行かない」が、**ライブラリの既定値によって
-迂回される。** そこで `local_files_only=True` を固定し、**無ければ明示的に失敗させる。**
-取得は Lumi のセットアップ経路（ピン留め + SHA-256 + ロールバック）に一本化する。
+ADR-019's decision — "never fetch externally without consent" — **gets bypassed by the
+library's default.** So `local_files_only=True` is pinned, and **failure is explicit
+when the model is missing.** Fetching is consolidated into Lumi's own setup path
+(pinning + SHA-256 + rollback).
 
-## import を遅らせる理由
+## Why the import is deferred
 
-`faster_whisper` の import は `ctranslate2` / `onnxruntime` / `tokenizers` を引き込み、
-**起動が目に見えて遅くなる。** 音声入力を使わない起動（TTS だけ、あるいはデバイスが無い）
-でその代償を払う必要はない。
+Importing `faster_whisper` pulls in `ctranslate2` / `onnxruntime` / `tokenizers`, and
+**visibly slows startup.** A startup that doesn't use voice input (TTS-only, or no
+device) shouldn't have to pay that cost.
 """
 
 from __future__ import annotations
@@ -38,16 +40,16 @@ from lumi.providers.stt.base import AudioBuffer, Segment, Transcription
 
 log = lumi_logging.get_logger(__name__)
 
-#: **CPU / int8。** GPU は LLM に全振りする（DESIGN.md §7）
+#: **CPU / int8.** The GPU is dedicated entirely to the LLM (DESIGN.md §7)
 DEFAULT_COMPUTE_TYPE: Final = "int8"
 DEFAULT_DEVICE: Final = "cpu"
 
-#: 実測して調整する〔Provisional〕。SLO は p50 0.22 s（docs/architecture/audio.md §7）
+#: Tuned after measurement [Provisional]. SLO is p50 0.22 s (docs/architecture/audio.md §7)
 DEFAULT_BEAM_SIZE: Final = 1
 
 
 class FasterWhisperProvider:
-    """`STTProvider` の実装。"""
+    """Implementation of `STTProvider`."""
 
     kind = ProviderKind.STT
 
@@ -71,7 +73,7 @@ class FasterWhisperProvider:
         self._model: Any | None = None
 
     async def load(self) -> None:
-        """**冪等。** モデルが無ければ `ProviderNotConfigured`（取りに行かない）。"""
+        """**Idempotent.** Raises `ProviderNotConfigured` if the model is missing (never fetches it)."""
         if self._model is not None:
             return
 
@@ -83,7 +85,7 @@ class FasterWhisperProvider:
     def _build(self) -> Any:
         try:
             from faster_whisper import WhisperModel
-        except ImportError as error:  # pragma: no cover - 依存が入っていれば起きない
+        except ImportError as error:  # pragma: no cover - never happens if the dependency is installed
             raise ProviderNotConfigured("faster_whisper_missing", str(error)) from error
 
         try:
@@ -92,11 +94,11 @@ class FasterWhisperProvider:
                 device=self._device,
                 compute_type=self._compute_type,
                 download_root=str(self._model_dir),
-                # ★ **ここが ADR-023 の実装。** 無ければ落ちる
+                # * **This is ADR-023's implementation.** Fails if missing
                 local_files_only=True,
             )
         except Exception as error:
-            # ライブラリは種々の例外を投げる。**「モデルが無い」に翻訳して返す**
+            # The library raises various exceptions. **Translated into "model missing" here**
             raise ProviderNotConfigured(
                 "model_missing",
                 f"{self._size} が {self._model_dir} に無い（セットアップで取得してください）",
@@ -111,11 +113,11 @@ class FasterWhisperProvider:
     async def transcribe(
         self, audio: AudioBuffer, language: str | None, cancel_token: CancelToken
     ) -> Transcription:
-        """**推論はスレッドに逃がす**（イベントループを止めない）。
+        """**Inference is offloaded to a thread** (never blocks the event loop).
 
-        契約は `cooperative` だが、**1回の `transcribe` は分割できない。**
-        できるのは「始める前に諦める」ことと、結果を捨てることだけ。
-        呼び出し側（Reactive Loop）は結果を捨てる側で barge-in を成立させる。
+        The contract is `cooperative`, but **a single `transcribe` call can't be split.**
+        All that's possible is "give up before starting" or discarding the result.
+        The caller (Reactive Loop) makes barge-in work by discarding the result.
         """
         if self._model is None:
             raise ProviderNotConfigured("not_loaded", "load() されていない")
@@ -132,7 +134,7 @@ class FasterWhisperProvider:
             segments, info = self._model.transcribe(
                 audio, language=language, beam_size=self._beam_size
             )
-            # faster-whisper のセグメントは遅延評価。**ここで確定させる**
+            # faster-whisper's segments are lazily evaluated. **Materialized here**
             collected = [
                 Segment(start_s=float(s.start), end_s=float(s.end), text=str(s.text))
                 for s in segments

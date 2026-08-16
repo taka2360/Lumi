@@ -1,6 +1,6 @@
-"""`<|ACT|>` マーカー。**docs/architecture/agent.md テスト9**（音声化テキストから除去される）。
+"""The `<|ACT|>` marker. **docs/architecture/agent.md test 9** (stripped from spoken text).
 
-読み上げてしまうと台無しになるので、**判定は保守的に**（怪しければ喋らない）。
+Reading it aloud would ruin things, so **the check errs conservative** (when in doubt, don't speak it).
 """
 
 from __future__ import annotations
@@ -10,13 +10,13 @@ from lumi.character import Emotion
 
 
 def speak(stream: MarkerStream, *chunks: str) -> str:
-    """チャンク列を食わせて、**読み上げられるテキスト**だけを返す。"""
+    """Feeds a sequence of chunks and returns only **the text that gets spoken**."""
     parts = [stream.feed(chunk).text for chunk in chunks]
     parts.append(stream.flush())
     return "".join(parts)
 
 
-# ── 除去 ────────────────────────────────────────────────────
+# ── Stripping ────────────────────────────────────────────────────
 
 
 def test_a_marker_is_removed_from_speech() -> None:
@@ -32,19 +32,19 @@ def test_the_marker_becomes_an_intent() -> None:
 
 
 def test_a_marker_split_across_chunks_is_still_removed() -> None:
-    """**チャンク境界を跨ぐのは普通に起きる。** 留めないと途中まで喋ってしまう。"""
+    """**Spanning a chunk boundary happens normally.** Without holding it back, part of it would get spoken."""
     stream = MarkerStream()
     assert speak(stream, 'うれ<|ACT {"emo', 'tion":"happy"}|>しい') == "うれしい"
 
 
 def test_the_opening_bracket_is_held_back() -> None:
-    """`<|AC` までしか来ていない時点で、それを喋らない。"""
+    """Never spoken while only `<|AC` has arrived so far."""
     stream = MarkerStream()
     assert stream.feed("こんにちは<|AC").text == "こんにちは"
 
 
 def test_a_bare_less_than_is_still_spoken() -> None:
-    """マーカーでない `<` を飲み込まない。"""
+    """A `<` that isn't a marker is never swallowed."""
     stream = MarkerStream()
     assert speak(stream, "3 < 5 だよ") == "3 < 5 だよ"
 
@@ -56,26 +56,27 @@ def test_several_markers_in_one_stream() -> None:
     assert [i.emotion for i in chunk.intents] == [Emotion.HAPPY, Emotion.SAD]
 
 
-# ── 失敗したら落とす ────────────────────────────────────────
+# ── Drop on failure ────────────────────────────────────────
 
 
 def test_broken_json_drops_the_whole_marker() -> None:
-    """**中途半端に読ませない。** マーカーごと落とす。"""
+    """**Never reads it half-parsed.** Drops the whole marker."""
     stream = MarkerStream()
     assert speak(stream, "ねえ<|ACT {emotion:happy}|>きいて") == "ねえきいて"
 
 
 def test_an_unterminated_marker_is_not_spoken() -> None:
-    """ストリームが途中で終わった。**「たぶんテキストだろう」で読み上げない。**"""
+    """The stream ended mid-marker. **Never read aloud on the assumption "it's probably just text."**"""
     stream = MarkerStream()
     assert speak(stream, 'おわり<|ACT {"emotion"') == "おわり"
 
 
 def test_an_unknown_emotion_is_dropped() -> None:
-    """**型に無いものを線に乗せない。**
+    """**Never puts something onto the wire that isn't in the type.**
 
-    renderer.md の「未知の emotion はフォールバック」は、`Emotion` にはあるが
-    そのモデルに表現手段が無い場合の話であって、ここの話ではない。
+    renderer.md's "unknown emotion falls back" refers to the case where the emotion
+    exists in `Emotion` but the model has no way to express it — not what's being
+    tested here.
     """
     assert parse_marker('{"emotion":"ecstatic"}') is None
 
@@ -88,11 +89,11 @@ def test_a_missing_emotion_is_dropped() -> None:
     assert parse_marker('{"intensity":0.5}') is None
 
 
-# ── 壊れた値は丸める ────────────────────────────────────────
+# ── Clamping malformed values ────────────────────────────────────────
 
 
 def test_an_out_of_range_intensity_is_clamped() -> None:
-    """**強度がおかしいだけで表情を失う理由が無い。**"""
+    """**No reason to lose an expression just because the intensity is off.**"""
     intent = parse_marker('{"emotion":"angry","intensity":5}')
     assert intent is not None
     assert intent.intensity == 1.0
@@ -111,7 +112,7 @@ def test_a_negative_duration_is_treated_as_absent() -> None:
 
 
 def test_a_boolean_is_not_a_number() -> None:
-    """`True` は `int` の部分型である。**ここで弾かないと intensity=1.0 になる。**"""
+    """`True` is a subtype of `int`. **Without rejecting it here, intensity would become 1.0.**"""
     intent = parse_marker('{"emotion":"happy","intensity":true}')
     assert intent is not None
     assert intent.intensity == 0.7

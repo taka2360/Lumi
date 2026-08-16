@@ -1,8 +1,8 @@
-"""Attention Arbiter。
+"""Attention Arbiter.
 
-**docs/contracts/state-machines.md テスト 1〜3c / 5 / 10。**
-**docs/architecture/agent.md テスト 1〜4e。**
-すべて **LLM を呼ばずに**テストできる。
+**docs/contracts/state-machines.md tests 1-3c / 5 / 10.**
+**docs/architecture/agent.md tests 1-4e.**
+All of it testable **without calling an LLM**.
 """
 
 from __future__ import annotations
@@ -65,7 +65,7 @@ def autonomous(intent: str = "small_talk") -> ActivityProposal:
 
 
 async def settle(instance: AttentionArbiter) -> None:
-    """背景の後始末タスクを待つ。**本番では待たない**（待つと barge-in が遅れる）。"""
+    """Waits for the background cleanup task. **Never waited for in production** (waiting would delay barge-in)."""
     if instance._pending:
         await asyncio.gather(*list(instance._pending))
 
@@ -76,7 +76,7 @@ def running_count(instance: AttentionArbiter) -> int:
     )
 
 
-# ── foreground の不変条件 ────────────────────────────────────
+# ── foreground invariants ────────────────────────────────────
 
 
 async def test_current_returns_idle_after_start(arbiter: AttentionArbiter) -> None:
@@ -94,7 +94,7 @@ def test_current_before_start_is_an_error(database: Database) -> None:
 async def test_exactly_one_running_activity_through_a_preempt(
     arbiter: AttentionArbiter,
 ) -> None:
-    """**Invariant 4。** preempt の途中でも `running` は1つ。"""
+    """**Invariant 4.** `running` stays at exactly one even mid-preempt."""
     assert running_count(arbiter) == 1
 
     first = await arbiter.propose(user_speech())
@@ -104,7 +104,7 @@ async def test_exactly_one_running_activity_through_a_preempt(
 
     second = await arbiter.propose(user_speech())
     assert isinstance(second, Accepted)
-    # 旧はまだ background で cancelling。ここが「窓が開いている」瞬間
+    # The old one is still cancelling in the background. This is the "window is open" instant
     assert running_count(arbiter) == 1
     assert arbiter.current().id == second.activity.id
     assert arbiter.get(first.activity.id).state is ActivityState.CANCELLING
@@ -141,7 +141,7 @@ async def test_failed_activity_ends_as_failed(arbiter: AttentionArbiter) -> None
     assert arbiter.get(accepted.activity.id).state is ActivityState.FAILED
 
 
-# ── 提案の判定 ──────────────────────────────────────────────
+# ── Proposal decisions ──────────────────────────────────────────────
 
 
 async def test_autonomous_is_accepted_while_idle(arbiter: AttentionArbiter) -> None:
@@ -184,7 +184,7 @@ async def test_user_speech_preempts_an_autonomous_activity(arbiter: AttentionArb
 
 
 async def test_deferred_proposals_are_deduplicated(arbiter: AttentionArbiter) -> None:
-    """**同一 kind × intent は1件**（新しい方で置換）。"""
+    """**One entry per identical kind × intent** (replaced by the newer one)."""
     await arbiter.propose(user_speech())
     await arbiter.propose(autonomous("same"))
     await arbiter.propose(autonomous("same"))
@@ -192,7 +192,7 @@ async def test_deferred_proposals_are_deduplicated(arbiter: AttentionArbiter) ->
 
 
 async def test_deferred_proposals_expire(database: Database) -> None:
-    """**30分前に話しかけたかったことを今実行されるのは不気味である。**"""
+    """**Executing something Lumi wanted to say 30 minutes ago, right now, would be unsettling.**"""
     now = datetime(2026, 8, 16, 12, 0, tzinfo=UTC)
     clock = lambda: now  # noqa: E731
     instance = AttentionArbiter(
@@ -214,11 +214,11 @@ async def test_deferred_proposals_are_returned_while_fresh(database: Database) -
     await instance.propose(user_speech())
     await instance.propose(autonomous())
     assert len(instance.take_deferred()) == 1
-    # 取り出したら消える（呼び出し側が改めて propose する）
+    # Disappears once retrieved (the caller calls propose() again itself)
     assert instance.deferred_count == 0
 
 
-# ── 中断 ────────────────────────────────────────────────
+# ── Interruption ────────────────────────────────────────────────
 
 
 async def test_interrupting_idle_is_a_no_op(arbiter: AttentionArbiter) -> None:
@@ -248,7 +248,7 @@ async def test_interrupt_stops_a_cooperative_child(arbiter: AttentionArbiter) ->
 
 
 async def test_interrupt_kills_a_hard_child(arbiter: AttentionArbiter) -> None:
-    """**TTS 再生の停止は `hard`。** barge-in の生命線。"""
+    """**Stopping TTS playback is `hard`.** The lifeline of barge-in."""
     killed: list[str] = []
 
     async def kill() -> None:
@@ -270,7 +270,7 @@ async def test_interrupt_kills_a_hard_child(arbiter: AttentionArbiter) -> None:
 async def test_non_cancellable_child_makes_the_activity_abandoned(
     arbiter: AttentionArbiter,
 ) -> None:
-    """**`abandoned` は正当な状態。** その結果は Lumi の文脈に入らない。"""
+    """**`abandoned` is a legitimate state.** Its result never enters Lumi's context."""
     accepted = await arbiter.propose(user_speech())
     assert isinstance(accepted, Accepted)
     accepted.activity.cancellables.append(
@@ -286,7 +286,7 @@ async def test_non_cancellable_child_makes_the_activity_abandoned(
 async def test_cooperative_child_that_never_stops_is_abandoned(
     arbiter: AttentionArbiter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**待ち続けて barge-in を壊すより、切り離す。** 契約違反なので警告は出す。"""
+    """**Detached rather than waiting forever and breaking barge-in.** A warning is logged since it's a contract violation."""
     monkeypatch.setattr(arbiter_module, "COOPERATIVE_GRACE_S", 0.01)
     accepted = await arbiter.propose(user_speech())
     assert isinstance(accepted, Accepted)
@@ -301,7 +301,7 @@ async def test_cooperative_child_that_never_stops_is_abandoned(
 
 
 async def test_hard_child_that_fails_to_die_is_abandoned(arbiter: AttentionArbiter) -> None:
-    """**止まったことにしない。**"""
+    """**Never treated as if it stopped.**"""
 
     async def kill() -> None:
         raise RuntimeError("kill failed")
@@ -325,24 +325,24 @@ async def test_interrupt_returns_to_idle(arbiter: AttentionArbiter) -> None:
     assert arbiter.current().state is ActivityState.RUNNING
 
 
-# ── Job と inference_lease ─────────────────────────────────
+# ── Job and inference_lease ─────────────────────────────────
 
 
 async def test_job_does_not_take_the_foreground(arbiter: AttentionArbiter) -> None:
-    """**Job は foreground を取らない**（ADR-018）。lease を取っても current は idle のまま。"""
+    """**A Job never takes foreground** (ADR-018). `current` stays idle even while holding a lease."""
     job = Job(id=new_job_id(), kind=JobKind.REFLECTION, cancellation=Cancellation.COOPERATIVE)
     async with arbiter.inference_lease(job):
         assert arbiter.current().kind is ActivityKind.IDLE
 
 
 def test_job_actor_is_always_system() -> None:
-    """`system` 固定 → **L0 のツールしか使えない。**"""
+    """Fixed to `system` → **only L0 tools are usable.**"""
     job = Job(id=new_job_id(), kind=JobKind.REFLECTION, cancellation=Cancellation.COOPERATIVE)
     assert job.actor is Actor.SYSTEM
 
 
 async def test_foreground_inference_revokes_the_job_lease(arbiter: AttentionArbiter) -> None:
-    """**これが無いと Reflection が会話の初トークンを待たせ、SLO を直撃する。**"""
+    """**Without this, Reflection would delay the conversation's first token, hitting the SLO directly.**"""
     job = Job(
         id=new_job_id(),
         kind=JobKind.REFLECTION,
@@ -360,7 +360,7 @@ async def test_foreground_inference_revokes_the_job_lease(arbiter: AttentionArbi
 
 
 async def test_background_activity_cannot_revoke_a_lease(arbiter: AttentionArbiter) -> None:
-    """foreground でない Activity からの要求は無視する。"""
+    """A request from a non-foreground Activity is ignored."""
     job = Job(
         id=new_job_id(),
         kind=JobKind.REFLECTION,
@@ -369,7 +369,7 @@ async def test_background_activity_cannot_revoke_a_lease(arbiter: AttentionArbit
     )
     first = await arbiter.propose(user_speech())
     assert isinstance(first, Accepted)
-    await arbiter.propose(user_speech())  # first は background に落ちる
+    await arbiter.propose(user_speech())  # first falls to background
     await settle(arbiter)
 
     async with arbiter.inference_lease(job) as lease:
@@ -390,6 +390,6 @@ async def test_lease_is_released_on_exit(arbiter: AttentionArbiter) -> None:
     async with arbiter.inference_lease(job):
         pass
 
-    # 抜けた後の要求は、もう誰の lease も revoke しない
+    # A request after exiting no longer revokes anyone's lease
     arbiter.request_inference(accepted.activity.id)
     assert not job.cancel_token.is_set

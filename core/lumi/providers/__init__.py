@@ -1,6 +1,6 @@
-"""Provider（LLM / STT / TTS / Embedding / Vision）。
+"""Providers (LLM / STT / TTS / Embedding / Vision).
 
-`Provider` protocol そのものは Phase 1 で定義する（docs/interfaces/provider.md）。
-Phase 0 に居るのは TTS の実体だけで、まだ抽象化していない。
-**使う前に抽象を作らない**（設計原則7）。
+The `Provider` protocol itself is defined in Phase 1 (docs/interfaces/provider.md).
+Phase 0 only has the TTS implementation, not yet abstracted.
+**Don't build the abstraction before it's needed** (design principle 7).
 """

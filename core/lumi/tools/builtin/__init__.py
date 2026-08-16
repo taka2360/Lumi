@@ -1,5 +1,6 @@
-"""in-core built-in Tool（Class A）。
+"""in-core built-in Tools (Class A).
 
-**「能力を Core に置いた」のではない。** Kernel 実行契約（bind → verify → execute）が
-in-core でしか成立しないため（ADR-017）。第三者コードではないので隔離の動機も無い。
+**This isn't "putting a capability into Core."** It's here because the Kernel
+execution contract (bind → verify → execute) only holds in-core (ADR-017). Since this
+isn't third-party code, there's no motivation to isolate it either.
 """

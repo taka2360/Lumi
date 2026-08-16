@@ -1,25 +1,27 @@
-"""Reactive Loop — 話しかけられたら答える。
+"""Reactive Loop — responds when spoken to.
 
-設計 → docs/architecture/agent.md §3
+Design → docs/architecture/agent.md §3
 
 ```
-speech-end → STT → Activity 提案 → 記憶検索（Phase 1 は 0件）→ PromptAssembly
-  → LLM stream ─┬→ text  → マーカー除去 → 文分割 → TTS → 再生 → リップシンク
-                ├→ <|ACT|> → ToolRegistry.invoke（表情）
-                └→ tool call → Kernel 実行契約 → ContextBlock（untrusted）→ 再投入
+speech-end → STT → Activity proposal → memory search (0 results in Phase 1) → PromptAssembly
+  → LLM stream ─┬→ text  → strip markers → sentence split → TTS → playback → lip sync
+                ├→ <|ACT|> → ToolRegistry.invoke (expression)
+                └→ tool call → Kernel execution contract → ContextBlock (untrusted) → re-fed
 ```
 
-## barge-in はここでは起こさない
+## barge-in does not happen here
 
-**「音が止まる」は VAD スレッドが同期的に行う**（`mute_flag`）。
-**「Activity が止まる」は `arbiter.interrupt()`** であり、その入口は `on_speech_started()`。
-このループは、止められる側として `cancel_token` と `Cancellable` を正しく提供する責任だけを負う。
+**"Sound stopping" is done synchronously by the VAD thread** (`mute_flag`).
+**"Activity stopping" is `arbiter.interrupt()`**, entered through `on_speech_started()`.
+This loop's only responsibility is to correctly offer `cancel_token` and `Cancellable` as
+the thing that gets stopped.
 
-## 表情マーカーも `invoke` を通る
+## Expression markers go through `invoke` too
 
-インラインマーカーは LLM が生成した「Stage を変えろ」という指示である。
-**LLM 由来の作用が Kernel を経由しない経路を作らない**（Invariant 2）。
-`character.set_expression` は L0 なので実質素通りするが、**経路は本番と同じ**。
+Inline markers are the LLM's generated instruction to "change the Stage."
+**Never create a path where an LLM-originated effect bypasses the Kernel** (Invariant 2).
+`character.set_expression` is L0, so it effectively passes straight through, but **the
+path is the same as production.**
 """
 
 from __future__ import annotations
@@ -63,21 +65,21 @@ from lumi.tools.registry import ToolRegistry
 
 log = lumi_logging.get_logger(__name__)
 
-#: STT に渡す言語。Phase 1 は日本語固定〔Provisional〕
+#: Language passed to STT. Fixed to Japanese in Phase 1 [Provisional]
 LANGUAGE: Final = "ja"
 
 
 @dataclass(frozen=True, slots=True)
 class LoopLimits:
-    """**上限は Activity が持つ**（docs/architecture/agent.md §3「ツールループ」）。"""
+    """**The limit belongs to the Activity** (docs/architecture/agent.md §3 "Tool loop")."""
 
     max_steps: int = 4
-    #: 1ターンの締切。**超えたら止める。** 無限に考え続けない
+    #: Deadline for one turn. **Stop once exceeded.** Never keep thinking forever
     turn_timeout_s: float = 60.0
 
 
 class ReactiveLoop:
-    """会話1本を回す。**Arbiter の下にいる**（自分で foreground を取らない）。"""
+    """Runs one conversation. **Lives under the Arbiter** (never takes foreground itself)."""
 
     __slots__ = (
         "_arbiter",
@@ -118,14 +120,14 @@ class ReactiveLoop:
     def session(self) -> Session:
         return self._session
 
-    # ── 入口 ──────────────────────────────────────────────
+    # ── Entry point ──────────────────────────────────────────────
 
     async def run(self) -> None:
-        """VAD イベントを引き取る。**asyncio 側の入口。**
+        """Consumes VAD events. **The entry point on the asyncio side.**
 
-        **1ターンは別タスクで走らせる。** ここで `await` すると、
-        喋っている最中に来る `SPEECH_STARTED`（＝ barge-in）を引き取れなくなる。
-        遮られたことに気づけないループは、barge-in を持っていないのと同じである。
+        **Each turn runs as a separate task.** `await`ing here would make it impossible
+        to pick up a `SPEECH_STARTED` (i.e. a barge-in) arriving while Lumi is speaking.
+        A loop that can't notice it was interrupted is the same as having no barge-in at all.
         """
         if self._audio is None or not self._audio.can_listen:
             log.warning("reactive.no_input")
@@ -141,7 +143,7 @@ class ReactiveLoop:
                 task.add_done_callback(turns.discard)
 
     async def on_speech_started(self) -> None:
-        """**barge-in。** 音はもう止まっている（VAD スレッド）。Activity を止める。"""
+        """**Barge-in.** The sound has already stopped (VAD thread). Stop the Activity."""
         result = await self._arbiter.interrupt("user_speech")
         log.info(
             "reactive.interrupted",
@@ -151,16 +153,17 @@ class ReactiveLoop:
         )
 
     async def on_speech_ended(self, audio: AudioBuffer) -> None:
-        """発話区間が確定した。**STT にかけてから Activity を提案する。**
+        """A speech segment was confirmed. **Run STT before proposing an Activity.**
 
-        提案の前に STT をするのは、**何も言っていなかった場合に Activity を作らないため**。
-        空の会話 Activity は idle を無駄に退避させ、Inspector を汚す。
+        STT happens before the proposal so that **no Activity gets created if nothing was
+        actually said**. An empty conversation Activity needlessly preempts idle and
+        clutters the Inspector.
         """
         try:
             stt: STTProvider = await self._get(ProviderKind.STT)
             transcription = await stt.transcribe(audio, LANGUAGE, CancelToken())
         except ProviderError as error:
-            # **黙って聞き流さない。** 何が足りないかはセットアップ状態が持っている
+            # **Don't silently ignore it.** What's missing is tracked by setup state
             log.warning("reactive.stt_failed", error=str(error))
             return
 
@@ -171,13 +174,13 @@ class ReactiveLoop:
         await self.handle_text(text)
 
     async def handle_text(self, text: str) -> None:
-        """テキスト入力からの1ターン。**音声経路と同じ道を通る。**"""
+        """One turn from text input. **Takes the same path as the voice route.**"""
         proposal = ActivityProposal(
             kind=ActivityKind.CONVERSATION,
             actor=Actor.USER_INITIATED,
             intent="reply",
             correlation_id=new_correlation_id(),
-            # **ユーザー発話は保留しない。** 後で蒸し返されても困る
+            # **A user utterance is never deferred.** Having it dredged up later would be problematic
             deferrable=False,
             deadline=datetime.now(UTC) + timedelta(seconds=self._limits.turn_timeout_s),
         )
@@ -191,19 +194,19 @@ class ReactiveLoop:
         try:
             await self._converse(activity, text)
         except ProviderError as error:
-            # **喋れなかったことを Activity の状態に残す**（黙って成功にしない）
+            # **Record in the Activity's state that it failed to speak** (never silently mark it a success)
             log.warning("reactive.turn_failed", error=str(error))
             failed = True
         finally:
             if self._arbiter.current().id == activity.id:
-                # 中断されていれば Arbiter が既に片付けている。二重遷移させない
+                # If it was interrupted, the Arbiter has already cleaned up. Don't double-transition
                 await self._arbiter.complete(activity.id, failed=failed)
 
-    # ── 1ターン ───────────────────────────────────────────
+    # ── One turn ───────────────────────────────────────────
 
     async def _converse(self, activity: Activity, text: str) -> None:
         started = time.perf_counter()
-        # **ここから先は遮られてよい。** 次の barge-in を受けられる状態に戻す
+        # **From here on, interruption is allowed.** Reset to a state that can accept the next barge-in
         if self._audio is not None:
             self._audio.resume_listening()
 
@@ -219,7 +222,7 @@ class ReactiveLoop:
             voice=self._voice(tts),
             cancel_token=activity.cancel_token,
         )
-        # **再生は `hard`。** バッファのミュートで即座に無音にできる
+        # **Playback is `hard`.** Muting the buffer silences it instantly
         speech = Cancellable(
             id=f"speech:{activity.id}",
             label="TTS 再生",
@@ -251,7 +254,7 @@ class ReactiveLoop:
         scheduler: PlaybackScheduler,
         blocks: list[ContextBlock],
     ) -> list[ToolCall]:
-        """1回の LLM ストリーム。**喋りながら**ツール呼び出しを集める。"""
+        """One LLM stream. **Collects tool calls while speaking.**"""
         prompt = assemble(persona=self._pack.persona, session=self._session, blocks=blocks)
 
         markers = MarkerStream()
@@ -266,7 +269,7 @@ class ReactiveLoop:
             activity.cancel_token,
         ):
             if activity.cancel_token.is_set:
-                # `cooperative`。**次のチェックポイントで止まる**
+                # `cooperative`. **Stops at the next checkpoint**
                 break
             match event:
                 case TextDelta(text=text):
@@ -277,15 +280,15 @@ class ReactiveLoop:
                     for sentence in sentences.feed(chunk.text):
                         scheduler.speak(sentence)
                 case ReasoningDelta():
-                    # **思考は音声化しない。** 吹き出しにも出さない（Inspector だけ）
+                    # **Reasoning is never spoken.** Not shown in the speech bubble either (Inspector only)
                     pass
                 case ToolCall():
                     calls.append(event)
                 case Finish():
                     pass
                 case LLMFailure(message=message):
-                    # 途中で壊れた。**もう喋ってしまった分と整合を取る必要がある**ので、
-                    # 例外にせずここで止める
+                    # Broke mid-stream. **What's already been spoken needs to stay
+                    # consistent**, so this stops here instead of raising an exception
                     log.warning("reactive.llm_failed", error=message)
 
         tail = markers.flush()
@@ -293,20 +296,20 @@ class ReactiveLoop:
         for sentence in [*sentences.feed(tail), *sentences.flush()]:
             scheduler.speak(sentence)
 
-        # **入力の join を継承する**（「LLM 出力だから常に tainted」ではない）
+        # **Inherits the join of the inputs** (not "always tainted because it's LLM output")
         self._session.record_lumi_turn("".join(spoken), prompt.context.effective_trust)
         return calls
 
-    # ── ツール ────────────────────────────────────────────
+    # ── Tools ────────────────────────────────────────────
 
     async def _run_tool(self, activity: Activity, call: ToolCall) -> ContextBlock:
         result = await self._tools.invoke(call.name, self._tool_context(activity), call.arguments)
-        # **ツール結果は untrusted。** session_trust は sticky に汚染される
+        # **Tool results are untrusted.** session_trust gets stickily tainted
         self._session.observe(result.trust_level)
         return _as_block(f"tool:{call.name}", result)
 
     async def _apply_expression(self, activity: Activity, intent: ExpressionIntent) -> None:
-        """マーカーも `invoke` を通す。**LLM 由来の作用にバイパスを作らない。**"""
+        """Markers also go through `invoke`. **No bypass for LLM-originated effects.**"""
         result = await self._tools.invoke(
             "character.set_expression",
             self._tool_context(activity),
@@ -321,7 +324,7 @@ class ReactiveLoop:
             actor=activity.actor,
             activity_id=activity.id,
             correlation_id=activity.correlation_id,
-            #: **Policy が見るのは実効 trust。** 3スコープの join を渡す
+            #: **What Policy looks at is effective trust.** Pass the join of the 3 scopes
             input_trust_level=self._session.context().effective_trust,
             deadline=activity.deadline,
         )
@@ -329,14 +332,14 @@ class ReactiveLoop:
     # ── Provider ──────────────────────────────────────────
 
     async def _get[T](self, kind: ProviderKind) -> T:
-        """`ProviderRegistry` は kind ごとに1つを返す。**未セットアップなら例外。**"""
+        """`ProviderRegistry` returns one per kind. **Raises if not set up.**"""
         return cast("T", await self._providers.get(kind))
 
     def _voice(self, tts: TTSProvider) -> VoiceConfig:
-        """Content Pack が話者を指定していなければ、**エンジンの既定に委ねる。**
+        """If the Content Pack doesn't specify a speaker, **defer to the engine's default.**
 
-        既定を Core が決め打たないのは、**入っているモデルが環境によって違う**ため
-        （AivisSpeech は実行時にモデルを取得する）。
+        Core doesn't hardcode a default because **which models are installed varies by
+        environment** (AivisSpeech fetches models at runtime).
         """
         speaker = self._pack.voice.speaker
         if speaker is not None:
@@ -347,16 +350,17 @@ class ReactiveLoop:
         return cast("VoiceConfig", default())
 
     def _require_playback(self) -> SpeakerPlayback:
-        """出力が無いなら**明示的に失敗する。** 黙って無音で会話しない。"""
+        """If there's no output, **fail explicitly.** Never silently converse in silence."""
         if self._audio is None or self._audio.playback is None:
             raise ProviderError("no_playback", "音声の出力先が無い")
         return self._audio.playback
 
 
 def _as_block(source: str, result: ToolResult) -> ContextBlock:
-    """`ToolResult` を ContextBlock に。**provenance は Registry が付けたものをそのまま使う。**
+    """Converts a `ToolResult` into a ContextBlock. **Uses the provenance the Registry
+    attached, unchanged.**
 
-    ここで作り直せてしまうと Invariant 7 の穴になる。
+    Reconstructing it here would open a hole in Invariant 7.
     """
     content = str(result.value) if result.ok else f"失敗: {result.error}"
     return ContextBlock(

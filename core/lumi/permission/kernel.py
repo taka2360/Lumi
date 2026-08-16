@@ -1,15 +1,15 @@
-"""Permission Kernel — **権限判断の唯一の所有者。**
+"""Permission Kernel — **the sole owner of permission decisions.**
 
-> **絶対原則: 権限判断は Core だけが行う。Extension・Stage・Shell・Tool・LLM は判断しない**
-> （Invariant 1, 2）。
+> **Absolute rule: only Core makes permission decisions. Extension, Stage, Shell,
+> Tool, and the LLM never decide** (Invariant 1, 2).
 
-設計 → docs/architecture/permission.md
+Design → docs/architecture/permission.md
 
-## PermissionKernel は Tool を知らない
+## PermissionKernel knows nothing about Tools
 
-引数で受け取るのは `PermissionSpec` と `SecurityScope` と文字列だけである。
-Kernel が個別ツールを知ると、**ツール追加のたびに Kernel が変わる**
-（docs/architecture/core.md §4 の禁止事項）。
+The only things it receives as arguments are `PermissionSpec`, `SecurityScope`, and
+strings. If the Kernel knew about individual tools, **the Kernel would change every
+time a tool is added** (a prohibition from docs/architecture/core.md §4).
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ log = lumi_logging.get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class Authorization:
-    """判断の結果。**監査に何を書いたかまで含めて返す**（Inspector と権限 UI が使う）。"""
+    """The result of a decision. **Returned along with what was written to the audit log** (used by the Inspector and the permission UI)."""
 
     decision: Decision
     rule_id: str
@@ -67,7 +67,7 @@ class PermissionKernel:
         raw_input_digest: str,
         args_digest: str,
     ) -> Authorization:
-        """`decide()` を通し、**決定内容にかかわらず監査に残す。**"""
+        """Runs through `decide()`, and **records it to the audit log regardless of the decision.**"""
         now = self._clock()
         grant = self._grants.find(spec.capability, scope, now)
         decision, rule_id = decide_with_rule(spec.risk, actor, effective_trust, grant)

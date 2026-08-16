@@ -1,4 +1,4 @@
-"""WS サーバの契約テスト。**LLM も外部エンジンも要らない。**"""
+"""Contract tests for the WS server. **Needs neither an LLM nor an external engine.**"""
 
 from __future__ import annotations
 
@@ -72,7 +72,7 @@ class TestAuthentication:
         await client.close()
 
     async def test_rejects_silence(self, server: WsServer, monkeypatch: pytest.MonkeyPatch) -> None:
-        """hello を送らない接続を掴み続けない。"""
+        """A connection that never sends hello isn't held open forever."""
         monkeypatch.setattr("lumi.transport.server.HELLO_TIMEOUT_S", 0.05)
         client = await connect(f"ws://127.0.0.1:{server.port}")
         with pytest.raises(ConnectionClosed):
@@ -104,7 +104,7 @@ class TestInvoke:
         await client.close()
 
     async def test_refuses_os_namespace_to_stage(self, server: WsServer) -> None:
-        """**`stage.*` は絶対に OS 特権を要求しない**（B2）。送信前に落とす。"""
+        """**`stage.*` must never request OS privileges** (B2). Rejected before sending."""
         client = await open_client(server, role="stage")
         await client.recv()
         await wait_until_connected(server, Role.STAGE)
@@ -123,14 +123,14 @@ class TestInvoke:
         await client.close()
 
     async def test_fails_loudly_when_not_connected(self, server: WsServer) -> None:
-        """**黙って劣化しない。** 相手が居ないことを例外で伝える。"""
+        """**Never silently degrades.** Reports that the peer is absent via an exception."""
         with pytest.raises(NotConnectedError):
             await server.invoke(Role.SHELL, "os.window.set_position", {})
 
 
 class TestClientMessages:
     async def test_client_cannot_send_commands(self, server: WsServer) -> None:
-        """クライアントから Core への command は受理しない。**接続ごと閉じる。**"""
+        """A `command` from the client to Core is never accepted. **The whole connection is closed.**"""
         client = await open_client(server)
         await client.recv()
         await client.send(
@@ -175,7 +175,7 @@ class TestToken:
 
 
 class TestRoleTokenIsolation:
-    """乗っ取られた Stage が shell として接続できないこと（B2 / B3）。"""
+    """A compromised Stage cannot authenticate as shell (B2 / B3)."""
 
     async def test_stage_token_cannot_authenticate_as_shell(self, server: WsServer) -> None:
         client = await open_client(server, role="shell", token=TOKENS[Role.STAGE])
@@ -204,7 +204,7 @@ class TestNotify:
         await client.close()
 
     async def test_dropped_silently_when_nobody_listens(self, server: WsServer) -> None:
-        """通知が届かないことは失敗ではない。**Core の進行を止めない。**"""
+        """A notification not arriving isn't a failure. **Never blocks Core's own progress.**"""
         await server.notify(Role.STAGE, "stage.setup.state", {})
 
     async def test_still_refuses_namespace_violations(self, server: WsServer) -> None:

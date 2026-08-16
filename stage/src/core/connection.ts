@@ -1,10 +1,11 @@
 /**
- * Core への WS 接続（Stage 側）。
+ * The WS connection to Core (Stage side).
  *
- * 接続先は Shell が `shell.core.endpoint` で教える（**Stage 用の token だけ**が渡ってくる）。
- * Core が再起動するとポートが変わるので、Shell からの通知で繋ぎ直す。
+ * Shell tells this where to connect via `shell.core.endpoint` (**only the
+ * Stage-specific token** is handed over). Core's port changes on restart, so a
+ * notification from Shell triggers a reconnect.
  *
- * **Stage はここで判断しない。** 受け取った `stage.*` をハンドラに渡すだけ。
+ * **The Stage never makes decisions here.** It just hands received `stage.*` off to handlers.
  */
 
 import { invoke } from "@tauri-apps/api/core";
@@ -13,11 +14,11 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { isTauri } from "../platform/tauri";
 import { type CoreMessage, helloMessage, parseCoreMessage, resultMessage } from "./protocol";
 
-/** 対応する Shell 側の定数は `shell/src-tauri/src/core_endpoint.rs`。**正は `wire.json`**（ADR-022）。 */
+/** The corresponding constant on the Shell side is `shell/src-tauri/src/core_endpoint.rs`. **`wire.json` is authoritative** (ADR-022). */
 export const CMD_CORE_ENDPOINT = "shell_core_endpoint";
 export const EVENT_CORE_ENDPOINT = "shell:core:endpoint";
 
-/** 再接続の待ち時間。Core の再起動を待てる程度に短く。 */
+/** Wait time before reconnecting. Short enough to wait out a Core restart. */
 const RECONNECT_DELAY_MS = 500;
 
 interface CoreEndpoint {
@@ -39,9 +40,10 @@ export interface CoreConnection {
 }
 
 /**
- * 接続を開始し、切れたら繋ぎ直し続ける。
+ * Starts the connection and keeps reconnecting if it drops.
  *
- * Tauri の外（ブラウザで開いたとき）では何もしない。**黙って壊れないため**に明示的に分岐する。
+ * Does nothing outside Tauri (when opened in a browser). Branches explicitly here
+ * **so it never silently breaks**.
  */
 export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection {
   if (!isTauri()) {
@@ -67,7 +69,7 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
 
     const handler = handlers.commands[message.method];
     if (!handler) {
-      // **知らない command は握りつぶさず、失敗として返す。**
+      // **An unknown command is never swallowed — it's returned as a failure.**
       socket?.send(resultMessage(message.id, false, {}, "unhandled_method"));
       return;
     }
@@ -95,7 +97,7 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
     }
     const endpoint = await invoke<CoreEndpoint | null>(CMD_CORE_ENDPOINT);
     if (closed || !endpoint) {
-      // Core がまだ listen していない。ポートが決まればイベントで起こされる。
+      // Core isn't listening yet. Woken by an event once the port is decided.
       return;
     }
 
@@ -124,7 +126,7 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
 
   void getCurrentWebviewWindow()
     .listen(EVENT_CORE_ENDPOINT, () => {
-      // ポートが変わった（Core が再起動した）。今の接続は捨てて繋ぎ直す。
+      // The port changed (Core restarted). Discard the current connection and reconnect.
       socket?.close();
       socket = null;
       void openSocket();

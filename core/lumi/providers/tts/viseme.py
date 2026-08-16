@@ -1,24 +1,26 @@
-"""リップシンクのタイムライン。**純粋関数**（HTTP もファイルも触らない）。
+"""Lip-sync timeline. **Pure functions** (touches neither HTTP nor files).
 
-設計 → docs/interfaces/renderer.md「生成方式」
+Design → docs/interfaces/renderer.md "Generation method"
 
-`audio_query` が返すモーラ列から、いつどの口の形にするかを組み立てる。
+Builds when to show which mouth shape from the mora sequence `audio_query` returns.
 
-**エンジンが音素長を返すとは限らない**〔2026-08-15 実測〕。
-AivisSpeech は `adjust_phoneme_length: false` であり、`audio_query` のモーラ長は
-**すべて 0.0** で返る（長さはモデルが合成時に決めるため）。VOICEVOX は返す。
+**The engine doesn't always return phoneme lengths** [observed 2026-08-15].
+AivisSpeech has `adjust_phoneme_length: false`, and `audio_query`'s mora lengths come
+back as **all 0.0** (the model decides the length during synthesis). VOICEVOX does
+return them.
 
-そこで:
+So:
 
-| エンジンが返すもの | 使うもの |
+| What the engine returns | What's used |
 |---|---|
-| 音素長がある（VOICEVOX） | **その値**。実際の発話と一致する |
-| 音素長が無い（AivisSpeech） | **モーラ列 + 合成された音声の長さ**から等分する |
+| Phoneme lengths present (VOICEVOX) | **Those values.** Matches the actual utterance |
+| No phoneme lengths (AivisSpeech) | **Divides evenly** from the mora sequence + the synthesized audio's length |
 
-どちらの場合も**口の形はモーラ列から決まる**。振幅からの推定と違い、母音を取り違えない。
+Either way, **the mouth shape is decided from the mora sequence.** Unlike an amplitude-
+based estimate, this never mistakes one vowel for another.
 
-型の置き場所: Phase 0 では TTS の隣に置く。Phase 1 で `ExpressionIntent` /
-`MotionIntent` を作るときに、Renderer への意図としてまとめて移す。
+Where the type lives: in Phase 0 it sits next to TTS. When `ExpressionIntent` /
+`MotionIntent` are built in Phase 1, it moves together as intent sent to the Renderer.
 """
 
 from __future__ import annotations
@@ -30,22 +32,22 @@ from typing import Any
 
 
 class Viseme(StrEnum):
-    """VRM の標準ビセーム（`aa` / `ih` / `ou` / `ee` / `oh`）に対応する。
+    """Corresponds to VRM's standard visemes (`aa` / `ih` / `ou` / `ee` / `oh`).
 
-    **ここが唯一の定義場所。** Renderer ごとに再定義しない
-    （AIRI は `Emotion` を4箇所に重複定義して壊れている）。
+    **This is the single source of definition.** Never redefine per Renderer
+    (AIRI is broken from defining `Emotion` redundantly in 4 places).
     """
 
     A = "A"
-    # 母音の名前なので `I` から変えない（`I_` にすると Stage 側の値と食い違う）。
+    # This is a vowel name, so it stays `I` (renaming to `I_` would mismatch the Stage-side value).
     I = "I"  # noqa: E741
     U = "U"
     E = "E"
     O = "O"  # noqa: E741
 
 
-#: `audio_query` の母音表記 → ビセーム。
-#: 大文字は無声化母音（VOICEVOX 系の表記）。**口の形は同じ**なので同じものに送る。
+#: `audio_query`'s vowel notation → viseme.
+#: Uppercase is a devoiced vowel (VOICEVOX-family notation). **The mouth shape is the same**, so it maps to the same value.
 _VOWEL_TO_VISEME: Mapping[str, Viseme] = {
     "a": Viseme.A,
     "i": Viseme.I,
@@ -59,15 +61,16 @@ _VOWEL_TO_VISEME: Mapping[str, Viseme] = {
     "O": Viseme.O,
 }
 
-#: 表に無いもの（撥音「ん」・促音「っ」・無音 `pau`、そして**知らない表記**）は
-#: すべて「口を閉じる」に落ちる。開けっ放しにしない（fail-closed）。
+#: Anything not in the table (the moraic nasal "ん", the geminate "っ", silence `pau`,
+#: and **any unrecognized notation**) all fall through to "close the mouth." Never
+#: leaves it hanging open (fail-closed).
 
 
 @dataclass(frozen=True, slots=True)
 class VisemeSpan:
-    """1つの口の形を、いつからいつまで出すか。
+    """When to show one mouth shape, from when to when.
 
-    `viseme` が `None` なら口を閉じる。
+    If `viseme` is `None`, the mouth is closed.
     """
 
     viseme: Viseme | None
@@ -95,7 +98,7 @@ class VisemeTimeline:
 
 
 def _seconds(value: Any) -> float:
-    """壊れた値を 0 として扱う。**エンジンの出力は信用しない**（Invariant 3）。"""
+    """Treats malformed values as 0. **Never trust the engine's output** (Invariant 3)."""
     if isinstance(value, (int, float)) and not isinstance(value, bool):
         result = float(value)
         return result if result > 0.0 and result < 3600.0 else 0.0
@@ -109,21 +112,22 @@ def _moras_of(phrase: Any) -> Sequence[Any]:
     return moras if isinstance(moras, Sequence) and not isinstance(moras, (str, bytes)) else ()
 
 
-#: 口を閉じるモーラ（撥音・促音・無音）の相対的な長さ。
-#: エンジンが音素長を返さないときの等分に使う。**「ん」は母音より短い。**
+#: Relative length of mora that close the mouth (moraic nasal / geminate / silence).
+#: Used when dividing time evenly if the engine doesn't return phoneme lengths.
+#: **"ん" is shorter than a vowel.**
 _CLOSED_WEIGHT = 0.7
 
 
 @dataclass(frozen=True, slots=True)
 class _Mora:
-    """モーラ1つ。`length` はエンジンが返した長さ（秒）。0 なら「不明」。"""
+    """One mora. `length` is the engine-reported length (seconds). 0 means "unknown."""
 
     viseme: Viseme | None
     length: float
 
 
 def _collect(query: Mapping[str, Any]) -> list[_Mora]:
-    """モーラ列だけを取り出す。**時間の割り当てはしない。**"""
+    """Extracts just the mora sequence. **Doesn't assign timing.**"""
     phrases = query.get("accent_phrases")
     if not isinstance(phrases, Sequence) or isinstance(phrases, (str, bytes)):
         return []
@@ -133,8 +137,9 @@ def _collect(query: Mapping[str, Any]) -> list[_Mora]:
         for mora in _moras_of(phrase):
             if not isinstance(mora, Mapping):
                 continue
-            # 子音は母音への移行区間。**母音と一緒に1つの span にする**ことで、
-            # 口が母音より少し早く開く（実際の口の動きに近い）。
+            # The consonant is the transition into the vowel. **Merging it into one
+            # span with the vowel** makes the mouth open slightly before the vowel
+            # (closer to how mouths actually move).
             length = _seconds(mora.get("consonant_length")) + _seconds(mora.get("vowel_length"))
             vowel = mora.get("vowel")
             viseme = _VOWEL_TO_VISEME.get(vowel) if isinstance(vowel, str) else None
@@ -147,12 +152,15 @@ def _collect(query: Mapping[str, Any]) -> list[_Mora]:
 
 
 def build_timeline(query: Mapping[str, Any], audio_seconds: float | None = None) -> VisemeTimeline:
-    """`audio_query` の応答（と、合成された音声の長さ）から口のタイムラインを作る。
+    """Builds the mouth timeline from `audio_query`'s response (and the synthesized
+    audio's length).
 
-    **速度倍率を必ず反映する。** 反映しないと、話速を変えた瞬間に口だけずれる。
+    **Always accounts for the speed multiplier.** Skipping it makes the mouth drift
+    the instant speech speed changes.
 
-    エンジンが音素長を返さない場合は `audio_seconds` を等分する。
-    **`audio_seconds` も無ければ、何も返さない**（でたらめな時間で口を動かさない）。
+    If the engine doesn't return phoneme lengths, `audio_seconds` is divided evenly.
+    **If `audio_seconds` is also missing, nothing is returned** (never move the mouth
+    on bogus timing).
     """
     speed = _seconds(query.get("speedScale")) or 1.0
     pre = _seconds(query.get("prePhonemeLength")) / speed
@@ -166,13 +174,13 @@ def build_timeline(query: Mapping[str, Any], audio_seconds: float | None = None)
     if reported > 0.0:
         durations = [mora.length / speed for mora in moras]
     elif audio_seconds is not None and audio_seconds > pre + post:
-        # エンジンが長さを返さない（AivisSpeech）。**実際の音声の長さで割り振る。**
+        # The engine doesn't return lengths (AivisSpeech). **Allocated using the actual audio length.**
         weights = [_CLOSED_WEIGHT if mora.viseme is None else 1.0 for mora in moras]
         total_weight = sum(weights)
         speech = audio_seconds - pre - post
         durations = [speech * weight / total_weight for weight in weights]
     else:
-        # 長さの根拠が無い。**適当な時間で口を動かさない。**
+        # No basis for timing. **Never move the mouth on made-up timing.**
         return VisemeTimeline(spans=(), total_ms=0)
 
     spans: list[VisemeSpan] = []

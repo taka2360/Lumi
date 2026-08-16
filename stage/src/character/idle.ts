@@ -1,24 +1,24 @@
 /**
- * アイドルモーション — **純粋関数**。
+ * Idle motion — **pure functions**.
  *
- * 時刻を引数で受け取る（テスト内で `performance.now()` を呼ばせない
- * → .claude/rules/tests.md「時刻は引数で渡す」）。
+ * Time is received as an argument (never calls `performance.now()` inside a test
+ * → .claude/rules/tests.md "time is passed as an argument").
  *
- * Phase 0 では手続き的な呼吸と揺れだけ。モーションクリップの再生は Phase 1 以降。
+ * Phase 0 only has procedural breathing and swaying. Playing motion clips is Phase 1 onward.
  */
 
 export interface IdlePose {
-  /** 上下の揺れ（メートル）。 */
+  /** Vertical sway (meters). */
   offsetY: number;
-  /** 左右の傾き（ラジアン）。 */
+  /** Left-right tilt (radians). */
   tiltZ: number;
-  /** 呼吸によるスケール。1.0 が基準。 */
+  /** Scale from breathing. 1.0 is the baseline. */
   breathScale: number;
 }
 
-/** 呼吸の周期（秒）。ゆっくりにしないと「生きている」ではなく「震えている」に見える。 */
+/** The breathing period (seconds). Without keeping it slow, it looks like "trembling" instead of "alive." */
 const BREATH_PERIOD_S = 4.0;
-/** 体の揺れの周期（秒）。呼吸と割り切れない値にして、動きが同期しないようにする。 */
+/** The body-sway period (seconds). Kept indivisible with the breathing period so the motions never sync up. */
 const SWAY_PERIOD_S = 6.7;
 
 export function computeIdlePose(elapsedSeconds: number): IdlePose {

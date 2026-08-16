@@ -1,17 +1,20 @@
-"""Tool の型。
+"""Tool types.
 
-型の定義 → docs/interfaces/tool.md / 契約 → docs/contracts/tool-execution.md
+Type definitions → docs/interfaces/tool.md / Contract → docs/contracts/tool-execution.md
 
-> **Tool が実装するのは `bind` と `execute` の2つだけ。** 正規化も権限判断も検証もしない。
+> **A Tool implements only `bind` and `execute`.** It does no normalization, no
+> permission decisions, no verification.
 
-## `execute` が `ToolResult` を返さない理由〔Phase 1 実装時に確定〕
+## Why `execute` doesn't return a `ToolResult` [finalized during Phase 1 implementation]
 
-docs は「**provenance は Core が付与する。Tool の自己申告を信じない**」と定めている
-（docs/interfaces/tool.md）。それを型で保証するため、Tool が返すのは
-**provenance を持たない `ToolOutcome`** とし、`ToolResult` は Tool Registry が組み立てる。
+The docs establish that "**provenance is attached by Core. A Tool's self-reported
+claim is never trusted**" (docs/interfaces/tool.md). To enforce that at the type
+level, what a Tool returns is **`ToolOutcome`, which carries no provenance**, and
+`ToolResult` is assembled by the Tool Registry.
 
-`ToolResult` を Tool に作らせると、`provenance_class=TRUSTED` と書ける経路が残る。
-それは Invariant 7（No Laundering）の穴そのものである。
+Letting a Tool construct a `ToolResult` would leave a path open to write
+`provenance_class=TRUSTED`. That is exactly the hole Invariant 7 (No Laundering)
+exists to close.
 """
 
 from __future__ import annotations
@@ -39,16 +42,16 @@ class ToolKind(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class ToolContext:
-    """`cancel_token` の扱いは `permission.cancellation` で決まる。"""
+    """How `cancel_token` behaves is determined by `permission.cancellation`."""
 
     cancel_token: CancelToken
     actor: Actor
     activity_id: ActivityId
     correlation_id: CorrelationId
-    #: 呼び出し元 context の `effective_trust`
+    #: The caller context's `effective_trust`
     input_trust_level: TrustLevel
     deadline: datetime | None = None
-    #: 副作用を持つなら必須（docs/architecture/recovery.md §3）
+    #: Required if it has a side effect (docs/architecture/recovery.md §3)
     idempotency_key: str | None = None
 
 
@@ -60,7 +63,7 @@ class ToolError:
 
 @dataclass(frozen=True, slots=True)
 class ToolOutcome:
-    """**Tool が返せるのはここまで。** provenance を持たない。"""
+    """**This is as far as a Tool can return.** Carries no provenance."""
 
     ok: bool
     value: Any | None = None
@@ -69,7 +72,7 @@ class ToolOutcome:
 
 @dataclass(frozen=True, slots=True)
 class ToolResult:
-    """**Tool Registry だけが組み立てる。** provenance は Core が付与する。"""
+    """**Only the Tool Registry assembles this.** Provenance is attached by Core."""
 
     ok: bool
     value: Any | None
@@ -80,7 +83,7 @@ class ToolResult:
 
 @dataclass(frozen=True, slots=True)
 class ToolDescriptor:
-    """LLM に見せるメタデータ。**`deferred=True` のものは既定で露出しない。**"""
+    """Metadata shown to the LLM. **`deferred=True` ones aren't exposed by default.**"""
 
     name: str
     description: str
@@ -90,10 +93,10 @@ class ToolDescriptor:
 
 
 class Tool(Protocol):
-    """Class A（in-core）の Tool。
+    """A Class A (in-core) Tool.
 
-    **実装してはいけないもの**: `authorize()` / `canonicalize()` / `verify()` /
-    `PermissionKernel` の呼び出し。いずれも静的検査で縛る。
+    **Must never implement**: `authorize()` / `canonicalize()` / `verify()` / calling
+    `PermissionKernel`. All of these are enforced by static checks.
     """
 
     name: str
@@ -107,7 +110,7 @@ class Tool(Protocol):
 
     concurrency_safe: bool
     idempotent: bool
-    #: 既定で LLM に露出しない（ツール数の爆発対策）
+    #: Not exposed to the LLM by default (guards against tool-count explosion)
     deferred: bool
 
     def bind(self, ctx: ToolContext, scope: Any) -> Handle: ...
@@ -117,10 +120,11 @@ class Tool(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class RemoteToolDescriptor:
-    """Class B。**Core は実行しない。** Extension Host に委譲する。
+    """Class B. **Core never executes it.** Delegated to the Extension Host.
 
-    〔Phase 4b で使う。ここに型だけ置いてあるのは、`register_remote` の
-    fail-closed 検証条件が Class A 側と対になっているため。**実装は Phase 4b。**〕
+    [Used starting Phase 4b. Only the type lives here for now, because
+    `register_remote`'s fail-closed verification conditions are paired with the
+    Class A side. **The implementation itself is Phase 4b.**]
     """
 
     name: str

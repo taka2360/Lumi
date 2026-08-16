@@ -1,43 +1,45 @@
-"""文分割 — LLM のトークンストリームを TTS の単位に切る。
+"""Sentence splitting — cuts the LLM's token stream into TTS-sized units.
 
-設計 → docs/architecture/audio.md §6
+Design → docs/architecture/audio.md §6
 
-## なぜ文単位なのか
+## Why sentence-sized units
 
-**最初の音が出るまでの時間が、体感のほぼすべて**（SLO p50 < 1.2 s）。
-全文が揃うのを待つと、長い返事ほど待たされる。第1文だけ先に喋り始める。
+**Time to first sound is almost the entire perceived experience** (SLO p50 < 1.2 s).
+Waiting for the full response means longer replies wait longer. Start speaking the first
+sentence as soon as it's ready.
 
-## 切りすぎない
+## Don't cut too aggressively
 
-短く切るほど早く喋り出せるが、**細切れの音声はイントネーションが壊れる**。
-句読点の「。」で切り、「、」では切らない。長すぎる場合だけ「、」を使う。
+Shorter cuts start speech sooner, but **choppy audio breaks intonation**.
+Cut on the punctuation mark "。", not "、". Only fall back to "、" when a segment is too long.
 
-## 終端が来たら待たない
+## Don't wait for a terminator
 
-`やった！` の直後に `」` が来るかもしれない — が、**それを待つと第1文が必ず1チャンク分遅れる**。
-遅れるのは「最初の音が出るまで」であり、そこが体感のほぼすべてである。
-待たずに切り、はぐれた閉じ記号は `is_speakable` が落とす。**読み上げないものを待たない。**
+A `」` might follow right after `やった！` — but **waiting for it always delays the first
+sentence by a full chunk**. The delay hits "time to first sound," which is almost the entire
+perceived experience. Cut without waiting; stray closing marks get dropped by `is_speakable`.
+**Don't wait for something that won't be spoken.**
 """
 
 from __future__ import annotations
 
 from typing import Final
 
-#: ここで文が終わる
+#: A sentence ends here
 TERMINATORS: Final = frozenset("。！？!?\n")
-#: 終端のあとに続きうる閉じ記号。**これを含めてから切る**（「そうだね！」の ！ を落とさない）
+#: Closing marks that may follow a terminator. **Include these before cutting** (don't drop the ！ in "そうだね！")
 CLOSERS: Final = frozenset("」』）)】〕》”\"'…♪〜~ 　")
-#: 終端が来ないまま伸びたら、ここで諦めて切る〔Provisional〕
+#: If nothing terminates before this length, give up and cut here [Provisional]
 MAX_CHARS: Final = 60
-#: 諦めるときに優先して使う区切り
+#: Preferred break points to use when giving up
 SOFT_BREAKS: Final = frozenset("、,・：:；;")
 
-#: これだけしか無い断片は TTS に投げない（読み上げるものが無い）
+#: Fragments consisting only of these are never sent to TTS (nothing to speak)
 _UNSPEAKABLE: Final = frozenset("。！？!?、,・：:；;「」『』（）()【】〕《》\"'…♪〜~\n\r\t 　")
 
 
 class SentenceStream:
-    """ストリーミング分割。**確定した文だけ返す。**"""
+    """Streaming split. **Only returns confirmed sentences.**"""
 
     __slots__ = ("_buffer",)
 
@@ -59,7 +61,7 @@ class SentenceStream:
         return sentences
 
     def flush(self) -> list[str]:
-        """ストリームが終わった。**残りを吐く**（終端が無くても喋る）。"""
+        """The stream has ended. **Flush the remainder** (speak it even without a terminator)."""
         remainder, self._buffer = self._buffer, ""
         return [remainder.strip()] if is_speakable(remainder) else []
 
@@ -74,7 +76,7 @@ class SentenceStream:
         if len(self._buffer) < MAX_CHARS:
             return None
 
-        # 終端が来ない。**諦めるが、切る場所は選ぶ**
+        # No terminator arrived. **Give up, but still choose where to cut**
         window = self._buffer[:MAX_CHARS]
         for index in range(len(window) - 1, 0, -1):
             if window[index] in SOFT_BREAKS:
@@ -83,5 +85,5 @@ class SentenceStream:
 
 
 def is_speakable(text: str) -> bool:
-    """読み上げる中身があるか。**記号と空白だけの断片を TTS に投げない。**"""
+    """Whether there's anything to speak. **Never send symbol-and-whitespace-only fragments to TTS.**"""
     return any(char not in _UNSPEAKABLE for char in text)

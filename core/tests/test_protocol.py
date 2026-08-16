@@ -1,4 +1,4 @@
-"""プロトコルの検証は**ソケットを開かずに**テストできること。"""
+"""Protocol validation can be tested **without opening a socket**."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ class TestParseHello:
 
 
 class TestNamespaceIsolation:
-    """`stage.*` は絶対に OS 特権を要求しない（docs/architecture/core.md §3）。"""
+    """`stage.*` must never request OS privileges (docs/architecture/core.md §3)."""
 
     def test_os_namespace_belongs_to_shell(self) -> None:
         assert method_matches_role("os.window.set_position", Role.SHELL)
@@ -76,7 +76,7 @@ class TestParseClientMessage:
         assert result.payload == {"x": 1}
 
     def test_rejects_command_from_client(self) -> None:
-        """クライアントは Core に command を出せない。**経路そのものを作らない。**"""
+        """A client can never issue a `command` to Core. **No such path is ever built.**"""
         raw = json.dumps({"kind": "command", "id": "1", "method": "os.input.click", "payload": {}})
         with pytest.raises(ProtocolError):
             parse_client_message(raw)

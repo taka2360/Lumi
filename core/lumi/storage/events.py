@@ -1,11 +1,12 @@
-"""`EventStore` の SQLite 実装。
+"""SQLite implementation of `EventStore`.
 
-契約 → docs/contracts/event-model.md「採番責任 — EventBus が唯一の採番者」
+Contract → docs/contracts/event-model.md "Numbering responsibility — the EventBus is
+the sole numbering authority"
 
-**採番（`MAX(sequence_id) + 1`）と INSERT を同一トランザクションで行う。**
-分けると、その間のクラッシュでギャップが生まれ、「ギャップ = 真の異常」という
-前提が崩れる。`UNIQUE (stream_key, sequence_id)` は多層防御であって、
-これがあるからトランザクションを緩めてよいという話ではない。
+**Numbering (`MAX(sequence_id) + 1`) and the INSERT happen in the same transaction.**
+Splitting them would let a crash in between create a gap, breaking the assumption that
+"a gap means a genuine anomaly." `UNIQUE (stream_key, sequence_id)` is defense in
+depth — its presence is not a reason to loosen the transaction.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from lumi.storage.sqlite import Database, StorageError
 
 
 class SqliteEventStore:
-    """`lumi.kernel.event.EventStore` の実装。"""
+    """Implementation of `lumi.kernel.event.EventStore`."""
 
     __slots__ = ("_db",)
 
@@ -31,7 +32,7 @@ class SqliteEventStore:
     async def append(
         self, event_id: EventId, draft: DomainEventDraft, occurred_at: datetime
     ) -> int:
-        """**ブロッキング I/O はスレッドに逃がす。** イベントループを止めない。"""
+        """**Blocking I/O is offloaded to a thread.** Never blocks the event loop."""
         return await asyncio.to_thread(self._append_blocking, event_id, draft, occurred_at)
 
     def _append_blocking(
@@ -40,7 +41,7 @@ class SqliteEventStore:
         try:
             payload = json.dumps(draft.payload, ensure_ascii=False)
         except (TypeError, ValueError) as error:
-            # JSON にできない payload を黙って捨てない。**発行側の設計ミスとして落とす。**
+            # A payload that can't be JSON-encoded is never silently dropped. **Treated as the publisher's design error.**
             raise StorageError(f"payload を JSON にできない: {draft.type}") from error
 
         with self._db.transaction() as conn:
@@ -67,7 +68,7 @@ class SqliteEventStore:
                     ),
                 )
             except sqlite3.IntegrityError as error:
-                # UNIQUE 違反 = 直列化が壊れている。**上書きも再採番もしない。**
+                # A UNIQUE violation means serialization is broken. **Never overwrite or renumber.**
                 raise StorageError(f"採番が衝突した: {draft.stream_key}#{sequence_id}") from error
 
         return sequence_id

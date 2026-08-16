@@ -1,6 +1,6 @@
-"""音声 I/O。**Core に置く**（barge-in の critical path を Core 内に閉じる）。
+"""Audio I/O. **Lives in Core** (keeps the barge-in critical path inside Core).
 
-設計 → docs/architecture/audio.md / ADR-003
+Design → docs/architecture/audio.md / ADR-003
 
-Phase 0 に在るのは再生だけ。capture / VAD / EchoGuard は Phase 1。
+Phase 0 only has playback. capture / VAD / EchoGuard belong to Phase 1.
 """

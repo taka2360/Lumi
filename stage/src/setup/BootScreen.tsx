@@ -1,17 +1,18 @@
 /**
- * 起動中の画面。**キャラクターが出るまでの間、何が起きているかを出す。**
+ * The screen shown while starting up. **Shows what's happening until the character appears.**
  *
- * 設計 → docs/architecture/ui.md「起動フェーズ」
+ * Design → docs/architecture/ui.md "Boot phases"
  *
- * 立っているのに反応しないキャラクターは壊れて見える。エンジンの取得に数分、
- * 起動に十数秒かかるので、その間は代わりにこれを出す。
+ * A character that's standing there but unresponsive looks broken. Fetching the
+ * engine takes minutes and starting it takes a dozen-odd seconds, so this is shown
+ * in the meantime instead.
  *
- * **主語は Lumi。** 見出しは常に「Lumi を起動しています」で、エンジンの取得・起動は
- * その内訳として下に添える。エンジン名だけを出すと、Lumi ではなく外部エンジンを
- * 起動しているように見える。
+ * **The subject is always Lumi.** The heading always reads "Starting Lumi," with
+ * fetching/starting the engine attached below as a detail. Showing just the engine
+ * name would make it look like an external engine, not Lumi, is starting.
  *
- * **フェーズを決めるのは Core。** ここは配られたものを表示するだけで、
- * 「そろそろ出してよいだろう」という判断を持たない。
+ * **Core decides the phase.** This component only displays what it's handed —
+ * it never judges "it's probably okay to show it now."
  */
 
 import type { TtsSetupSnapshot } from "../core/store";
@@ -22,7 +23,7 @@ function percent(progress: number | null): string {
   return `${Math.round((progress ?? 0) * 100)}%`;
 }
 
-/** 今どの内訳を進めているか。**見出しではなく、その下に添える1行。** */
+/** Which detail step is currently in progress. **Not the heading — a line attached below it.** */
 function step(tts: TtsSetupSnapshot, connected: boolean): { step: string; note: string } {
   if (!connected) {
     return { step: "Lumi Core に接続しています…", note: "" };
@@ -37,7 +38,7 @@ function step(tts: TtsSetupSnapshot, connected: boolean): { step: string; note: 
     case "starting":
       return {
         step: `${engine} を起動しています…`,
-        // **初回が長いことを先に言う。** 言わないと固まったように見える（実測 2 分）。
+        // **States up front that the first run takes a while.** Without this it looks frozen (observed at 2 minutes).
         note: "初回はエンジンが音声モデルを取得するため、数分かかることがあります。",
       };
     default:

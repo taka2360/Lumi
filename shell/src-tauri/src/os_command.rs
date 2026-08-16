@@ -1,44 +1,46 @@
-//! `os.*` の検証層（B3）— **純粋関数**。ソケットもウィンドウも要らずにテストできる。
+//! The `os.*` verification layer (B3) — **pure functions**. Testable without a socket or a window.
 //!
-//! > **Shell は Core を信頼しない。** Core が侵害されただけで OS 乗っ取りになってはならない。
+//! > **Shell never trusts Core.** Core being compromised alone must never turn into an OS takeover.
 //! > → docs/contracts/security-boundaries.md B3
 //!
-//! Core の指示内容にかかわらず、次を適用する。
+//! Applied regardless of what Core instructs:
 //!
-//! 1. WS token による認証（`ws_client.rs`）
-//! 2. **allowlist** — 未知のコマンドは拒否してログ
-//! 3. **schema** — 型・範囲・列挙値
-//! 4. **保護対象への無条件拒否**（Invariant 8）
+//! 1. Authentication via the WS token (`ws_client.rs`)
+//! 2. **allowlist** — an unknown command is rejected and logged
+//! 3. **schema** — type, range, enum values
+//! 4. **Unconditional rejection for protected targets** (Invariant 8)
 //!
-//! ここに置くのは**拒否だけ**。「許可」を置いたら Invariant 1 の実質的な破壊になる。
+//! Only **rejection** ever lives here. Placing "permission" here would
+//! effectively destroy Invariant 1.
 //!
-//! ## この層が保証しないこと
+//! ## What this layer does not guarantee
 //!
-//! B3 が保証するのは (a) allowlist 外の操作ができない (b) 保護対象への入力・キャプチャが
-//! できない (c) 権限昇格が自己承認で行われない、の3点**だけ**である。
-//! **被害の防止ではなく、権限の上限固定。**
+//! B3 guarantees only these three things: (a) nothing outside the allowlist can
+//! be done, (b) input/capture against a protected target can't happen, (c)
+//! privilege escalation is never self-approved.
+//! **This fixes the ceiling on privilege — it does not prevent harm.**
 
 use serde_json::Value;
 
 use crate::window::WindowKind;
 
-/// 検証を通った `os.*` 要求。**この型を作れるのは `validate` だけ**にしておく。
+/// An `os.*` request that passed verification. **Only `validate` may construct this type.**
 #[derive(Debug, Clone, PartialEq)]
 pub enum OsCommand {
     WindowGetPosition { window: WindowKind },
     WindowSetPosition { window: WindowKind, x: f64, y: f64 },
 }
 
-/// 拒否の理由。**必ずログに残す。** 黙って落とさない。
+/// The reason for a rejection. **Always logged.** Never silently dropped.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Rejection {
-    /// allowlist に載っていない。
+    /// Not on the allowlist.
     UnknownMethod,
-    /// Phase 0 では実装しない lane（`os.input.*` / `os.capture.*`）。
+    /// A lane not implemented in Phase 0 (`os.input.*` / `os.capture.*`).
     NotImplemented,
-    /// payload が schema に合わない。
+    /// The payload doesn't match the schema.
     InvalidPayload(String),
-    /// Lumi のウィンドウではない対象を指定された。
+    /// A target that isn't one of Lumi's own windows was specified.
     UnknownWindow,
 }
 
@@ -53,16 +55,17 @@ impl Rejection {
     }
 }
 
-/// **Phase 0 の allowlist。** ここに無いものは通らない。
+/// **Phase 0's allowlist.** Anything not here is never let through.
 ///
-/// 増やすときは docs/contracts/security-boundaries.md の B3 を読み直すこと。
+/// Re-read docs/contracts/security-boundaries.md's B3 before adding to it.
 pub(crate) const ALLOWED_METHODS: &[&str] = &["os.window.get_position", "os.window.set_position"];
 
-/// Phase 4c まで実装しない namespace。**存在しないのではなく、明示的に拒否する。**
+/// A namespace not implemented until Phase 4c. **Not "doesn't exist" — explicitly rejected.**
 ///
-/// Invariant 8 の穴（全画面キャプチャ / 座標指定の入力注入）の決着が済んでいないため
-/// （docs/roadmap.md Phase 4c「🔴 着手前に決めること」）。
-/// ここを実装するときは、**`WindowKind::is_protected` による拒否を必ず通す**。
+/// This is because the holes in Invariant 8 (full-screen capture / coordinate-based
+/// input injection) haven't been resolved yet (docs/roadmap.md Phase 4c "🔴 to
+/// decide before starting"). When implementing this, **always route it through
+/// rejection via `WindowKind::is_protected`.**
 const DEFERRED_PREFIXES: &[&str] = &["os.input.", "os.capture."];
 
 pub fn validate(method: &str, payload: &Value) -> Result<OsCommand, Rejection> {
@@ -82,14 +85,14 @@ pub fn validate(method: &str, payload: &Value) -> Result<OsCommand, Rejection> {
             x: finite_number(payload, "x")?,
             y: finite_number(payload, "y")?,
         }),
-        // ALLOWED_METHODS に足して match を足し忘れたときに**通してしまわない**ため、
-        // ここは到達しても拒否する。
+        // So that adding to ALLOWED_METHODS but forgetting to add a match arm
+        // **never lets it through**, this rejects even if reached.
         _ => Err(Rejection::UnknownMethod),
     }
 }
 
-/// 対象ウィンドウは **Lumi 自身のウィンドウに限る**。
-/// 任意の HWND を Core から指定させない（B3 の「権限の上限固定」）。
+/// The target window is **restricted to Lumi's own windows only.**
+/// Core is never allowed to specify an arbitrary HWND (B3's "fixed privilege ceiling").
 fn window_of(payload: &Value) -> Result<WindowKind, Rejection> {
     let label = payload
         .get("window")
@@ -111,7 +114,7 @@ fn finite_number(payload: &Value, key: &str) -> Result<f64, Rejection> {
 
 #[cfg(test)]
 mod tests {
-    // テストは panic してよい場所なので unwrap を許す。
+    // Tests are allowed to panic, so unwrap is permitted here.
     #![allow(clippy::unwrap_used)]
 
     use serde_json::json;
@@ -132,7 +135,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_method() {
-        // roadmap Phase 0 検証手順 9: 未知の os.* コマンドは拒否されてログに残る
+        // roadmap Phase 0 verification step 9: an unknown os.* command is rejected and logged
         assert_eq!(validate("os.window.destroy", &json!({})), Err(Rejection::UnknownMethod));
         assert_eq!(validate("os.evil", &json!({})), Err(Rejection::UnknownMethod));
         assert_eq!(validate("stage.character.speak", &json!({})), Err(Rejection::UnknownMethod));
@@ -140,7 +143,7 @@ mod tests {
 
     #[test]
     fn rejects_deferred_lanes_even_if_core_asks_nicely() {
-        // Invariant 8 の決着前に input / capture を通さない（fail-closed）
+        // Never let input / capture through before Invariant 8 is resolved (fail-closed)
         for method in ["os.input.click", "os.input.key", "os.capture.screenshot"] {
             assert_eq!(
                 validate(method, &json!({"window": "stage"})),
@@ -175,7 +178,7 @@ mod tests {
 
     #[test]
     fn every_allowlisted_method_is_handled() {
-        // allowlist に足して match を足し忘れると、ここで気づく。
+        // Catches it here if a method is added to the allowlist but the match arm is forgotten.
         for method in ALLOWED_METHODS {
             let rejection = validate(method, &json!({}));
             assert_ne!(

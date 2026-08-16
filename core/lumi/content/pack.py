@@ -1,16 +1,17 @@
-"""Content Pack を読む。**データだけ。コードは受け付けない。**
+"""Reads Content Packs. **Data only. Never accepts code.**
 
-仕様 → docs/architecture/extension.md §9 / クレジット義務 → docs/licensing.md §6
+Spec → docs/architecture/extension.md §9 / Credit obligations → docs/licensing.md §6
 
-## fail-closed で落とす2つ
+## Two things that fail closed
 
-| 条件 | 理由 |
+| Condition | Reason |
 |---|---|
-| **コードが入っている** | 共有・配布されやすい。コードを含むと Extension と同じ脅威になる |
-| **`[credit]` が無い** | クレジット表記は音源規約上の義務。**「後で足す」ができない性質のもの** |
+| **Contains code** | Easily shared and redistributed. Including code makes it the same threat as an Extension |
+| **`[credit]` is missing** | Credit attribution is a licensing obligation from the voice source's terms. **Not something that can be "added later."** |
 
-**Core は `credit_text` を解釈しない。** 規約が要求する表記は権利者が決めるので、
-整形すると要求を満たさなくなりうる。**そのまま Stage に渡す。**
+**Core never interprets `credit_text`.** The wording the license requires is decided by
+the rights holder, and reformatting it could make it fail to satisfy that requirement.
+**It's passed to the Stage unchanged.**
 """
 
 from __future__ import annotations
@@ -24,8 +25,9 @@ from lumi import logging as lumi_logging
 
 log = lumi_logging.get_logger(__name__)
 
-#: **これが1つでも入っていたら読み込まない。** 拡張子で判断するのは完全ではないが、
-#: 「うっかり入った」を止めるには十分であり、fail-closed の側に倒れている
+#: **If even one of these is present, loading is refused.** Judging by extension isn't
+#: airtight, but it's enough to catch "accidentally included," and it errs on the
+#: fail-closed side.
 CODE_SUFFIXES: Final = frozenset(
     {
         ".py",
@@ -51,12 +53,12 @@ CODE_SUFFIXES: Final = frozenset(
 
 
 class ContentPackError(RuntimeError):
-    """読み込めない。**黙って既定値で代用しない。**"""
+    """Couldn't be loaded. **Never silently substitutes a default.**"""
 
 
 @dataclass(frozen=True, slots=True)
 class Credit:
-    """規約が要求する表記。**Core は解釈せず、そのまま渡す。**"""
+    """The wording the license requires. **Core doesn't interpret it — passed through as-is.**"""
 
     name: str
     credit_text: str
@@ -67,7 +69,7 @@ class Credit:
 
 @dataclass(frozen=True, slots=True)
 class VoiceSettings:
-    #: `None` = エンジンの既定話者を使う（Phase 1 は既定のまま）
+    #: `None` = uses the engine's default speaker (stays default in Phase 1)
     speaker: int | None
     credit: Credit
 
@@ -76,13 +78,13 @@ class VoiceSettings:
 class CharacterPack:
     root: Path
     name: str
-    #: 人格プロンプト。**PromptAssembly の persona になる**（trusted）
+    #: Persona prompt. **Becomes PromptAssembly's persona** (trusted)
     persona: str
     voice: VoiceSettings
 
 
 def load_character(root: Path) -> CharacterPack:
-    """`character.toml` と `voice.toml` を読む。**足りなければ例外。**"""
+    """Reads `character.toml` and `voice.toml`. **Raises if anything is missing.**"""
     if not root.is_dir():
         raise ContentPackError(f"Content Pack が無い: {root}")
 
@@ -143,7 +145,7 @@ def _optional_int(value: Any) -> int | None:
 
 
 def _credit(section: dict[str, Any], path: Path) -> Credit:
-    """**欠けていたら読み込まない。** クレジットは後から足せない性質の義務である。"""
+    """**Refuses to load if missing.** Credit is an obligation that can't be added after the fact."""
     return Credit(
         name=_text(section, "name", path),
         credit_text=_text(section, "credit_text", path),

@@ -1,6 +1,6 @@
-"""Lumi Core — 権威（判断・状態・ポリシー・記憶）を持つ単一プロセス。
+"""Lumi Core — the single process holding authority (decisions, state, policy, memory).
 
-設計 → docs/architecture/core.md
+Design → docs/architecture/core.md
 """
 
 __version__ = "0.0.0"

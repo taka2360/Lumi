@@ -1,27 +1,29 @@
-"""信頼の追跡と伝播 — [Invariant 3](../../docs/contracts/invariants.md) / 7 の型による実装。
+"""Trust tracking and propagation — a type-level implementation of
+[Invariant 3](../../docs/contracts/invariants.md) / 7.
 
-規則の唯一の定義場所 → docs/contracts/provenance.md
+The single source of definition for these rules → docs/contracts/provenance.md
 
-## なぜトップレベルに居るのか
+## Why this lives at the top level
 
-`Signal` が `trust_level` を持つ（docs/contracts/event-model.md）ので、
-`kernel/` はこの型に依存する。`memory/` の下に置くと **kernel → memory の逆依存**が生まれ、
-「kernel は他に依存しない」が破れる。
+`Signal` carries a `trust_level` (docs/contracts/event-model.md), so `kernel/` depends
+on this type. Placing it under `memory/` would create a **kernel → memory reverse
+dependency**, breaking "kernel depends on nothing else."
 
-trust の型は kernel・permission・tools・agent・memory の**すべてが使う横断的な制約**であり、
-どれか1つの下に置くと「そのモジュールの持ち物」に見えてしまう。
+The trust types are a **cross-cutting constraint used by all of** kernel, permission,
+tools, agent, and memory, and placing them under any single one of those would make it
+look like that module owns them.
 → docs/architecture/core.md §4
 
-## 実装上の絶対条件
+## Absolute implementation rules
 
-**`TrustLevel.TRUSTED` を代入してよいのは2箇所だけ。**
+**`TrustLevel.TRUSTED` may be assigned in exactly two places.**
 
-1. ユーザーの直接入力を受け取るハンドラ（音声入力・テキスト入力・UI 操作）
-2. 記憶 UI のユーザー確認ハンドラ（Phase 2）
+1. The handler that receives direct user input (voice input, text input, UI actions)
+2. The memory UI's user-confirmation handler (Phase 2)
 
-**自動昇格の実装を作らない。** ここにある `join` / `taint` / `propagate` は
-**汚染を伝播させるための関数であって、昇格の経路ではない**（入力が全て trusted のときだけ
-trusted を返す）。これは grep とテストで検証する。
+**No automatic-escalation implementation is ever built.** The `join` / `taint` /
+`propagate` functions here **propagate taint — they are not an escalation path**
+(they return trusted only when every input is trusted). This is verified with grep and tests.
 """
 
 from __future__ import annotations
@@ -33,25 +35,25 @@ from typing import Literal, Protocol
 
 
 class ProvenanceClass(StrEnum):
-    """ラベル。**監査とユーザーへの説明のため**であって、Policy を緩めるためではない。"""
+    """A label. **For audit and explaining to the user** — not for relaxing Policy."""
 
-    #: ユーザーの直接入力 / Lumi 内部状態 / システム設定 / user_confirmed な記憶
+    #: Direct user input / Lumi's internal state / system settings / user_confirmed memories
     TRUSTED = "trusted"
-    #: 外部由来の生データ。Web 本文・ファイル・Vision 結果・ゲーム画面・Extension 出力
+    #: Raw data of external origin. Web page content, files, Vision results, game screens, Extension output
     UNTRUSTED = "untrusted"
-    #: untrusted を入力に含む処理の出力。要約・抽出された記憶・推論結果
+    #: Output of processing that took untrusted content as input. Summaries, extracted memories, inference results
     DERIVED = "derived"
 
 
 class TrustLevel(StrEnum):
-    """Policy 判断用。join-semilattice（`trusted ⊑ tainted`）。"""
+    """For Policy decisions. A join-semilattice (`trusted ⊑ tainted`)."""
 
     TRUSTED = "trusted"
     TAINTED = "tainted"
 
 
 class Provenanced(Protocol):
-    """provenance を持つレコード。**粒度は文字単位ではなくレコード単位。**"""
+    """A record that carries provenance. **The granularity is per-record, not per-character.**"""
 
     @property
     def provenance_class(self) -> ProvenanceClass: ...
@@ -61,24 +63,25 @@ class Provenanced(Protocol):
 
 
 def taint(cls: ProvenanceClass) -> TrustLevel:
-    """ラベルを Policy 判断用の2値に落とす。
+    """Collapses the label into the binary value Policy decides on.
 
-    **`DERIVED` も `TAINTED` になる。** これが Invariant 7 の核心であり、
-    「悪意あるページの要約は生ページより安全そう」という直感を否定している。
-    攻撃者は要約を生き延びるペイロードを作れるし、格下げを許せばロンダリング経路ができる。
+    **`DERIVED` also becomes `TAINTED`.** This is the core of Invariant 7, and it
+    rejects the intuition that "a summary of a malicious page seems safer than the raw
+    page." An attacker can craft a payload that survives summarization, and allowing a
+    downgrade would create a laundering path.
     """
     return TrustLevel.TRUSTED if cls is ProvenanceClass.TRUSTED else TrustLevel.TAINTED
 
 
 def join(a: TrustLevel, b: TrustLevel) -> TrustLevel:
-    """束の join。**片方でも汚染されていれば汚染。**"""
+    """Join over the lattice. **Tainted if either side is tainted.**"""
     if a is TrustLevel.TAINTED or b is TrustLevel.TAINTED:
         return TrustLevel.TAINTED
     return TrustLevel.TRUSTED
 
 
 def join_all(levels: Iterable[TrustLevel]) -> TrustLevel:
-    """空なら `TRUSTED`。**入力が無いことは汚染されていないことを意味する**（単位元）。"""
+    """`TRUSTED` if empty. **No input means no taint** (identity element)."""
     result = TrustLevel.TRUSTED
     for level in levels:
         result = join(result, level)
@@ -86,11 +89,13 @@ def join_all(levels: Iterable[TrustLevel]) -> TrustLevel:
 
 
 def propagate(inputs: Iterable[Provenanced], *, is_raw_external: bool) -> ProvenanceClass:
-    """処理の出力に付ける `ProvenanceClass` を決める。**迷ったら汚染側に倒す。**
+    """Decides the `ProvenanceClass` to attach to a processing step's output. **When in
+    doubt, err toward taint.**
 
-    `is_raw_external=True` は「**Lumi の外の世界から取ってきた生データ**」を意味する。
-    LLM の出力にこれを立ててはならない — LLM 出力は Lumi が組み立てたプロンプトの関数であって、
-    外界の観測ではない。立てると、雑談ターンまで汚染されて provenance 昇格が判別力を失う。
+    `is_raw_external=True` means "**raw data fetched from outside Lumi's world**." This
+    must never be set on LLM output — LLM output is a function of the prompt Lumi
+    assembled, not an observation of the outside world. Setting it there would taint
+    even ordinary small-talk turns and rob the escalation rule of its discriminating power.
     """
     if is_raw_external:
         return ProvenanceClass.UNTRUSTED
@@ -100,16 +105,17 @@ def propagate(inputs: Iterable[Provenanced], *, is_raw_external: bool) -> Proven
 
 
 def propagate_trust(inputs: Iterable[Provenanced]) -> TrustLevel:
-    """処理の出力の `TrustLevel`。入力の join。"""
+    """The `TrustLevel` of a processing step's output. The join of its inputs."""
     return join_all(i.trust_level for i in inputs)
 
 
 def propagate_from_trust(trust: TrustLevel, *, is_raw_external: bool) -> ProvenanceClass:
-    """入力の `TrustLevel` しか手元に無いときの `propagate()`。
+    """`propagate()` for when only the input's `TrustLevel` is on hand.
 
-    Tool 結果の provenance を Kernel が付けるときに使う（入力は呼び出し元 context の
-    `effective_trust` 1つだけ）。**`is_raw_external` の判断は lane が持つ**
-    （`lumi.permission.scope.LANE_RESULT_IS_EXTERNAL`）。Tool に申告させない。
+    Used when the Kernel attaches provenance to a Tool result (the only input is the
+    caller context's single `effective_trust`). **The `is_raw_external` decision
+    belongs to the lane** (`lumi.permission.scope.LANE_RESULT_IS_EXTERNAL`). The Tool
+    never self-declares it.
     """
     if is_raw_external:
         return ProvenanceClass.UNTRUSTED
@@ -118,11 +124,12 @@ def propagate_from_trust(trust: TrustLevel, *, is_raw_external: bool) -> Provena
 
 @dataclass(frozen=True, slots=True)
 class Turn:
-    """会話の1ターン。
+    """One turn of conversation.
 
-    **Lumi のターンの `trust_level` は、そのターンの生成に使った入力の join。**
-    「LLM 出力だから常に tainted」ではない。純粋な雑談ターンは persona・ユーザー発話・
-    internal state だけから生成されており、tainted 扱いする理由が無い。
+    **A Lumi turn's `trust_level` is the join of the inputs used to generate it.**
+    Not "always tainted because it's LLM output." A pure small-talk turn is generated
+    solely from persona, the user's utterance, and internal state, with no reason to
+    treat it as tainted.
     """
 
     role: Literal["user", "lumi"]
@@ -132,24 +139,26 @@ class Turn:
 
 @dataclass(frozen=True, slots=True)
 class PromptContext:
-    """プロンプト全体としての実効的な信頼度。**3つのスコープに分ける。**
+    """The prompt's overall effective trust. **Split into three scopes.**
 
-    分けない場合、設計は2通りに割れてどちらも受け入れられない。
+    Without splitting, the design forks into two options and neither is acceptable.
 
-    - 過去ターンを block と同列に join する
-      → **2ターン目以降が常に TAINTED** になり、昇格規則が判別力を失う
-    - 過去ターンを join から外す
-      → Web の要約が「自分の発話」として次ターンに入り、**そこで taint が消える**
+    - Joining past turns at the same level as blocks
+      → **every turn from the second one onward is always TAINTED**, and the
+      escalation rule loses its discriminating power
+    - Excluding past turns from the join
+      → a web summary enters the next turn as "my own utterance," and **taint
+      vanishes right there**
     """
 
-    #: このターンの ContextBlock（ツール結果・記憶）の join
+    #: Join of this turn's ContextBlocks (tool results, memories)
     block_trust: TrustLevel = TrustLevel.TRUSTED
-    #: Working Memory に載っている Turn の join
+    #: Join of the Turns currently in Working Memory
     history_trust: TrustLevel = TrustLevel.TRUSTED
-    #: セッション開始以降の全 join。**sticky**（一度 TAINTED になったら戻らない）
+    #: The full join since session start. **sticky** (once TAINTED, never reverts)
     session_trust: TrustLevel = TrustLevel.TRUSTED
 
     @property
     def effective_trust(self) -> TrustLevel:
-        """**`max_provenance` とは呼ばない。**「最大」が何を意味するかが曖昧で、必ず取り違える。"""
+        """**Never called `max_provenance`.** What "maximum" means here is ambiguous and always gets misread."""
         return join(self.block_trust, join(self.history_trust, self.session_trust))
