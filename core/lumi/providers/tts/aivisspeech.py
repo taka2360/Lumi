@@ -39,8 +39,30 @@ class TtsError(RuntimeError):
 
 
 class AivisSpeechClient:
+    """**One connection pool, reused.**
+
+    A client per request pays connection setup on every sentence, and that cost lands on
+    `tts_first_audio_ms` — the span the p50 budget is tightest on
+    (docs/architecture/audio.md §7).
+    """
+
     def __init__(self, port: int) -> None:
         self._base = f"http://{HOST}:{port}"
+        self._client: httpx.AsyncClient | None = None
+
+    def _session(self) -> httpx.AsyncClient:
+        """Created lazily. **Constructing it must not happen at import time** — that would
+        make merely importing the module look like preparing to talk to the network
+        (docs/architecture/setup.md §1 Principle 1).
+        """
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=SYNTHESIS_TIMEOUT_S)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
 
     async def version(self, probe_seconds: float) -> str | None:
         """Whether it's running. **`None` if not running** (not raised as an exception).
@@ -91,19 +113,19 @@ class AivisSpeechClient:
         false`), the mora sequence is allocated using the actual audio length →
         `viseme.build_timeline`
         """
+        client = self._session()
         try:
-            async with httpx.AsyncClient(timeout=SYNTHESIS_TIMEOUT_S) as client:
-                query_response = await client.post(
-                    f"{self._base}/audio_query", params={"text": text, "speaker": speaker}
-                )
-                query_response.raise_for_status()
-                query: Any = query_response.json()
+            query_response = await client.post(
+                f"{self._base}/audio_query", params={"text": text, "speaker": speaker}
+            )
+            query_response.raise_for_status()
+            query: Any = query_response.json()
 
-                audio_response = await client.post(
-                    f"{self._base}/synthesis", params={"speaker": speaker}, json=query
-                )
-                audio_response.raise_for_status()
-                wav = audio_response.content
+            audio_response = await client.post(
+                f"{self._base}/synthesis", params={"speaker": speaker}, json=query
+            )
+            audio_response.raise_for_status()
+            wav = audio_response.content
         except httpx.HTTPError as error:
             raise TtsError("synthesis_failed", str(error)) from error
         except ValueError as error:

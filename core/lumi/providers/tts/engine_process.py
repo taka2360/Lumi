@@ -18,6 +18,7 @@ import subprocess
 from pathlib import Path
 
 from lumi import logging as lumi_logging
+from lumi.providers.device import DeviceChoice, resolve
 from lumi.providers.tts.aivisspeech import AivisSpeechClient
 from lumi.setup.state import EngineRuntime
 
@@ -49,11 +50,20 @@ class EngineProcess:
     It's the same single state distributed to the Stage, so **it's never defined in two places.**
     """
 
-    def __init__(self, executable: Path | None, port: int) -> None:
+    def __init__(
+        self,
+        executable: Path | None,
+        port: int,
+        *,
+        device: DeviceChoice | str = DeviceChoice.AUTO,
+    ) -> None:
         self._executable = executable
         self._port = port
         self._client = AivisSpeechClient(port)
         self._process: asyncio.subprocess.Process | None = None
+        #: Where the engine runs. Measured 2026-08-16: **GPU 440 ms vs CPU 900 ms** for the
+        #: first sentence, at a cost of 1.0 GB VRAM (ADR-025)
+        self._device = resolve(device)
 
     async def ensure_running(self) -> EngineRuntime:
         """Starts the engine if it isn't running, and waits for it to respond.
@@ -72,6 +82,12 @@ class EngineProcess:
         try:
             self._process = await asyncio.create_subprocess_exec(
                 str(self._executable),
+                "--port",
+                str(self._port),
+                # **Stated explicitly either way.** Left to the engine's own default, the
+                # device would depend on an environment variable Lumi doesn't control
+                # (`VV_USE_GPU`), and nothing would report which one won
+                "--use_gpu" if self._device is DeviceChoice.CUDA else "--no-use_gpu",
                 cwd=str(self._executable.parent),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -82,7 +98,12 @@ class EngineProcess:
             log.warning("tts.engine.spawn_failed", error=str(error))
             return EngineRuntime.FAILED
 
-        log.info("tts.engine.spawned", pid=self._process.pid, port=self._port)
+        log.info(
+            "tts.engine.spawned",
+            pid=self._process.pid,
+            port=self._port,
+            device=self._device.value,
+        )
         return await self._wait_until_ready()
 
     async def _wait_until_ready(self) -> EngineRuntime:

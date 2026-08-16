@@ -174,6 +174,36 @@ async def test_ollama_streams_text_and_finishes() -> None:
     assert finish.usage["completion_tokens"] == 7
 
 
+async def test_ollama_always_states_whether_to_think() -> None:
+    """★ **Omitting the field leaves the model's default in place.**
+
+    Hybrid-reasoning models think unless told not to, so `think=False` would be silently
+    ignored — and the whole p50 budget would be spent before Lumi says a word
+    (measured 2026-08-16: 272 ms vs 5578 ms to the first spoken token).
+    """
+    sent: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "0.5.0"})
+        if request.url.path == "/api/tags":
+            return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+        sent.append(json.loads(request.content))
+        return httpx.Response(200, content=ndjson({"done": True}))
+
+    provider = OllamaProvider("qwen3:8b", transport=transport(handler))
+    await provider.load()
+
+    for think in (False, True):
+        options = LLMOptions(model="qwen3:8b", think=think)
+        async for _ in provider.stream(
+            [Message(role="user", content="?")], None, options, CancelToken()
+        ):
+            pass
+
+    assert [payload["think"] for payload in sent] == [False, True]
+
+
 async def test_ollama_separates_reasoning_from_text() -> None:
     """**Reasoning is never routed to TTS.** Keeping it a separate type means downstream code can't
     mix it up.
@@ -315,10 +345,22 @@ async def test_missing_stt_model_fails_loudly(empty_model_dir: Path) -> None:
 
     If missing, it stops in a state that can say "please fetch it."
     """
-    provider = FasterWhisperProvider("tiny", empty_model_dir)
+    provider = FasterWhisperProvider("small", empty_model_dir)
     with pytest.raises(ProviderNotConfigured) as error:
         await provider.load()
     assert error.value.reason == "model_missing"
+
+
+async def test_an_unpinned_model_name_is_a_different_failure(empty_model_dir: Path) -> None:
+    """**"Not pinned" and "not fetched yet" need different answers.**
+
+    One is fixed by running setup; the other can't be fixed by the user at all.
+    Collapsing them would send someone to re-download a model that was never offered.
+    """
+    provider = FasterWhisperProvider("tiny", empty_model_dir)
+    with pytest.raises(ProviderNotConfigured) as error:
+        await provider.load()
+    assert error.value.reason == "unknown_model"
 
 
 async def test_transcribe_before_load_is_refused(empty_model_dir: Path) -> None:
@@ -328,11 +370,22 @@ async def test_transcribe_before_load_is_refused(empty_model_dir: Path) -> None:
         await provider.transcribe(audio, "ja", CancelToken())
 
 
-def test_stt_stays_off_the_gpu(empty_model_dir: Path) -> None:
-    """**The GPU is dedicated entirely to the LLM** (DESIGN.md §7)."""
-    hint = FasterWhisperProvider("tiny", empty_model_dir).resource_hint()
+def test_stt_reports_the_device_it_resolved_to(empty_model_dir: Path) -> None:
+    """DESIGN.md §7 places STT on the GPU when there is room.
+
+    Measured 2026-08-16: **60 ms on GPU vs 920 ms on CPU** for the same clip. The 0.22 s
+    budget is unreachable on CPU, so `resource_hint()` has to say which one is in play —
+    Phase 5's `ModelResourceManager` budgets from these numbers.
+    """
+    hint = FasterWhisperProvider("small", empty_model_dir, device="cpu").resource_hint()
     assert hint.device_pref is DevicePref.CPU_ONLY
     assert hint.vram_estimate_mb == 0
+
+
+def test_forcing_cpu_is_honoured(empty_model_dir: Path) -> None:
+    """**A setting, not a guess.** Small-VRAM machines need the escape hatch (ADR-025)."""
+    provider = FasterWhisperProvider("small", empty_model_dir, device="cpu")
+    assert provider.resource_hint().device_pref is DevicePref.CPU_ONLY
 
 
 def test_faster_whisper_download_is_disabled_in_code() -> None:

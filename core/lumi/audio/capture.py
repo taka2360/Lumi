@@ -27,6 +27,7 @@ from lumi.audio.devices import StreamPlan
 from lumi.audio.resample import resample, to_mono
 from lumi.audio.ring import RingBuffer, Samples
 from lumi.audio.vad import (
+    FRAME_MS,
     SAMPLE_RATE,
     WINDOW_SAMPLES,
     SileroVad,
@@ -59,8 +60,10 @@ class CaptureUnavailable(RuntimeError):
     """
 
 
-#: Notification from VAD. `audio` is only populated for SPEECH_ENDED
-VadListener = Callable[[VadEvent, Samples | None], None]
+#: Notification from VAD. `audio` is only populated for SPEECH_ENDED; the `float` is the
+#: `perf_counter` timestamp of when the event's audio actually happened (docs/architecture/audio.md
+#: §7). **Passing "now" instead would hide the ring backlog from every latency measurement.**
+VadListener = Callable[[VadEvent, Samples | None, float], None]
 
 
 class MicrophoneCapture:
@@ -222,6 +225,10 @@ class VadWorker:
                 time.sleep(_IDLE_SLEEP_S)
                 continue
             read_at = time.perf_counter()
+            # Everything still in the ring is *newer* than what was just read, so the chunk's
+            # audio ended this far in the past. **Without this the backlog is invisible** and
+            # every latency would be reported as if the VAD were always caught up.
+            audio_at = read_at - self._ring.available / self._source_rate
             converted = resample(raw, self._source_rate, SAMPLE_RATE)
             self._pending = (
                 converted if len(self._pending) == 0 else np.concatenate((self._pending, converted))
@@ -229,7 +236,7 @@ class VadWorker:
             while len(self._pending) >= WINDOW_SAMPLES:
                 window = self._pending[:WINDOW_SAMPLES]
                 self._pending = self._pending[WINDOW_SAMPLES:]
-                self._process(window, read_at)
+                self._process(window, read_at, audio_at)
 
     def resume(self) -> None:
         """**Resets to a state that can accept the next barge-in.** Called from the asyncio side.
@@ -239,7 +246,13 @@ class VadWorker:
         """
         self._resume.set()
 
-    def _process(self, window: Samples, read_at: float) -> None:
+    def _process(self, window: Samples, read_at: float, audio_at: float) -> None:
+        """`audio_at` is when this window's audio actually happened, in `perf_counter` terms.
+
+        It is an approximation: one ring read may yield several windows, and they all get the
+        same timestamp. The error is bounded by one read (~32 ms) and **biased toward reporting
+        latency as larger than it was**, which is the safe direction for an SLO.
+        """
         assert self._vad is not None
         if self._resume.is_set():
             self._resume.clear()
@@ -253,23 +266,33 @@ class VadWorker:
             if event is VadEvent.MUTE_REQUESTED:
                 # * **critical path.** Sound stops here (synchronous, bypasses the Arbiter)
                 self._mute_flag.set()
+                muted_at = time.perf_counter()
+                speech_at = audio_at - FRAME_MS / 1000.0
                 log.info(
                     "vad.mute",
-                    mute_latency_ms=round((time.perf_counter() - read_at) * 1000, 2),
+                    # What the implementation controls: read → silent (target < 50 ms)
+                    mute_latency_ms=round((muted_at - read_at) * 1000, 2),
+                    # What the user feels: speech onset → silent (target < 120 ms).
+                    # **Measured separately** — the frame boundary and the ring backlog are in
+                    # here, and no amount of faster inference removes them
+                    perceived_ms=round((muted_at - speech_at) * 1000, 2),
                     probability=round(probability, 3),
                 )
-                self._listener(event, None)
+                self._listener(event, None, speech_at)
             elif event is VadEvent.FALSE_TRIGGER:
                 # **It was a false trigger. Revert.** This is what lets the mute threshold be pushed
                 # aggressively
                 self._mute_flag.clear()
                 log.info("vad.false_trigger")
-                self._listener(event, None)
+                self._listener(event, None, audio_at)
             elif event is VadEvent.SPEECH_ENDED:
                 audio = self._segmenter.take()
-                self._listener(event, _clamp(audio))
+                # The user actually stopped talking `min_silence_duration_ms` ago — that is
+                # where the turn's clock starts, **not when Core noticed** (audio.md §7)
+                ended_at = audio_at - self._segmenter.params.min_silence_duration_ms / 1000.0
+                self._listener(event, _clamp(audio), ended_at)
             else:
-                self._listener(event, None)
+                self._listener(event, None, audio_at)
 
 
 def _clamp(audio: Samples) -> Samples:

@@ -9,8 +9,16 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.8 |
+| Revision | rev.9 |
 | 実装フェーズ | **Phase 0 の完了条件を達成。Phase 1（MVP: Talking Desktop Character）着手。** セットアップ周りの検証手順 15〜18 が残る → [roadmap.md](roadmap.md) |
+
+> **rev.9 の変更点**（Phase 1 の実測が設計を1つ覆した）
+> 1. **TTS に GPU を使えるようにした** → [ADR-025](decisions/ADR-025-tts-on-gpu.md)。
+>    ADR-008 の「TTS は CPU で VRAM を一切消費しない」を**実測により撤回**した。
+>    CPU の TTS は 24 コアを飽和させて 0.9 秒かかり、**p95 2.0 秒の完了条件に届かない**。
+>    GPU に 1.0 GB 置くと 440 ms になる。**守ろうとしていた VRAM の余裕は、そもそも使われていなかった**
+> 2. **§7 の VRAM 表に実測値を入れた**（LLM 5.5 / STT 0.4 / TTS 1.0 = 6.9 GB / 12 GB）
+> 3. **プロンプト組み立ての予算と切り落とし順序を定義した** → [architecture/agent.md](architecture/agent.md) §3（§12 に行を追加）
 
 > **rev.8 の変更点**（Phase 0 のクローズと、Phase 1 着手前に決めたこと）
 > 1. **Phase 0 の完了条件を達成した。** 別マシンのインストーラから起動し、キャラクターが立って一言喋るところまで確認した。
@@ -323,23 +331,31 @@ Core内部:
 | LLM | **Ollama**（Qwen3系 / Gemma3系）→ `LLMProvider` で交換可能 | ローカル無料優先。将来クラウドへ | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
 | STT | faster-whisper (CTranslate2, int8) | torch非依存でインストーラを小さく保てる | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
 | VAD | Silero VAD (ONNX Runtime, CPU) | 軽量。VRAM を使わない | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
-| TTS | **AivisSpeech**（第一）/ VOICEVOX（代替）/ Kokoro（英語） | **別プロセス・CPU 動作で VRAM を一切消費しない**。LLM に VRAM を全振りできる | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
+| TTS | **AivisSpeech**（第一）/ VOICEVOX（代替）/ Kokoro（英語） | 日本語品質・別プロセス・ライセンス境界。**GPU があれば使う**（CPU では約 2 倍遅い → ADR-025） | [ADR-008](decisions/ADR-008-provider-abstraction.md), [ADR-025](decisions/ADR-025-tts-on-gpu.md) |
 | Embedding | Ruri v3系 / bge-m3（ONNX, CPU） | 日本語検索品質。VRAM を使わない | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
 | Browser | Playwright（out-of-process Extension） | Apache-2.0 | — |
 | ライセンス | **Core = MIT** | GPL/AGPL・非OSS を Core に入れない。Live2D / TTSエンジン / 音声モデル / 商用SDK は Extension・外部プロセス境界に隔離 | — |
 
 ### GPU / VRAM 戦略（RTX 4070 12GB、実効約10.8GB）
 
-| モデル | 配置 | VRAM |
-|---|---|---|
-| LLM (Qwen3 8B Q4_K_M等) | GPU / pinned | ~6.5 GB |
-| STT (faster-whisper int8) | GPU（空きがあれば）/ CPU | ~1.0 GB |
-| VAD (Silero ONNX) | **CPU固定** | 0 |
-| Embedding (ONNX) | **CPU固定** | 0 |
-| **TTS (AivisSpeech/VOICEVOX)** | **別プロセス・CPU** | **0** |
-| Vision (Phase 5) | オンデマンド、使用後アンロード | ~3-4 GB |
+| モデル | 配置 | VRAM（見積） | **Phase 1 実測** |
+|---|---|---|---|
+| LLM (Qwen3.5 9B Q4_K_M) | GPU / pinned | ~6.5 GB | **5.5 GB** |
+| STT (faster-whisper int8) | GPU（空きがあれば）/ CPU | ~1.0 GB | **0.4 GB** |
+| VAD (Silero ONNX) | **CPU固定** | 0 | 0 |
+| Embedding (ONNX) | **CPU固定** | 0 | — |
+| **TTS (AivisSpeech/VOICEVOX)** | **別プロセス。GPU があれば使う**〔ADR-025〕 | ~1.0 GB | **1.0 GB** |
+| Vision (Phase 5) | オンデマンド、使用後アンロード | ~3-4 GB | — |
 
-**TTS を CPU の別プロセスにしたことで、LLM に VRAM を全振りできる構成が成立している。** これが TTS 選定の主因。
+**合計 6.9 / 12 GB**〔2026-08-16 実測 → [measurements/phase1.md](measurements/phase1.md)〕。
+
+**当初は「TTS を CPU に置いて LLM に VRAM を全振りする」を TTS 選定の主因としていたが、
+Phase 1 の実測で撤回した**（[ADR-025](decisions/ADR-025-tts-on-gpu.md)）。
+CPU の TTS は 24 コアを飽和させて 0.9 秒かかり、**p95 2.0 秒の完了条件に届かない**。
+GPU に 1.0 GB 置くと 440 ms になる。**守ろうとしていた VRAM の余裕は、そもそも使われていなかった。**
+
+**GPU が無い環境では CPU で動く。** ただし SLO は GPU 構成での約束である。
+
 `ModelResourceManager` の実装は Phase 5。Phase 1 では `Provider.load/unload/resource_hint()` の**窓口だけ**を確定させる（後から Provider にライフサイクルを追加すると全 Provider の書き換えになるため）。
 
 ---
@@ -592,6 +608,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [022](decisions/ADR-022-wire-contract.md) | プロセス境界を越える名前と定数を `wire.json` に一元化し、3言語のテストで突き合わせる |
 | [023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) | LLM ランタイムと推論モデルを配布物に含めず、種類ごとに取得方法を変える |
 | [024](decisions/ADR-024-activity-priority.md) | Activity の priority を表から決め、割り込み可否を単一の閾値で判定する |
+| [025](decisions/ADR-025-tts-on-gpu.md) | **TTS に GPU を使えるようにする**（ADR-008 の「VRAM を消費しない」を実測により撤回） |
 
 ---
 

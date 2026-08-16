@@ -27,7 +27,9 @@ from pathlib import Path
 import httpx
 
 from lumi import logging as lumi_logging
+from lumi.setup import models
 from lumi.setup.engines import EngineArtifact, is_allowed_origin, is_allowed_redirect
+from lumi.setup.models import ModelArtifact, model_directory
 
 log = lumi_logging.get_logger(__name__)
 
@@ -77,17 +79,26 @@ def _tar_executable() -> Path:
 
 async def _download(
     client: httpx.AsyncClient,
-    artifact: EngineArtifact,
+    url: str,
+    *,
+    size: int,
+    sha256: str,
     destination: Path,
-    progress: ProgressCallback | None,
+    progress: ProgressCallback | None = None,
+    allow_origin: Callable[[str], bool] = is_allowed_origin,
+    allow_redirect: Callable[[str], bool] = is_allowed_redirect,
 ) -> None:
-    """Verifies **size and SHA-256 while fetching**. Raises if even one doesn't match."""
-    url = artifact.url
-    if not is_allowed_origin(url):
+    """Verifies **size and SHA-256 while fetching**. Raises if even one doesn't match.
+
+    The allowlists are parameters because engines and models come from different
+    distributors. **Both are still fixed at import time** — neither is ever user-supplied,
+    which is the property that keeps this from being "Lumi downloads arbitrary files."
+    """
+    if not allow_origin(url):
         raise SetupError("origin_not_allowed", url)
 
     for hop in range(MAX_REDIRECTS + 1):
-        if hop > 0 and not is_allowed_redirect(url):
+        if hop > 0 and not allow_redirect(url):
             # Prevents being redirected to a different distribution source.
             raise SetupError("redirect_not_allowed", url)
 
@@ -103,7 +114,7 @@ async def _download(
                 raise SetupError("http_error", f"{response.status_code} {url}")
 
             declared = response.headers.get("content-length")
-            if declared is not None and int(declared) != artifact.size:
+            if declared is not None and int(declared) != size:
                 raise SetupError("size_mismatch", f"content-length={declared}")
 
             digest = hashlib.sha256()
@@ -112,21 +123,21 @@ async def _download(
             with destination.open("wb") as file:
                 async for chunk in response.aiter_bytes(CHUNK_SIZE):
                     written += len(chunk)
-                    if written > artifact.size:
+                    if written > size:
                         # Larger than expected. **Aborted before reading to the end.**
-                        raise SetupError("size_mismatch", f"received>{artifact.size}")
+                        raise SetupError("size_mismatch", f"received>{size}")
                     file.write(chunk)
                     digest.update(chunk)
                     if progress is not None:
-                        percent = written * 100 // artifact.size
+                        percent = written * 100 // size
                         if percent != reported:
                             reported = percent
-                            await progress(written / artifact.size)
+                            await progress(written / size)
 
-            if written != artifact.size:
-                raise SetupError("size_mismatch", f"received={written} expected={artifact.size}")
+            if written != size:
+                raise SetupError("size_mismatch", f"received={written} expected={size}")
             actual = digest.hexdigest()
-            if actual != artifact.sha256:
+            if actual != sha256:
                 raise SetupError("hash_mismatch", f"sha256={actual}")
             return
 
@@ -181,7 +192,14 @@ async def install_engine(
         # **This is the first point external connection happens.** Never reached before the user's
         # choice.
         async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
-            await _download(client, artifact, archive, progress)
+            await _download(
+                client,
+                artifact.url,
+                size=artifact.size,
+                sha256=artifact.sha256,
+                destination=archive,
+                progress=progress,
+            )
         log.info("setup.install.download.verified", sha256=artifact.sha256)
 
         extracted = work_dir / "extracted"
@@ -200,3 +218,95 @@ async def install_engine(
     finally:
         # The temp directory is never left behind, whether this succeeds or fails.
         await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
+
+
+async def install_stt_model(
+    artifact: ModelArtifact,
+    models_dir: Path,
+    *,
+    progress: ProgressCallback | None = None,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> Path:
+    """Fetches and installs an STT model, returning the directory it landed in.
+
+    Design → docs/architecture/setup.md §3b / decision → ADR-023
+
+    **Nothing is extracted.** A model is a set of files, not an archive, so the fetched bytes
+    are placed as-is. Atomicity is the same single rename as `install_engine`: every file has
+    to verify in a temp directory before anything is committed.
+
+    **A partially-present model is never treated as installed.** Missing one file makes STT
+    fail at load time with an error that points at the model, not at the audio path — the kind
+    of failure that costs an hour to trace.
+
+    `transport` exists so tests can run the whole path without the network, the same seam
+    `OllamaProvider` uses. **The allowlists still apply** — a mock transport doesn't loosen
+    which URLs are acceptable.
+    """
+    final_dir = model_directory(artifact, models_dir)
+    if await asyncio.to_thread(is_model_installed, artifact, models_dir):
+        log.info("setup.model.already_installed", path=str(final_dir))
+        return final_dir
+
+    await asyncio.to_thread(models_dir.mkdir, parents=True, exist_ok=True)
+    work_dir = models_dir / f".tmp-{secrets.token_hex(8)}"
+    await asyncio.to_thread(work_dir.mkdir)
+
+    try:
+        log.info("setup.model.download.start", model=artifact.name, size=artifact.size)
+        fetched = 0
+        # **This is the first point external connection happens.** Never reached before the
+        # user's choice (docs/architecture/setup.md §1 Principle 1).
+        async with httpx.AsyncClient(
+            timeout=TIMEOUT, follow_redirects=False, transport=transport
+        ) as client:
+            for file in artifact.files:
+                await _download(
+                    client,
+                    artifact.url_for(file),
+                    size=file.size,
+                    sha256=file.sha256,
+                    destination=work_dir / file.name,
+                    progress=_scaled(progress, fetched, file.size, artifact.size),
+                    allow_origin=models.is_allowed_origin,
+                    allow_redirect=models.is_allowed_redirect,
+                )
+                fetched += file.size
+        log.info("setup.model.download.verified", model=artifact.name, files=len(artifact.files))
+
+        # **The sole commit operation.** Nothing is left behind if it fails before this.
+        await asyncio.to_thread(work_dir.rename, final_dir)
+        log.info("setup.model.committed", path=str(final_dir))
+        return final_dir
+    finally:
+        await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
+
+
+def is_model_installed(artifact: ModelArtifact, models_dir: Path) -> bool:
+    """Whether every pinned file is present at its pinned size.
+
+    **Sizes only, not hashes.** Re-hashing 480 MB on every startup would cost more than the
+    STT budget for the whole turn. The hashes are what the fetch verifies; this is what
+    detects a half-finished or hand-edited directory.
+    """
+    directory = model_directory(artifact, models_dir)
+    return all(
+        (path := directory / file.name).is_file() and path.stat().st_size == file.size
+        for file in artifact.files
+    )
+
+
+def _scaled(
+    progress: ProgressCallback | None, done: int, part: int, total: int
+) -> ProgressCallback | None:
+    """Maps one file's 0-1 onto the whole model's 0-1.
+
+    Without this the bar resets to zero on every file, which reads as "it restarted."
+    """
+    if progress is None or total <= 0:
+        return None
+
+    async def report(fraction: float) -> None:
+        await progress((done + part * fraction) / total)
+
+    return report

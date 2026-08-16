@@ -166,8 +166,12 @@ class OllamaProvider:
         }
         if options.max_tokens is not None:
             payload["options"]["num_predict"] = options.max_tokens
-        if options.think:
-            payload["think"] = True
+        # ★ **Always sent, including `False`.** Hybrid-reasoning models (Qwen3.5, ...) think by
+        # default, and omitting the field leaves that default in place — so `think=False` would
+        # be silently ignored. Measured 2026-08-16: thinking pushed time-to-first-spoken-token
+        # from 272 ms to 5578 ms, which is the entire p50 budget spent before Lumi says a word
+        # (docs/measurements/phase1.md).
+        payload["think"] = options.think
         if tools:
             payload["tools"] = [_tool_payload(t) for t in tools]
 

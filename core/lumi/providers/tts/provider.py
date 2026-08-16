@@ -25,6 +25,7 @@ from lumi.providers.base import (
     ResourceHint,
     UnloadPolicy,
 )
+from lumi.providers.device import DeviceChoice, resolve
 from lumi.providers.tts.aivisspeech import AivisSpeechClient, TtsError
 from lumi.providers.tts.base import SpeechAudio, VoiceConfig
 from lumi.providers.tts.engine_process import EngineProcess
@@ -43,11 +44,18 @@ class AivisSpeechProvider:
     id = "aivisspeech"
     kind = ProviderKind.TTS
 
-    __slots__ = ("_client", "_default_speaker", "_engine", "_loaded", "_speaker_name")
+    __slots__ = ("_client", "_default_speaker", "_device", "_engine", "_loaded", "_speaker_name")
 
-    def __init__(self, port: int, *, executable: Path | None = None) -> None:
+    def __init__(
+        self,
+        port: int,
+        *,
+        executable: Path | None = None,
+        device: DeviceChoice | str = DeviceChoice.AUTO,
+    ) -> None:
         self._client = AivisSpeechClient(port)
-        self._engine = EngineProcess(executable, port)
+        self._engine = EngineProcess(executable, port, device=device)
+        self._device = resolve(device)
         self._default_speaker: int | None = None
         self._speaker_name = ""
         self._loaded = False
@@ -115,8 +123,10 @@ class AivisSpeechProvider:
         §7).
         """
         return ResourceHint(
+            # Still a separate process — but no longer free of VRAM (ADR-025).
+            # Measured 2026-08-16: 1020 MiB when running on the GPU
             device_pref=DevicePref.EXTERNAL_PROCESS,
-            vram_estimate_mb=0,
+            vram_estimate_mb=0 if self._device is DeviceChoice.CPU else 1020,
             load_time_estimate_ms=int(START_TIMEOUT_S * 1000),
             unload_policy=UnloadPolicy.PINNED,
         )

@@ -113,19 +113,48 @@ async def test_sentences_play_in_order_even_when_the_short_one_finishes_first() 
     assert notifier.texts() == ["ながい文。", "みじかい。"]
 
 
-async def test_generation_is_parallel() -> None:
-    """**Sequential generation always leaves a gap between sentences.** 4 sentences finish faster
-    than their sum in series.
+async def test_generation_does_not_run_ahead_by_default() -> None:
+    """★ **Parallel generation was removed after measuring** (docs/architecture/audio.md §6).
+
+    A TTS engine saturates its device on one request, so four at once don't finish sooner —
+    each just takes four times as long, and **the first sentence is the one that suffers**.
     """
-    tts = FakeTts(delays=dict.fromkeys(["A。", "B。", "C。", "D。"], 0.05))
+    order: list[str] = []
+
+    class Tracking(FakeTts):
+        async def synthesize(
+            self, text: str, voice: VoiceConfig, cancel_token: CancelToken
+        ) -> SpeechAudio:
+            order.append(f"start:{text}")
+            result = await super().synthesize(text, voice, cancel_token)
+            order.append(f"end:{text}")
+            return result
+
+    scheduler = make(Tracking(delays={"A。": 0.02, "B。": 0.0}), FakeNotifier())
+    scheduler.speak("A。")
+    scheduler.speak("B。")
+    await scheduler.finish()
+
+    # B doesn't start until A is done
+    assert order.index("end:A。") < order.index("start:B。")
+
+
+async def test_look_ahead_still_happens() -> None:
+    """N=1 is "one at a time, continuously" — **not** "wait for playback to finish."
+
+    Synthesis outruns real time, so the next sentence is ready before the current one
+    stops playing. The gap between sentences stays closed.
+    """
+    tts = FakeTts(delays=dict.fromkeys(["A。", "B。", "C。"], 0.01))
     scheduler = make(tts, FakeNotifier())
 
     started = asyncio.get_running_loop().time()
-    for text in ("A。", "B。", "C。", "D。"):
+    for text in ("A。", "B。", "C。"):
         scheduler.speak(text)
     await scheduler.finish()
 
-    assert asyncio.get_running_loop().time() - started < 0.05 * 4
+    # 3 sentences x 10 ms audio each; generation overlaps playback rather than following it
+    assert asyncio.get_running_loop().time() - started < 0.2
 
 
 # ── Playback and notification ──────────────────────────────────────────────

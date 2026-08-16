@@ -410,6 +410,78 @@ async def test_a_tool_result_taints_the_following_turn() -> None:
     assert rig.session.turns[-1].trust_level is TrustLevel.TAINTED
 
 
+# ── Latency measurement (docs/architecture/audio.md §7) ──────
+
+
+async def test_a_turn_reports_its_latency_breakdown() -> None:
+    """**Every turn reports.** The SLO is a distribution, not a best case."""
+    rig = Rig(FakeLlm([text("うん。")]))
+    await rig.start()
+
+    await rig.loop.handle_text("やあ")
+
+    latency = rig.loop.last_latency
+    assert latency is not None
+    assert set(latency.spans) == {
+        "retrieve_ms",
+        "assemble_ms",
+        "llm_first_token_ms",
+        "llm_first_segment_ms",
+        "tts_first_audio_ms",
+        "playback_ms",
+    }
+
+
+async def test_the_voice_route_also_measures_vad_and_stt() -> None:
+    """`vad_ms` starts when the user **stopped talking**, not when Core noticed."""
+    rig = Rig(FakeLlm([text("はい。")]), stt_text="おはよう")
+    await rig.start()
+
+    ended_at = asyncio.get_running_loop().time()
+    await rig.loop.on_speech_ended(np.zeros(1600, dtype=np.float32), ended_at)
+
+    latency = rig.loop.last_latency
+    assert latency is not None
+    assert "vad_ms" in latency.spans
+    assert "stt_ms" in latency.spans
+
+
+async def test_an_interrupted_turn_still_reports() -> None:
+    """★ **Barge-in is the normal case, not an error.**
+
+    "How far did it get before being cut off" is exactly what needs measuring, and the
+    stages it never reached stay **absent** rather than being recorded as 0.
+    """
+    rig = Rig(FakeLlm([text("ながいはなしを。")], delay=0.05))
+    await rig.start()
+
+    turn = asyncio.create_task(rig.loop.handle_text("なにか話して"))
+    await asyncio.sleep(0.01)
+    await rig.loop.on_speech_started()
+    await turn
+
+    latency = rig.loop.last_latency
+    assert latency is not None
+    assert "tts_first_audio_ms" not in latency.spans
+
+
+async def test_the_tool_loop_does_not_reassign_the_first_spans() -> None:
+    """`assemble_ms` means **the first** assembly — the one the user is waiting on."""
+    call: list[LLMEvent] = [
+        ToolCall(id="1", name="character.set_expression", arguments={"emotion": "happy"}),
+        Finish(reason="tool_calls"),
+    ]
+    rig = Rig(FakeLlm([call, text("できたよ。")]))
+    await rig.start()
+
+    await rig.loop.handle_text("笑って")
+
+    assert rig.llm.step == 2
+    latency = rig.loop.last_latency
+    assert latency is not None
+    assert latency.spans["assemble_ms"] >= 0
+
+
 # ── barge-in ────────────────────────────────────────────────
 
 

@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from typing import Any, Final, Protocol
 
 from lumi import logging as lumi_logging
+from lumi.agent.latency import TurnTimer
 from lumi.audio.playback import SpeakerPlayback
 from lumi.audio.resample import pcm16_to_float32, resample, to_interleaved, to_mono
 from lumi.audio.ring import Samples
@@ -46,7 +47,7 @@ METHOD_SPEECH_STARTED: Final = "stage.speech.started"
 METHOD_SPEECH_ENDED: Final = "stage.speech.ended"
 
 #: Number of TTS generations to run concurrently [Provisional]. docs/architecture/audio.md §6
-MAX_PARALLEL: Final = 4
+MAX_PARALLEL: Final = 1
 
 # : How far ahead of time to start writing the next sentence into the ring. **Keeps no gap between
 # sentences**. : Since the ring preserves order, writing early doesn't scramble the audio
@@ -92,6 +93,7 @@ class PlaybackScheduler:
         "_spoken",
         "_started",
         "_synth",
+        "_timer",
         "_total",
         "_tts",
         "_voice",
@@ -106,6 +108,7 @@ class PlaybackScheduler:
         voice: VoiceConfig,
         cancel_token: CancelToken,
         max_parallel: int = MAX_PARALLEL,
+        timer: TurnTimer | None = None,
     ) -> None:
         self._tts = tts
         self._playback = playback
@@ -121,6 +124,9 @@ class PlaybackScheduler:
         self._failed = 0
         self._aborted = False
         self._started = False
+        #: Optional. **Only the first sentence contributes** to the SLO spans — that is the
+        #: one the user is waiting on (docs/architecture/audio.md §7)
+        self._timer = timer
 
     def speak(self, text: str) -> None:
         """Queue one sentence. **Non-blocking.** Generation runs in parallel in the background."""
@@ -133,6 +139,8 @@ class PlaybackScheduler:
         self._synth.add(task)
         task.add_done_callback(self._synth.discard)
 
+        if slot.index == 0 and self._timer is not None:
+            self._timer.begin("tts_first_audio_ms")
         self._queue.put_nowait(slot)
         if self._player is None:
             self._player = asyncio.create_task(self._play_loop(), name="playback")
@@ -183,6 +191,9 @@ class PlaybackScheduler:
                 self._failed += 1
                 _resolve(slot.audio, None)
             else:
+                if slot.index == 0 and self._timer is not None:
+                    self._timer.end("tts_first_audio_ms")
+                    self._timer.begin("playback_ms")
                 _resolve(slot.audio, audio)
 
     # ── Playback ──────────────────────────────────────────────
@@ -212,6 +223,10 @@ class PlaybackScheduler:
             self._started = True
 
         self._playback.write(samples)
+        if slot.index == 0 and self._timer is not None:
+            self._timer.end("playback_ms")
+            # ★ The first sound is queued. **This is where the measured interval ends**
+            self._timer.complete()
         self._spoken += 1
         await self._notify_started(slot.text, audio)
         await asyncio.sleep(max(0.0, duration_s - LEAD_S))

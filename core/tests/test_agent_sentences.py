@@ -4,7 +4,12 @@
 
 from __future__ import annotations
 
-from lumi.agent.sentences import MAX_CHARS, SentenceStream, is_speakable
+from lumi.agent.sentences import (
+    FIRST_MAX_CHARS,
+    MAX_CHARS,
+    SentenceStream,
+    is_speakable,
+)
 
 
 def test_sentences_are_emitted_at_terminators() -> None:
@@ -68,8 +73,52 @@ def test_a_long_run_is_cut_at_a_soft_break() -> None:
 
 def test_a_long_run_without_any_break_is_cut_hard() -> None:
     stream = SentenceStream()
-    sentences = stream.feed("あ" * (MAX_CHARS * 2))
-    assert sentences == ["あ" * MAX_CHARS, "あ" * MAX_CHARS]
+    sentences = stream.feed("あ" * (FIRST_MAX_CHARS + MAX_CHARS * 2))
+    # The first is capped short; the rest use the normal cap
+    assert sentences == ["あ" * FIRST_MAX_CHARS, "あ" * MAX_CHARS, "あ" * MAX_CHARS]
+
+
+# ── The first segment is cut short (docs/architecture/audio.md §6) ──────────
+
+
+def test_the_first_segment_cuts_at_a_comma() -> None:
+    """**Time to first sound beats intonation — once per utterance.**
+
+    Waiting for "。" delays the reply's very first sound, and that delay happens exactly
+    where it is felt most.
+    """
+    stream = SentenceStream()
+    fed = stream.feed("そうだね、たぶんそうなると思うよ。")
+    assert fed == ["そうだね、", "たぶんそうなると思うよ。"]
+
+
+def test_later_segments_do_not_cut_at_a_comma() -> None:
+    """**Only the first one.** Chopping every clause would wreck the intonation throughout."""
+    stream = SentenceStream()
+    stream.feed("うん。")
+    assert stream.feed("あとでね、たぶん。") == ["あとでね、たぶん。"]
+
+
+def test_the_first_segment_is_capped_shorter() -> None:
+    stream = SentenceStream()
+    first = stream.feed("あ" * FIRST_MAX_CHARS)[0]
+    assert len(first) == FIRST_MAX_CHARS
+
+
+def test_a_terminator_still_wins_over_the_short_cap() -> None:
+    """A short first sentence isn't padded out to the cap."""
+    stream = SentenceStream()
+    assert stream.feed("うん。ところで") == ["うん。"]
+
+
+def test_an_unspeakable_first_fragment_does_not_consume_the_exception() -> None:
+    """A leading "、" produces nothing speakable. **The next segment still gets the short cut.**
+
+    If the exception were spent on a fragment that never reached TTS, the real first
+    sentence would be cut on the normal rule and the whole point would be lost.
+    """
+    stream = SentenceStream()
+    assert stream.feed("、そうだね、うん。") == ["そうだね、", "うん。"]
 
 
 def test_newlines_end_a_sentence() -> None:

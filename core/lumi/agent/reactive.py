@@ -27,12 +27,12 @@ path is the same as production.**
 from __future__ import annotations
 
 import asyncio
-import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final, cast
 
 from lumi import logging as lumi_logging
+from lumi.agent.latency import TurnLatency, TurnTimer
 from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import ContextBlock, assemble
 from lumi.agent.sentences import SentenceStream
@@ -84,6 +84,7 @@ class ReactiveLoop:
     __slots__ = (
         "_arbiter",
         "_audio",
+        "_last_latency",
         "_limits",
         "_notifier",
         "_options",
@@ -115,10 +116,16 @@ class ReactiveLoop:
         self._session = session or Session()
         self._limits = limits or LoopLimits()
         self._audio = audio
+        self._last_latency: TurnLatency | None = None
 
     @property
     def session(self) -> Session:
         return self._session
+
+    @property
+    def last_latency(self) -> TurnLatency | None:
+        """The most recent turn's breakdown. **What the Inspector shows** (roadmap Phase 1)."""
+        return self._last_latency
 
     # ── Entry point ──────────────────────────────────────────────
 
@@ -134,11 +141,11 @@ class ReactiveLoop:
             return
 
         turns: set[asyncio.Task[None]] = set()
-        async for event, audio in self._audio.events():
+        async for event, audio, audio_at in self._audio.events():
             if event is VadEvent.SPEECH_STARTED:
                 await self.on_speech_started()
             elif event is VadEvent.SPEECH_ENDED and audio is not None:
-                task = asyncio.create_task(self.on_speech_ended(audio), name="turn")
+                task = asyncio.create_task(self.on_speech_ended(audio, audio_at), name="turn")
                 turns.add(task)
                 task.add_done_callback(turns.discard)
 
@@ -152,16 +159,23 @@ class ReactiveLoop:
             abandoned=result.abandoned,
         )
 
-    async def on_speech_ended(self, audio: AudioBuffer) -> None:
+    async def on_speech_ended(self, audio: AudioBuffer, ended_at: float | None = None) -> None:
         """A speech segment was confirmed. **Run STT before proposing an Activity.**
 
         STT happens before the proposal so that **no Activity gets created if nothing was
         actually said**. An empty conversation Activity needlessly preempts idle and
         clutters the Inspector.
+
+        `ended_at` is when the user actually stopped talking, not when this was called.
+        **The gap between the two is `vad_ms`** and it is the largest fixed cost in the
+        budget (docs/architecture/audio.md §7), so it must not be measured from here.
         """
+        timer = TurnTimer(new_correlation_id(), started_at=ended_at)
+        timer.since_start("vad_ms")
         try:
             stt: STTProvider = await self._get(ProviderKind.STT)
-            transcription = await stt.transcribe(audio, LANGUAGE, CancelToken())
+            with timer.span("stt_ms"):
+                transcription = await stt.transcribe(audio, LANGUAGE, CancelToken())
         except ProviderError as error:
             # **Don't silently ignore it.** What's missing is tracked by setup state
             log.warning("reactive.stt_failed", error=str(error))
@@ -171,10 +185,18 @@ class ReactiveLoop:
         if not text:
             log.info("reactive.empty_transcription")
             return
-        await self.handle_text(text)
+        await self.handle_text(text, timer=timer)
 
-    async def handle_text(self, text: str) -> None:
-        """One turn from text input. **Takes the same path as the voice route.**"""
+    async def handle_text(self, text: str, *, timer: TurnTimer | None = None) -> None:
+        """One turn from text input. **Takes the same path as the voice route.**
+
+        Without a `timer`, one starts here — so `vad_ms` and `stt_ms` are simply absent
+        rather than zero. **Typed input never went through those stages**, and recording
+        them as 0 would drag the percentiles toward a speed the voice path never reaches.
+        """
+        timer = timer or TurnTimer(new_correlation_id())
+        # Phase 1 has no memory retrieval. **Recorded explicitly so the spans stay contiguous**
+        timer.record("retrieve_ms", 0)
         proposal = ActivityProposal(
             kind=ActivityKind.CONVERSATION,
             actor=Actor.USER_INITIATED,
@@ -193,21 +215,23 @@ class ReactiveLoop:
         activity = outcome.activity
         failed = False
         try:
-            await self._converse(activity, text)
+            await self._converse(activity, text, timer)
         except ProviderError as error:
             # **Record in the Activity's state that it failed to speak** (never silently mark it a
             # success)
             log.warning("reactive.turn_failed", error=str(error))
             failed = True
         finally:
+            # **An interrupted turn reports too.** Barge-in is the normal case, and how far
+            # the turn got before being cut off is exactly what needs measuring
+            self._last_latency = timer.emit()
             if self._arbiter.current().id == activity.id:
                 # If it was interrupted, the Arbiter has already cleaned up. Don't double-transition
                 await self._arbiter.complete(activity.id, failed=failed)
 
     # ── One turn ───────────────────────────────────────────
 
-    async def _converse(self, activity: Activity, text: str) -> None:
-        started = time.perf_counter()
+    async def _converse(self, activity: Activity, text: str, timer: TurnTimer) -> None:
         # **From here on, interruption is allowed.** Reset to a state that can accept the next
         # barge-in
         if self._audio is not None:
@@ -224,6 +248,7 @@ class ReactiveLoop:
             self._notifier,
             voice=self._voice(tts),
             cancel_token=activity.cancel_token,
+            timer=timer,
         )
         # **Playback is `hard`.** Muting the buffer silences it instantly
         speech = Cancellable(
@@ -239,7 +264,7 @@ class ReactiveLoop:
             for step in range(self._limits.max_steps):
                 if activity.cancel_token.is_set:
                     break
-                calls = await self._one_step(activity, llm, scheduler, blocks)
+                calls = await self._one_step(activity, llm, scheduler, blocks, timer)
                 if not calls:
                     break
                 blocks += [await self._run_tool(activity, call) for call in calls]
@@ -248,23 +273,32 @@ class ReactiveLoop:
         finally:
             speech.mark_finished()
 
-        log.info("reactive.turn_done", elapsed_ms=round((time.perf_counter() - started) * 1000, 1))
-
     async def _one_step(
         self,
         activity: Activity,
         llm: LLMProvider,
         scheduler: PlaybackScheduler,
         blocks: list[ContextBlock],
+        timer: TurnTimer,
     ) -> list[ToolCall]:
-        """One LLM stream. **Collects tool calls while speaking.**"""
-        prompt = assemble(persona=self._pack.persona, session=self._session, blocks=blocks)
+        """One LLM stream. **Collects tool calls while speaking.**
+
+        The timer marks are `mark_once`: the tool loop assembles a prompt every step, but the
+        spans mean **the first** of each — what the user is actually waiting on.
+
+        **What this does not measure well**: if step 1 is a pure tool call with no text, the
+        tool round-trip lands inside `llm_first_token_ms`. Acceptable while Phase 1 has one
+        L0 tool; revisit when tools become common.
+        """
+        with timer.span("assemble_ms"):
+            prompt = assemble(persona=self._pack.persona, session=self._session, blocks=blocks)
 
         markers = MarkerStream()
         sentences = SentenceStream()
         spoken: list[str] = []
         calls: list[ToolCall] = []
 
+        timer.begin("llm_first_token_ms")
         async for event in llm.stream(
             prompt.messages,
             self._tools.list_exposed(),
@@ -276,11 +310,15 @@ class ReactiveLoop:
                 break
             match event:
                 case TextDelta(text=text):
+                    if timer.end("llm_first_token_ms") is not None:
+                        # The wait for a full TTS-able unit starts here (audio.md §7)
+                        timer.begin("llm_first_segment_ms")
                     chunk = markers.feed(text)
                     spoken.append(chunk.text)
                     for intent in chunk.intents:
                         await self._apply_expression(activity, intent)
                     for sentence in sentences.feed(chunk.text):
+                        timer.end("llm_first_segment_ms")
                         scheduler.speak(sentence)
                 case ReasoningDelta():
                     # **Reasoning is never spoken.** Not shown in the speech bubble either
@@ -298,6 +336,7 @@ class ReactiveLoop:
         tail = markers.flush()
         spoken.append(tail)
         for sentence in [*sentences.feed(tail), *sentences.flush()]:
+            timer.end("llm_first_segment_ms")
             scheduler.speak(sentence)
 
         # **Inherits the join of the inputs** (not "always tainted because it's LLM output")

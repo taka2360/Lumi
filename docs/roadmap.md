@@ -150,11 +150,11 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
   - [x] `block_trust` / `history_trust` / `session_trust`（sticky）の3スコープ
 - [x] Provider interface（`load` / `unload` / `resource_hint` / **`attribution`** を含む）〔Step C〕
 - [ ] **推論スタックのセットアップ**〔[ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) / [architecture/setup.md](architecture/setup.md) §2b〕
-  - [x] **Ollama の検出**（取得もインストールもしない）〔Step C〕/ [ ] 「LLM 未セットアップ」/ `model_missing` の**提示**（Step G）
+  - [x] **Ollama の検出**（取得もインストールもしない）と `model_missing` の判定 〔Step C / **Step F で実機確認**（[measurements/phase1.md](measurements/phase1.md)）〕 / [ ] Stage への**提示**（Step G）
   - [ ] **STT モデルの取得**（ピン留め + SHA-256 + ロールバック）。**ライブラリの自動ダウンロードを無効化する**
   - [x] **Silero VAD を配布物に同梱** 〔Step D/E。faster-whisper 同梱の ONNX（MIT）を使う。**OSS 通知への Silero Team のクレジット追加が残っている** → Step G〕
   - [ ] 起動フェーズ（`boot`）を **LLM / STT / TTS の3つから導出**する。「喋れるが聞けない」を正常な状態として出す
-- [ ] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）〔ログは有り。区間別計測は Step F〕
+- [x] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）〔Step F で `turn_latency` / `vad.mute` を実装。**数値の記録はモデル取得後**〕
 - [ ] Inspector 最小版（Activity ツリー / レイテンシ内訳）〔Step G〕
 - [ ] **Content Pack の既定キャラクター**〔Step E で `content/characters/lumi/` を作成。**VRM 本体はまだ置いていない**（下記の持ち越し）〕
 
@@ -171,11 +171,22 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
 ### 完了条件
 話しかけると **p95 2.0 秒以内**に喋り始め、**途中で遮ると止まる**。
 
+**〔2026-08-16 実測〕音声経路で p50 1.50 秒 / ウォーム p95 1.63 秒。完了条件を満たしている。**
+ただし **GPU 構成での話**である（[ADR-025](decisions/ADR-025-tts-on-gpu.md)）。
+CPU では TTS だけで 0.9 秒かかり届かない。→ [measurements/phase1.md](measurements/phase1.md)
+
+**残っているのは実機での手動確認**（マイクから話しかける / 喋っている途中で遮る）。
+計測はオフライン注入（録音済み音声）で行った。
+
 ### レイテンシ SLO
 
 **表と区間別予算は [architecture/audio.md](architecture/audio.md) §7 が唯一の定義場所。**
 
-要点: p50 < 1.2s / p95 < 2.0s / p99 < 3.0s。**区間合計は p50 目標の 85% 以下**に収め、残りを計測外処理の予備枠として空けておく（Phase 1 は区間合計 0.95s）。
+要点: p50 < 1.2s / p95 < 2.0s / p99 < 3.0s。**区間合計は p50 目標の 85% 以下**に収め、残りを計測外処理の予備枠として空けておく。
+
+🔴 **Phase 2 着手前に決めること: 記憶検索を足すと 85% 規則を破る。**〔Step F で判明〕
+Phase 1 の区間合計は 1.02s（= 上限ちょうど）。記憶検索 0.05s を足すと 1.07s / 89% になる。
+**他の区間を縮めるか p50 目標を見直すかを、Phase 2 の実装前に決める。**
 
 ### なぜ Kernel 基盤を MVP に入れるのか
 **あとから Kernel を入れるのが一番危ない。** Attention Arbiter・Cancellation 契約・Provenance・Event 採番は、後から挿入すると全コードのシグネチャを書き換えることになる。L0 ツールしか無くても、**型と経路は本番と同じもの**を通す。
@@ -399,6 +410,9 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 6 | 🔴 **プライバシーとデータ保存の方針**（`contracts/privacy.md` を書く） | **Phase 2 着手前** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
 | 8 | **DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる） | Phase 3 着手前 |
+| 8b | 🔴 **記憶検索を足すと区間合計が 85% 規則を破る**（1.07s / 89%）。区間を縮めるか p50 目標を見直すか | **Phase 2 着手前** → [architecture/audio.md](architecture/audio.md) §7 |
+| ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
+| 8d | 🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**。予算を直すか、パラメータを下げるか | **Phase 1 完了判定の前** → [measurements/phase1.md](measurements/phase1.md) |
 | 9 | 設定の保存形式とスキーマ | Phase 1（必要になった時点） |
 | ~~10~~ | ~~**`Activity.priority` の数値体系と `interruptible_by` を集合にする必要性**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-024](decisions/ADR-024-activity-priority.md)。**`interruptible_at: int` の単一閾値**（`>=` で判定）。値は [architecture/agent.md](architecture/agent.md) §1 |
 | 11 | キャラクター人格の記述形式（独自 vs 既存カード互換） | Phase 1 後半 |

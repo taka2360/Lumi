@@ -52,7 +52,9 @@ log = lumi_logging.get_logger(__name__)
 
 #: The LLM to use. **Lumi doesn't fetch the model itself** (ADR-023)
 MODEL_ENV: Final = "LUMI_LLM_MODEL"
-DEFAULT_MODEL: Final = "qwen3:4b"
+#: [Provisional] 2026-08-16: Qwen3.5 9B (Q4_K_M, 6.6 GB). Fits a 12 GB card whole,
+#: which is what makes the first-token budget reachable (DESIGN.md §7: LLM gets the VRAM)
+DEFAULT_MODEL: Final = "qwen3.5:9b"
 #: STT model size [Provisional]. To be finalized after measurement
 STT_MODEL_ENV: Final = "LUMI_STT_MODEL"
 DEFAULT_STT_MODEL: Final = "small"

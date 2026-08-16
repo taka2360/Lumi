@@ -72,7 +72,13 @@ class TestDownload:
         destination = tmp_path / "dl.bin"
 
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
-            await _download(client, artifact, destination, None)
+            await _download(
+                client,
+                artifact.url,
+                size=artifact.size,
+                sha256=artifact.sha256,
+                destination=destination,
+            )
 
         assert destination.read_bytes() == PAYLOAD
 
@@ -80,14 +86,26 @@ class TestDownload:
         artifact = artifact_for(sha256="0" * 64)
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "hash_mismatch"
 
     async def test_rejects_a_size_mismatch(self, tmp_path: Path) -> None:
         artifact = artifact_for(size=len(PAYLOAD) + 1)
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "size_mismatch"
 
     async def test_stops_when_the_body_is_larger_than_pinned(self, tmp_path: Path) -> None:
@@ -99,7 +117,13 @@ class TestDownload:
 
         async with client_for(handler) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "size_mismatch"
 
     async def test_follows_an_allowed_redirect(self, tmp_path: Path) -> None:
@@ -112,7 +136,13 @@ class TestDownload:
             return httpx.Response(200, content=PAYLOAD)
 
         async with client_for(handler) as client:
-            await _download(client, artifact, tmp_path / "dl.bin", None)
+            await _download(
+                client,
+                artifact.url,
+                size=artifact.size,
+                sha256=artifact.sha256,
+                destination=tmp_path / "dl.bin",
+            )
 
     async def test_refuses_a_redirect_to_another_host(self, tmp_path: Path) -> None:
         artifact = artifact_for()
@@ -124,14 +154,26 @@ class TestDownload:
 
         async with client_for(handler) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "redirect_not_allowed"
 
     async def test_refuses_an_origin_outside_the_pin(self, tmp_path: Path) -> None:
         artifact = artifact_for(url="https://evil.example.com/engine.7z")
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "origin_not_allowed"
 
     async def test_reports_progress(self, tmp_path: Path) -> None:
@@ -142,7 +184,14 @@ class TestDownload:
             seen.append(fraction)
 
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
-            await _download(client, artifact, tmp_path / "dl.bin", progress)
+            await _download(
+                client,
+                artifact.url,
+                size=artifact.size,
+                sha256=artifact.sha256,
+                destination=tmp_path / "dl.bin",
+                progress=progress,
+            )
 
         assert seen
         assert seen[-1] == pytest.approx(1.0)
@@ -166,9 +215,10 @@ def fake_download(
 ) -> Callable[..., Awaitable[None]]:
     async def _fake(
         _client: httpx.AsyncClient,
-        _artifact: EngineArtifact,
+        _url: str,
+        *,
         destination: Path,
-        _progress: object,
+        **_kwargs: object,
     ) -> None:
         if error is not None:
             raise error

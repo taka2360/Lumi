@@ -36,13 +36,17 @@ from lumi.providers.base import (
     ResourceHint,
     UnloadPolicy,
 )
+from lumi.providers.device import DeviceChoice, resolve
 from lumi.providers.stt.base import AudioBuffer, Segment, Transcription
+from lumi.setup.install import is_model_installed
+from lumi.setup.models import STT_MODELS, model_directory
 
 log = lumi_logging.get_logger(__name__)
 
-#: **CPU / int8.** The GPU is dedicated entirely to the LLM (DESIGN.md §7)
-DEFAULT_COMPUTE_TYPE: Final = "int8"
-DEFAULT_DEVICE: Final = "cpu"
+#: Compute type per device. DESIGN.md §7 places STT on the GPU when there is room.
+#: Measured 2026-08-16: **GPU 60 ms vs CPU 920 ms** for the same clip — 15x, for 0.4 GB
+#: (docs/measurements/phase1.md). The 0.22 s budget is unreachable on CPU.
+COMPUTE_TYPE: Final = {DeviceChoice.CUDA: "int8_float16", DeviceChoice.CPU: "int8"}
 
 #: Tuned after measurement [Provisional]. SLO is p50 0.22 s (docs/architecture/audio.md §7)
 DEFAULT_BEAM_SIZE: Final = 1
@@ -60,15 +64,17 @@ class FasterWhisperProvider:
         model_size: str,
         model_dir: Path,
         *,
-        device: str = DEFAULT_DEVICE,
-        compute_type: str = DEFAULT_COMPUTE_TYPE,
+        device: DeviceChoice | str = DeviceChoice.AUTO,
+        compute_type: str | None = None,
         beam_size: int = DEFAULT_BEAM_SIZE,
     ) -> None:
         self.id = f"faster-whisper:{model_size}"
         self._size = model_size
         self._model_dir = model_dir
-        self._device = device
-        self._compute_type = compute_type
+        #: **Resolved once, at construction.** Probing per request would make the device a
+        #: thing that can change mid-session, which nothing downstream expects
+        self._device = resolve(device)
+        self._compute_type = compute_type or COMPUTE_TYPE[self._device]
         self._beam_size = beam_size
         self._model: Any | None = None
 
@@ -82,7 +88,7 @@ class FasterWhisperProvider:
         import asyncio
 
         self._model = await asyncio.to_thread(self._build)
-        log.info("stt.loaded", provider=self.id, device=self._device)
+        log.info("stt.loaded", provider=self.id, device=self._device.value)
 
     def _build(self) -> Any:
         try:
@@ -90,10 +96,11 @@ class FasterWhisperProvider:
         except ImportError as error:  # pragma: no cover - unreachable if the dependency is present
             raise ProviderNotConfigured("faster_whisper_missing", str(error)) from error
 
+        source = self._resolve()
         try:
             return WhisperModel(
-                self._size,
-                device=self._device,
+                str(source),
+                device=self._device.value,
                 compute_type=self._compute_type,
                 download_root=str(self._model_dir),
                 # * **This is ADR-023's implementation.** Fails if missing
@@ -105,6 +112,23 @@ class FasterWhisperProvider:
                 "model_missing",
                 f"{self._size} が {self._model_dir} に無い（セットアップで取得してください）",
             ) from error
+
+    def _resolve(self) -> Path:
+        """The directory the pinned model was installed into (docs/architecture/setup.md §3b).
+
+        **Checked here rather than left to the library.** `faster_whisper` would report a
+        missing model as a generic cache miss, and the error would point at the audio path
+        instead of at setup.
+        """
+        artifact = STT_MODELS.get(self._size)
+        if artifact is None:
+            raise ProviderNotConfigured("unknown_model", f"ピン留めされていない: {self._size}")
+        if not is_model_installed(artifact, self._model_dir):
+            raise ProviderNotConfigured(
+                "model_missing",
+                f"{self._size} が {self._model_dir} に無い（セットアップで取得してください）",
+            )
+        return model_directory(artifact, self._model_dir)
 
     async def unload(self) -> None:
         self._model = None
@@ -155,9 +179,12 @@ class FasterWhisperProvider:
     def resource_hint(self) -> ResourceHint:
         return ResourceHint(
             device_pref=(
-                DevicePref.CPU_ONLY if self._device == "cpu" else DevicePref.GPU_PREFERRED
+                DevicePref.CPU_ONLY
+                if self._device is DeviceChoice.CPU
+                else DevicePref.GPU_PREFERRED
             ),
-            vram_estimate_mb=0 if self._device == "cpu" else 1000,
+            # Measured 2026-08-16: small / int8_float16 → 417 MiB
+            vram_estimate_mb=0 if self._device is DeviceChoice.CPU else 420,
             load_time_estimate_ms=2000,
             unload_policy=UnloadPolicy.PINNED,
         )
