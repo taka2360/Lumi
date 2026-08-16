@@ -9,7 +9,7 @@ would mean rebuilding it later.
 
 | Persisted | Not persisted |
 |---|---|
-| Kernel facts (Activity start/end, the Tool's three-stage recording, permission decisions) | **Utterance text** |
+| Kernel facts (Activity start/end, Tool's 3-stage record, permission) | **Utterance text** |
 
 **Utterance text is never put into a DomainEvent's payload.** Phase 1's Working Memory
 lives in in-session memory only; persisting conversation starts in Phase 2 (after
@@ -38,10 +38,12 @@ from lumi import logging as lumi_logging
 
 log = lumi_logging.get_logger(__name__)
 
-#: The current schema version. When a migration is added, **this must match `_MIGRATIONS`'s length**.
+# : The current schema version. When a migration is added, **this must match `_MIGRATIONS`'s
+# length**.
 SCHEMA_VERSION: Final = 2
 
-#: Applying index 0 produces schema version 1. **Existing entries are never rewritten** (append-only).
+# : Applying index 0 produces schema version 1. **Existing entries are never rewritten**
+# (append-only).
 _MIGRATIONS: Final[tuple[tuple[str, ...], ...]] = (
     (
         """

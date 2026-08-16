@@ -65,7 +65,9 @@ def autonomous(intent: str = "small_talk") -> ActivityProposal:
 
 
 async def settle(instance: AttentionArbiter) -> None:
-    """Waits for the background cleanup task. **Never waited for in production** (waiting would delay barge-in)."""
+    """Waits for the background cleanup task. **Never waited for in production** (waiting would
+    delay barge-in).
+    """
     if instance._pending:
         await asyncio.gather(*list(instance._pending))
 
@@ -286,7 +288,9 @@ async def test_non_cancellable_child_makes_the_activity_abandoned(
 async def test_cooperative_child_that_never_stops_is_abandoned(
     arbiter: AttentionArbiter, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**Detached rather than waiting forever and breaking barge-in.** A warning is logged since it's a contract violation."""
+    """**Detached rather than waiting forever and breaking barge-in.** A warning is logged since
+    it's a contract violation.
+    """
     monkeypatch.setattr(arbiter_module, "COOPERATIVE_GRACE_S", 0.01)
     accepted = await arbiter.propose(user_speech())
     assert isinstance(accepted, Accepted)
@@ -329,7 +333,7 @@ async def test_interrupt_returns_to_idle(arbiter: AttentionArbiter) -> None:
 
 
 async def test_job_does_not_take_the_foreground(arbiter: AttentionArbiter) -> None:
-    """**A Job never takes foreground** (ADR-018). `current` stays idle even while holding a lease."""
+    """**A Job never takes foreground** (ADR-018). `current` stays idle while holding a lease."""
     job = Job(id=new_job_id(), kind=JobKind.REFLECTION, cancellation=Cancellation.COOPERATIVE)
     async with arbiter.inference_lease(job):
         assert arbiter.current().kind is ActivityKind.IDLE
@@ -342,7 +346,9 @@ def test_job_actor_is_always_system() -> None:
 
 
 async def test_foreground_inference_revokes_the_job_lease(arbiter: AttentionArbiter) -> None:
-    """**Without this, Reflection would delay the conversation's first token, hitting the SLO directly.**"""
+    """**Without this, Reflection would delay the conversation's first token, hitting the SLO
+    directly.**
+    """
     job = Job(
         id=new_job_id(),
         kind=JobKind.REFLECTION,

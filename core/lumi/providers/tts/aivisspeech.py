@@ -119,7 +119,8 @@ class AivisSpeechClient:
 
         timeline = build_timeline(query, audio_seconds)
         if not timeline.spans:
-            # **Never silently play silence.** This happens when garbled input is passed in (observed).
+            # **Never silently play silence.** This happens when garbled input is passed in
+            # (observed).
             raise TtsError("no_moras", "モーラが1つも得られなかった")
 
         log.info(

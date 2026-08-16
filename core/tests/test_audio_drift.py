@@ -68,7 +68,9 @@ class TestEstimate:
         assert abs(long.ppm - 50.0) < 3.0
 
     def test_startup_transient_is_excluded(self) -> None:
-        """Including buffer-filling right after start produces a spurious slope. **Only the second half is used.**"""
+        """Including buffer-filling right after start produces a spurious slope. **Only the second
+        half is used.**
+        """
         samples = series(0.0)
         warmed = [(wall, stream + min(wall, 0.5) * 0.2) for wall, stream in samples]
         estimate = estimate_drift(warmed)
@@ -86,7 +88,9 @@ class TestRefusesToGuess:
 
 class TestRelative:
     def test_relative_is_the_difference(self) -> None:
-        """What breaks AEC isn't drift from wall-clock time — it's **drift between input and output**."""
+        """What breaks AEC isn't drift from wall-clock time — it's **drift between input and
+        output**.
+        """
         capture = estimate_drift(series(100.0))
         playback = estimate_drift(series(98.0))
         assert capture is not None and playback is not None

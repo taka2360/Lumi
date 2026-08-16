@@ -50,7 +50,9 @@ def test_self_initiated_l3_and_above_is_denied(risk: Risk) -> None:
 
 
 def test_escalation_is_an_explicit_mapping() -> None:
-    """The "bumps up by one level" description was retracted because it contradicted the table at L3."""
+    """The "bumps up by one level" description was retracted because it contradicted the table at
+    L3.
+    """
     assert escalate_for_self_initiated(Risk.L2) is Risk.L3
     assert escalate_for_self_initiated(Risk.L3) is Risk.DENIED
     assert escalate_for_self_initiated(Risk.L4) is Risk.DENIED
@@ -144,7 +146,9 @@ def test_remaining_uses_are_consumed() -> None:
 
 
 def test_decide_takes_exactly_four_arguments() -> None:
-    """**Guarantees at the signature level that an LLM's stated reasoning or a Tool's self-report never arrives** (Invariant 1)."""
+    """**Guarantees at the signature level that an LLM's stated reasoning or a Tool's self-report
+    never arrives** (Invariant 1).
+    """
     parameters = list(inspect.signature(decide).parameters)
     assert parameters == ["base_risk", "actor", "effective_trust", "grant"]
 

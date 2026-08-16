@@ -37,7 +37,8 @@ CHUNK_SIZE = 1024 * 256
 #: The number of redirects allowed. **Never follows indefinitely.**
 MAX_REDIRECTS = 5
 
-#: Connect and read timeouts. Fetching can take a long time, so read is generous while connect stays short.
+# : Connect and read timeouts. Fetching can take a long time, so read is generous while connect
+# stays short.
 TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=60.0, pool=10.0)
 
 ProgressCallback = Callable[[float], Awaitable[None]]
@@ -53,7 +54,9 @@ class SetupError(RuntimeError):
 
 
 def _find_executable(root: Path, name: str) -> Path | None:
-    """Finds the executable in the extracted tree. Searched by name so it tracks changes to the distributable's internal structure."""
+    """Finds the executable in the extracted tree. Searched by name so it tracks changes to the
+    distributable's internal structure.
+    """
     if not root.is_dir():
         return None
     return next(root.rglob(name), None)
@@ -175,7 +178,8 @@ async def install_engine(
     try:
         archive = work_dir / f"{artifact.name}-{artifact.version}.7z"
         log.info("setup.install.download.start", engine=artifact.name, version=artifact.version)
-        # **This is the first point external connection happens.** Never reached before the user's choice.
+        # **This is the first point external connection happens.** Never reached before the user's
+        # choice.
         async with httpx.AsyncClient(timeout=TIMEOUT, follow_redirects=False) as client:
             await _download(client, artifact, archive, progress)
         log.info("setup.install.download.verified", sha256=artifact.sha256)

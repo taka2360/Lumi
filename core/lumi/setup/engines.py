@@ -15,7 +15,9 @@ from urllib.parse import urlsplit
 
 @dataclass(frozen=True, slots=True)
 class EngineArtifact:
-    """A pinned distributable. **These four (version / url / size / sha256) are the basis of verification.**"""
+    """A pinned distributable. **These four (version / url / size / sha256) are the basis of
+    verification.**
+    """
 
     name: str
     display_name: str
@@ -74,7 +76,9 @@ def is_allowed_origin(url: str) -> bool:
 
 
 def is_allowed_redirect(url: str) -> bool:
-    """Whether this is valid as a redirect destination. **Must be https and the host must be on the allowlist.**"""
+    """Whether this is valid as a redirect destination. **Must be https and the host must be on the
+    allowlist.**
+    """
     parts = urlsplit(url)
     if parts.scheme != "https":
         return False

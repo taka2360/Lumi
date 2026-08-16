@@ -5,8 +5,8 @@
 
 | Exception | Reason |
 |---|---|
-| `lumi.provenance` | `Signal` carries `trust_level`. Placing it under memory/ would create a reverse dependency |
-| `lumi.logging` | Structured logging isn't a capability — it's the foundation every module sits on |
+| `lumi.provenance` | `Signal` carries `trust_level`; under memory/ that's a reverse dependency |
+| `lumi.logging` | Structured logging isn't a capability — the foundation every module sits on |
 
 "Outside world" concerns like persistence are received through a Protocol
 (`EventStore`). **The implementation lives outside the kernel.**

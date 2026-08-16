@@ -41,7 +41,8 @@ class SqliteEventStore:
         try:
             payload = json.dumps(draft.payload, ensure_ascii=False)
         except (TypeError, ValueError) as error:
-            # A payload that can't be JSON-encoded is never silently dropped. **Treated as the publisher's design error.**
+            # A payload that can't be JSON-encoded is never silently dropped. **Treated as the
+            # publisher's design error.**
             raise StorageError(f"payload を JSON にできない: {draft.type}") from error
 
         with self._db.transaction() as conn:

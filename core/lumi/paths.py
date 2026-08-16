@@ -3,8 +3,8 @@
 **Confined to one place.** Scattering them makes "delete everything" impossible to honor
 (docs/roadmap.md Phase 2 🔴 privacy item #5).
 
-Phase 0 only uses `engines_dir` and `setup_state_file`.
-Where the memory DB / audit log live is decided in Phase 2 (after `contracts/privacy.md` is written).
+Phase 0 only uses `engines_dir` and `setup_state_file`. Where the memory DB / audit log live is
+decided in Phase 2 (after `contracts/privacy.md` is written).
 
 **User data (erasable) and bundled assets (read-only) are different things.** The former
 lives under `data_dir()`, the latter under `content_dir()`, and what gets erased differs.

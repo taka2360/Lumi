@@ -38,7 +38,9 @@ def api(
 
 class TestHostApiSelection:
     def test_wasapi_wins_over_mme(self) -> None:
-        """MME has 209 ms output latency (observed). The same hardware appears under both, so **the outcome depends on how it's chosen**."""
+        """MME has 209 ms output latency (observed). The same hardware appears under both, so **the
+        outcome depends on how it's chosen**.
+        """
         plan = plan_audio(
             [
                 device(0, "mic", MME, input_channels=1, rate=44100),
@@ -56,7 +58,9 @@ class TestHostApiSelection:
         assert plan.warnings == ()
 
     def test_falls_back_to_mme_and_says_so(self) -> None:
-        """**Never silently falls back to the slow path.** Falling back is fine, but it's always reported."""
+        """**Never silently falls back to the slow path.** Falling back is fine, but it's always
+        reported.
+        """
         plan = plan_audio(
             [
                 device(0, "mic", MME, input_channels=1, rate=44100),
@@ -147,7 +151,9 @@ class TestSampleRate:
 
 class TestMissingDevices:
     def test_no_input_device_is_a_state_not_an_error(self) -> None:
-        """**This happens for real** (the initial state of a machine observed in practice). Returned as a state, not raised as an exception."""
+        """**This happens for real** (the initial state of a machine observed in practice). Returned
+        as a state, not raised as an exception.
+        """
         plan = plan_audio(
             [device(0, "spk", output_channels=2)],
             [api(WASAPI, default_input=None, default_output=0)],

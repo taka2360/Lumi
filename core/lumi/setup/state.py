@@ -40,7 +40,8 @@ class EngineRuntime(StrEnum):
 
     #: Not running.
     STOPPED = "stopped"
-    #: Starting up. Not yet responding (the first run can take minutes as the engine fetches its own model).
+    # : Starting up. Not yet responding (the first run can take minutes as the engine fetches its
+    # own model).
     STARTING = "starting"
     #: Can speak.
     READY = "ready"
@@ -77,7 +78,8 @@ class TtsSetup:
     version: str | None = None
     port: int | None = None
     executable: str | None = None
-    #: The reason for the failure. Only populated for `FAILED`. **The wording that prevents silent degradation.**
+    # : The reason for the failure. Only populated for `FAILED`. **The wording that prevents silent
+    # degradation.**
     reason: str | None = None
     #: Fetch progress (0.0-1.0). Only populated for `INSTALLING`.
     progress: float | None = None
@@ -116,8 +118,8 @@ def boot_phase(setup: TtsSetup, *, prompting: bool) -> BootPhase:
     if setup.state is TtsSetupState.INSTALLING:
         return BootPhase.INSTALLING
     if setup.usable and setup.runtime in (EngineRuntime.STOPPED, EngineRuntime.STARTING):
-        # **It just hasn't started yet — it's about to.**
-        # Marking this READY would make the character flash in and then vanish (hit this in practice).
+        # **It just hasn't started yet — it's about to.** Marking this READY would make the
+        # character flash in and then vanish (hit this in practice).
         return BootPhase.STARTING
     return BootPhase.READY
 

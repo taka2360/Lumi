@@ -1,4 +1,5 @@
-"""Reactive Loop. **Exercises every path without calling an LLM** (the core principle of `.claude/rules/tests.md`).
+"""Reactive Loop. **Exercises every path without calling an LLM**
+(the core principle of `.claude/rules/tests.md`).
 
 docs/architecture/agent.md test 7 (`max_steps` / `deadline` / cancel), and
 docs/contracts/provenance.md tests 8-10 (a turn's trust inheritance).
@@ -393,8 +394,8 @@ async def test_a_small_talk_turn_stays_trusted() -> None:
 async def test_a_tool_result_taints_the_following_turn() -> None:
     """A turn after a tool result comes in is **`DERIVED` = `TAINTED`**.
 
-    A `character` lane result isn't `is_raw_external` since it's not an observation
-    of the outside world, but the rule **"inherits the join of the inputs"** applies here in the same form.
+    A `character` lane result isn't `is_raw_external` since it's not an observation of the outside
+    world, but the rule **"inherits the join of the inputs"** applies here in the same form.
     """
     call: list[LLMEvent] = [
         ToolCall(id="1", name="fs.read", arguments={}),
@@ -437,7 +438,8 @@ async def test_an_interrupt_mutes_the_playback() -> None:
     await rig.loop.on_speech_started()
     await turn
 
-    # Confirms it had started speaking and then stopped (if nothing had played, this wouldn't be a real test)
+    # Confirms it had started speaking and then stopped (if nothing had played, this wouldn't be a
+    # real test)
     assert rig.notifier.spoken() == ["あ。"]
     assert playback.mute_flag.is_set()
     assert playback.queued == 0

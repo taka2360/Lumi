@@ -99,7 +99,9 @@ def check_audio() -> CheckResult:
 
 
 def check_ssl() -> CheckResult:
-    """Needed to fetch the TTS engine. **The certificate store is prone to breaking under PyInstaller.**"""
+    """Needed to fetch the TTS engine. **The certificate store is prone to breaking under
+    PyInstaller.**
+    """
     try:
         import ssl
 

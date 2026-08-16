@@ -75,7 +75,8 @@ def test_lifecycle_payload_carries_no_raw_arguments() -> None:
 
 
 def test_the_three_stage_vocabulary_is_distinct() -> None:
-    """With only `INTENT_RECORDED`, it never executed; with `STARTED` present, it **may have** executed.
+    """With only `INTENT_RECORDED`, it never executed;
+    with `STARTED` present, it **may have** executed.
 
     Without this distinction, recovery would be too conservative to be usable.
     """

@@ -14,7 +14,7 @@ So:
 | What the engine returns | What's used |
 |---|---|
 | Phoneme lengths present (VOICEVOX) | **Those values.** Matches the actual utterance |
-| No phoneme lengths (AivisSpeech) | **Divides evenly** from the mora sequence + the synthesized audio's length |
+| No phoneme lengths (AivisSpeech) | **Divides evenly** across the mora sequence + audio length |
 
 Either way, **the mouth shape is decided from the mora sequence.** Unlike an amplitude-
 based estimate, this never mistakes one vowel for another.
@@ -46,8 +46,8 @@ class Viseme(StrEnum):
     O = "O"  # noqa: E741
 
 
-#: `audio_query`'s vowel notation → viseme.
-#: Uppercase is a devoiced vowel (VOICEVOX-family notation). **The mouth shape is the same**, so it maps to the same value.
+# : `audio_query`'s vowel notation → viseme. : Uppercase is a devoiced vowel (VOICEVOX-family
+# notation). **The mouth shape is the same**, so it maps to the same value.
 _VOWEL_TO_VISEME: Mapping[str, Viseme] = {
     "a": Viseme.A,
     "i": Viseme.I,
@@ -174,7 +174,8 @@ def build_timeline(query: Mapping[str, Any], audio_seconds: float | None = None)
     if reported > 0.0:
         durations = [mora.length / speed for mora in moras]
     elif audio_seconds is not None and audio_seconds > pre + post:
-        # The engine doesn't return lengths (AivisSpeech). **Allocated using the actual audio length.**
+        # The engine doesn't return lengths (AivisSpeech). **Allocated using the actual audio
+        # length.**
         weights = [_CLOSED_WEIGHT if mora.viseme is None else 1.0 for mora in moras]
         total_weight = sum(weights)
         speech = audio_seconds - pre - post

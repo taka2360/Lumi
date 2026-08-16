@@ -1,4 +1,5 @@
-"""VAD and barge-in decisions. **docs/architecture/audio.md test table 2 / 4b / 4c / 5 / 6 / 9 / 12.**
+"""VAD and barge-in decisions.
+**docs/architecture/audio.md test table 2 / 4b / 4c / 5 / 6 / 9 / 12.**
 
 `SpeechSegmenter` is pure logic, so **barge-in is testable with neither a device nor a model.**
 """
@@ -67,15 +68,19 @@ def test_playback_boost_ignores_a_quiet_room(  # table 5
 
 def test_a_loud_voice_always_interrupts(  # table 6
 ) -> None:
-    """**Confirms there's no suppression.** A loud enough voice can always interrupt, even during playback."""
+    """**Confirms there's no suppression.** A loud enough voice can always interrupt, even during
+    playback.
+    """
     segmenter = SpeechSegmenter()
     assert VadEvent.MUTE_REQUESTED in feed(segmenter, [0.95], playing=True)
 
 
 def test_a_false_trigger_restores_playback() -> None:
-    """**Can recover from a false trigger.** This is what lets the mute threshold be pushed aggressively (table 4c).
+    """**Can recover from a false trigger.**
+    This is what lets the mute threshold be pushed aggressively (table 4c).
 
-    "Stop for an instant and resume right away" feels far better than "talk over the user for 300 ms."
+    "Stop for an instant and resume right away" feels far better than "talk over the user for 300
+    ms."
     """
     segmenter = SpeechSegmenter()
     feed(segmenter, [0.9], playing=True)
@@ -178,7 +183,8 @@ def test_hysteresis_keeps_the_segment_alive_through_a_dip() -> None:
 
 
 def test_the_preroll_keeps_the_start_of_a_word() -> None:
-    """**Word onsets are never clipped.** Frames from before segment confirmation are never discarded.
+    """**Word onsets are never clipped.**
+    Frames from before segment confirmation are never discarded.
 
     There are two "befores" here. Dropping either would lose the word onset.
 
@@ -203,7 +209,8 @@ def test_the_preroll_keeps_the_start_of_a_word() -> None:
 
     # The preroll's 0.5 remains at the front
     assert float(audio[0]) == pytest.approx(0.5)
-    # **The 250 ms (0.25) leading up to confirmation also remains.** Losing this would drop the whole word onset
+    # **The 250 ms (0.25) leading up to confirmation also remains.** Losing this would drop the
+    # whole word onset
     assert float(audio[WINDOW_SAMPLES]) == pytest.approx(0.25)
     assert len(audio) >= WINDOW_SAMPLES * (1 + speech_frames)
 
@@ -239,7 +246,8 @@ def test_the_window_size_is_enforced(silero: SileroVad) -> None:
 
 
 def test_one_frame_fits_in_the_mute_budget(silero: SileroVad) -> None:
-    """Of **mute latency < 50 ms** (table 3), what the implementation controls is inference and the decision.
+    """Of **mute latency < 50 ms** (table 3), what the implementation controls
+    is inference and the decision.
 
     What's measured here is "from VAD reading a frame to the decision coming out."
     The user's perceived experience (perceived barge-in latency < 120 ms) is a

@@ -50,7 +50,8 @@ class SpeakerPlayback:
         self._plan = plan
         self._ring = RingBuffer(int(plan.samplerate * PLAYBACK_RING_SECONDS))
         self._reference = RingBuffer(int(plan.samplerate * REFERENCE_RING_SECONDS))
-        #: **Shared with the VAD thread.** Once set, output goes silent from the next callback onward
+        # : **Shared with the VAD thread.** Once set, output goes silent from the next callback
+        # onward
         self._mute_flag = mute_flag or threading.Event()
         self._underruns = 0
         self._stream: Any = None
@@ -101,12 +102,14 @@ class SpeakerPlayback:
         del frames
 
     def write(self, samples: Samples) -> None:
-        """Append to the playback queue. **Must be resampled to the device rate before passing in.**"""
+        """Append to the playback queue. **Must be resampled to the device rate first.**"""
         self._ring.write(samples)
 
     @property
     def queued(self) -> int:
-        """Number of samples still queued for playback. **Used by the Inspector and tests to check whether audio was dropped.**"""
+        """Number of samples still queued for playback. **Used by the Inspector and tests to check
+        whether audio was dropped.**
+        """
         return self._ring.available
 
     def is_active(self) -> bool:
@@ -114,7 +117,7 @@ class SpeakerPlayback:
         return not self._mute_flag.is_set() and self._ring.available > 0
 
     def mute(self) -> None:
-        """**The barge-in exit point.** Synchronous — silence takes effect from the next callback."""
+        """**The barge-in exit point.** Synchronous — silence takes effect next callback."""
         self._mute_flag.set()
 
     def unmute(self) -> None:

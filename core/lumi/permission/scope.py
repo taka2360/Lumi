@@ -111,8 +111,8 @@ class SecurityScope:
 class Handle(Protocol):
     """A stable reference to whatever a `SecurityScope` points at.
 
-    **A Handle isn't valid until it passes `BindVerifier.verify()`.**
-    The Handle `Tool.bind` returns must never be passed straight to `execute` (the Kernel sits in between).
+    **A Handle isn't valid until it passes `BindVerifier.verify()`.** The Handle `Tool.bind` returns
+    must never be passed straight to `execute` (the Kernel sits in between).
     """
 
     @property

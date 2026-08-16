@@ -137,7 +137,9 @@ def test_in_core_tool_cannot_claim_a_class_b_lane(registry: ToolRegistry) -> Non
 
 
 def test_denied_cannot_be_declared_as_a_risk(registry: ToolRegistry) -> None:
-    """`DENIED` **only ever appears as an effective risk value** — it's not something that can be declared."""
+    """`DENIED` **only ever appears as an effective risk value** — it's not something that can be
+    declared.
+    """
 
     class Impossible(SetExpressionTool):
         permission = PermissionSpec(

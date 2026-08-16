@@ -1,4 +1,5 @@
-"""PromptAssembly. **docs/architecture/agent.md test 8** (deterministic truncation on budget overflow).
+"""PromptAssembly. **docs/architecture/agent.md test 8**
+(deterministic truncation on budget overflow).
 
 The single most important property here is that truncation never makes taint disappear.
 """
@@ -158,7 +159,9 @@ def test_context_blocks_outlive_old_turns() -> None:
 
 
 def test_the_persona_and_current_utterance_survive_any_budget() -> None:
-    """**The two things that are never dropped.** Dropping either would erase the persona or leave it unclear what's being answered."""
+    """**The two things that are never dropped.** Dropping either would erase the persona or leave
+    it unclear what's being answered.
+    """
     prompt = assemble(persona=PERSONA, session=session_with("助けて"), budget_tokens=1)
 
     assert prompt.over_budget

@@ -12,7 +12,7 @@ outside the threat model, and this never claims otherwise**
 
 | Phase | Implementation |
 |---|---|
-| **1** | Unreachable via any Tool path. **No `DELETE` / `UPDATE` exists anywhere in the codebase** |
+| **1** | Unreachable via any Tool path. **No `DELETE` / `UPDATE` exists anywhere in the code** |
 | 4a | Hash chain (`prev_hash` / `record_hash`). **Detects** tampering (doesn't prevent it) |
 
 ## Why digests are kept
@@ -51,7 +51,8 @@ class AuditRecord:
     raw_input_digest: str
     decision: Decision
     reason: str
-    #: **Required.** Policy changes over time. Without knowing the rule in effect at the time, "why was this allowed" can't be answered
+    # : **Required.** Policy changes over time. Without knowing the rule in effect at the time, "why
+    # was this allowed" can't be answered
     policy_version: str
     policy_rule_id: str
     tool: str

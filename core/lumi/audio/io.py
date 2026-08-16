@@ -79,7 +79,9 @@ class AudioIO:
         return self._playback
 
     async def start(self, *, vad: SileroVad | None = None) -> None:
-        """**"start" means until the connection is actually up.** Just opening it doesn't mean "listening."""
+        """**"start" means until the connection is actually up.** Just opening it doesn't mean
+        "listening.
+        """
         self._loop = asyncio.get_running_loop()
 
         if self._playback is not None:
@@ -132,7 +134,8 @@ class AudioIO:
         try:
             self._events.put_nowait((event, audio))
         except asyncio.QueueFull:
-            # **Prioritize the latest.** Drop the old notification to let the current utterance through
+            # **Prioritize the latest.** Drop the old notification to let the current utterance
+            # through
             log.warning("audio.event_queue_full")
             with suppress(asyncio.QueueEmpty):
                 self._events.get_nowait()
@@ -140,7 +143,9 @@ class AudioIO:
                 self._events.put_nowait((event, audio))
 
     async def events(self) -> AsyncIterator[VadNotification]:
-        """The entry point on the asyncio side. **Corresponds to `_drain_events` (docs/architecture/audio.md §3).**"""
+        """The entry point on the asyncio side. **Corresponds to `_drain_events`
+        (docs/architecture/audio.md §3).**
+        """
         while True:
             yield await self._events.get()
 

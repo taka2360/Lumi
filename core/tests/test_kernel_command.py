@@ -121,7 +121,7 @@ async def test_before_tool_veto_stops_the_rest() -> None:
 
 
 async def test_veto_from_a_non_vetoable_hook_is_a_contract_error() -> None:
-    """**`before_tool` is the only Hook that can veto.** A refusal anywhere else doesn't stop Core."""
+    """**`before_tool` is the only Hook that can veto.** A refusal elsewhere doesn't stop Core."""
     registry = HookRegistry()
 
     async def veto(payload: Mapping[str, Any]) -> Veto:

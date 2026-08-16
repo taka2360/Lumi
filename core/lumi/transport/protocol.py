@@ -42,10 +42,12 @@ from uuid import uuid4
 
 PROTOCOL_VERSION: Final = 1
 
-#: Time allowed to wait for hello. Closed once exceeded (never holds an unauthenticated connection open indefinitely).
+# : Time allowed to wait for hello. Closed once exceeded (never holds an unauthenticated connection
+# open indefinitely).
 HELLO_TIMEOUT_S: Final = 5.0
 
-#: The WS ping interval and how long to wait for a response. The mechanism for detecting that one side has died.
+# : The WS ping interval and how long to wait for a response. The mechanism for detecting that one
+# side has died.
 PING_INTERVAL_S: Final = 5.0
 PING_TIMEOUT_S: Final = 10.0
 

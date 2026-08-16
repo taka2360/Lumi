@@ -83,7 +83,9 @@ ProposalOutcome = Accepted | Deferred | Rejected
 
 @dataclass(frozen=True, slots=True)
 class InterruptResult:
-    """**Returns what stopped and what became abandoned.** Surfaced in the Inspector to make debugging possible."""
+    """**Returns what stopped and what became abandoned.** Surfaced in the Inspector to make
+    debugging possible.
+    """
 
     activity_id: ActivityId
     final_state: ActivityState
@@ -94,7 +96,7 @@ class InterruptResult:
 
 @dataclass(frozen=True, slots=True)
 class InferenceLease:
-    """Valid only while the Job may perform inference. **Revoked if foreground requests inference.**"""
+    """Valid only while the Job may perform inference. **Revoked on foreground inference.**"""
 
     job_id: JobId
     token: CancelToken
@@ -112,7 +114,8 @@ class DeferredQueue:
     __slots__ = ("_entries", "_ttl")
 
     def __init__(self, *, ttl: timedelta = DEFERRED_TTL) -> None:
-        #: Keyed by (kind, intent). **One entry per identical kind × intent** (replaced by the newer one)
+        # : Keyed by (kind, intent). **One entry per identical kind × intent** (replaced by the
+        # newer one)
         self._entries: dict[tuple[ActivityKind, str], _DeferredEntry] = {}
         self._ttl = ttl
 
@@ -121,7 +124,9 @@ class DeferredQueue:
         return Deferred(retry_after=self._ttl)
 
     def take_ready(self, now: datetime) -> list[ActivityProposal]:
-        """Retrieves the ones still within their deadline. **Expired ones are silently dropped** (that's what TTL means)."""
+        """Retrieves the ones still within their deadline. **Expired ones are silently dropped**
+        (that's what TTL means).
+        """
         ready: list[ActivityProposal] = []
         for (kind, intent), entry in self._entries.items():
             if now - entry.offered_at > self._ttl:
@@ -161,7 +166,8 @@ class AttentionArbiter:
         self._deferred = DeferredQueue(ttl=deferred_ttl)
         self._leases: dict[JobId, InferenceLease] = {}
         self._foreground: ActivityId | None = None
-        #: "Cleanup of the old Activity" running in the background. **Kept referenced or GC would collect it**
+        # : "Cleanup of the old Activity" running in the background. **Kept referenced or GC would
+        # collect it**
         self._pending: set[asyncio.Task[InterruptResult]] = set()
 
     # ── Startup ──────────────────────────────────────────────
@@ -364,7 +370,7 @@ class AttentionArbiter:
         await self._publish_ended(activity, reason="failed" if failed else "completed")
 
     async def _to_idle(self) -> None:
-        """Returns foreground to idle. **idle never disappears**, so this just finds and wakes it."""
+        """Returns foreground to idle. **idle never disappears**, so this just wakes it."""
         idle = self._find_idle()
         self._foreground = idle.id
         if idle.state is ActivityState.SUSPENDED:
@@ -393,7 +399,8 @@ class AttentionArbiter:
             self._leases.pop(job.id, None)
 
     def request_inference(self, activity_id: ActivityId) -> None:
-        """**Called when the foreground Activity starts inference.** Revokes any existing Job leases.
+        """**Called when the foreground Activity starts inference.**
+        Revokes any existing Job leases.
 
         A request from a non-foreground Activity is ignored (if background work
         could evict a Job, priority would lose its meaning).

@@ -96,7 +96,9 @@ class OllamaProvider:
     # ── Lifecycle ────────────────────────────────────
 
     async def load(self) -> None:
-        """**Idempotent.** Only confirms connectivity and that the model exists (weights live in Ollama)."""
+        """**Idempotent.** Only confirms connectivity and that the model exists (weights live in
+        Ollama).
+        """
         if self._loaded:
             return
 
@@ -108,7 +110,8 @@ class OllamaProvider:
 
         models = await self._models()
         if not self._has_model(models):
-            # **Not "not installed" — "the model is missing."** The action to guide the user toward differs
+            # **Not "not installed" — "the model is missing."** The action to guide the user toward
+            # differs
             raise ProviderNotConfigured(
                 "model_missing", f"{self._model} が見つからない。`ollama pull {self._model}`"
             )
@@ -179,7 +182,8 @@ class OllamaProvider:
 
                 async for line in response.aiter_lines():
                     if cancel_token.is_set:
-                        # **cooperative.** Breaking out here lets the `with` block close the connection
+                        # **cooperative.** Breaking out here lets the `with` block close the
+                        # connection
                         log.info("llm.cancelled", reason=cancel_token.reason)
                         return
                     if not line.strip():
@@ -296,7 +300,8 @@ def _tool_calls(raw: Any) -> list[LLMEvent]:
             continue
         arguments = function.get("arguments")
         if isinstance(arguments, str):
-            # Some implementations send this as a JSON string. **Discard if unreadable** (never fill in a guess)
+            # Some implementations send this as a JSON string. **Discard if unreadable** (never fill
+            # in a guess)
             try:
                 arguments = json.loads(arguments)
             except json.JSONDecodeError:

@@ -1,4 +1,5 @@
-"""The Provider foundation and its implementations. **Calls neither an LLM nor an external engine** (HTTP is substituted).
+"""The Provider foundation and its implementations.
+**Calls neither an LLM nor an external engine** (HTTP is substituted).
 
 docs/interfaces/provider.md test table 1-6 / 8.
 """
@@ -133,7 +134,7 @@ async def test_ollama_not_running_is_unavailable() -> None:
 
 
 async def test_ollama_without_the_model_is_not_configured() -> None:
-    """**The state where `ollama pull` should be suggested.** Prompting to start it would be a lie."""
+    """**The state where `ollama pull` should be suggested.** Prompting to start it would lie."""
     with pytest.raises(ProviderNotConfigured) as error:
         await ollama_with(version={"version": "0.5.0"}, tags={"models": []}).load()
     assert error.value.reason == "model_missing"
@@ -174,7 +175,9 @@ async def test_ollama_streams_text_and_finishes() -> None:
 
 
 async def test_ollama_separates_reasoning_from_text() -> None:
-    """**Reasoning is never routed to TTS.** Keeping it a separate type means downstream code can't mix it up."""
+    """**Reasoning is never routed to TTS.** Keeping it a separate type means downstream code can't
+    mix it up.
+    """
     provider = ollama_with(
         version={"version": "0.5.0"},
         tags={"models": [{"name": "qwen3:8b"}]},
@@ -269,7 +272,9 @@ async def test_ollama_stops_when_the_token_fires() -> None:
 
 
 async def test_ollama_reports_a_broken_stream_as_an_event() -> None:
-    """**A failure after connecting is never raised as an exception.** It couldn't stay consistent with what's already been spoken."""
+    """**A failure after connecting is never raised as an exception.** It couldn't stay consistent
+    with what's already been spoken.
+    """
 
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/chat":
@@ -331,7 +336,9 @@ def test_stt_stays_off_the_gpu(empty_model_dir: Path) -> None:
 
 
 def test_faster_whisper_download_is_disabled_in_code() -> None:
-    """`local_files_only=True` hasn't been removed. **Removing it would make it silently start communicating.**"""
+    """`local_files_only=True` hasn't been removed. **Removing it would make it silently start
+    communicating.**
+    """
     source = Path(FasterWhisperProvider.__module__.replace(".", "/") + ".py")
     text = (Path(__file__).resolve().parents[1] / source).read_text(encoding="utf-8")
     assert "local_files_only=True" in text

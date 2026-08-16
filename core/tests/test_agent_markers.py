@@ -1,6 +1,7 @@
 """The `<|ACT|>` marker. **docs/architecture/agent.md test 9** (stripped from spoken text).
 
-Reading it aloud would ruin things, so **the check errs conservative** (when in doubt, don't speak it).
+Reading it aloud would ruin things, so **the check errs conservative** (when in doubt, don't speak
+it).
 """
 
 from __future__ import annotations
@@ -32,7 +33,9 @@ def test_the_marker_becomes_an_intent() -> None:
 
 
 def test_a_marker_split_across_chunks_is_still_removed() -> None:
-    """**Spanning a chunk boundary happens normally.** Without holding it back, part of it would get spoken."""
+    """**Spanning a chunk boundary happens normally.** Without holding it back, part of it would get
+    spoken.
+    """
     stream = MarkerStream()
     assert speak(stream, 'うれ<|ACT {"emo', 'tion":"happy"}|>しい') == "うれしい"
 
@@ -66,7 +69,9 @@ def test_broken_json_drops_the_whole_marker() -> None:
 
 
 def test_an_unterminated_marker_is_not_spoken() -> None:
-    """The stream ended mid-marker. **Never read aloud on the assumption "it's probably just text."**"""
+    """The stream ended mid-marker. **Never read aloud on the assumption "it's probably just
+    text."**
+    """
     stream = MarkerStream()
     assert speak(stream, 'おわり<|ACT {"emotion"') == "おわり"
 

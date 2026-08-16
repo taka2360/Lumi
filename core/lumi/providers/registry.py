@@ -25,7 +25,7 @@ class ProviderInfo:
 
 
 class ProviderRegistry:
-    """Selects one per kind. **UI for choosing the selection lands later in Phase 1 (settings UI).**"""
+    """Selects one per kind. **UI for choosing lands later in Phase 1 (settings UI).**"""
 
     __slots__ = ("_providers", "_selected")
 

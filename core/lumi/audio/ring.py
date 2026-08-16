@@ -41,10 +41,12 @@ class RingBuffer:
         #: Pre-allocated up front. **Never allocated again inside the callback**
         self._data: Samples = np.zeros(capacity, dtype=np.float32)
         self._capacity = capacity
-        #: Total write count / total read count (monotonically increasing; position derived via modulo)
+        # : Total write count / total read count (monotonically increasing; position derived via
+        # modulo)
         self._write = 0
         self._read = 0
-        #: **Count of dropped samples.** Never dropped silently — if this grows, the design or size is wrong
+        # : **Count of dropped samples.** Never dropped silently — if this grows, the design or size
+        # is wrong
         self._dropped = 0
 
     @property
@@ -82,7 +84,9 @@ class RingBuffer:
             self._dropped += overflow
 
     def read(self, count: int) -> Samples | None:
-        """Returns data if `count` samples are available. **`None` if not enough** (never a partial read).
+        """Returns data if `count` samples are available.
+
+        **`None` if not enough** (never a partial read).
 
         Allowing partial reads would let VAD's window arrive at an odd size and break inference.
         """
@@ -121,5 +125,7 @@ class RingBuffer:
         return filled
 
     def clear(self) -> None:
-        """**Used when discarding playback for a barge-in.** Moves the read position up to the write position."""
+        """**Used when discarding playback for a barge-in.** Moves the read position up to the write
+        position.
+        """
         self._read = self._write

@@ -1,4 +1,6 @@
-"""Sentence splitting. **Time to first sound is almost the entire perceived experience** (docs/architecture/audio.md §6)."""
+"""Sentence splitting. **Time to first sound is almost the entire perceived experience**
+(docs/architecture/audio.md §6).
+"""
 
 from __future__ import annotations
 

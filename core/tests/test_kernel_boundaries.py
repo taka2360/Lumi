@@ -41,7 +41,8 @@ def imported_names(path: Path) -> set[str]:
 
 
 def test_kernel_does_not_depend_on_other_modules() -> None:
-    """**The kernel holds only types and arbitration; it knows nothing about concrete capabilities.**
+    """**The kernel holds only types and arbitration;
+    it knows nothing about concrete capabilities.**
 
     "Outside world" concerns like persistence are received through a Protocol. The
     implementation lives outside the kernel.
@@ -75,7 +76,7 @@ def test_only_the_arbiter_applies_state_transitions() -> None:
 
 
 def test_only_the_arbiter_assigns_the_foreground() -> None:
-    """If assignments to `_foreground` were scattered, Invariant 4 couldn't be upheld in one place."""
+    """If assignments to `_foreground` scattered, Invariant 4 couldn't be upheld in one place."""
     writers = [
         source.relative_to(LUMI).as_posix()
         for source in lumi_sources()
@@ -99,7 +100,8 @@ def test_only_the_event_module_constructs_domain_events() -> None:
 
 
 def test_permission_does_not_depend_on_tools() -> None:
-    """The dependency direction is `tools → permission`. **The Kernel knows nothing about individual tools** (Invariant 1).
+    """The dependency direction is `tools → permission`.
+    **The Kernel knows nothing about individual tools** (Invariant 1).
 
     If it started knowing, the Permission Kernel would change every time a tool is added.
     """
@@ -110,7 +112,8 @@ def test_permission_does_not_depend_on_tools() -> None:
 
 
 def test_tools_do_not_call_the_permission_kernel() -> None:
-    """**If a Tool authorized itself, an implementation mistake would become a permission bypass directly** (Invariant 1).
+    """**If a Tool authorized itself, an implementation mistake would become
+    a permission bypass directly** (Invariant 1).
 
     A Tool may only import types (`PermissionSpec` / `SecurityScope`, etc); it never
     touches the decision-making side (`PermissionKernel` / `decide` / `GrantStore`).
@@ -176,7 +179,8 @@ def test_the_audit_log_is_append_only() -> None:
 
 
 def test_trust_level_trusted_is_only_written_where_allowed() -> None:
-    """**No automatic-escalation implementation is ever built** (Invariant 7 / provenance.md test 5).
+    """**No automatic-escalation implementation is ever built**
+    (Invariant 7 / provenance.md test 5).
 
     Exactly two places are allowed:
     1. The handler that receives direct user input → `Session.record_user_utterance`

@@ -262,7 +262,8 @@ class TestInstall:
 
 
 class TestNetworkOptional:
-    """**No external communication until the user chooses to** (docs/architecture/setup.md Principle 1).
+    """**No external communication until the user chooses to**
+    (docs/architecture/setup.md Principle 1).
 
     A static check. Guarantees "no communication unless called" in code form
     (.claude/rules/tests.md "static checks are tests too").
@@ -301,7 +302,9 @@ class TestNetworkOptional:
         assert aivisspeech.HOST == "127.0.0.1"
 
     def test_the_llm_client_only_talks_to_localhost(self) -> None:
-        """**Conversation content never leaves the machine.** Remote inference is added as a separate Provider (ADR-023)."""
+        """**Conversation content never leaves the machine.** Remote inference is added as a
+        separate Provider (ADR-023).
+        """
         module = Path(ollama.__file__)
         urls = re.findall(r"https?://[^\"']*", module.read_text(encoding="utf-8"))
         assert urls, "URL の組み立て方が変わった。このテストを見直すこと"

@@ -37,7 +37,8 @@ from lumi.audio.vad import (
 
 log = lumi_logging.get_logger(__name__)
 
-#: Input ring length [Provisional]. **Kept long rather than risk overflow** (so a temporary VAD delay doesn't lose data)
+# : Input ring length [Provisional]. **Kept long rather than risk overflow** (so a temporary VAD
+# delay doesn't lose data)
 CAPTURE_RING_SECONDS: Final = 8.0
 
 #: Grace period before the first frame arrives. **A successful `open()` doesn't mean "listening."**
@@ -47,12 +48,15 @@ FIRST_FRAME_TIMEOUT_S: Final = 3.0
 #: How long the VAD thread sleeps when the ring is empty. Well under the frame length (32 ms)
 _IDLE_SLEEP_S: Final = 0.004
 
-#: Cap on speech segment length [Provisional]. **Never buffer indefinitely** (continuous ambient noise would eat RAM)
+# : Cap on speech segment length [Provisional]. **Never buffer indefinitely** (continuous ambient
+# noise would eat RAM)
 MAX_SEGMENT_SECONDS: Final = 30.0
 
 
 class CaptureUnavailable(RuntimeError):
-    """Fails to open / never receives a frame. **Never end up "thinking it's listening while hearing nothing."**"""
+    """Fails to open / never receives a frame. **Never end up "thinking it's listening while hearing
+    nothing."**
+    """
 
 
 #: Notification from VAD. `audio` is only populated for SPEECH_ENDED
@@ -105,7 +109,8 @@ class MicrophoneCapture:
         """
         del frames, time_info
         if status:
-            # Overflow, etc. **Not swallowed, but no log write happens here** (I/O would violate the deadline)
+            # Overflow, etc. **Not swallowed, but no log write happens here** (I/O would violate the
+            # deadline)
             self._overflows += 1
         samples = np.asarray(indata, dtype=np.float32).reshape(-1)
         if self._plan.channels > 1:
@@ -150,7 +155,7 @@ class VadWorker:
     | Path | When | Who |
     |---|---|---|
     | Recovery from a false trigger | after `false_trigger_ms` elapses | VAD thread (automatic) |
-    | **`resume()`** | right before speaking next, after handling an utterance | **the asyncio side** |
+    | **`resume()`** | right before speaking again, post-utterance | **the asyncio side** |
 
     Without the latter, **barge-in only works once.** A mute from a confirmed segment
     isn't a false trigger, so it doesn't revert automatically, and the next
@@ -255,7 +260,8 @@ class VadWorker:
                 )
                 self._listener(event, None)
             elif event is VadEvent.FALSE_TRIGGER:
-                # **It was a false trigger. Revert.** This is what lets the mute threshold be pushed aggressively
+                # **It was a false trigger. Revert.** This is what lets the mute threshold be pushed
+                # aggressively
                 self._mute_flag.clear()
                 log.info("vad.false_trigger")
                 self._listener(event, None)

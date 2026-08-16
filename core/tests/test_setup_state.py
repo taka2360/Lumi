@@ -39,7 +39,9 @@ class TestTtsSetup:
 
 
 class TestBootPhase:
-    """**A pure function that decides whether the character may be shown** (docs/architecture/ui.md)."""
+    """**A pure function that decides whether the character may be shown**
+    (docs/architecture/ui.md).
+    """
 
     def test_waiting_for_the_user(self) -> None:
         setup = TtsSetup(state=TtsSetupState.NOT_CONFIGURED)

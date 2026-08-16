@@ -101,7 +101,9 @@ class MarkerStream:
 
 
 def parse_marker(body: str) -> ExpressionIntent | None:
-    """Read the content between `<|ACT` and `|>`. **Returns None on failure** (drops the whole marker)."""
+    """Read the content between `<|ACT` and `|>`. **Returns None on failure** (drops the whole
+    marker).
+    """
     try:
         payload: Any = json.loads(body.strip())
     except json.JSONDecodeError:
@@ -114,7 +116,8 @@ def parse_marker(body: str) -> ExpressionIntent | None:
 
     raw_emotion = payload.get("emotion")
     if raw_emotion not in tuple(Emotion):
-        # **Don't put something onto the wire that isn't in the type.** The Renderer's fallback is not what this is about
+        # **Don't put something onto the wire that isn't in the type.** The Renderer's fallback is
+        # not what this is about
         log.info("marker.unknown_emotion", emotion=str(raw_emotion)[:40])
         return None
 
@@ -127,14 +130,16 @@ def parse_marker(body: str) -> ExpressionIntent | None:
 
 
 def _clamp(value: Any, *, default: float) -> float:
-    """**Clamp out-of-range values instead of discarding them.** No reason to lose an expression just because the intensity is off."""
+    """**Clamp out-of-range values instead of discarding them.** No reason to lose an expression
+    just because the intensity is off.
+    """
     if not isinstance(value, int | float) or isinstance(value, bool):
         return default
     return max(0.0, min(1.0, float(value)))
 
 
 def _positive_int(value: Any) -> int | None:
-    """**Treat a malformed value the same as "not specified"** (don't drop the whole marker for it)."""
+    """**Treat a malformed value like "not specified"** (don't drop the whole marker for it)."""
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
         return None
     return value

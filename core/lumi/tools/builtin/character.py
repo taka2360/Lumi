@@ -20,7 +20,8 @@ from lumi.permission.policy import PermissionSpec, Risk, SideEffect
 from lumi.permission.scope import ScopeLane, SecurityScope
 from lumi.tools.base import ToolContext, ToolError, ToolKind, ToolOutcome
 
-#: The function that sends intent to the Stage. **The Tool knows nothing about WS or the Stage** (it's injected).
+# : The function that sends intent to the Stage. **The Tool knows nothing about WS or the Stage**
+# (it's injected).
 SendExpression = Callable[[ExpressionIntent], Awaitable[None]]
 
 _DEFAULT_INTENSITY: Final = 0.7
@@ -64,7 +65,8 @@ class SetExpressionTool:
         reversible=True,
         # Doesn't change anything on the user's PC. This changes Lumi's own expression
         side_effect=SideEffect.NONE,
-        # A single send can't be stopped once started. **No L3 constraint applies since the side effect is none**
+        # A single send can't be stopped once started. **No L3 constraint applies since the side
+        # effect is none**
         cancellation=Cancellation.NON_CANCELLABLE,
     )
     concurrency_safe = True
@@ -81,14 +83,15 @@ class SetExpressionTool:
         return CharacterHandle(scope=scope)
 
     async def execute(self, ctx: ToolContext, handle: Any) -> ToolOutcome:
-        """**Never re-resolves raw input.** Only reads `handle.scope` (the defense against TOCTOU)."""
+        """**Never re-resolves raw input.** Only reads `handle.scope` (defends against TOCTOU)."""
         del ctx
         metadata = handle.scope.metadata
         raw_emotion = metadata.get("emotion")
         try:
             emotion = Emotion(raw_emotion)
         except ValueError:
-            # **Never silently falls back to neutral.** An unrecognized value is returned as a failure
+            # **Never silently falls back to neutral.** An unrecognized value is returned as a
+            # failure
             return ToolOutcome(
                 ok=False,
                 error=ToolError(code="unknown_emotion", message=f"未知の emotion: {raw_emotion!r}"),

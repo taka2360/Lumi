@@ -51,5 +51,7 @@ class TTSProvider(Provider, Protocol):
     ) -> SpeechAudio: ...
 
     def supported_languages(self) -> frozenset[str]:
-        """**Fails explicitly for an unsupported language.** Never silently falls back to reading it in English."""
+        """**Fails explicitly for an unsupported language.** Never silently falls back to reading it
+        in English.
+        """
         ...

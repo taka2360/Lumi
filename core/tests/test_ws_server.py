@@ -130,7 +130,9 @@ class TestInvoke:
 
 class TestClientMessages:
     async def test_client_cannot_send_commands(self, server: WsServer) -> None:
-        """A `command` from the client to Core is never accepted. **The whole connection is closed.**"""
+        """A `command` from the client to Core is never accepted. **The whole connection is
+        closed.**
+        """
         client = await open_client(server)
         await client.recv()
         await client.send(

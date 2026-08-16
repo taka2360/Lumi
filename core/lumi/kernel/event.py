@@ -10,7 +10,7 @@ Single source of definition for the contract → docs/contracts/event-model.md
 | What's blocked | How |
 |---|---|
 | External code writing a DomainEvent directly | `Signal` **has no** `stream_key` / `sequence_id` |
-| A publisher assigning its own number | `DomainEventDraft` **has no** `sequence_id`. Only `EventBus` assigns one |
+| Self-assigned numbering | `DomainEventDraft` has no `sequence_id` — only `EventBus` assigns one |
 
 **Core decides** whether and how a `Signal` becomes a `DomainEvent`.
 A Signal is raw material, not a fact.
@@ -73,7 +73,8 @@ class Signal:
     #: Determined by the sender's trust level. Propagates to anything derived from this
     trust_level: TrustLevel
 
-    # **Has neither** `stream_key` nor `sequence_id`. This is the type-level guarantee (Invariant 6).
+    # **Has neither** `stream_key` nor `sequence_id`. This is the type-level guarantee (Invariant
+    # 6).
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,7 +109,9 @@ class DomainEvent:
 
 
 class EventStore(Protocol):
-    """Persistence of DomainEvents. Implemented by `lumi.storage` (a Protocol to invert the dependency direction)."""
+    """Persistence of DomainEvents. Implemented by `lumi.storage` (a Protocol to invert the
+    dependency direction).
+    """
 
     async def append(
         self, event_id: EventId, draft: DomainEventDraft, occurred_at: datetime
@@ -213,7 +216,8 @@ class EventBus:
             try:
                 await handler(event)
             except Exception:
-                # **One subscriber's failure never stops the Bus.** But it's never silently dropped either.
+                # **One subscriber's failure never stops the Bus.** But it's never silently dropped
+                # either.
                 log.exception(
                     "event.subscriber_failed",
                     stream_key=event.stream_key,

@@ -64,7 +64,9 @@ class ResourceHint:
 
 @dataclass(frozen=True, slots=True)
 class Attribution:
-    """Information needed for the credit display. **Core doesn't interpret this — it's passed straight to the Stage.**"""
+    """Information needed for the credit display. **Core doesn't interpret this — it's passed
+    straight to the Stage.**
+    """
 
     display_name: str
     #: The exact wording required by the license. e.g. "VOICEVOX:Zundamon"

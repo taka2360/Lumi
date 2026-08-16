@@ -93,7 +93,9 @@ def test_idle_starts_running_without_being_proposed() -> None:
 
 
 def test_suspended_is_only_for_idle() -> None:
-    """If anything other than idle could take `suspended`, Invariant 4's "exactly one running" would loosen."""
+    """If anything other than idle could take `suspended`, Invariant 4's "exactly one running" would
+    loosen.
+    """
     conversation = make(ActivityKind.CONVERSATION)
     conversation._apply(ActivityState.ACCEPTED)
     conversation._apply(ActivityState.RUNNING)

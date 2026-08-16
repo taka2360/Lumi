@@ -1,4 +1,5 @@
-"""The conversation session and trust's 3 scopes. **docs/contracts/provenance.md tests 8 / 9 / 10 / 11.**
+"""The conversation session and trust's 3 scopes.
+**docs/contracts/provenance.md tests 8 / 9 / 10 / 11.**
 
 This is the crux of Invariant 7 (No Laundering). Building even one path where taint
 disappears would strip it from "what Lumi says after reading the web," letting L3
@@ -99,7 +100,9 @@ def test_compact_rejects_a_negative_count() -> None:
 
 
 def test_recording_a_lumi_turn_also_taints_the_session() -> None:
-    """A turn's taint propagates to the session. **Prevents "recorded but not observed" from happening.**"""
+    """A turn's taint propagates to the session. **Prevents "recorded but not observed" from
+    happening.**
+    """
     session = Session()
     session.record_lumi_turn("さっき読んだページによると…", TrustLevel.TAINTED)
     assert session.session_trust is TrustLevel.TAINTED

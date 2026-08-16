@@ -48,8 +48,8 @@ METHOD_SPEECH_ENDED: Final = "stage.speech.ended"
 #: Number of TTS generations to run concurrently [Provisional]. docs/architecture/audio.md §6
 MAX_PARALLEL: Final = 4
 
-#: How far ahead of time to start writing the next sentence into the ring. **Keeps no gap between sentences**.
-#: Since the ring preserves order, writing early doesn't scramble the audio
+# : How far ahead of time to start writing the next sentence into the ring. **Keeps no gap between
+# sentences**. : Since the ring preserves order, writing early doesn't scramble the audio
 LEAD_S: Final = 0.05
 
 

@@ -1,4 +1,5 @@
-"""PlaybackScheduler. **docs/architecture/audio.md §6** (parallel pre-generation + order-preserving playback).
+"""PlaybackScheduler. **docs/architecture/audio.md §6**
+(parallel pre-generation + order-preserving playback).
 
 Testable without opening a device. Without calling `start()`, `SpeakerPlayback` is
 just a container holding a ring and `mute_flag` — exactly what's being tested here.
@@ -98,7 +99,9 @@ def make(tts: FakeTts, notifier: FakeNotifier, **kwargs: Any) -> PlaybackSchedul
 
 
 async def test_sentences_play_in_order_even_when_the_short_one_finishes_first() -> None:
-    """* **A shorter sentence finishes generating first.** Playing in arrival order would scramble sentences."""
+    """* **A shorter sentence finishes generating first.** Playing in arrival order would scramble
+    sentences.
+    """
     tts = FakeTts(delays={"ながい文。": 0.05, "みじかい。": 0.0})
     notifier = FakeNotifier()
     scheduler = make(tts, notifier)
@@ -111,7 +114,9 @@ async def test_sentences_play_in_order_even_when_the_short_one_finishes_first() 
 
 
 async def test_generation_is_parallel() -> None:
-    """**Sequential generation always leaves a gap between sentences.** 4 sentences finish faster than their sum in series."""
+    """**Sequential generation always leaves a gap between sentences.** 4 sentences finish faster
+    than their sum in series.
+    """
     tts = FakeTts(delays=dict.fromkeys(["A。", "B。", "C。", "D。"], 0.05))
     scheduler = make(tts, FakeNotifier())
 
@@ -162,14 +167,16 @@ async def test_ended_is_sent_once_at_the_end() -> None:
 
 
 async def test_nothing_is_sent_when_nothing_was_spoken() -> None:
-    """Sending `ended` when nothing was spoken would make the Stage try to close a mouth that was never open."""
+    """Sending `ended` when nothing was spoken would make the Stage try to close a mouth that was
+    never open.
+    """
     notifier = FakeNotifier()
     await make(FakeTts(), notifier).finish()
     assert notifier.sent == []
 
 
 async def test_visemes_are_omitted_without_a_timeline() -> None:
-    """**Better to not move the mouth than move it on bogus timing** (docs/interfaces/renderer.md)."""
+    """**Better to not move the mouth than move it on bogus timing** (interfaces/renderer.md)."""
     notifier = FakeNotifier()
     scheduler = make(FakeTts(), notifier)
 
@@ -183,7 +190,9 @@ async def test_visemes_are_omitted_without_a_timeline() -> None:
 
 
 async def test_abort_mutes_immediately_and_discards_the_queue() -> None:
-    """**Never waits for generation to finish.** Mute comes first (the only part the user actually feels)."""
+    """**Never waits for generation to finish.** Mute comes first (the only part the user actually
+    feels).
+    """
     speaker = playback()
     tts = FakeTts(delays={"ながい。": 1.0})
     scheduler = make(tts, FakeNotifier(), playback=speaker)
@@ -262,7 +271,9 @@ async def test_a_broken_wav_is_counted() -> None:
 
 
 async def test_an_unsupported_sample_width_is_refused_not_converted() -> None:
-    """**Fails rather than inventing a conversion.** Silently converting would make a broken-sound bug impossible to trace."""
+    """**Fails rather than inventing a conversion.** Silently converting would make a broken-sound
+    bug impossible to trace.
+    """
 
     class EightBitTts(FakeTts):
         async def synthesize(

@@ -184,12 +184,14 @@ class TestEngineWithoutPhonemeLengths:
         assert spans[1].duration_ms < spans[0].duration_ms
 
     def test_reported_lengths_win_when_the_engine_provides_them(self) -> None:
-        # VOICEVOX does return them. **When they arrive, those are used** (matches the actual utterance).
+        # VOICEVOX does return them. **When they arrive, those are used** (matches the actual
+        # utterance).
         timeline = build_timeline(KONNICHIWA, audio_seconds=99.0)
         assert timeline.total_ms != 99000
 
     def test_refuses_to_guess_without_any_duration(self) -> None:
-        # Moving the mouth with no basis for timing would **keep it running out of sync with the sound**.
+        # Moving the mouth with no basis for timing would **keep it running out of sync with the
+        # sound**.
         assert build_timeline(AIVISSPEECH).spans == ()
 
     def test_refuses_when_the_audio_is_shorter_than_the_padding(self) -> None:

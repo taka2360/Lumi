@@ -31,7 +31,8 @@ from lumi.setup.coordinator import (
 from lumi.setup.state import BootPhase, EngineRuntime, TtsSetupState
 from lumi.transport.protocol import NAMESPACE_BY_ROLE, PROTOCOL_VERSION, Role
 
-#: The repo's `docs/contracts/wire.json`. **Never read at runtime** (docs aren't bundled in the distributable).
+# : The repo's `docs/contracts/wire.json`. **Never read at runtime** (docs aren't bundled in the
+# distributable).
 WIRE_PATH = Path(__file__).resolve().parents[2] / "docs" / "contracts" / "wire.json"
 
 
@@ -42,12 +43,16 @@ def wire() -> dict[str, Any]:
 
 
 def values_of(enum: type[StrEnum]) -> list[str]:
-    """Retrieves a StrEnum's values **in declaration order**. The contract's ordering also carries meaning (the order states progress)."""
+    """Retrieves a StrEnum's values **in declaration order**. The contract's ordering also carries
+    meaning (the order states progress).
+    """
     return [str(member) for member in enum]
 
 
 class TestContractItself:
-    """Consistency of the contract itself. **If the contract is broken, cross-checking it means nothing.**"""
+    """Consistency of the contract itself. **If the contract is broken, cross-checking it means
+    nothing.**
+    """
 
     def test_the_contract_file_exists(self) -> None:
         assert WIRE_PATH.is_file(), f"{WIRE_PATH} が無い（docs/contracts/wire.md）"
@@ -100,6 +105,6 @@ class TestCoreMatchesTheContract:
         ],
     )
     def test_enum_values(self, wire: dict[str, Any], enum: type[StrEnum], key: str) -> None:
-        # Adding a value but forgetting it on the Stage side falls back to the
-        # Stage's fail-closed default (`?? "starting"` / `?? null`). **Neither an error nor a warning appears.**
+        # Adding a value but forgetting it on the Stage side falls back to the Stage's fail-closed
+        # default (`?? "starting"` / `?? null`). **Neither an error nor a warning appears.**
         assert values_of(enum) == wire["enums"][key]

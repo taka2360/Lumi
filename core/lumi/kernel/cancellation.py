@@ -72,7 +72,9 @@ class CancelToken:
 
 
 class CancellationContractError(ValueError):
-    """The contract and the implementation disagree. **Fails at startup or registration** (fail-closed)."""
+    """The contract and the implementation disagree. **Fails at startup or registration**
+    (fail-closed).
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -99,9 +101,12 @@ class Cancellable:
 
     def __post_init__(self) -> None:
         if self.contract is Cancellation.HARD and self.kill is None:
-            # Declaring `hard` without a way to actually stop it is the same as barge-in not working.
+            # Declaring `hard` without a way to actually stop it is the same as barge-in not
+            # working.
             raise CancellationContractError(f"{self.label}: hard を宣言したが kill が無い")
 
     def mark_finished(self) -> None:
-        """Called by the work itself in `finally`. **Called even on normal completion** (the Arbiter doesn't distinguish)."""
+        """Called by the work itself in `finally`. **Called even on normal completion** (the Arbiter
+        doesn't distinguish).
+        """
         self.finished.set()

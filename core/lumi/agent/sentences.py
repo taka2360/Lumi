@@ -27,7 +27,8 @@ from typing import Final
 
 #: A sentence ends here
 TERMINATORS: Final = frozenset("。！？!?\n")
-#: Closing marks that may follow a terminator. **Include these before cutting** (don't drop the ！ in "そうだね！")
+# : Closing marks that may follow a terminator. **Include these before cutting** (don't drop the ！
+# in "そうだね！")
 CLOSERS: Final = frozenset("」』）)】〕》”\"'…♪〜~ 　")
 #: If nothing terminates before this length, give up and cut here [Provisional]
 MAX_CHARS: Final = 60
@@ -85,5 +86,7 @@ class SentenceStream:
 
 
 def is_speakable(text: str) -> bool:
-    """Whether there's anything to speak. **Never send symbol-and-whitespace-only fragments to TTS.**"""
+    """Whether there's anything to speak. **Never send symbol-and-whitespace-only fragments to
+    TTS.**
+    """
     return any(char not in _UNSPEAKABLE for char in text)

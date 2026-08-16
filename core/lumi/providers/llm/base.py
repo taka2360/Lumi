@@ -45,7 +45,9 @@ class TextDelta:
 
 @dataclass(frozen=True, slots=True)
 class ReasoningDelta:
-    """Reasoning. **Never routed to TTS.** Not shown in the speech bubble either (fine to show in the Inspector)."""
+    """Reasoning. **Never routed to TTS.** Not shown in the speech bubble either (fine to show in
+    the Inspector).
+    """
 
     text: str
 

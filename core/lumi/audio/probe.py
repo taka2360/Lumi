@@ -33,8 +33,8 @@ from lumi.audio.drift import DriftEstimate, drift_ms, estimate_drift, relative_p
 #: Frames per callback. Smaller lowers latency but tightens the callback's deadline.
 BLOCK_SIZE = 512
 
-#: **Treated as "not connected" if the first frame doesn't arrive within this time.**
-#: Some devices exist where `open()` succeeds but not a single frame ever arrives (disabled endpoints).
+# : **Treated as "not connected" if the first frame doesn't arrive within this time.** : Some
+# devices exist where `open()` succeeds but not a single frame ever arrives (disabled endpoints).
 FIRST_FRAME_TIMEOUT_S = 3.0
 
 DEFAULT_SECONDS = 30.0
@@ -102,7 +102,8 @@ class StreamReport:
                 f"    ✗ 開けたがフレームが来ない（{FIRST_FRAME_TIMEOUT_S:.0f} 秒待った）。"
                 "**開通していないものとして扱う**"
             )
-            # **Don't discard the reason.** "No frame arrived" and "died partway through" are different things.
+            # **Don't discard the reason.** "No frame arrived" and "died partway through" are
+            # different things.
             if self.error:
                 out.append(f"      理由: {self.error}")
             return out
@@ -273,7 +274,7 @@ def _close(session: _Session) -> None:
 
 
 def probe(seconds: float = DEFAULT_SECONDS) -> ProbeReport:
-    """Plan, open, and measure. **Runs input and output simultaneously** (to compare their clocks)."""
+    """Plan, open, and measure. **Runs input and output together** (to compare their clocks)."""
     try:
         devices, host_apis = list_devices()
     except OSError as error:
@@ -293,7 +294,8 @@ def probe(seconds: float = DEFAULT_SECONDS) -> ProbeReport:
             session.flowing = session.recorder.first_frame.wait(FIRST_FRAME_TIMEOUT_S)
 
     if any(session.flowing for session in sessions.values()):
-        # **Measure while keeping input and output running simultaneously** (to compare their clocks).
+        # **Measure while keeping input and output running simultaneously** (to compare their
+        # clocks).
         time.sleep(seconds)
 
     for session in sessions.values():

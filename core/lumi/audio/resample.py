@@ -76,7 +76,9 @@ def to_mono(x: Samples, channels: int) -> Samples:
 
 
 def to_interleaved(mono: Samples, channels: int) -> Samples:
-    """Expand mono to the output stream's channel count. **Copies the same waveform to every channel.**
+    """Expand mono to the output stream's channel count.
+
+    **Copies the same waveform to every channel.**
 
     TTS output is mono, but the output stream is opened with the device's default
     channel count (docs/architecture/audio.md §8). Putting it in only one channel would

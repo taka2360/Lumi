@@ -37,7 +37,9 @@ POLICY_VERSION: Final = "2026-08-16"
 
 
 class Risk(IntEnum):
-    """The L assignments are Provisional. **Where the L2/L3 boundary should sit won't be known until it's used in practice.**"""
+    """The L assignments are Provisional. **Where the L2/L3 boundary should sit won't be known until
+    it's used in practice.**
+    """
 
     #: Reads and observation (screenshot, reading world state)
     L0 = 0
@@ -49,7 +51,8 @@ class Risk(IntEnum):
     L3 = 3
     #: Shell execution, deletion, sending externally, irreversible operations
     L4 = 4
-    #: **Only ever appears as an effective risk.** A Tool can never declare this (rejected at registration)
+    # : **Only ever appears as an effective risk.** A Tool can never declare this (rejected at
+    # registration)
     DENIED = 5
 
 
@@ -156,5 +159,7 @@ def decide_with_rule(
     effective_trust: TrustLevel,
     grant: Grant | None,
 ) -> tuple[Decision, str]:
-    """For the audit log. **The decision itself goes through the same implementation as `decide()`** (`_evaluate`)."""
+    """For the audit log. **The decision itself goes through the same implementation as `decide()`**
+    (`_evaluate`).
+    """
     return _evaluate(base_risk, actor, effective_trust, grant)

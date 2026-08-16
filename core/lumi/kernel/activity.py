@@ -28,7 +28,8 @@ class ActivityKind(StrEnum):
 
 
 class Actor(StrEnum):
-    """**Whose intent started this.** Also one of Policy's arguments (docs/architecture/permission.md).
+    """**Whose intent started this.**
+    Also one of Policy's arguments (docs/architecture/permission.md).
 
     "A file read the user asked for" and "a file read Lumi did on its own" are
     different acts. This expresses that obvious fact in the type system.
@@ -85,7 +86,8 @@ _INTERRUPTIBLE_AT: Final[dict[ActivityKind, int]] = {
 
 
 def priority_of(kind: ActivityKind, actor: Actor) -> int:
-    """Priority is **decided from the table.** A proposer (LLM, Stage, Extension) can never pass one in.
+    """Priority is **decided from the table.**
+    A proposer (LLM, Stage, Extension) can never pass one in.
 
     This closes off any path for a claim like "this autonomous action is urgent"
     (upholding Invariant 1 on the Arbiter side too).
@@ -151,10 +153,12 @@ class ActivityProposal:
 
     kind: ActivityKind
     actor: Actor
-    #: What it's trying to do. Used by `DeferredQueue`'s deduplication (one entry per identical kind × intent)
+    # : What it's trying to do. Used by `DeferredQueue`'s deduplication (one entry per identical
+    # kind × intent)
     intent: str
     correlation_id: CorrelationId
-    #: Whether it may be re-proposed later if it can't be accepted now. True for autonomous, False for user speech
+    # : Whether it may be re-proposed later if it can't be accepted now. True for autonomous, False
+    # for user speech
     deferrable: bool = False
     deadline: datetime | None = None
 
@@ -193,7 +197,9 @@ class Activity:
         return interruptible_at_of(self.kind)
 
     def _apply(self, new_state: ActivityState) -> None:
-        """**Called only from the Attention Arbiter.** Tests verify it's never called from anywhere else."""
+        """**Called only from the Attention Arbiter.** Tests verify it's never called from anywhere
+        else.
+        """
         if new_state not in _ALLOWED[self._state]:
             raise InvalidTransition(f"{self.kind}: {self._state} → {new_state} は許されていない")
         if new_state is ActivityState.SUSPENDED and self.kind is not ActivityKind.IDLE:

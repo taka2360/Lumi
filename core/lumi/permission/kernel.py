@@ -33,7 +33,9 @@ log = lumi_logging.get_logger(__name__)
 
 @dataclass(frozen=True, slots=True)
 class Authorization:
-    """The result of a decision. **Returned along with what was written to the audit log** (used by the Inspector and the permission UI)."""
+    """The result of a decision. **Returned along with what was written to the audit log** (used by
+    the Inspector and the permission UI).
+    """
 
     decision: Decision
     rule_id: str
@@ -67,7 +69,7 @@ class PermissionKernel:
         raw_input_digest: str,
         args_digest: str,
     ) -> Authorization:
-        """Runs through `decide()`, and **records it to the audit log regardless of the decision.**"""
+        """Runs through `decide()`, and **records it to the audit log either way.**"""
         now = self._clock()
         grant = self._grants.find(spec.capability, scope, now)
         decision, rule_id = decide_with_rule(spec.risk, actor, effective_trust, grant)

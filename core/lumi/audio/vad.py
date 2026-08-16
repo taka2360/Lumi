@@ -14,15 +14,16 @@ Design → docs/architecture/audio.md §3, §5 / Decision → ADR-003
 | On false trigger | **Revert and resume playback** | Discard the segment |
 | Destination | `mute_flag` (synchronous) | asyncio → Arbiter |
 
-If these were the same, Lumi would keep talking the whole time `min_speech_duration_ms = 250` is waited out.
-**Being able to recover from a false trigger lets the mute threshold be pushed much more aggressively.**
-"Stop for an instant and resume right away" feels far better than "talk over the user for 300 ms."
+If these were the same, Lumi would keep talking the whole time `min_speech_duration_ms = 250` is
+waited out. **Being able to recover from a false trigger lets the mute threshold be pushed much more
+aggressively.** "Stop for an instant and resume right away" feels far better than "talk over the
+user for 300 ms."
 
 ## EchoGuard L1 — do not "suppress"
 
-During playback, **only raise** `mute_threshold`. Never stop input.
-AIRI's "suppress voice input while speaking" prevents self-loops, but **makes barge-in fundamentally impossible.**
-Being interruptible by a loud enough voice is a requirement on Lumi's side.
+During playback, **only raise** `mute_threshold`. Never stop input. AIRI's "suppress voice input
+while speaking" prevents self-loops, but **makes barge-in fundamentally impossible.** Being
+interruptible by a loud enough voice is a requirement on Lumi's side.
 """
 
 from __future__ import annotations
@@ -81,7 +82,8 @@ class VadEvent(StrEnum):
 
 
 class SpeechSegmenter:
-    """**Pure logic.** Touches neither the model nor the device (consumes a stream of probabilities, emits events).
+    """**Pure logic.** Touches neither the model nor the device
+    (consumes a stream of probabilities, emits events).
 
     Keeping this pure is what makes barge-in testable.
     """
@@ -104,14 +106,15 @@ class SpeechSegmenter:
         preroll_frames = max(1, self._params.speech_pad_ms // FRAME_MS)
         #: Preroll for word onsets. **Frames from "before" speech begins**
         self._preroll: deque[Samples] = deque(maxlen=preroll_frames)
-        #: Frames from when speech starts **until the segment is confirmed**.
-        #: Discarding these would drop the entire `min_speech_duration_ms` (250 ms) worth of word onset
+        # : Frames from when speech starts **until the segment is confirmed**. : Discarding these
+        # would drop the entire `min_speech_duration_ms` (250 ms) worth of word onset
         self._candidate: list[Samples] = []
         self._segment: list[Samples] = []
         self._speech_frames = 0
         self._silence_frames = 0
         self._muted_frames = 0
-        #: Whether a speech segment was confirmed since this mute. **If confirmed, it wasn't a false trigger**
+        # : Whether a speech segment was confirmed since this mute. **If confirmed, it wasn't a
+        # false trigger**
         self._confirmed_since_mute = False
         self.muted = False
         self.in_speech = False
@@ -137,7 +140,8 @@ class SpeechSegmenter:
         # ── (b) Speech segment confirmation — hysteresis + minimum duration ──
         if not self.in_speech:
             if probability >= params.speech_threshold:
-                # **Buffer even before confirmation.** Discarding would lose the full 250 ms leading up to confirmation
+                # **Buffer even before confirmation.** Discarding would lose the full 250 ms leading
+                # up to confirmation
                 self._speech_frames += 1
                 self._candidate.append(frame)
             else:
@@ -194,11 +198,13 @@ class SpeechSegmenter:
         return audio
 
     def unmute(self) -> None:
-        """Clear the mute state from outside. **The only way to revert it after a confirmed utterance.**
+        """Clear the mute state from outside.
+        **The only way to revert it after a confirmed utterance.**
 
-        (c) only handles false triggers, so **the caller must explicitly revert it
-        between interrupting and the next time it speaks** (`VadWorker.resume` → `AudioIO.resume_listening`).
-        Failing to call this leaves `muted` set, so **barge-in only works once.**
+        (c) only handles false triggers, so **the caller must explicitly revert it between
+        interrupting and the next time it speaks** (`VadWorker.resume` →
+        `AudioIO.resume_listening`). Failing to call this leaves `muted` set, so **barge-in only
+        works once.**
         """
         self.muted = False
         self._muted_frames = 0

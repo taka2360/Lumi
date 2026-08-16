@@ -39,9 +39,11 @@ class ProvenanceClass(StrEnum):
 
     #: Direct user input / Lumi's internal state / system settings / user_confirmed memories
     TRUSTED = "trusted"
-    #: Raw data of external origin. Web page content, files, Vision results, game screens, Extension output
+    # : Raw data of external origin. Web page content, files, Vision results, game screens,
+    # Extension output
     UNTRUSTED = "untrusted"
-    #: Output of processing that took untrusted content as input. Summaries, extracted memories, inference results
+    # : Output of processing that took untrusted content as input. Summaries, extracted memories,
+    # inference results
     DERIVED = "derived"
 
 
@@ -160,5 +162,7 @@ class PromptContext:
 
     @property
     def effective_trust(self) -> TrustLevel:
-        """**Never called `max_provenance`.** What "maximum" means here is ambiguous and always gets misread."""
+        """**Never called `max_provenance`.** What "maximum" means here is ambiguous and always gets
+        misread.
+        """
         return join(self.block_trust, join(self.history_trust, self.session_trust))

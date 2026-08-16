@@ -30,7 +30,8 @@ class KnownEngine:
     name: str
     display_name: str
     port: int
-    #: Held as an environment variable name plus a trailing path, not a path relative to `%LOCALAPPDATA%` etc.
+    # : Held as an environment variable name plus a trailing path, not a path relative to
+    # `%LOCALAPPDATA%` etc.
     candidates: tuple[tuple[str, str], ...]
 
 
@@ -88,7 +89,9 @@ class DetectedEngine:
 
 
 def candidate_executables(engine: KnownEngine, env: Mapping[str, str]) -> list[Path]:
-    """Assembles candidate paths. **A pure function** (environment variables are passed as an argument)."""
+    """Assembles candidate paths. **A pure function** (environment variables are passed as an
+    argument).
+    """
     results: list[Path] = []
     for variable, suffix in engine.candidates:
         base = env.get(variable)

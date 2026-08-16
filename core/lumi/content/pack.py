@@ -6,8 +6,8 @@ Spec → docs/architecture/extension.md §9 / Credit obligations → docs/licens
 
 | Condition | Reason |
 |---|---|
-| **Contains code** | Easily shared and redistributed. Including code makes it the same threat as an Extension |
-| **`[credit]` is missing** | Credit attribution is a licensing obligation from the voice source's terms. **Not something that can be "added later."** |
+| **Contains code** | Shared and redistributed easily — the same threat as an Extension |
+| **`[credit]` is missing** | A licensing obligation from the voice terms — never "added later." |
 
 **Core never interprets `credit_text`.** The wording the license requires is decided by
 the rights holder, and reformatting it could make it fail to satisfy that requirement.
@@ -145,7 +145,7 @@ def _optional_int(value: Any) -> int | None:
 
 
 def _credit(section: dict[str, Any], path: Path) -> Credit:
-    """**Refuses to load if missing.** Credit is an obligation that can't be added after the fact."""
+    """**Refuses to load if missing.** Credit is an obligation that can't be added later."""
     return Credit(
         name=_text(section, "name", path),
         credit_text=_text(section, "credit_text", path),

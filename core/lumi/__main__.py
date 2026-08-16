@@ -93,7 +93,8 @@ async def _run() -> int:
     log.info("core.ws.listening", host="127.0.0.1", port=port)
     log.info("core.started", version=__version__, pid=os.getpid())
 
-    # Detection is local only. **No external communication happens here** (docs/architecture/setup.md §1).
+    # Detection is local only. **No external communication happens here**
+    # (docs/architecture/setup.md §1).
     await setup.initialize()
 
     if os.environ.get(PARENT_WATCH_ENV) == "stdin":
@@ -144,8 +145,9 @@ def _force_utf8_stdio() -> None:
 def main() -> int:
     _force_utf8_stdio()
     if "--self-check" in sys.argv[1:]:
-        # **The path that verifies the distributable works on this PC** (docs/architecture/setup.md).
-        # Doesn't start WS or anything else. Imported here so normal startup isn't made heavier.
+        # **The path that verifies the distributable works on this PC**
+        # (docs/architecture/setup.md). Doesn't start WS or anything else. Imported here so normal
+        # startup isn't made heavier.
         from lumi.selfcheck import run
 
         return run()

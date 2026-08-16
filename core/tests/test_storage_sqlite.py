@@ -36,7 +36,9 @@ def test_reopening_does_not_reapply(tmp_path: Path) -> None:
 
 
 def test_a_newer_schema_is_refused(tmp_path: Path) -> None:
-    """**Never guesses and proceeds anyway.** The case of an older Lumi opening a DB a newer Lumi created."""
+    """**Never guesses and proceeds anyway.** The case of an older Lumi opening a DB a newer Lumi
+    created.
+    """
     path = tmp_path / "events.db"
     db = Database.open(path)
     with db.transaction() as conn:

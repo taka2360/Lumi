@@ -7,10 +7,10 @@ Isolation block format → docs/contracts/provenance.md §Isolation within the p
 
 | | |
 |---|---|
-| **Taint never disappears from budget overflow** | `block_trust` is the join of **all blocks passed in**, not just the ones that fit |
+| **Taint survives overflow** | `block_trust` joins every block passed in, not just the kept ones |
 | **Only the prompt gets truncated** | `Session` is never touched. `history_trust` never decreases |
 | **Truncation is deterministic** | The same input always produces the same prompt (snapshottable) |
-| **Untrusted content is isolated** | But this is **only one layer of defense** (the last line of defense is Policy's forced escalation) |
+| **Untrusted content is isolated** | One layer; Policy's forced escalation is the last line |
 """
 
 from __future__ import annotations
@@ -72,8 +72,8 @@ def estimate_tokens(text: str) -> int:
 class ContextBlock:
     """A fragment inserted into the prompt. Tool results, memories, web content, etc.
 
-    **Core is what attaches `provenance_class`** (Tool Registry / MemoryStore).
-    Letting this be reconstructed here would open a hole in Invariant 7, so **this class only receives it.**
+    **Core is what attaches `provenance_class`** (Tool Registry / MemoryStore). Letting this be
+    reconstructed here would open a hole in Invariant 7, so **this class only receives it.**
     """
 
     #: Where this came from. e.g. `tool:character.set_expression` / `memory` / `web`
@@ -111,8 +111,8 @@ def assemble(
 ) -> AssembledPrompt:
     """Assumes `session`'s **last Turn is the current utterance**.
 
-    Truncation order (docs/architecture/agent.md §3):
-    persona and the current utterance are never dropped → conversation turns oldest-first → ContextBlocks oldest-first.
+    Truncation order (docs/architecture/agent.md §3): persona and the current utterance are never
+    dropped → conversation turns oldest-first → ContextBlocks oldest-first.
     """
     turns = session.turns
     if not turns:
@@ -131,7 +131,8 @@ def assemble(
     over_budget = remaining < 0
 
     # Reserve budget for ContextBlocks first. **Tool results are input to this turn's decision**,
-    # and dropping them means the LLM decides its next move without seeing the results of tools it called
+    # and dropping them means the LLM decides its next move without seeing the results of tools it
+    # called
     kept_blocks, remaining = _take_newest(
         [(block, estimate_tokens(block.render())) for block in blocks], remaining
     )

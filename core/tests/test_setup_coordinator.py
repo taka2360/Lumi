@@ -86,7 +86,9 @@ def states_of(server: FakeServer) -> list[str]:
 
 
 def boots_of(server: FakeServer) -> list[str]:
-    """The sequence of broadcast boot phases. **The order the Stage actually sees** (docs/architecture/ui.md)."""
+    """The sequence of broadcast boot phases. **The order the Stage actually sees**
+    (docs/architecture/ui.md).
+    """
     return [item["boot"] for item in server.notifications if item["method"] == "stage.setup.state"]
 
 
@@ -120,7 +122,9 @@ class TestPrompt:
     async def test_asks_even_when_the_stage_connects_before_detection_finishes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """**A race condition observed in practice.** Must ask even if the Stage connects before detection finishes."""
+        """**A race condition observed in practice.** Must ask even if the Stage connects before
+        detection finishes.
+        """
         started = asyncio.Event()
 
         async def slow_detect(_env: Any) -> list[DetectedEngine]:
@@ -143,7 +147,9 @@ class TestPrompt:
     async def test_skipping_keeps_lumi_running_and_visible(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Starts even when the choice is not to fetch. **State is explicitly reported as "not configured."**"""
+        """Starts even when the choice is not to fetch. **State is explicitly reported as "not
+        configured."**
+        """
         no_engines(monkeypatch)
         server = FakeServer(["skip"])
         coordinator = SetupCoordinator(server.as_server(), {})
@@ -214,7 +220,8 @@ class TestPrompt:
         await coordinator.on_stage_connected()
 
         assert coordinator.state.state is TtsSetupState.INSTALLED
-        # Also broadcast when asking starts and when answering ends, so the same state repeats in a row.
+        # Also broadcast when asking starts and when answering ends, so the same state repeats in a
+        # row.
         assert states_of(server) == [
             "not_configured",
             "not_configured",
@@ -223,10 +230,10 @@ class TestPrompt:
             "installed",
             "installed",
         ]
-        # **The transition as seen by the Stage.** Progresses one-way: question →
-        # fetching → engine starting.
-        # **Never returns to `setup` after `installing`** (returning would flash the question screen).
-        # Right after fetching it's `starting`. **Marking it `ready` would show the character only to pull it back.**
+        # **The transition as seen by the Stage.** Progresses one-way: question → fetching → engine
+        # starting. **Never returns to `setup` after `installing`** (returning would flash the
+        # question screen). Right after fetching it's `starting`. **Marking it `ready` would show
+        # the character only to pull it back.**
         assert boots_of(server) == [
             "ready",
             "ready",
@@ -276,7 +283,9 @@ class TestManagedEngine:
     async def test_an_engine_lumi_installed_reports_installed_not_detected(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """**"Lumi installed it" and "the user had already installed it" are different states** (setup.md §2)."""
+        """**"Lumi installed it" and "the user had already installed it" are different states**
+        (setup.md §2).
+        """
 
         async def detect(_env: Any) -> list[DetectedEngine]:
             return [

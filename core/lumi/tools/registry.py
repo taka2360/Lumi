@@ -122,7 +122,8 @@ class ToolRegistry:
             raise ToolRegistrationError(f"{tool.name}: {tool.lane} は Class B の lane")
 
         if tool.permission.risk is Risk.DENIED:
-            # DENIED only ever appears as an "effective risk" value — it's not something a Tool can declare.
+            # DENIED only ever appears as an "effective risk" value — it's not something a Tool can
+            # declare.
             raise ToolRegistrationError(f"{tool.name}: risk に DENIED は宣言できない")
 
         if tool.lane not in self._canonicalizers:
@@ -143,7 +144,9 @@ class ToolRegistry:
         self._tools[tool.name] = tool
 
     def list_exposed(self) -> list[ToolDescriptor]:
-        """Only the `deferred=False` ones. **Kept to roughly a dozen even past 50 registered tools.**"""
+        """Only the `deferred=False` ones. **Kept to roughly a dozen even past 50 registered
+        tools.**
+        """
         return [self._describe(tool) for tool in self._tools.values() if not tool.deferred]
 
     def search(self, query: str) -> list[ToolDescriptor]:
@@ -282,8 +285,10 @@ class ToolRegistry:
         )
 
     def _refuse(self, ctx: ToolContext, tool_name: str, code: str, message: str) -> ToolResult:
-        """**Even when there's no result, provenance is still attached.** Errs toward the safe side (untrusted)."""
-        del ctx  # On failure, input trust is never carried forward (there's no value, so nothing to join with)
+        """**Even when there's no result, provenance is still attached.** Errs toward the safe side
+        (untrusted).
+        """
+        del ctx  # On failure, input trust is never carried forward (no value means nothing to join)
         log.info("tool.refused", tool=tool_name, code=code, reason=message)
         return ToolResult(
             ok=False,

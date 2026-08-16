@@ -66,7 +66,7 @@ def test_output_of_a_process_containing_untrusted_is_tainted() -> None:
 
 
 def test_output_of_a_process_containing_derived_stays_tainted() -> None:
-    """**Mixing in derived never gets downgraded.** Loosening this would create a laundering path."""
+    """**Mixing in derived never gets downgraded.** Loosening this creates a laundering path."""
     inputs = [block(ProvenanceClass.TRUSTED), block(ProvenanceClass.DERIVED)]
     assert propagate(inputs, is_raw_external=False) is ProvenanceClass.DERIVED
     assert propagate_trust(inputs) is TrustLevel.TAINTED
@@ -94,7 +94,7 @@ def test_one_tainted_block_taints_the_whole_context() -> None:
 
 
 def test_a_pure_chat_context_stays_trusted() -> None:
-    """With only persona, user utterance, and internal state, there's no reason to become tainted."""
+    """With only persona, utterance, and internal state, there's no reason to become tainted."""
     assert PromptContext().effective_trust is TrustLevel.TRUSTED
 
 
@@ -113,7 +113,7 @@ def test_session_trust_survives_the_block_falling_out_of_context() -> None:
 
 
 def test_history_trust_is_counted() -> None:
-    """The foundation for: the join is preserved even when `compact()` replaces this with a summary."""
+    """The foundation: the join is preserved even when `compact()` replaces this with a summary."""
     context = PromptContext(history_trust=TrustLevel.TAINTED)
     assert context.effective_trust is TrustLevel.TAINTED
 

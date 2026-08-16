@@ -75,7 +75,9 @@ def test_code_nested_deeper_is_also_rejected(tmp_path: Path) -> None:
 
 
 def test_a_pack_without_credit_is_rejected(tmp_path: Path) -> None:
-    """**Test 13b.** Credit attribution is an obligation from the voice source's terms, and can't be added later."""
+    """**Test 13b.** Credit attribution is an obligation from the voice source's terms, and can't be
+    added later.
+    """
     root = pack(tmp_path, voice="[voice]\nspeaker = 0\n")
 
     with pytest.raises(ContentPackError, match=r"\[credit\]"):

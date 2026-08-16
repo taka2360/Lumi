@@ -59,7 +59,9 @@ DEFAULT_STT_MODEL: Final = "small"
 
 
 class ConversationRuntime:
-    """Holds what conversation needs and owns start/stop. **Not disposable** (lives as long as the process)."""
+    """Holds what conversation needs and owns start/stop. **Not disposable** (lives as long as the
+    process).
+    """
 
     __slots__ = ("_audio", "_database", "_loop", "_providers", "_setup", "_task")
 
@@ -104,7 +106,7 @@ class ConversationRuntime:
         )
 
     async def start(self) -> None:
-        """**Starts regardless of whether it can speak.** Missing pieces show up in logs and state."""
+        """**Starts regardless of whether it can speak.** Missing pieces show up in logs/state."""
         self._register_providers()
         await self._audio.start()
 

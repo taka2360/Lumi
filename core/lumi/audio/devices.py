@@ -15,8 +15,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-#: Preferred host API on Windows. **Based on measurements** (docs/measurements/phase0.md).
-#: MME has 209 ms output latency, which rules out barge-in. DirectSound is slower by the layer it adds on top of WASAPI.
+# : Preferred host API on Windows. **Based on measurements** (docs/measurements/phase0.md). : MME
+# has 209 ms output latency, which rules out barge-in. DirectSound is slower by the layer it adds on
+# top of WASAPI.
 PREFERRED_HOST_APIS = ("Windows WASAPI",)
 
 #: Host APIs with high latency, unsuited to barge-in. Warns when there's no choice but to pick one.
@@ -123,7 +124,8 @@ def _pick(devices: list[Device], host_apis: list[HostApi], *, capture: bool) -> 
         chosen = usable(by_index.get(index) if index is not None else None)
         if chosen is not None:
             return chosen
-    # Last resort when only host APIs without a default exist. **Preference order is still respected.**
+    # Last resort when only host APIs without a default exist. **Preference order is still
+    # respected.**
     for host_api in _ordered(host_apis):
         for device in devices:
             chosen = usable(device)

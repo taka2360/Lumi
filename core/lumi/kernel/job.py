@@ -35,7 +35,8 @@ class JobKind(StrEnum):
 
 @dataclass(slots=True)
 class Job:
-    """**`actor` is fixed to `system`.** It isn't a field so rewriting it is blocked at the type level.
+    """**`actor` is fixed to `system`.**
+    It isn't a field so rewriting it is blocked at the type level.
 
     If L1-or-above tools are needed, that's not a Job — it's **work that should be
     proposed as an Activity instead** (docs/architecture/agent.md §5, rule 4).
@@ -44,7 +45,8 @@ class Job:
     id: JobId
     kind: JobKind
     cancellation: Cancellation
-    #: If True, acquires an `inference_lease` from the Arbiter. Revoked if foreground requests inference
+    # : If True, acquires an `inference_lease` from the Arbiter. Revoked if foreground requests
+    # inference
     uses_inference: bool = False
     cancel_token: CancelToken = field(default_factory=CancelToken)
 

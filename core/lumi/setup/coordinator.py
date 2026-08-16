@@ -138,7 +138,8 @@ class SetupCoordinator:
         if self._state.state is not TtsSetupState.NOT_CONFIGURED:
             return
         if self._answers.tts_prompt_answered or self._prompting:
-            # **Once answered, never asked again.** Asking every startup is the textbook definition of annoying.
+            # **Once answered, never asked again.** Asking every startup is the textbook definition
+            # of annoying.
             return
 
         self._prompting = True
@@ -177,7 +178,8 @@ class SetupCoordinator:
                 log.info("setup.prompt.unanswered")
                 return
 
-            # **The question disappears the moment an answer arrives.** Never lets the question paint over the fetching phase.
+            # **The question disappears the moment an answer arrives.** Never lets the question
+            # paint over the fetching phase.
             self._awaiting_answer = False
             choice = result.payload.get("choice") if result.ok else None
             # **An unrecognized answer is treated the same as "don't fetch"** (fail-closed).
@@ -198,7 +200,9 @@ class SetupCoordinator:
             reason = self._state.reason
 
     async def install_tts_engine(self) -> None:
-        """Fetches because the user chose to. **No external communication happens before this point.**"""
+        """Fetches because the user chose to. **No external communication happens before this
+        point.**
+        """
         artifact = AIVISSPEECH_ENGINE
         await self._set_state(
             TtsSetup(
@@ -245,7 +249,8 @@ class SetupCoordinator:
             await self._set_state(TtsSetup(state=TtsSetupState.FAILED, reason="cancelled"))
             raise
         except Exception as error:
-            # Even for the unexpected, **never silently reverts to not-configured.** What happened is recorded.
+            # Even for the unexpected, **never silently reverts to not-configured.** What happened
+            # is recorded.
             log.exception("setup.install.crashed")
             await self._set_state(TtsSetup(state=TtsSetupState.FAILED, reason="unexpected_error"))
             del error

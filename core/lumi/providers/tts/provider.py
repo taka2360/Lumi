@@ -32,7 +32,8 @@ from lumi.setup.state import EngineRuntime
 
 log = lumi_logging.get_logger(__name__)
 
-#: Grace period before the engine responds. **Never wait forever** (couldn't tell it apart from never starting)
+# : Grace period before the engine responds. **Never wait forever** (couldn't tell it apart from
+# never starting)
 START_TIMEOUT_S: Final = 180.0
 
 
@@ -52,7 +53,9 @@ class AivisSpeechProvider:
         self._loaded = False
 
     async def load(self) -> None:
-        """**Idempotent.** Starts the engine (leaves it alone if already running) and settles on a default speaker."""
+        """**Idempotent.** Starts the engine (leaves it alone if already running) and settles on a
+        default speaker.
+        """
         if self._loaded:
             return
 
@@ -108,7 +111,9 @@ class AivisSpeechProvider:
         return frozenset({"ja"})
 
     def resource_hint(self) -> ResourceHint:
-        """**Zero VRAM.** This is the primary reason TTS was chosen this way (ADR-008 / DESIGN.md §7)."""
+        """**Zero VRAM.** This is the primary reason TTS was chosen this way (ADR-008 / DESIGN.md
+        §7).
+        """
         return ResourceHint(
             device_pref=DevicePref.EXTERNAL_PROCESS,
             vram_estimate_mb=0,

@@ -45,7 +45,9 @@ def draft(stream_key: str = "activity:x", event_type: str = "ActivityStarted") -
 
 
 def test_signal_has_no_stream_key_or_sequence_id() -> None:
-    """**Blocked at the type level** (Invariant 6). No path exists for external code to write a DomainEvent directly."""
+    """**Blocked at the type level** (Invariant 6). No path exists for external code to write a
+    DomainEvent directly.
+    """
     fields = {f.name for f in dataclasses.fields(Signal)}
     assert "stream_key" not in fields
     assert "sequence_id" not in fields
@@ -79,7 +81,9 @@ async def test_concurrent_publish_has_no_gap_or_duplicate(bus: EventBus) -> None
 
 
 async def test_events_are_persisted_before_dispatch(bus: EventBus, database: Database) -> None:
-    """**Persists before dispatching.** Reversing this risks a crash where a subscriber saw a fact absent from history."""
+    """**Persists before dispatching.** Reversing this risks a crash where a subscriber saw a fact
+    absent from history.
+    """
     seen: list[int] = []
 
     async def handler(event: DomainEvent) -> None:

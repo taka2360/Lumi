@@ -70,10 +70,11 @@ class Session:
     def record_user_utterance(self, text: str) -> Turn:
         """**The direct user-input handler.** The sole point where `TRUSTED` is initially granted.
 
-        **What this does not guarantee**: whether an STT result is really the user's own voice.
-        A third party in the same room, or audio played from a speaker, can also get transcribed
-        by STT (docs/contracts/provenance.md §Why STT results are TRUSTED, and its limits).
-        Speaker identification is out of scope for Phase 1-9, and **is recorded here as a known limitation.**
+        **What this does not guarantee**: whether an STT result is really the user's own voice. A
+        third party in the same room, or audio played from a speaker, can also get transcribed by
+        STT (docs/contracts/provenance.md §Why STT results are TRUSTED, and its limits). Speaker
+        identification is out of scope for Phase 1-9, and **is recorded here as a known
+        limitation.**
         """
         turn = Turn(role="user", text=text, trust_level=TrustLevel.TRUSTED)
         self._turns.append(turn)

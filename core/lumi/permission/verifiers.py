@@ -36,7 +36,9 @@ class BindVerificationError(RuntimeError):
 
 
 class ResultVerificationError(RuntimeError):
-    """Class B reported operating outside its scope. **The result is discarded** (the side effect itself can't be undone)."""
+    """Class B reported operating outside its scope. **The result is discarded** (the side effect
+    itself can't be undone).
+    """
 
 
 class Canonicalizer(Protocol):
@@ -63,7 +65,9 @@ class ResultVerifier(Protocol):
     lane: ScopeLane
 
     def verify(self, scope: SecurityScope, acted_on: str) -> None:
-        """Raises `ResultVerificationError` if outside scope. The result is discarded and recorded as `denied`."""
+        """Raises `ResultVerificationError` if outside scope. The result is discarded and recorded
+        as `denied`.
+        """
         ...
 
 
@@ -94,7 +98,8 @@ class CharacterCanonicalizer:
         """
         target = raw_input.get("target", "self")
         if target != "self":
-            # There's no concept of "another character." **An unrecognized target is never let through.**
+            # There's no concept of "another character." **An unrecognized target is never let
+            # through.**
             raise CanonicalizationError(f"未知の対象: {target!r}")
         return SecurityScope(
             lane=ScopeLane.CHARACTER,

@@ -180,7 +180,8 @@ class ReactiveLoop:
             actor=Actor.USER_INITIATED,
             intent="reply",
             correlation_id=new_correlation_id(),
-            # **A user utterance is never deferred.** Having it dredged up later would be problematic
+            # **A user utterance is never deferred.** Having it dredged up later would be
+            # problematic
             deferrable=False,
             deadline=datetime.now(UTC) + timedelta(seconds=self._limits.turn_timeout_s),
         )
@@ -194,7 +195,8 @@ class ReactiveLoop:
         try:
             await self._converse(activity, text)
         except ProviderError as error:
-            # **Record in the Activity's state that it failed to speak** (never silently mark it a success)
+            # **Record in the Activity's state that it failed to speak** (never silently mark it a
+            # success)
             log.warning("reactive.turn_failed", error=str(error))
             failed = True
         finally:
@@ -206,7 +208,8 @@ class ReactiveLoop:
 
     async def _converse(self, activity: Activity, text: str) -> None:
         started = time.perf_counter()
-        # **From here on, interruption is allowed.** Reset to a state that can accept the next barge-in
+        # **From here on, interruption is allowed.** Reset to a state that can accept the next
+        # barge-in
         if self._audio is not None:
             self._audio.resume_listening()
 
@@ -280,7 +283,8 @@ class ReactiveLoop:
                     for sentence in sentences.feed(chunk.text):
                         scheduler.speak(sentence)
                 case ReasoningDelta():
-                    # **Reasoning is never spoken.** Not shown in the speech bubble either (Inspector only)
+                    # **Reasoning is never spoken.** Not shown in the speech bubble either
+                    # (Inspector only)
                     pass
                 case ToolCall():
                     calls.append(event)

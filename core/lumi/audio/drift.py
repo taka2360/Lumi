@@ -18,7 +18,8 @@ import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-#: Minimum sample count needed to fit a slope. Below this, no estimate is made (**never return a guess**).
+# : Minimum sample count needed to fit a slope. Below this, no estimate is made (**never return a
+# guess**).
 MIN_SAMPLES = 64
 
 

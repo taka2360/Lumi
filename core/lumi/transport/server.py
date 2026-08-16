@@ -87,7 +87,9 @@ class _Connection:
         return True
 
     def abandon_all(self, reason: str) -> None:
-        """The connection dropped. **Fails any pending commands with an error** (never leaves them hanging)."""
+        """The connection dropped. **Fails any pending commands with an error** (never leaves them
+        hanging).
+        """
         for command_id, future in self._pending.items():
             if not future.done():
                 future.set_exception(NotConnectedError(f"{command_id}: {reason}"))
@@ -213,7 +215,8 @@ class WsServer:
         connection = _Connection(role, ws)
         previous = self._connections.get(role)
         if previous is not None:
-            # A reconnect. The old one is discarded (never leaves a ghost connection on Core's side).
+            # A reconnect. The old one is discarded (never leaves a ghost connection on Core's
+            # side).
             log.info("transport.reconnect", role=role.value)
             previous.abandon_all("再接続で置き換えられた")
             await previous.ws.close(code=1000, reason="replaced by a new connection")
@@ -256,7 +259,8 @@ class WsServer:
             await ws.close(code=CLOSE_PROTOCOL_ERROR, reason="invalid hello")
             return None
 
-        # The comparison is done in a way that avoids timing attacks. **Only checked against the token for the claimed role.**
+        # The comparison is done in a way that avoids timing attacks. **Only checked against the
+        # token for the claimed role.**
         if not secrets.compare_digest(hello.token, self._tokens[hello.role]):
             log.warning("transport.auth.rejected", role=hello.role.value)
             await ws.close(code=CLOSE_UNAUTHORIZED, reason="invalid token")

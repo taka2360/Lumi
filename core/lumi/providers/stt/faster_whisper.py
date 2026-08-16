@@ -73,7 +73,9 @@ class FasterWhisperProvider:
         self._model: Any | None = None
 
     async def load(self) -> None:
-        """**Idempotent.** Raises `ProviderNotConfigured` if the model is missing (never fetches it)."""
+        """**Idempotent.** Raises `ProviderNotConfigured` if the model is missing (never fetches
+        it).
+        """
         if self._model is not None:
             return
 
@@ -85,7 +87,7 @@ class FasterWhisperProvider:
     def _build(self) -> Any:
         try:
             from faster_whisper import WhisperModel
-        except ImportError as error:  # pragma: no cover - never happens if the dependency is installed
+        except ImportError as error:  # pragma: no cover - unreachable if the dependency is present
             raise ProviderNotConfigured("faster_whisper_missing", str(error)) from error
 
         try:
