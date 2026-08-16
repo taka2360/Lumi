@@ -131,31 +131,32 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
 **目的: 「話しかけると答え、遮れば止まる」を成立させる。**
 
 ### 必須
-- [ ] Mic → Silero VAD → faster-whisper → Ollama(Qwen3系) → AivisSpeech → 再生 + **リップシンク**
-- [ ] **音声の3層分離**（audio callback / VAD 専用スレッド / asyncio）。**コールバック内で推論しない**
-- [ ] **barge-in**（ミュート判定と発話区間確定を別閾値で。誤爆から復帰できること）
-- [ ] EchoGuard **L1**（適応的閾値。ヘッドホン前提を明示）
-- [ ] Working Memory のみ（セッション内会話履歴。ベクトルなし）
-- [ ] **Kernel 基盤**
-  - [ ] Attention Arbiter（`_foreground` 単一参照 / idle 必置 / `suspended`）
-  - [ ] `DeferredQueue`（TTL 付き）
-  - [ ] **`Job` と `inference_lease`**（Phase 2 の Reflection で必要になるが、後から入れると経路が変わる）
-  - [ ] Activity / Tool の独立した状態機械
-  - [ ] Cancellation 契約（cooperative / hard / non_cancellable）
-  - [ ] Command / EventBus（Signal ↔ DomainEvent 分離、stream_key 採番）
-  - [ ] Hook（固定セット）
-  - [ ] Crash Recovery の**イベント語彙**と `idempotency_key` の型（実装は Phase 4a）
-- [ ] **Permission Kernel の骨格**（L0 ツールのみ登録。`decide()` は本番と同じ関数。Kernel実行契約と Scope 正規化も本番と同じ経路）
-- [ ] **Provenance の型と伝播**（L0 しか無くても型を後入れしない）
-  - [ ] `block_trust` / `history_trust` / `session_trust`（sticky）の3スコープ
-- [ ] Provider interface（`load` / `unload` / `resource_hint` / **`attribution`** を含む）
+- [x] Mic → Silero VAD → faster-whisper → Ollama(Qwen3系) → AivisSpeech → 再生 + **リップシンク** 〔Step E で結線。実機での通しは Step F〕
+- [x] **音声の3層分離**（audio callback / VAD 専用スレッド / asyncio）。**コールバック内で推論しない** 〔Step D。AST で静的検査〕
+- [x] **barge-in**（ミュート判定と発話区間確定を別閾値で。誤爆から復帰できること）〔Step D/E。実測は Step F〕
+- [x] EchoGuard **L1**（適応的閾値。ヘッドホン前提を明示）〔Step D〕
+- [x] Working Memory のみ（セッション内会話履歴。ベクトルなし）〔Step E〕
+- [x] **Kernel 基盤** 〔Step A〕
+  - [x] Attention Arbiter（`_foreground` 単一参照 / idle 必置 / `suspended`）
+  - [x] `DeferredQueue`（TTL 付き）
+  - [x] **`Job` と `inference_lease`**（Phase 2 の Reflection で必要になるが、後から入れると経路が変わる）
+  - [x] Activity / Tool の独立した状態機械
+  - [x] Cancellation 契約（cooperative / hard / non_cancellable）
+  - [x] Command / EventBus（Signal ↔ DomainEvent 分離、stream_key 採番）
+  - [x] Hook（固定セット）
+  - [x] Crash Recovery の**イベント語彙**と `idempotency_key` の型（実装は Phase 4a）
+- [x] **Permission Kernel の骨格**（L0 ツールのみ登録。`decide()` は本番と同じ関数。Kernel実行契約と Scope 正規化も本番と同じ経路）〔Step B〕
+- [x] **Provenance の型と伝播**（L0 しか無くても型を後入れしない）〔Step B/E〕
+  - [x] `block_trust` / `history_trust` / `session_trust`（sticky）の3スコープ
+- [x] Provider interface（`load` / `unload` / `resource_hint` / **`attribution`** を含む）〔Step C〕
 - [ ] **推論スタックのセットアップ**〔[ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) / [architecture/setup.md](architecture/setup.md) §2b〕
-  - [ ] **Ollama の検出**（取得もインストールもしない）と「LLM 未セットアップ」/ `model_missing` の提示
+  - [x] **Ollama の検出**（取得もインストールもしない）〔Step C〕/ [ ] 「LLM 未セットアップ」/ `model_missing` の**提示**（Step G）
   - [ ] **STT モデルの取得**（ピン留め + SHA-256 + ロールバック）。**ライブラリの自動ダウンロードを無効化する**
-  - [ ] **Silero VAD を配布物に同梱**（LICENSE 本文の確認が前提 → [licensing.md](licensing.md) §7 未確認 #9）
+  - [x] **Silero VAD を配布物に同梱** 〔Step D/E。faster-whisper 同梱の ONNX（MIT）を使う。**OSS 通知への Silero Team のクレジット追加が残っている** → Step G〕
   - [ ] 起動フェーズ（`boot`）を **LLM / STT / TTS の3つから導出**する。「喋れるが聞けない」を正常な状態として出す
-- [ ] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）
-- [ ] Inspector 最小版（Activity ツリー / レイテンシ内訳）
+- [ ] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）〔ログは有り。区間別計測は Step F〕
+- [ ] Inspector 最小版（Activity ツリー / レイテンシ内訳）〔Step G〕
+- [ ] **Content Pack の既定キャラクター**〔Step E で `content/characters/lumi/` を作成。**VRM 本体はまだ置いていない**（下記の持ち越し）〕
 
 ### Phase 0 からの持ち越し
 
@@ -414,7 +415,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 
 | # | リスク | 影響 | 対策 | 判定 Phase |
 |---|---|---|---|---|
-| R1 | **Python Core の同梱**。torch 依存だとインストーラ 1-2GB | 配布不能 | torch を避ける（CTranslate2 / ONNX） | Phase 0 |
+| R1 | **Python Core の同梱**。torch 依存だとインストーラ 1-2GB | 配布不能 | torch を避ける（CTranslate2 / ONNX） | ~~Phase 0~~ → **Phase 1 で再判定済み。インストーラ 65.7 MB**（[measurements/phase1.md](measurements/phase1.md)） |
 | R2 | **Tauri 2 の透過+クリックスルー+ホバー検知** | Shell 選定の破綻 | Phase 0 スパイク。`PlatformShell` で退避 | Phase 0 |
 | R3 | **AEC 不在による barge-in の自己ループ** | 中核機能の破綻 | 3段階 EchoGuard | Phase 1-2 |
 | R4 | **VRAM 競合** | 機能の相互排他 | TTS を CPU 別プロセスに。Phase 5 で Manager | Phase 0-1 実測 |

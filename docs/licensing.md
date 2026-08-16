@@ -235,6 +235,16 @@ ACML の禁止事項:
 
 **GPL / AGPL は1つも含まれない**（§6 のビルド時検査に抵触しない）。
 
+#### Microsoft VC++ ランタイム〔2026-08-16 追記〕
+
+配布物には `msvcp140.dll` / `vcruntime140*.dll` が入る。**PyInstaller が Phase 0 から入れていた**
+（Python 本体と全ネイティブ拡張が要求する）。Step E で**出所を System32 に固定した**
+（`lumi-core.spec` の `_pin_vcruntime()`。理由 → [measurements/phase1.md](measurements/phase1.md)）。
+
+これらは Microsoft の**再頒布可能パッケージ**であり、アプリケーションへの同梱が明示的に許諾されている。
+**Core = MIT の境界を汚さない**（Windows 向けにビルドされた実行体が必ず伴うもので、
+CPython の公式配布物にも同じ DLL が入っている）。**Lumi のコードのライセンスとは無関係。**
+
 #### ★ Silero VAD は faster-whisper が同梱している〔2026-08-16 実測〕
 
 ```

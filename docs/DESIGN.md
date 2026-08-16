@@ -615,6 +615,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Provenance の型・伝播・trust の3スコープ・隔離ブロック書式 | [contracts/provenance.md](contracts/provenance.md) |
 | Activity / Tool の状態機械・foreground の定義・Cancellation 3契約・barge-in 手順 | [contracts/state-machines.md](contracts/state-machines.md) |
 | **Activity の `priority` / `interruptible_at` の値と割り込み判定** | [architecture/agent.md](architecture/agent.md) §1 |
+| **PromptAssembly の構成・トークン予算・切り落とし順序** | [architecture/agent.md](architecture/agent.md) §3 |
 | Kernel 実行契約・Class A / Class B | [contracts/tool-execution.md](contracts/tool-execution.md) |
 | Signal / DomainEvent / Command・**Hook 一覧** | [contracts/event-model.md](contracts/event-model.md) |
 | 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |

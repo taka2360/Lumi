@@ -111,10 +111,66 @@ def check_ssl() -> CheckResult:
     return CheckResult("TLS", True, f"CA 証明書 {stats['x509_ca']} 件")
 
 
+def check_vad() -> CheckResult:
+    """**barge-in の critical path。** ONNX を読んで、実際に1フレーム推論する。
+
+    モデルは faster-whisper の同梱物を借りている（ADR-023 / docs/licensing.md §4.6）ので、
+    **パッケージ更新でパスが変われば、ここで落ちる。** これが検知の唯一の手段である。
+    """
+    try:
+        import numpy as np
+
+        from lumi.audio.vad import WINDOW_SAMPLES, SileroVad, VadModelUnavailable
+    except ImportError as error:
+        return CheckResult("Silero VAD", False, f"import できない: {error}")
+
+    try:
+        vad = SileroVad()
+        probability = vad.probability(np.zeros(WINDOW_SAMPLES, dtype=np.float32))
+    except (VadModelUnavailable, RuntimeError, OSError, ValueError) as error:
+        return CheckResult("Silero VAD", False, f"{type(error).__name__}: {error}")
+    if not 0.0 <= probability <= 1.0:
+        return CheckResult("Silero VAD", False, f"確率が範囲外: {probability}")
+    return CheckResult("Silero VAD", True, "ONNX Runtime (CPU) で推論できる")
+
+
+def check_stt() -> CheckResult:
+    """**モデルではなくランタイムを見る。** モデルは実行時取得（ADR-023）。
+
+    `ctranslate2` はネイティブ拡張であり、**入っていなくても import は通らない**。
+    ここで落としておかないと「話しかけても無反応」として現れる。
+    """
+    try:
+        import ctranslate2
+        import faster_whisper
+    except ImportError as error:
+        return CheckResult("faster-whisper", False, f"import できない: {error}")
+    versions = f"{faster_whisper.__version__} / CTranslate2 {ctranslate2.__version__}"
+    return CheckResult("faster-whisper", True, versions)
+
+
+def check_content() -> CheckResult:
+    """**人格が無い Lumi は Lumi ではない。** 同梱 Content Pack が読めるか。"""
+    try:
+        from lumi import paths
+        from lumi.content.pack import ContentPackError, load_character
+    except ImportError as error:
+        return CheckResult("Content Pack", False, f"import できない: {error}")
+
+    try:
+        pack = load_character(paths.default_character_dir())
+    except ContentPackError as error:
+        return CheckResult("Content Pack", False, str(error))
+    return CheckResult("Content Pack", True, f"{pack.name} / {pack.voice.credit.credit_text}")
+
+
 CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_sqlite_vec,
     check_fts5,
     check_audio,
+    check_vad,
+    check_stt,
+    check_content,
     check_ssl,
 )
 

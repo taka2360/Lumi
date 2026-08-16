@@ -144,6 +144,17 @@ class VadWorker:
 
     ここが「すぐ黙る」を担当する。asyncio に渡すのは、その後の
     「Activity を止める」「STT にかける」という**遅くてよい仕事**だけ。
+
+    ## ミュートを戻すのは2経路ある
+
+    | 経路 | いつ | 誰が |
+    |---|---|---|
+    | 誤爆からの復帰 | `false_trigger_ms` 経過 | VAD スレッド（自動） |
+    | **`resume()`** | 発話を処理し終えて次を喋る直前 | **asyncio 側** |
+
+    後者が無いと、**barge-in は1回しか効かない。** 区間が確定したミュートは
+    誤爆ではないので自動では戻らず、`muted` が立ったままだと次の
+    `MUTE_REQUESTED` が発火しない（`SpeechSegmenter.feed` の (a)）。
     """
 
     __slots__ = (
@@ -151,6 +162,7 @@ class VadWorker:
         "_listener",
         "_mute_flag",
         "_pending",
+        "_resume",
         "_ring",
         "_segmenter",
         "_source_rate",
@@ -179,6 +191,9 @@ class VadWorker:
         self._is_playing = is_playing or (lambda: False)
         self._pending: Samples = np.zeros(0, dtype=np.float32)
         self._stop = threading.Event()
+        #: asyncio 側からの「ミュートを戻してよい」。**Event 越しに渡す**
+        #: （`SpeechSegmenter` を別スレッドから直接触らない）
+        self._resume = threading.Event()
         self._thread: threading.Thread | None = None
 
     def start(self) -> None:
@@ -211,8 +226,21 @@ class VadWorker:
                 self._pending = self._pending[WINDOW_SAMPLES:]
                 self._process(window, read_at)
 
+    def resume(self) -> None:
+        """**次の barge-in を受けられる状態に戻す。** asyncio 側から呼ぶ。
+
+        `Event` を立てるだけで、実際の解除は VAD スレッドが行う。
+        `SpeechSegmenter` の状態を2つのスレッドから書かないため。
+        """
+        self._resume.set()
+
     def _process(self, window: Samples, read_at: float) -> None:
         assert self._vad is not None
+        if self._resume.is_set():
+            self._resume.clear()
+            self._segmenter.unmute()
+            self._mute_flag.clear()
+
         probability = self._vad.probability(window)
         events = self._segmenter.feed(probability, window, playing=self._is_playing())
 

@@ -143,7 +143,11 @@ core/lumi/
 ├── provenance.py    ProvenanceClass / TrustLevel / join / propagate（**依存ゼロ**）
 ├── kernel/          arbiter, activity, job, command, event, hooks,
 │                    cancellation, inference_lease, recovery, scheduler
-├── agent/           reactive, deliberative, drives, prompt assembly
+├── agent/           reactive, deliberative, drives,
+│                    session（Working Memory + sticky session_trust）,
+│                    prompt（PromptAssembly）, markers（<|ACT|>）,
+│                    sentences（文分割）, speech（PlaybackScheduler → audio.md §6）,
+│                    runtime（会話の組み立て。**判断を持たない**）
 ├── memory/          working, episodic, semantic, reflection, retrieval, decay
 ├── world/           facets, snapshot, projection
 ├── internal/        mood, fatigue, drives state
@@ -155,8 +159,13 @@ core/lumi/
 ├── audio/           ring, resample, capture, vad, playback, io（EchoGuard L1 は vad 内）
 ├── extensions/      host, manifest, protocol
 ├── storage/         sqlite, migrations, vector store
+├── content/         Content Pack の**読み取り専用ローダ**（extension.md §9）
 └── transport/       ws server, protocol schema
 ```
+
+**`content/` はローダであって Content Pack ではない。** パックの実体はリポジトリ root の
+`content/characters/<name>/` に置かれ、**データのみでコードを含まない**（[extension.md](extension.md) §9）。
+Core 側にローダが要るのは、`[credit]` の欠落を **fail-closed で落とす**責任が Core にあるため。
 
 **`kernel/` が他のどのモジュールにも依存しないこと**を静的検査で保証する。kernel は型と調停だけを持ち、具体的な能力を知らない。
 

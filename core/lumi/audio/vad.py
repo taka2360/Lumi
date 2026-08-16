@@ -88,6 +88,7 @@ class SpeechSegmenter:
 
     __slots__ = (
         "_candidate",
+        "_confirmed_since_mute",
         "_muted_frames",
         "_params",
         "_preroll",
@@ -110,6 +111,8 @@ class SpeechSegmenter:
         self._speech_frames = 0
         self._silence_frames = 0
         self._muted_frames = 0
+        #: このミュート以降に発話区間が確定したか。**確定したなら誤爆ではない**
+        self._confirmed_since_mute = False
         self.muted = False
         self.in_speech = False
 
@@ -126,6 +129,7 @@ class SpeechSegmenter:
         if playing and not self.muted and probability > params.mute_threshold_for(playing=True):
             self.muted = True
             self._muted_frames = 0
+            self._confirmed_since_mute = False
             events.append(VadEvent.MUTE_REQUESTED)
         elif self.muted:
             self._muted_frames += 1
@@ -150,6 +154,8 @@ class SpeechSegmenter:
                 self._segment = [*self._preroll, *self._candidate]
                 self._preroll.clear()
                 self._candidate.clear()
+                # **このミュートは正しかった。** 以降 (c) の対象にしない
+                self._confirmed_since_mute = True
                 events.append(VadEvent.SPEECH_STARTED)
         else:
             self._segment.append(frame)
@@ -163,9 +169,14 @@ class SpeechSegmenter:
                 events.append(VadEvent.SPEECH_ENDED)
 
         # ── (c) 誤爆からの復帰 ──
+        # **確定した発話を「誤爆」と呼ばない。** 区間が終われば (b) は in_speech を下ろすので、
+        # `_confirmed_since_mute` が無いと、正しく遮った発話の直後に必ずここが発火する。
+        # そうなると呼び出し側は「遮ったのは間違いだった」と受け取り、
+        # **中断したはずの再生を戻してしまう。**
         if (
             self.muted
             and not self.in_speech
+            and not self._confirmed_since_mute
             and self._muted_frames * FRAME_MS >= params.false_trigger_ms
         ):
             self.muted = False
@@ -183,9 +194,15 @@ class SpeechSegmenter:
         return audio
 
     def unmute(self) -> None:
-        """再生が終わった等で、外からミュート状態を解除する。"""
+        """外からミュート状態を解除する。**確定した発話の後はこれが唯一の戻し方。**
+
+        (c) は誤爆にしか効かないので、**遮ってから次に喋り出すまでの間に
+        呼び出し側が明示的に戻す**（`VadWorker.resume` → `AudioIO.resume_listening`）。
+        呼ばないと `muted` が立ったままになり、**barge-in が1回しか効かない。**
+        """
         self.muted = False
         self._muted_frames = 0
+        self._confirmed_since_mute = False
 
 
 class VadModelUnavailable(RuntimeError):

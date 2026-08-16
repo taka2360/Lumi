@@ -133,6 +133,14 @@ TTS と**同型**（`not_configured` → `installing` → `installed` / `failed`
 モデルが無ければ黙って取りに行くため、原則1（ユーザーが選ぶまで外部通信しない）が
 **ライブラリの都合で迂回される**。キャッシュに無ければ明示的に失敗させる。
 
+置き場所は `paths.models_dir()` = `<data_dir>/models/`〔Phase 1 Step E〕。
+**エンジン（`engines/`）と分けている**のは、消す単位が違うため — モデルだけ捨てて
+取り直したい状況が普通にある（壊れた / 別のサイズに替える）。
+
+**Silero VAD はこの経路に乗らない。** 配布物に同梱してあり
+（[../licensing.md](../licensing.md) §4.6）、取得は一切発生しない。
+barge-in の critical path に「初回は動かない」を作らないためである。
+
 ### 起動フェーズへの反映
 
 Phase 0 の `boot` は TTS だけを見ていた。**Phase 1 では LLM / STT / TTS の3つから導出する。**

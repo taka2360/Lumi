@@ -15,9 +15,11 @@ import threading
 
 from lumi import __version__
 from lumi import logging as lumi_logging
+from lumi.agent.runtime import ConversationRuntime
+from lumi.audio.devices import AudioPlan, plan_audio
+from lumi.audio.probe import list_devices
 from lumi.dev_probe import ENV_FLAG as DEV_PROBE_FLAG
 from lumi.dev_probe import probe_os_boundary
-from lumi.greeting import Greeter
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.transport.protocol import Role
 from lumi.transport.server import WsServer, tokens_from_env
@@ -64,13 +66,17 @@ async def _run() -> int:
 
     server: WsServer
     setup: SetupCoordinator
-    greeter: Greeter
+    conversation: ConversationRuntime | None = None
 
     async def on_stage_connected() -> None:
-        # **セットアップが片付いてから喋る。** 取得の途中で喋り始めると、
+        # **セットアップが片付いてから会話を始める。** 取得の途中で聞き始めると、
         # 進捗表示と発話が混ざって何が起きているか分からなくなる。
+        nonlocal conversation
         await setup.on_stage_connected()
-        await greeter.greet_once()
+        if conversation is not None:
+            return
+        conversation = ConversationRuntime(server, setup, _audio_plan())
+        await conversation.start()
 
     async def on_connect(role: Role) -> None:
         # 接続ハンドラを塞がないように、時間のかかるものは別タスクで走らせる。
@@ -81,7 +87,6 @@ async def _run() -> int:
 
     server = WsServer(tokens, port=int(os.environ.get("LUMI_WS_PORT", "0")), on_connect=on_connect)
     setup = SetupCoordinator(server, os.environ)
-    greeter = Greeter(server, setup)
     port = await server.start()
     # **Shell はこの行を stdout から読んで接続先を知る。** イベント名を変えない。
     log.info("core.ws.listening", host="127.0.0.1", port=port)
@@ -98,9 +103,24 @@ async def _run() -> int:
     finally:
         log.info("core.stopping")
         # **Lumi が起動したエンジンだけ止める**（docs/architecture/core.md §6）。
-        await greeter.aclose()
+        if conversation is not None:
+            await conversation.stop()
         await server.stop()
     return 0
+
+
+def _audio_plan() -> AudioPlan:
+    """デバイスを見て、開くべきストリームを決める。
+
+    **入力デバイスが1つも無いことは正常な状態**（docs/architecture/audio.md）。
+    列挙そのものが失敗したときも、起動は止めない — 音が無い Lumi でも Lumi は立つ。
+    """
+    try:
+        devices, host_apis = list_devices()
+    except Exception as error:
+        log.warning("audio.probe_failed", error=str(error))
+        return AudioPlan(capture=None, playback=None, warnings=("デバイスを列挙できなかった",))
+    return plan_audio(devices, host_apis)
 
 
 def _force_utf8_stdio() -> None:

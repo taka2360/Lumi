@@ -73,6 +73,17 @@ def to_mono(x: Samples, channels: int) -> Samples:
     return x[:usable].reshape(-1, channels).mean(axis=1).astype(np.float32)
 
 
+def to_interleaved(mono: Samples, channels: int) -> Samples:
+    """mono を出力ストリームのチャンネル数に広げる。**全チャンネルに同じ波形を配る。**
+
+    TTS の出力は mono だが、出力ストリームはデバイス既定のチャンネル数で開く
+    （docs/architecture/audio.md §8）。片方だけに入れると片耳から聞こえる。
+    """
+    if channels <= 1:
+        return mono.astype(np.float32, copy=False)
+    return np.repeat(mono.astype(np.float32, copy=False), channels)
+
+
 def pcm16_to_float32(data: bytes) -> Samples:
     """16bit PCM（TTS エンジンの出力）を float32 に。**-1.0〜1.0 に正規化する。**"""
     if not data:

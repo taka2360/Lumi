@@ -88,6 +88,29 @@ def test_a_false_trigger_restores_playback() -> None:
     assert not segmenter.muted
 
 
+def test_barge_in_works_more_than_once(  # 表4d
+) -> None:
+    """★ **区間が確定したミュートは自動では戻らない。**
+
+    誤爆ではないので `false_trigger` の経路に乗らず、`muted` が立ったままになる。
+    そのままだと (a) のガードで**次の `MUTE_REQUESTED` が二度と出ない** —
+    つまり **barge-in が1回しか効かない**。戻す経路（`unmute`）が要るのはこのため。
+    """
+    params = VadParams()
+    segmenter = SpeechSegmenter(params)
+    loud = [0.9] * frames_for(params.min_speech_duration_ms)
+    silence = [0.0] * frames_for(params.min_silence_duration_ms)
+
+    feed(segmenter, loud + silence, playing=True)
+    assert segmenter.muted
+
+    # 戻さないまま次の発話 → ミュートは出ない
+    assert VadEvent.MUTE_REQUESTED not in feed(segmenter, [0.95], playing=True)
+
+    segmenter.unmute()
+    assert VadEvent.MUTE_REQUESTED in feed(segmenter, [0.95], playing=True)
+
+
 def test_a_real_utterance_does_not_get_unmuted() -> None:
     """区間が確定していれば、誤爆ではないのでミュートを戻さない。"""
     params = VadParams()

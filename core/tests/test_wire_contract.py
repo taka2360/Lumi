@@ -79,9 +79,8 @@ class TestCoreMatchesTheContract:
         assert {role.value for role in Role} == set(wire["namespace_by_role"])
 
     def test_stage_methods(self, wire: dict[str, Any]) -> None:
-        # greeting は Phase 1 で消える（agent/reactive に置き換わる）ので、
-        # import はこのテストの中だけに閉じる。
-        from lumi.greeting import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED
+        # 発話の method は Phase 1 で `agent/speech.py`（PlaybackScheduler）に移った。
+        from lumi.agent.speech import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED
 
         declared = {METHOD_STATE, METHOD_PROMPT, METHOD_SPEECH_STARTED, METHOD_SPEECH_ENDED}
         assert declared == set(wire["methods"]["stage"])

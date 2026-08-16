@@ -6,10 +6,10 @@
 
 ## 現在の状態
 
-**Phase 0 着手中。** 設計は rev.6 まで完了し承認済み。
+**Phase 1 着手中。** 設計は rev.8 まで完了し承認済み。
 コードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
 
-Phase 0 の進捗と実測値 → [docs/measurements/phase0.md](docs/measurements/phase0.md) / [docs/roadmap.md](docs/roadmap.md)
+Phase 1 の進捗と実測値 → [docs/measurements/phase1.md](docs/measurements/phase1.md) / [docs/roadmap.md](docs/roadmap.md)
 
 ## リポジトリ構成
 

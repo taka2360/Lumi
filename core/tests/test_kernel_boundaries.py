@@ -178,13 +178,13 @@ def test_trust_level_trusted_is_only_written_where_allowed() -> None:
     """**自動昇格の実装を作らない**（Invariant 7 / provenance.md テスト5）。
 
     許されるのは2箇所だけ:
-    1. ユーザーの直接入力を受け取るハンドラ（Phase 1 の Step E で登場する）
-    2. 記憶 UI のユーザー確認ハンドラ（Phase 2）
+    1. ユーザーの直接入力を受け取るハンドラ → `Session.record_user_utterance`
+    2. 記憶 UI のユーザー確認ハンドラ（**Phase 2。まだ存在しない**）
 
-    **現時点ではどちらも存在しないので、書き込みは1つも無いのが正しい。**
-    増えたらこの allowlist を更新し、そのとき「本当にユーザー確認を経ているか」を見直す。
+    **増やすときは、そこが本当にユーザーの意思表示かを見直すこと。**
+    「STT の結果だから」「要約したから」は理由にならない。
     """
-    allowed: set[str] = set()
+    allowed = {"agent/session.py"}
     writers = {
         source.relative_to(LUMI).as_posix()
         for source in lumi_sources()

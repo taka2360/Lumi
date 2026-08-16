@@ -1,0 +1,22 @@
+# 声の設定とクレジット。
+#
+# **[credit] が無い Content Pack は読み込まない**（fail-closed）。
+# クレジット表記は音源規約上の義務であり、「後で足す」ができない性質のものだから
+# （docs/architecture/extension.md §9 / docs/licensing.md §6）。
+#
+# エンジン側のクレジットはここではなく Provider.attribution() が持つ。
+# **モデルは Content Pack が選び、エンジンは Provider が決める**ため。
+
+[voice]
+# speaker を書かない = エンジンの既定話者を使う。
+# 既定話者を固定していないのは、AivisSpeech に入っているモデルが環境によって違うため。
+# 特定のモデルを指定するときは、その話者 ID とクレジットをここに書き替える。
+
+[credit]
+name = "AivisSpeech 既定の音声合成モデル"
+credit_text = "音声: AivisSpeech（既定の音声合成モデル）"
+license_name = "Aivis Common Model License (ACML) 1.0"
+license_url = "https://hub.aivis-project.com/"
+# license_file は空。**モデルを同梱していない**ため（エンジンが実行時に取得する）。
+# 同梱する場合は LICENSE/ に全文を入れ、ここにそのパスを書く義務が発生する。
+license_file = ""

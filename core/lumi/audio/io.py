@@ -107,6 +107,15 @@ class AudioIO:
             playback=self._playback.plan.describe() if self._playback else None,
         )
 
+    def resume_listening(self) -> None:
+        """**次の barge-in を受けられる状態に戻す。**
+
+        区間が確定したミュートは誤爆ではないので自動では戻らない。
+        呼ばないと **barge-in が1回しか効かない**（`VadWorker.resume`）。
+        """
+        if self._vad_worker is not None:
+            self._vad_worker.resume()
+
     def _is_playing(self) -> bool:
         """**EchoGuard L1 の入力。** 再生中は閾値を上げる（抑制はしない）。"""
         return self._playback is not None and self._playback.is_active()

@@ -104,6 +104,11 @@ class SpeakerPlayback:
         """再生キューに足す。**デバイスのレートに揃えてから渡すこと。**"""
         self._ring.write(samples)
 
+    @property
+    def queued(self) -> int:
+        """再生待ちのサンプル数。**Inspector とテストが「捨てられたか」を見る。**"""
+        return self._ring.available
+
     def is_active(self) -> bool:
         """再生中か。**EchoGuard L1 の閾値ブーストはこれで決まる。**"""
         return not self._mute_flag.is_set() and self._ring.available > 0
@@ -126,50 +131,3 @@ class SpeakerPlayback:
             self._stream = None
         if self._underruns:
             log.warning("playback.underruns", count=self._underruns)
-
-
-# ── Phase 0 の遺物 ────────────────────────────────────────
-# **`greeting.py` が消える Step E で一緒に消す。** 止める手段が無いので、
-# Phase 1 の会話経路では使わない（barge-in が成立しない）。
-
-
-class PlaybackError(RuntimeError):
-    """鳴らせなかった。**理由を持つ**（黙って無音にしない）。"""
-
-    def __init__(self, reason: str, detail: str = "") -> None:
-        super().__init__(f"{reason}: {detail}" if detail else reason)
-        self.reason = reason
-        self.detail = detail
-
-
-def _play_blocking(data: bytes) -> None:
-    """PortAudio に渡して鳴り終わるまで待つ。**専用スレッドで呼ぶこと。**"""
-    from lumi.audio.wav import WavError, decode_wav
-
-    try:
-        import sounddevice as sd
-    except OSError as error:
-        raise PlaybackError("audio_backend_unavailable", str(error)) from error
-
-    try:
-        wav = decode_wav(data)
-    except WavError as error:
-        raise PlaybackError("wav_malformed", str(error)) from error
-
-    if wav.sample_width != 2:
-        raise PlaybackError("unsupported_sample_width", f"{wav.sample_width * 8}bit")
-
-    try:
-        with sd.RawOutputStream(
-            samplerate=wav.sample_rate, channels=wav.channels, dtype="int16"
-        ) as stream:
-            stream.write(wav.frames)
-    except Exception as error:
-        raise PlaybackError("playback_failed", str(error)) from error
-
-
-async def play_wav(data: bytes) -> None:
-    """WAV を鳴らし終わるまで待つ。**止められない**（Phase 0 の範囲）。"""
-    import asyncio
-
-    await asyncio.to_thread(_play_blocking, data)

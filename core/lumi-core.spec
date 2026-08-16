@@ -20,6 +20,7 @@ Core = MIT の境界を汚す。`sounddevice` は環境変数 `SD_ENABLE_ASIO` �
 ASIO 版を読むので、**同梱しなければ使われることはない**（docs/licensing.md）。
 """
 
+import os
 from pathlib import Path
 
 from PyInstaller.utils.hooks import get_package_paths
@@ -32,18 +33,39 @@ vec0 = Path(sqlite_vec_dir) / "vec0.dll"
 if not vec0.is_file():
     raise SystemExit(f"sqlite-vec の拡張が見つからない: {vec0}")
 
+# ── Silero VAD の ONNX ────────────────────────────────────────
+# **faster-whisper が同梱しているものを借りる**（docs/licensing.md §4.6 / ADR-023）。
+# PyPI の `silero-vad` は torch に依存するので使わない（R1 直撃）。
+# **これはパッケージ内部構造への依存である。** 更新でパスが変わればここで落ちる。
+_, faster_whisper_dir = get_package_paths("faster_whisper")
+silero = Path(faster_whisper_dir) / "assets" / "silero_vad_v6.onnx"
+if not silero.is_file():
+    raise SystemExit(f"Silero VAD の ONNX が見つからない: {silero}")
+
+# ── 既定の Content Pack ───────────────────────────────────────
+# **人格が無い Lumi は Lumi ではない。** `paths.content_dir()` が
+# 固めた実行体では `sys._MEIPASS/content` を見る。
+content = Path(SPECPATH).parent / "content"
+if not (content / "characters" / "lumi" / "character.toml").is_file():
+    raise SystemExit(f"既定の Content Pack が無い: {content}")
+
 # PortAudio 本体は `sounddevice` のフックが `_sounddevice_data` ごと集める。
 # **そこに ASIO 版が混ざる**ので、Analysis の後で落とす（下の `_drop_asio`）。
 binaries = [(str(vec0), "sqlite_vec")]
 
+datas = [
+    (str(silero), "faster_whisper/assets"),
+    (str(content), "content"),
+]
+
 # 使っていないものを持ち込まない（インストーラサイズ R1）。
+# **numpy は外せない。** Phase 1 で VAD・リサンプル・再生が要求した（Step D）
 excludes = [
     "tkinter",
     "unittest",
     "pydoc",
     "doctest",
     "pdb",
-    "numpy",  # Phase 1 で VAD が要求したら外す
     "pytest",
     "mypy",
     "ruff",
@@ -53,7 +75,7 @@ a = Analysis(
     ["lumi/__main__.py"],
     pathex=[],
     binaries=binaries,
-    datas=[],
+    datas=datas,
     hiddenimports=["lumi.selfcheck"],
     hookspath=[],
     hooksconfig={},
@@ -76,6 +98,37 @@ a.binaries = _drop_asio(a.binaries)
 a.datas = _drop_asio(a.datas)
 
 
+def _pin_vcruntime(entries):
+    """**VC++ ランタイムを System32 のものに固定する。**
+
+    PyInstaller は必要な DLL を PATH から探す。このマシンでは
+    `C:\\Program Files\\Microsoft\\jdk-11.0.16.101-hotspot\\bin\\msvcp140.dll`（**14.16 / VS2017**）
+    が先に見つかり、それが配布物に入った。onnxruntime.dll はもっと新しいものを要求するので、
+    **固めた実行体でだけ DLL の初期化に失敗する**（2026-08-16 実測。開発環境では起きない）。
+
+    症状は「Silero VAD が読めない」＝ **barge-in が丸ごと死ぬ**。しかも import は
+    そこまで通るので、気づくのは実際に話しかけたときになる。
+
+    ビルド機の PATH に配布物が左右されること自体が問題なので、
+    **PATH を直すのではなく、ここで出所を System32 に固定する。**
+    """
+    system32 = Path(os.environ.get("SystemRoot", "C:\\Windows")) / "System32"
+    pinned = []
+    for dest, source, kind in entries:
+        name = Path(dest).name
+        if name.lower().startswith(("msvcp140", "vcruntime140")) and Path(dest).parent == Path("."):
+            replacement = system32 / name
+            if not replacement.is_file():
+                raise SystemExit(f"System32 に {name} が無い（VC++ 再頒布可能パッケージを入れる）")
+            pinned.append((dest, str(replacement), kind))
+        else:
+            pinned.append((dest, source, kind))
+    return pinned
+
+
+a.binaries = _pin_vcruntime(a.binaries)
+
+
 def _require(entries, needle, message):
     """**入っているべきものが入っていることを、ビルド時に落として保証する。**
 
@@ -87,6 +140,9 @@ def _require(entries, needle, message):
 
 _require(a.binaries, "sqlite_vec/vec0", "sqlite-vec の拡張が配布物に入っていない")
 _require(a.binaries + a.datas, "libportaudio64bit.dll", "PortAudio が配布物に入っていない")
+_require(a.datas, "silero_vad_v6.onnx", "Silero VAD が配布物に入っていない（barge-in が死ぬ）")
+_require(a.datas, "content/characters/lumi/character.toml", "既定の Content Pack が入っていない")
+_require(a.binaries, "onnxruntime", "ONNX Runtime が配布物に入っていない")
 if any("asio" in entry[0].lower() for entry in a.binaries + a.datas):
     raise SystemExit("ASIO 版の PortAudio が残っている（再配布条件が別にある）")
 
