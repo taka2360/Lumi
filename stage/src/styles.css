@@ -1,0 +1,224 @@
+/* Stage は透過ウィンドウ。**背景を塗らない**。
+   ここで色を塗ると、透過ウィンドウの意味が無くなる。 */
+:root {
+  color-scheme: light dark;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  overflow: hidden;
+  /* 透過部分でマウスイベントを拾わない。クリックスルーの判定は Shell 側が持つが、
+     WebView 側でも拾わないようにしておく（多層防御ではなく、単純な整合性のため）。 */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+body {
+  font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+}
+
+.stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.character {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* ホバー中はうっすら光らせる。クリックスルーが解除されている状態が見えること自体が
+   Phase 0 の検証項目（roadmap 検証手順 4）。 */
+.stage--hover .character {
+  filter: drop-shadow(0 0 12px rgba(160, 200, 255, 0.85));
+}
+
+/* オーバーレイ（セットアップ UI と注意書き）。
+   **中身に合わせて縮む**ようにする。ここが広いと、その分だけクリックスルーが
+   解除されてしまう（当たり判定として Shell に渡すため）。 */
+.overlay {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 20px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+}
+
+.panel {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: rgba(20, 24, 34, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #f2f5fb;
+  font-size: 12px;
+  line-height: 1.6;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.panel--compact {
+  padding: 8px 12px;
+}
+
+.panel__title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.panel__body {
+  margin: 0 0 8px;
+}
+
+.panel__note {
+  margin: 0 0 12px;
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+.panel__status {
+  margin: 0;
+}
+
+.panel__status--bad {
+  color: #ffb4b4;
+}
+
+/* **取得する / しない を同等に提示する**（ADR-019 原則2）。
+   同じ大きさ・同じ色。片方を目立たせない。 */
+.panel__actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.panel__button {
+  padding: 8px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: rgba(255, 255, 255, 0.1);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.panel__button:hover {
+  background: rgba(255, 255, 255, 0.18);
+}
+
+/* キャラクターを掴む面。ドラッグで移動、ホイールで拡大縮小
+   （docs/architecture/ui.md「ウィンドウの移動と大きさ」）。
+   **キャラクターの上でだけ効く。** 透過部分は Shell がクリックスルーにしている。 */
+.stage__grab {
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+}
+
+.stage__grab:active {
+  cursor: grabbing;
+}
+
+/* 起動中の表示。キャラクターが出るまでの間に何が起きているかを見せる。 */
+.boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 18px;
+  border-radius: 14px;
+  background: rgba(20, 24, 34, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #f2f5fb;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  max-width: 320px;
+}
+
+.boot__spinner {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  border-top-color: rgba(180, 215, 255, 0.95);
+  animation: boot-spin 900ms linear infinite;
+}
+
+@keyframes boot-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* 動きを減らす設定を尊重する。**回り続けるものは、その設定の主な対象**。 */
+@media (prefers-reduced-motion: reduce) {
+  .boot__spinner {
+    animation: none;
+  }
+}
+
+/* **主語は Lumi。** ここが一番大きい（docs/architecture/ui.md「起動フェーズ」）。 */
+.boot__title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.5;
+}
+
+/* 今どの内訳を進めているか。見出しより小さくして、内訳であることを見せる。 */
+.boot__step {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+  opacity: 0.9;
+}
+
+.boot__note {
+  margin: 0;
+  font-size: 11px;
+  line-height: 1.5;
+  opacity: 0.75;
+  text-align: center;
+}
+
+.boot__bar {
+  width: 200px;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  overflow: hidden;
+}
+
+.boot__bar-fill {
+  height: 100%;
+  background: rgba(180, 215, 255, 0.95);
+  transition: width 200ms ease-out;
+}
+
+/* VRM が未配置であることの表示。**隠さない。** */
+.notice {
+  margin: 0;
+  padding: 4px 8px;
+  text-align: center;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.45);
+  border-radius: 6px;
+}

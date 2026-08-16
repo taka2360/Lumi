@@ -1,0 +1,8 @@
+# 改行は LF に正規化する（Windows / macOS / Linux で同じ内容にする）
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
+*.vrm binary
+*.onnx binary

@@ -5,6 +5,7 @@
 | Status | Accepted |
 | Date | 2026-08-14 |
 | 改訂 | 2026-08-15 — 実装スケッチのみ差し替え（VAD をコールバック外の専用スレッドへ）。決定は変更なし |
+| 修正 | 2026-08-15 — **[ADR-020](ADR-020-split-audio-streams.md) が Trade-offs の「duplex stream を Phase 1 から開く」を修正した。** 入出力は別ストリームで開く。決定（音声 I/O を Core に置く / critical path が asyncio を経由しない）は変更なし |
 | 関連 | [../architecture/audio.md](../architecture/audio.md), [../architecture/agent.md](../architecture/agent.md) |
 
 ---
@@ -124,6 +125,11 @@ def _vad_loop(self):
 ### duplex stream を Phase 1 から開く
 
 Phase 2 の AEC で再生バッファを参照信号として渡すため、**Phase 1 から duplex（capture + playback + reference channel）で開く**。後から duplex 化すると全面書き換えになる。
+
+> **【2026-08-15 修正】** この段落は [ADR-020](ADR-020-split-audio-streams.md) が修正した。
+> Phase 0 の実測により、**duplex が開けるかはユーザーの機材が決める**（同一の USB ヘッドセットでも
+> マイクとヘッドホンの mix format が違えば開けない）ことと、**分離ストリームでもドリフトが 2 ppm 未満**
+> であることが分かった。**入出力は別ストリームで開き、reference signal は Core が自前で持つ。**
 
 ---
 

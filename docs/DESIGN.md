@@ -9,8 +9,21 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.6 |
-| 実装フェーズ | Phase 0 未着手（🔴 着手前の決定事項は解消済み） |
+| Revision | rev.7 |
+| 実装フェーズ | **Phase 0 実装中。** 残るは PyInstaller パッケージング・インストーラ・別マシン検証 → [roadmap.md](roadmap.md) |
+
+> **rev.7 の変更点**（Phase 0 の実装と実測による修正。**すべて「作ってみたら想定と違った」もの**）
+> 1. **リップシンクの生成方式を確定した。** 口の形はモーラ列から、時間は**合成された音声の長さ**から割り振る。
+>    AivisSpeech は音素長を返さない（全モーラ `0.0`）ため、当初の「TTS 出力から音素タイミングを取る」は成立しなかった → [interfaces/renderer.md](interfaces/renderer.md)
+> 2. **duplex stream を使わないことにした。** duplex が開ける条件はユーザーの機材が決めてしまい、
+>    分離ストリームでもドリフトは測定分解能以下だった。reference signal は Core が自前で持つ → [ADR-020](decisions/ADR-020-split-audio-streams.md)。roadmap 未確定事項 #4 が解消
+> 3. **音声デバイスの選択方針を確定した**（OS の既定デバイス / WASAPI / デバイス既定レート / **開通は最初のフレームの到着で判定**）→ [architecture/audio.md](architecture/audio.md) §8
+> 4. **TTS エンジンプロセスの所有者を Core にした。** Lumi が起動したものだけ Lumi が止める → [architecture/core.md](architecture/core.md) §6
+> 5. **使用中モデルのライセンス全文は、モデル自身の manifest が持っている**ことが分かった（licensing.md 未確認 #2 が解消）→ [licensing.md](licensing.md) §4.4
+> 6. **Python サイドカーを PyInstaller の onedir で固め、`resources` として同梱する**ことを決めた。
+>    onefile は**強制終了のたびに `%TEMP%` へ 21 MB の残骸を残す** → [ADR-021](decisions/ADR-021-sidecar-packaging.md)。roadmap 未確定事項 #2 が解消
+> 7. **サードパーティ通知を依存グラフから生成するようにした**（284 件）。
+>    **GPL / AGPL / 非 OSS を見つけたらビルドを失敗させる** → [licensing.md](licensing.md) §6
 
 > **rev.6 の変更点**（Phase 0 の 🔴 ブロッカー解消）
 > 1. **音声ライブラリ・TTS エンジンの利用規約を調査し、[licensing.md](licensing.md) に記録した。** roadmap 未確定事項 #1 が解消 → §10
@@ -494,6 +507,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 |---|---|
 | [roadmap.md](roadmap.md) | Phase 分割・完了条件・未確定事項・リスク一覧 |
 | [licensing.md](licensing.md) | 外部コンポーネントのライセンス調査結果・**配布物の構成**・クレジット義務 |
+| [measurements/](measurements/) | **実測値の記録**（設計ではなく観測）。R1 / R2 / R4 と Phase 5 の判定根拠 |
 
 ### contracts/ — 型と契約（すべて Confirmed。変更コストが最も高い）
 
@@ -506,6 +520,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [state-machines.md](contracts/state-machines.md) | Activity と Tool の独立した状態機械 |
 | [event-model.md](contracts/event-model.md) | Signal と DomainEvent の分離、採番責任、順序保証 |
 | [tool-execution.md](contracts/tool-execution.md) | Kernel実行契約 canonicalize→decide→bind→verify→execute |
+| [wire.md](contracts/wire.md) | 線上に出る名前と定数の規則。値は [wire.json](contracts/wire.json) が持つ |
 
 ### architecture/ — 各領域の設計
 
@@ -520,6 +535,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [extension.md](architecture/extension.md) | Provider / Capability の2機構、信頼レベル、Hook |
 | [audio.md](architecture/audio.md) | barge-in critical path、EchoGuard、SLO |
 | [ui.md](architecture/ui.md) | Shell、Stage、Widget Broker、Character |
+| [setup.md](architecture/setup.md) | 初回セットアップ、外部エンジンの取得・検証・ロールバック・検出 |
 | [recovery.md](architecture/recovery.md) | Crash Recovery、冪等性、イベント語彙 |
 
 ### interfaces/ — コンポーネント間の契約
@@ -556,6 +572,9 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [017](decisions/ADR-017-out-of-process-tool-contract.md) | 副作用を持つ lane の Tool を in-core に置き、out-of-process には事後検証契約を適用する |
 | [018](decisions/ADR-018-foreground-and-jobs.md) | foreground を単一の参照として定義し、Job を Activity と分離する |
 | [019](decisions/ADR-019-tts-engine-distribution.md) | TTS エンジンを配布物に含めず、ユーザーの明示的な選択に基づく実行時取得とする |
+| [020](decisions/ADR-020-split-audio-streams.md) | 入力と出力を別ストリームで開き、クロックドリフトを実測可能にする |
+| [021](decisions/ADR-021-sidecar-packaging.md) | Python Core を PyInstaller の onedir で固め、resources として同梱する |
+| [022](decisions/ADR-022-wire-contract.md) | プロセス境界を越える名前と定数を `wire.json` に一元化し、3言語のテストで突き合わせる |
 
 ---
 
@@ -582,14 +601,18 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Signal / DomainEvent / Command・**Hook 一覧** | [contracts/event-model.md](contracts/event-model.md) |
 | 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |
 | 権限マトリクス・オブジェクト責務行列 | [contracts/authority-matrix.md](contracts/authority-matrix.md) |
-| Shell / Stage の責務・ウィンドウ一覧・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
-| 音声の3層構造・EchoGuard・VAD パラメータ・**レイテンシ SLO** | [architecture/audio.md](architecture/audio.md) |
+| **線上に出る名前と定数**（`PROTOCOL_VERSION` / method 名 / Tauri のイベント・コマンド名 / 線に乗る enum の値） | [contracts/wire.json](contracts/wire.json)（値）+ [contracts/wire.md](contracts/wire.md)（規則） |
+| Shell / Stage の責務・ウィンドウ一覧・**トレイメニュー**・**起動フェーズ**・**ウィンドウ操作**・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
+| 音声の3層構造・EchoGuard・VAD パラメータ・**レイテンシ SLO**・**デバイス選択とストリームの開き方** | [architecture/audio.md](architecture/audio.md) |
 | 記憶の形成・忘却・矛盾・**検索スコアリング式**・salience 補正 | [architecture/memory.md](architecture/memory.md) |
 | Extension の2機構・信頼レベル・ライフサイクル・Content Pack | [architecture/extension.md](architecture/extension.md) |
 | Drive / AutonomyGate / AutonomyBudget | [architecture/autonomy.md](architecture/autonomy.md) |
 | World / Internal State の分離と facet 定義 | [architecture/world-state.md](architecture/world-state.md) |
 | `Tool` / `SecurityScope` / `Handle` / 検証器の**型定義** | [interfaces/tool.md](interfaces/tool.md) |
 | `MemoryRecord` / `AssertionMode` の**型定義** | [interfaces/memory.md](interfaces/memory.md) |
+| Renderer に渡す意図の型・**リップシンクの生成方式**・`stage.speech.*` の契約 | [interfaces/renderer.md](interfaces/renderer.md) |
 | GPU / VRAM 戦略とモデル配置 | **DESIGN.md** §7 |
 | Phase 分割と完了条件・未確定事項・リスク一覧 | [roadmap.md](roadmap.md) |
 | **外部コンポーネントのライセンス・配布物の構成・クレジット義務・ACML 特例への対応** | [licensing.md](licensing.md) |
+| **実測値**（インストーラサイズ / RAM / VRAM / レイテンシ / CPU） | `measurements/phase<N>.md` |
+| **外部エンジンの取得元のピン留め・検証方法・インストール先・TTS セットアップ状態** | [architecture/setup.md](architecture/setup.md) |

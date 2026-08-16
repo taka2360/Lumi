@@ -45,27 +45,40 @@ Phase 4 は Kernel 本実装・権限 UI・Grant・監査・hash chain・Crash R
 Lumi は**公開配布される前提**で設計する。これによりクレジット表記が Phase 0 の必須項目になった（下記）。
 
 ### やること
-- [ ] Tauri 2 で透過ウィンドウ・常時最前面・クリックスルー
-- [ ] **ホバー検知**（Rust 側で Win32 カーソル監視の自前実装。Tauri には Electron の `forward:true` 相当が無い）
-- [ ] VRM を Stage に表示し、アイドルモーションでループ
-- [ ] Python Core を **Tauri サイドカーとして起動・監視・終了**
-- [ ] WS 接続（token 認証）、ハートビート、片方が落ちた時の復帰
-- [ ] **`os.*` の schema 検証 + allowlist を Shell 側に最小実装**（[B3](contracts/security-boundaries.md) の骨格）
-- [ ] **初回セットアップ**〔ADR-019〕
-  - [ ] TTS エンジンを取得する / しない の選択を**同等に**提示する（既定で取得しない）
-  - [ ] 公式配布元からの取得 → **検証**（完全性・配布元）→ セットアップ
-  - [ ] 失敗時のロールバック（**部分的にインストールされた状態を残さない**）
-  - [ ] 取得しない場合も Lumi が起動し、**「TTS 未セットアップ」が明示される**
-  - [ ] ユーザーが別途インストール済みの AivisSpeech / VOICEVOX を検出する
-- [ ] **クレジット表示画面**（トレイ → クレジット）〔ADR-019〕
-  - [ ] エンジン名・音源名・ライセンス全文・禁止事項をユーザーが読める
-  - [ ] Phase 0 では Stage 側に静的に作る。`Provider.attribution()` との接続は Phase 1
-- [ ] ハードコードされた「こんにちは」を AivisSpeech で発話 → リップシンク
-- [ ] duplex stream の骨格（capture + playback + reference channel）
-- [ ] **入出力が別デバイスのときの duplex 動作を実測**（別デバイスだと失敗 / クロックドリフトする。Phase 2 の AEC の前提が崩れないか）
-- [ ] `PlatformShell` インターフェースを定義（Electron 退避路の確保）
-- [ ] **VRAM / RAM / インストーラサイズを実測して記録**（Phase 5 の設計根拠になる）
-- [ ] **サイドカー同梱状態で sqlite-vec（SQLite ローダブル拡張）がロードできることを確認**（Phase 2 で気づくと記憶機能ごと止まる）
+- [x] Tauri 2 で透過ウィンドウ・常時最前面・クリックスルー 〔2026-08-15。透過の目視確認は残〕
+- [x] **ホバー検知**（Rust 側で Win32 カーソル監視の自前実装。Tauri には Electron の `forward:true` 相当が無い）〔判定は Shell 側の純粋関数。[measurements/phase0.md](measurements/phase0.md)〕
+- [ ] VRM を Stage に表示し、アイドルモーションでループ 〔**プレースホルダで貫通済み**。VRM ローダーの統合点は実装済みで、`.vrm` を置けば読む。既定同梱モデルは未定（[licensing.md](licensing.md) §7 未確認 #5）〕
+- [x] Python Core を **Tauri サイドカーとして起動・監視・終了** 〔Job Object でゾンビを残さない〕
+- [x] WS 接続（token 認証）、ハートビート、片方が落ちた時の復帰
+- [x] **`os.*` の schema 検証 + allowlist を Shell 側に最小実装**（[B3](contracts/security-boundaries.md) の骨格）
+- [ ] **初回セットアップ**〔ADR-019 / 設計は [architecture/setup.md](architecture/setup.md)〕
+  - [x] TTS エンジンを取得する / しない の選択を**同等に**提示する（既定で取得しない）
+  - [x] 公式配布元からの取得 → **検証**（URL・サイズ・SHA-256）→ セットアップ 〔実ネットワークでの取得は未実施〕
+  - [x] 失敗時のロールバック（**部分的にインストールされた状態を残さない**）
+  - [x] 取得しない場合も Lumi が起動し、**「TTS 未セットアップ」が明示される**
+  - [x] ユーザーが別途インストール済みの AivisSpeech / VOICEVOX を検出する
+- [x] **クレジット表示画面**（トレイ → クレジット）〔ADR-019 / 内容は [licensing.md](licensing.md) §6〕
+  - [x] エンジン名・音源のクレジット例・ライセンス全文・禁止事項をユーザーが読める
+  - [x] Phase 0 では Stage 側に静的に作る。`Provider.attribution()` との接続は Phase 1
+  - [x] **Core が落ちていても読める**（クレジット画面は Core に接続しない）
+  - [x] **推移的依存を含む OSS 通知の生成**〔2026-08-15。`scripts/generate-oss-notice.mjs` が3つの依存グラフから生成（284 件）。
+    **GPL / AGPL を見つけたらビルドを失敗させる** → [licensing.md](licensing.md) §6〕
+- [x] ハードコードされた「こんにちは」を AivisSpeech で発話 → リップシンク
+  〔エンジンの起動・停止は Core が持つ（[architecture/core.md](architecture/core.md) §6）。
+  リップシンクの方式は実測を経て確定（[interfaces/renderer.md](interfaces/renderer.md)）〕
+- [x] **音声デバイスの選択と開通確認の骨格**〔duplex は使わないことにした → [ADR-020](decisions/ADR-020-split-audio-streams.md)。
+  reference signal は Core が自前で持つ。リング・VAD・ミュートは Phase 1〕
+- [x] **入出力が別デバイスのときの動作を実測** 〔2026-08-15。**別デバイスでも開ける。同一デバイスでも開けないことがある。**
+  分離ストリームのドリフトは測定分解能以下 → [measurements/phase0.md](measurements/phase0.md)〕
+- [x] **起動フェーズに応じた画面**〔2026-08-15。セットアップ → 取得中 → 起動中 → キャラクター表示。
+  **出してよいかは Core が決める**（[architecture/ui.md](architecture/ui.md)「起動フェーズ」）〕
+- [x] **ウィンドウの移動と拡大縮小**〔簡易版。キャラクターの上でドラッグ / ホイール。
+  **位置と大きさは保存しない**（設定の保存形式が未確定のため。未確定事項 #9）〕
+- [x] `PlatformShell` インターフェースを定義（Electron 退避路の確保）〔Stage に露出するのは OS 特権を含まない部分集合。[interfaces/shell.md](interfaces/shell.md)〕
+- [x] **VRAM / RAM / インストーラサイズを実測して記録** 〔2026-08-15。**インストーラ 13.1 MB / Lumi 本体 497 MB / VRAM 55 MiB**。
+  R1 解消 → [measurements/phase0.md](measurements/phase0.md)〕
+- [x] **サイドカー同梱状態で sqlite-vec（SQLite ローダブル拡張）がロードできることを確認** 〔2026-08-15。`lumi-core.exe --self-check`〕
+- [x] **Python サイドカーのパッケージング**〔PyInstaller の onedir。onefile は強制終了で %TEMP% に残骸を残す → [ADR-021](decisions/ADR-021-sidecar-packaging.md)〕
 
 ### 完了条件
 インストーラを作って**別マシン**で起動し、**初回セットアップを通した上で**、キャラクターが立って一言喋る。
@@ -75,20 +88,22 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 > **ただしクレジット表示は落とさない。** 配布物ができた時点で義務が発生し、後から遡って直せないため。
 
 ### 検証手順
-1. `pnpm tauri build` で Windows インストーラが生成され、**サイズを記録**（R1判定）
+1. ~~`pnpm tauri build` で Windows インストーラが生成され、**サイズを記録**（R1判定）~~ 〔2026-08-15 完了。`pnpm build` で **13.1 MB**〕
 2. クリーンな別マシン（または VM）にインストールして起動
 3. キャラクターが透過背景で最前面に立ち、**背後のウィンドウが操作できる**
 4. キャラクターの上にカーソルを乗せると**ホバーが検知される**（R2判定）
-5. タスクマネージャで Shell と Python Core の**両プロセスの RAM 使用量を記録**
+5. ~~タスクマネージャで Shell と Python Core の**両プロセスの RAM 使用量を記録**~~ 〔2026-08-15 完了。Shell 37 MB / Core 50 MB〕
 6. 「こんにちは」を発話し、**口が動く**
 7. Core プロセスを強制終了 → Shell が検知して再起動する
 8. Shell を終了 → Core も確実に終了する（ゾンビプロセスが残らない）
 9. **未知の `os.*` コマンドを Shell に送ると拒否され、ログに残る**（B3 骨格の確認）
-10. **アイドル時の VRAM / RAM 実測値を記録**
+10. ~~**アイドル時の VRAM / RAM 実測値を記録**~~ 〔2026-08-15 完了。VRAM 55 MiB〕
 11. ~~音声ライブラリ利用規約を確認し、記録~~ 〔2026-08-15 完了 → [licensing.md](licensing.md)〕
-12. **マイクとスピーカーが別デバイスの構成で duplex stream が開けるか確認**（開けないならフォールバック方針を決めて記録）
-13. **サイドカーから sqlite-vec がロードできるか確認**
-14. **インストーラに AivisSpeech / VOICEVOX のバイナリが含まれていないことを確認**（[licensing.md](licensing.md) テスト1）
+12. ~~マイクとスピーカーが別デバイスの構成で duplex stream が開けるか確認~~
+    〔2026-08-15 完了。**duplex を使わない**方針に変更 → [ADR-020](decisions/ADR-020-split-audio-streams.md)。
+    別マシンでは `uv run python -m lumi.audio.probe` を回して**入出力が開通することだけ**確認する〕
+13. ~~**サイドカーから sqlite-vec がロードできるか確認**~~ 〔2026-08-15 完了。別マシンでは `lumi-core.exe --self-check` を回す〕
+14. ~~**インストーラに AivisSpeech / VOICEVOX のバイナリが含まれていないことを確認**~~ 〔2026-08-15 完了。92 ファイルを列挙して確認〕
 15. **初回セットアップで「取得しない」を選び、Lumi が起動して「TTS 未セットアップ」が表示されることを確認**
 16. **ネットワークを遮断した状態で取得を試み、明示的に失敗し、部分的な残骸が残らないことを確認**
 17. **ユーザーが選択するまで外部へのネットワークアクセスが発生しないことを確認**（パケットキャプチャ / Network-optional 原則）
@@ -351,9 +366,9 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 |---|---|---|
 | 1 | ~~🔴 AivisSpeech / VOICEVOX の音声ライブラリ利用規約~~ | **✓ 解消**〔2026-08-15〕→ [licensing.md](licensing.md), [ADR-019](decisions/ADR-019-tts-engine-distribution.md) |
 | 1b | **AivisSpeech の LICENSE 本文・依存ライブラリ・同梱モデルのライセンス**（同梱を再検討する場合に必要） | Phase 0（取得実装時）→ [licensing.md](licensing.md) §7 |
-| 2 | Python サイドカーのパッケージング（PyInstaller vs uv 同梱） | Phase 0（実測） |
+| 2 | ~~Python サイドカーのパッケージング（PyInstaller vs uv 同梱）~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-021](decisions/ADR-021-sidecar-packaging.md)。**PyInstaller の onedir** |
 | 3 | Ollama を同梱するかユーザーに別途インストールさせるか（**[ADR-019](decisions/ADR-019-tts-engine-distribution.md) と同じ論法を適用予定**） | Phase 0-1 |
-| 4 | 入出力が別デバイスのときの duplex stream の扱い | Phase 0（実測。Phase 2 の AEC の前提） |
+| 4 | ~~入出力が別デバイスのときの duplex stream の扱い~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-020](decisions/ADR-020-split-audio-streams.md)。**duplex を使わない**（別ストリーム + Core が持つ reference） |
 | 5 | LLM モデル選定（Qwen3系 / Gemma3系）— 日本語会話品質と Tool Calling 品質 | Phase 1（実測） |
 | 6 | 🔴 **プライバシーとデータ保存の方針**（`contracts/privacy.md` を書く） | **Phase 2 着手前** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
@@ -393,4 +408,3 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | R13 | **Crash 中の副作用の宙ぶらりん** | 状態不整合 | イベント語彙を Phase 1 で固定。非 idempotent は再実行せず報告 | Phase 4a |
 | R14 | **音声ライブラリ・モデルのライセンス** | 配布時の法務 | ~~Phase 0 で確認~~ → **確認済み**。配布物に非再配布可のものを入れない（[ADR-019](decisions/ADR-019-tts-engine-distribution.md)）。Provider 抽象で差し替え可能 | **Phase 0（対応済み。残: [licensing.md](licensing.md) §7 の未確認事項）** |
 | R19 | **ACML 特例条項の「開発元の努力」義務**。LLM が任意テキストを生成して TTS に流す構成そのものが対象。努力が不十分と評価されるリスク | 音声モデルが使えなくなる | 人格プロンプト・なりすまし機能の不在・[Invariant 3](contracts/invariants.md) による外部テキスト隔離・クレジット/禁止事項の提示（[licensing.md](licensing.md) §5）。**内容分類器は作らない**（レイテンシと誤検知のコストが上回る） | Phase 1 |
-[REDACTED]

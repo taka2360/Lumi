@@ -38,6 +38,8 @@ interface PlatformShell {
   setContentProtection(w: WindowHandle, on: boolean): Promise<void>
   setPosition(w: WindowHandle, x: number, y: number): Promise<void>
   getPosition(w: WindowHandle): Promise<Point>
+  startDragging(w: WindowHandle): Promise<void>          // 掴んで動かす。OS に委ねる
+  scaleWindow(w: WindowHandle, factor: number): Promise<void>  // 倍率。**クランプは Shell 側**
 
   // ── 入力 ───────────────────────────────────
   onCursorMove(cb: (p: Point) => void): Disposable
@@ -77,22 +79,49 @@ await window.setIgnoreCursorEvents(true)
 
 **`forward: true` 相当が無い。** これが Lumi の要件（キャラクターにカーソルを乗せたら反応する）と衝突する。
 
-### Tauri 実装の方針〔Phase 0 スパイク〕
+### Tauri 実装の方針〔Phase 0 で実装・実測済み〕
 
 ```
-Rust 側で ~60Hz でカーソル位置を取得（GetCursorPos / ローレベルフック）
-  ↓ onCursorMove として Stage に通知
-Stage が hit_region と比較
+Stage が setHitRegion(rects) で当たり判定領域を渡す
   ↓
-領域内 → setClickThrough(false)
-領域外 → setClickThrough(true)
+Rust 側で ~60Hz でカーソル位置を取得（GetCursorPos 相当）
+  ↓ 判定も Shell 側（純粋関数）
+領域内 → setClickThrough(false) + onHoverState("inside")
+領域外 → setClickThrough(true)  + onHoverState("outside")
 ```
 
-**ポーリングのコストと応答性のトレードオフを Phase 0 で実測する。** 60Hz のカーソル取得が CPU を無視できる程度に収まるかを確認する。
+**当初案（カーソル位置を Stage に送って Stage が比較する）を採らない。**
+60Hz の往復は `shell.*` の「1ms 以下であるべきもの」を守れず、Stage が固まると
+クリックスルーも固まる。Stage が渡すのは**領域だけ**にする。
+→ [../architecture/ui.md](../architecture/ui.md)「ホバー検知の実装方針」
+
+**実測**: 16ms 周期のポーリングで 1コアの約 2.8%（debug ビルド）。
+→ [../measurements/phase0.md](../measurements/phase0.md)
 
 破綻した場合の代替:
 1. ローレベルマウスフック（`SetWindowsHookEx`）に切り替える
 2. `PlatformShell` を Electron 実装に差し替える
+
+### Stage に露出する範囲
+
+上の `PlatformShell` は **Shell 全体の姿**であり、そのすべてが Stage から呼べるわけではない。
+
+| 分類 | 呼ぶ主体 | 経路 |
+|---|---|---|
+| `setHitRegion` / `onHoverState` / ウィンドウ操作 | Stage | `shell.*`（Tauri IPC） |
+| `captureScreen` / `injectInput` / `launchProcess` / `spawnSidecar` | **Core** | `os.*`（WS） |
+
+**Stage 側の TypeScript の `PlatformShell` には OS 特権を載せない。**
+`stage.*` は絶対に OS 特権を要求しない、という規則を型で守るため
+（実装: `stage/src/platform/PlatformShell.ts`）。
+
+#### `scaleWindow` に「大きさ」ではなく「倍率」を渡す理由〔Phase 0〕
+
+Stage が「この大きさにしろ」と絶対値を渡せると、**画面より大きい / 1 ピクセルの
+ウィンドウを要求できてしまう。** Stage は信頼されていない（B1 / B2）ので、
+**上限・下限を決めるのは Shell 側**にする（`compute_scaled_size` は純粋関数）。
+
+同じ理由で移動は `setPosition` ではなく `startDragging`。**座標を Stage に計算させない。**
 
 ---
 
@@ -219,3 +248,8 @@ function decideFadeState(cursor: Point, region: HitRegion, prev: FadeState): Fad
 | 8 | **Core 側の BindVerifier を無効化しても Shell 側で拒否される**（二重化の確認） |
 | 9 | カーソル監視の CPU 使用率が許容範囲（Phase 0 実測） |
 | 10 | ホバー検知が hit_region の変化に追従する |
+| 11 | **`compute_scaled_size` が上限・下限でクランプする**（Stage が画面外の大きさを要求できない） |
+| 12 | **Core のサイドカーを起動してもコンソールウィンドウが出ない**（Windows） |
+| 13 | **`compute_stage_placement` が作業領域の右下に収まる位置を返す**（マルチモニタのオフセットを含む） |
+| 14 | **拡大しても右下の角が動かない**（`anchor_bottom_right`） |
+| 15 | **開発ビルドではサイドカーよりソースを優先する**（固めた実行体が古いまま動かない） |

@@ -1,0 +1,61 @@
+[project]
+name = "lumi-core"
+version = "0.0.0"
+description = "Lumi Core — 権威（判断・状態・ポリシー・記憶）を持つ AI Core"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+license = "MIT"
+dependencies = [
+    "websockets>=13.0",
+    "structlog>=24.4.0",
+    "sqlite-vec>=0.1.9",
+    "httpx>=0.28.1",
+    "sounddevice>=0.5.5",
+]
+
+# torch に依存しない（インストーラサイズ R1）。
+# 依存を足すときは docs/DESIGN.md §7 の技術選定に載っているものだけにする。
+
+[project.scripts]
+lumi-core = "lumi.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.7",
+    "mypy>=1.13",
+    "pyinstaller>=6.22.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["lumi"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "RUF"]
+# コメント・docstring は日本語で書く（.claude/rules/01-design-process.md）。
+# 全角括弧などを「紛らわしい文字」として弾く規則は、その方針と衝突するため無効にする。
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unreachable = true
+files = ["lumi", "tests"]
+
+# 型スタブを持たない外部ライブラリ。**個別に列挙する**（全体を無視しない）。
+[[tool.mypy.overrides]]
+module = ["sqlite_vec.*", "sounddevice.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
