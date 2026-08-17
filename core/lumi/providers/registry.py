@@ -79,10 +79,17 @@ class ProviderRegistry:
         return [self.peek(kind).attribution() for kind in sorted(self._selected)]
 
     async def unload_all(self) -> None:
+        """**Unloads everything, loaded or not.**
+
+        `is_loaded()` means "usable," not "owns nothing." A Provider that owns an
+        external process can be holding one it started while `load()` was interrupted
+        partway (cancelled, or the engine never answered). Skipping those **leaves the
+        process behind on exit**, which is exactly what docs/architecture/core.md §6
+        forbids. `unload()` is idempotent, so calling it unconditionally is safe.
+        """
         for by_id in self._providers.values():
             for provider in by_id.values():
-                if provider.is_loaded():
-                    try:
-                        await provider.unload()
-                    except Exception:
-                        log.exception("provider.unload_failed", provider=provider.id)
+                try:
+                    await provider.unload()
+                except Exception:
+                    log.exception("provider.unload_failed", provider=provider.id)

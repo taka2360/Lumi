@@ -35,12 +35,14 @@ from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
+from lumi.providers.base import ProviderError, ProviderKind
 from lumi.providers.llm.base import LLMOptions
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
+from lumi.setup.state import EngineRuntime
 from lumi.storage.audit import SqliteAuditLog
 from lumi.storage.events import SqliteEventStore
 from lumi.storage.sqlite import Database
@@ -65,11 +67,12 @@ class ConversationRuntime:
     process).
     """
 
-    __slots__ = ("_audio", "_database", "_loop", "_providers", "_setup", "_task")
+    __slots__ = ("_audio", "_database", "_loop", "_providers", "_setup", "_task", "_warmup")
 
     def __init__(self, server: WsServer, setup: SetupCoordinator, plan: AudioPlan) -> None:
         self._setup = setup
         self._task: asyncio.Task[None] | None = None
+        self._warmup: asyncio.Task[None] | None = None
         self._audio = AudioIO(plan)
         self._providers = ProviderRegistry()
 
@@ -111,6 +114,18 @@ class ConversationRuntime:
         """**Starts regardless of whether it can speak.** Missing pieces show up in logs/state."""
         self._register_providers()
         await self._audio.start()
+        # **The engine is started here, not at the first utterance.** The boot phase the
+        # Stage shows is derived from this process state, so with nobody starting it and
+        # reporting back, `installed × stopped` keeps rendering "starting" forever
+        # (docs/architecture/ui.md "Boot phases"). Deferring it to first speech would also
+        # add the engine's startup — tens of seconds, minutes on the first run — onto the
+        # first reply.
+        #
+        # **Not awaited.** Listening and the reactive loop don't depend on the engine, and
+        # blocking here would hold up capture for the whole startup.
+        self._warmup = asyncio.create_task(
+            warm_tts(self._providers, self._setup), name="tts-warmup"
+        )
 
         if self._loop is None:
             log.warning("conversation.disabled", reason="content pack")
@@ -139,11 +154,14 @@ class ConversationRuntime:
 
     async def stop(self) -> None:
         """**Only stops what Lumi itself started** (docs/architecture/core.md §6)."""
-        if self._task is not None:
-            self._task.cancel()
+        for task in (self._warmup, self._task):
+            if task is None:
+                continue
+            task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+                await task
+        self._warmup = None
+        self._task = None
         await self._audio.stop()
         try:
             async with asyncio.timeout(30.0):
@@ -151,6 +169,35 @@ class ConversationRuntime:
         except TimeoutError:
             log.warning("providers.unload_timeout")
         self._database.close()
+
+
+async def warm_tts(providers: ProviderRegistry, setup: SetupCoordinator) -> None:
+    """Starts the TTS engine, and **reports the process state as it moves**.
+
+    Two states that move independently (docs/architecture/setup.md "Never mix
+    installation state and process state"): the Provider owns the process, the
+    Coordinator owns the state the Stage sees. **Whoever starts the process is the one
+    who has to report it**, or the two silently drift apart.
+
+    Failing to start is **not** a reason to keep the user waiting — `failed` resolves to
+    boot phase `ready`, the character comes out, and the SetupPanel is what says it's
+    broken. **The character is never held hostage** (docs/architecture/ui.md).
+    """
+    if not providers.has(ProviderKind.TTS):
+        # Not set up, or the fetch was declined. **Not broken**, so the state stays
+        # `stopped` — it really isn't running, and nothing is starting it.
+        return
+
+    await setup.set_runtime(EngineRuntime.STARTING)
+    try:
+        await providers.get(ProviderKind.TTS)
+    except ProviderError as error:
+        # Installed but won't start = broken. **Never leave it looking like it's still
+        # starting.**
+        log.warning("tts.warmup_failed", reason=error.reason, detail=error.detail)
+        await setup.set_runtime(EngineRuntime.FAILED)
+        return
+    await setup.set_runtime(EngineRuntime.READY)
 
 
 def _load_pack() -> CharacterPack | None:

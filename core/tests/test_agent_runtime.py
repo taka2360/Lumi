@@ -1,0 +1,166 @@
+"""Startup wiring. **Neither WS nor an engine process is involved** (both are substituted).
+
+Regression: with nobody starting the engine and reporting the process state back, the
+Stage keeps showing "starting" forever (observed 2026-08-17). The boot phase is derived
+from `installed × runtime`, so **the axis has to keep moving**
+(docs/architecture/ui.md "Boot phases").
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+
+from lumi import paths as paths_module
+from lumi.agent.runtime import warm_tts
+from lumi.providers.base import (
+    Attribution,
+    DevicePref,
+    ProviderKind,
+    ProviderUnavailable,
+    ResourceHint,
+    UnloadPolicy,
+)
+from lumi.providers.registry import ProviderRegistry
+from lumi.setup import coordinator as coordinator_module
+from lumi.setup.coordinator import SetupCoordinator
+from lumi.setup.detect import DetectedEngine
+from lumi.setup.state import EngineRuntime
+from lumi.transport.protocol import Role
+from lumi.transport.server import WsServer
+
+
+class FakeServer:
+    """Holds only the one method the Coordinator uses for broadcasting."""
+
+    def __init__(self) -> None:
+        self.boots: list[str] = []
+
+    async def notify(self, role: Role, method: str, payload: dict[str, Any] | None = None) -> None:
+        assert role is Role.STAGE
+        if method == "stage.setup.state" and payload is not None:
+            self.boots.append(str(payload["boot"]))
+
+    def as_server(self) -> WsServer:
+        return cast(WsServer, self)
+
+
+class FakeTts:
+    """Holds only what `ProviderRegistry` touches. **Never starts a process.**"""
+
+    id = "fake-tts"
+    kind = ProviderKind.TTS
+
+    def __init__(self, *, fails: bool = False) -> None:
+        self._fails = fails
+        self._loaded = False
+        self.load_calls = 0
+
+    async def load(self) -> None:
+        self.load_calls += 1
+        if self._fails:
+            raise ProviderUnavailable("engine_not_ready", "エンジンの状態: failed")
+        self._loaded = True
+
+    async def unload(self) -> None:
+        self._loaded = False
+
+    def is_loaded(self) -> bool:
+        return self._loaded
+
+    def resource_hint(self) -> ResourceHint:
+        return ResourceHint(
+            device_pref=DevicePref.EXTERNAL_PROCESS,
+            vram_estimate_mb=0,
+            load_time_estimate_ms=0,
+            unload_policy=UnloadPolicy.PINNED,
+        )
+
+    def attribution(self) -> Attribution:
+        return Attribution(display_name="Fake", credit_text="Fake", license_name="MIT")
+
+
+@pytest.fixture(autouse=True)
+def isolated_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(paths_module, "setup_state_file", lambda: tmp_path / "s.json")
+
+
+def detects(monkeypatch: pytest.MonkeyPatch, engines: list[DetectedEngine]) -> None:
+    async def detect(_env: Any) -> list[DetectedEngine]:
+        return engines
+
+    monkeypatch.setattr(coordinator_module, "detect_engines", detect)
+
+
+def installed_by_lumi(tmp_path: Path) -> DetectedEngine:
+    return DetectedEngine(
+        name="aivisspeech",
+        display_name="AivisSpeech",
+        port=10101,
+        executable=tmp_path / "run.exe",
+        running=False,
+        managed_by_lumi=True,
+        version="1.2.0",
+    )
+
+
+async def make_coordinator(server: FakeServer) -> SetupCoordinator:
+    coordinator = SetupCoordinator(server.as_server(), {})
+    await coordinator.initialize()
+    return coordinator
+
+
+class TestWarmTts:
+    async def test_reports_starting_then_ready(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """**The character has to come out.** Without the final report the Stage keeps
+        showing the loading screen even though the engine is already able to speak.
+        """
+        detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+        providers = ProviderRegistry()
+        provider = FakeTts()
+        providers.register(provider)
+
+        await warm_tts(providers, coordinator)
+
+        assert provider.load_calls == 1, "最初の発話まで起動を先送りしていない"
+        assert coordinator.state.runtime is EngineRuntime.READY
+        assert server.boots[0] == "starting", "起動中であることを先に見せる"
+        assert server.boots[-1] == "ready"
+
+    async def test_a_broken_engine_still_lets_the_character_out(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Installed but won't start = broken. **The character is never held hostage**
+        (docs/architecture/ui.md) — the SetupPanel is what says it's broken.
+        """
+        detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+        providers = ProviderRegistry()
+        providers.register(FakeTts(fails=True))
+
+        await warm_tts(providers, coordinator)
+
+        assert coordinator.state.runtime is EngineRuntime.FAILED
+        assert server.boots[-1] == "ready"
+
+    async def test_does_not_claim_to_be_starting_what_it_cannot_start(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Not set up, so no TTS Provider is registered. **`starting` is never broadcast**
+        for something nothing is starting.
+        """
+        detects(monkeypatch, [])
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+
+        await warm_tts(ProviderRegistry(), coordinator)
+
+        assert coordinator.state.runtime is EngineRuntime.STOPPED
+        assert server.boots == ["ready"]
