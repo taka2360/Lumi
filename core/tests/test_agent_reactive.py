@@ -8,6 +8,7 @@ docs/contracts/provenance.md tests 8-10 (a turn's trust inheritance).
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import io
 import wave
 from collections.abc import AsyncIterator, Sequence
@@ -22,6 +23,7 @@ from lumi.agent.session import Session
 from lumi.agent.speech import METHOD_SPEECH_STARTED
 from lumi.audio.devices import AudioPlan, Device, StreamPlan
 from lumi.audio.io import AudioIO
+from lumi.audio.vad import VadEvent
 from lumi.content.pack import CharacterPack, Credit, VoiceSettings
 from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.cancellation import CancelToken
@@ -174,13 +176,24 @@ class FakeTts(_Base):
 class FakeNotifier:
     def __init__(self) -> None:
         self.sent: list[tuple[str, dict[str, Any]]] = []
+        #: Signalled per sentence. **Lets a test wait on the thing it cares about** instead
+        #: of guessing a sleep long enough for however many await points the path has
+        self._spoke = asyncio.Event()
 
     async def notify(self, role: Role, method: str, payload: dict[str, Any] | None = None) -> None:
         del role
         self.sent.append((method, payload or {}))
+        if method == METHOD_SPEECH_STARTED:
+            self._spoke.set()
 
     def spoken(self) -> list[str]:
         return [p["text"] for m, p in self.sent if m == METHOD_SPEECH_STARTED]
+
+    async def wait_for_speech(self, count: int = 1) -> None:
+        """Returns once `count` sentences have actually reached the Stage."""
+        while len(self.spoken()) < count:
+            self._spoke.clear()
+            await self._spoke.wait()
 
 
 class Rig:
@@ -237,17 +250,21 @@ class _NullAudit:
 
 
 def _audio() -> AudioIO:
-    """**Never opens a device.** Without calling `start()`, it's just an output container."""
+    """**Never opens a device.** Without calling `start()`, it's just a pair of containers.
+
+    A capture plan is included so `can_listen` holds and `run()` will consume events;
+    the stream itself is only opened by `AudioIO.start()`, which no test calls.
+    """
     device = Device(
         index=0,
         name="fake",
         host_api="WASAPI",
-        max_input_channels=0,
+        max_input_channels=1,
         max_output_channels=1,
         default_samplerate=float(RATE),
     )
     plan = AudioPlan(
-        capture=None,
+        capture=StreamPlan(device=device, samplerate=RATE, channels=1),
         playback=StreamPlan(device=device, samplerate=RATE, channels=1),
         warnings=(),
     )
@@ -506,13 +523,15 @@ async def test_an_interrupt_mutes_the_playback() -> None:
     assert playback is not None
 
     turn = asyncio.create_task(rig.loop.handle_text("しゃべって"))
-    await asyncio.sleep(0.06)
+    await rig.notifier.wait_for_speech()
     await rig.loop.on_speech_started()
     await turn
 
     # Confirms it had started speaking and then stopped (if nothing had played, this wouldn't be a
     # real test)
-    assert rig.notifier.spoken() == ["あ。"]
+    spoken = rig.notifier.spoken()
+    assert spoken[0] == "あ。"
+    assert len(spoken) < 3, "最後まで喋らずに止まった"
     assert playback.mute_flag.is_set()
     assert playback.queued == 0
 
@@ -553,3 +572,54 @@ async def test_each_provider_is_required(kind: ProviderKind) -> None:
     await rig.loop.handle_text("やあ")
 
     assert rig.session.turns[-1].role == "user"
+
+
+# ── The loop stays alive ──────────────────────────────────────
+
+
+async def test_a_failing_event_does_not_make_lumi_deaf(monkeypatch: pytest.MonkeyPatch) -> None:
+    """★ Regression (observed 2026-08-17): **one bad event ended the loop for good.**
+
+    `run()` awaited `on_speech_started()` inline, so a raise there escaped the `async for`
+    and no VAD event was ever read again — and since nobody awaits the task, asyncio only
+    mentioned it at GC. **Being deaf for the rest of the session is far worse than
+    dropping one utterance**, so the loop logs and keeps listening.
+    """
+    rig = Rig(FakeLlm([text("まだ聞こえてるよ。")]), stt_text="おーい")
+    await rig.start()
+
+    async def boom(self: AttentionArbiter, reason: str) -> None:
+        # Exactly what the unstarted Arbiter raised in production
+        raise RuntimeError("Arbiter が start() されていない")
+
+    monkeypatch.setattr(AttentionArbiter, "interrupt", boom)
+
+    task = asyncio.create_task(rig.loop.run())
+    try:
+        rig.audio._offer(VadEvent.SPEECH_STARTED, None, 0.0)
+        rig.audio._offer(VadEvent.SPEECH_ENDED, np.zeros(1600, dtype=np.float32), 0.0)
+        # The turn runs in its own task. **Raced against the loop itself** so a dead loop
+        # fails immediately with the right message instead of timing out
+        speaking = asyncio.create_task(rig.notifier.wait_for_speech())
+        await asyncio.wait({speaking, task}, timeout=5.0, return_when=asyncio.FIRST_COMPLETED)
+        speaking.cancel()
+
+        assert not task.done(), "1つのイベントが失敗してもループは生き残る"
+        assert [t.text for t in rig.session.turns][:1] == ["おーい"], "次の発話を拾えている"
+    finally:
+        await _drain(task)
+
+
+async def _drain(loop_task: asyncio.Task[None]) -> None:
+    """Stops the loop **and the turn tasks it spawned.**
+
+    A turn left running would outlive the test and land its failure in whichever test
+    happens to run next.
+    """
+    pending = [t for t in asyncio.all_tasks() if t.get_name() == "turn"]
+    for task in (loop_task, *pending):
+        task.cancel()
+    for task in (loop_task, *pending):
+        # The loop's own exception, if any, was already reported by the assertions above
+        with contextlib.suppress(BaseException):
+            await task

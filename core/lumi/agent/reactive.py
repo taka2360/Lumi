@@ -135,6 +135,10 @@ class ReactiveLoop:
         **Each turn runs as a separate task.** `await`ing here would make it impossible
         to pick up a `SPEECH_STARTED` (i.e. a barge-in) arriving while Lumi is speaking.
         A loop that can't notice it was interrupted is the same as having no barge-in at all.
+
+        **One broken event never ends the loop.** Letting it propagate makes Lumi deaf for
+        the rest of the session — a far worse outcome than one dropped utterance — and
+        asyncio would only reveal it at GC time. **Loud, and still listening.**
         """
         if self._audio is None or not self._audio.can_listen:
             log.warning("reactive.no_input")
@@ -143,11 +147,15 @@ class ReactiveLoop:
         turns: set[asyncio.Task[None]] = set()
         async for event, audio, audio_at in self._audio.events():
             if event is VadEvent.SPEECH_STARTED:
-                await self.on_speech_started()
+                try:
+                    await self.on_speech_started()
+                except Exception:
+                    log.exception("reactive.interrupt_failed")
             elif event is VadEvent.SPEECH_ENDED and audio is not None:
                 task = asyncio.create_task(self.on_speech_ended(audio, audio_at), name="turn")
                 turns.add(task)
                 task.add_done_callback(turns.discard)
+                task.add_done_callback(_report_turn)
 
     async def on_speech_started(self) -> None:
         """**Barge-in.** The sound has already stopped (VAD thread). Stop the Activity."""
@@ -397,6 +405,17 @@ class ReactiveLoop:
         if self._audio is None or self._audio.playback is None:
             raise ProviderError("no_playback", "音声の出力先が無い")
         return self._audio.playback
+
+
+def _report_turn(task: asyncio.Task[None]) -> None:
+    """**A turn that died has to say so.** Nobody awaits these tasks, so without this the
+    exception surfaces only as an unretrieved-task warning whenever GC happens to run.
+    """
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        log.error("reactive.turn_crashed", error=str(error), exc_info=error)
 
 
 def _as_block(source: str, result: ToolResult) -> ContextBlock:

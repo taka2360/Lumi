@@ -9,6 +9,7 @@ are **raised as distinct exceptions** (so callers can tailor guidance to the use
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 
 from lumi import logging as lumi_logging
@@ -27,11 +28,14 @@ class ProviderInfo:
 class ProviderRegistry:
     """Selects one per kind. **UI for choosing lands later in Phase 1 (settings UI).**"""
 
-    __slots__ = ("_providers", "_selected")
+    __slots__ = ("_loading", "_providers", "_selected")
 
     def __init__(self) -> None:
         self._providers: dict[ProviderKind, dict[str, Provider]] = {}
         self._selected: dict[ProviderKind, str] = {}
+        #: One in-flight `load()` per kind. **Created lazily** so a Registry can be built
+        #: outside a running loop
+        self._loading: dict[ProviderKind, asyncio.Lock] = {}
 
     def register(self, provider: Provider, *, select: bool = True) -> None:
         by_id = self._providers.setdefault(provider.kind, {})
@@ -47,12 +51,25 @@ class ProviderRegistry:
     async def get(self, kind: ProviderKind) -> Provider:
         """Returns the selected Provider. **Loads it if not yet loaded.**
 
-        `load()` is idempotent, so the caller doesn't need to track state.
+        **Idempotent is not the same as concurrency-safe.** A `load()` that starts an
+        external engine takes ~14 seconds, and every turn arriving in that window sees
+        `is_loaded() == False`. Without serializing, four utterances in a row started
+        **four AivisSpeech processes, each holding 1 GB of VRAM** (observed 2026-08-17) —
+        precisely the VRAM the LLM is supposed to get (DESIGN.md §7).
+
+        Serialized per kind rather than globally: waiting for the TTS engine must not
+        also delay the STT model.
         """
         provider = self.peek(kind)
-        if not provider.is_loaded():
-            await provider.load()
-        return provider
+        if provider.is_loaded():
+            return provider
+        async with self._loading.setdefault(kind, asyncio.Lock()):
+            # **Re-checked**: whoever held the lock has very likely just loaded it.
+            # Re-`peek` too, since `select()` may have moved while we waited
+            provider = self.peek(kind)
+            if not provider.is_loaded():
+                await provider.load()
+            return provider
 
     def peek(self, kind: ProviderKind) -> Provider:
         """Retrieves it **without loading.** Used for status display and `attribution()`."""

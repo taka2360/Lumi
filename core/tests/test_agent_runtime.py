@@ -1,9 +1,12 @@
 """Startup wiring. **Neither WS nor an engine process is involved** (both are substituted).
 
-Regression: with nobody starting the engine and reporting the process state back, the
-Stage keeps showing "starting" forever (observed 2026-08-17). The boot phase is derived
-from `installed × runtime`, so **the axis has to keep moving**
-(docs/architecture/ui.md "Boot phases").
+**This file exists because the unit tests all build their own wiring.** Every collaborator
+here is exercised elsewhere; what is only testable at this level is *whether they were
+connected at all*. Both regressions below were invisible to every other test:
+
+* nobody started the engine, so the Stage showed "starting" forever (observed 2026-08-17)
+* nobody called `arbiter.start()`, so Lumi went deaf on the first utterance
+  (observed 2026-08-17)
 """
 
 from __future__ import annotations
@@ -14,7 +17,9 @@ from typing import Any, cast
 import pytest
 
 from lumi import paths as paths_module
-from lumi.agent.runtime import warm_tts
+from lumi.agent.runtime import ConversationRuntime, warm_tts
+from lumi.audio.devices import AudioPlan
+from lumi.kernel.activity import ActivityKind, ActivityState
 from lumi.providers.base import (
     Attribution,
     DevicePref,
@@ -110,6 +115,39 @@ async def make_coordinator(server: FakeServer) -> SetupCoordinator:
     coordinator = SetupCoordinator(server.as_server(), {})
     await coordinator.initialize()
     return coordinator
+
+
+class TestAssembly:
+    """**Does starting the runtime actually leave a usable system behind.**"""
+
+    async def test_the_arbiter_is_started(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ Regression (observed 2026-08-17): **Lumi answered nothing when spoken to.**
+
+        `current()` raises while `_foreground` is unset, so the first `SPEECH_STARTED`
+        killed the reactive loop — and asyncio only reports an unretrieved task exception
+        at GC, so **nothing said anything was wrong.**
+
+        Startup sequence step 9 (docs/architecture/core.md §7) says the idle Activity is
+        created `running` at startup. **Every other test built its own Arbiter and started
+        it**, so the production path was the one place this never happened.
+        """
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+        try:
+            await runtime.start()
+
+            foreground = runtime.arbiter.current()
+            assert foreground.kind is ActivityKind.IDLE
+            assert foreground.state is ActivityState.RUNNING, "idle は running で生成される"
+        finally:
+            await runtime.stop()
 
 
 class TestWarmTts:

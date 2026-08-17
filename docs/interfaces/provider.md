@@ -44,7 +44,13 @@ Phase 1 には Vision が無いので `ModelResourceManager` は不要（Phase 5
 
 しかし**後から Provider にライフサイクルを追加すると全 Provider の書き換えになる**。窓口だけ先に確保しておけば、Phase 5 は Manager を上に被せるだけで済む。
 
-Phase 1 の `load()` は「起動時に一度呼ぶ」だけでよい。
+Phase 1 の `load()` に、Phase 5 の Manager のような調停は要らない。
+
+ただし**「起動時に一度呼ぶだけ」ではない。** 実際には最初に必要になったターンが呼ぶ。
+外部エンジンの起動は十数秒かかるので、**その間に来たターンが全部「まだロードされていない」を見る。**
+`load()` が冪等であることは、**同時に呼ばれてよいことを意味しない**
+（4 プロセス起動して VRAM を 4 GB 食った。2026-08-17 実測）。
+**同時呼び出しの直列化は `ProviderRegistry.get()` の責任**（kind ごとに1本。TTS の起動待ちが STT を止めない）。
 
 ### `attribution()` を Phase 1 で入れる理由
 
@@ -326,6 +332,7 @@ GameAgent セッション中の Vision ロードは予算チェック必須。
 |---|---|
 | 1 | 各 Provider が `Provider` protocol を満たす |
 | 2 | `load` / `unload` が冪等 |
+| 2b | **`load()` に時間がかかる間に `get()` が同時に来ても、`load()` は1回しか走らない**（kind ごとに直列化。別 kind は待たされない） |
 | 3 | 外部エンジン未起動時に明示的なエラーになる |
 | 4 | LLM の `cancel_token` でストリームが中断する |
 | 5 | Tool Calling 非対応の検知とフォールバックが動く |

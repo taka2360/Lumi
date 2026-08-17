@@ -6,6 +6,8 @@ docs/interfaces/provider.md test table 1-6 / 8.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from collections.abc import Iterator
 from pathlib import Path
@@ -107,6 +109,58 @@ async def test_registry_loads_on_first_get() -> None:
 
     # **`load` is idempotent.** Not called a second time
     assert provider.loads == 1
+
+
+async def test_a_slow_load_is_not_started_twice() -> None:
+    """★ Regression (observed 2026-08-17): **four AivisSpeech processes at once.**
+
+    `load()` being idempotent says nothing about being called concurrently. Starting the
+    engine takes ~14 seconds, and every turn arriving inside that window saw
+    `is_loaded() == False` — so each one started its own process, **each holding 1 GB of
+    the VRAM the LLM is supposed to get** (DESIGN.md §7).
+    """
+
+    class Slow(Dummy):
+        async def load(self) -> None:
+            # Stands in for the engine handshake. **The window where the bug lived**
+            await asyncio.sleep(0.01)
+            self.loads += 1
+
+    registry = ProviderRegistry()
+    provider = Slow()
+    registry.register(provider)
+
+    await asyncio.gather(*(registry.get(ProviderKind.LLM) for _ in range(4)))
+
+    assert provider.loads == 1
+
+
+async def test_waiting_on_one_kind_does_not_block_another() -> None:
+    """**Serialized per kind, never globally.** Waiting for the TTS engine must not also
+    hold up STT — they are separate processes with separate costs.
+    """
+    started = asyncio.Event()
+
+    class Blocking(Dummy):
+        kind = ProviderKind.TTS
+
+        async def load(self) -> None:
+            started.set()
+            await asyncio.sleep(3600)
+
+    registry = ProviderRegistry()
+    registry.register(Blocking("tts"))
+    registry.register(Dummy())
+
+    blocked = asyncio.create_task(registry.get(ProviderKind.TTS))
+    await started.wait()
+    try:
+        async with asyncio.timeout(1.0):
+            await registry.get(ProviderKind.LLM)
+    finally:
+        blocked.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await blocked
 
 
 def test_registry_refuses_an_unregistered_kind() -> None:

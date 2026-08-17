@@ -67,7 +67,16 @@ class ConversationRuntime:
     process).
     """
 
-    __slots__ = ("_audio", "_database", "_loop", "_providers", "_setup", "_task", "_warmup")
+    __slots__ = (
+        "_arbiter",
+        "_audio",
+        "_database",
+        "_loop",
+        "_providers",
+        "_setup",
+        "_task",
+        "_warmup",
+    )
 
     def __init__(self, server: WsServer, setup: SetupCoordinator, plan: AudioPlan) -> None:
         self._setup = setup
@@ -94,12 +103,17 @@ class ConversationRuntime:
         )
         tools.register(SetExpressionTool(_expression_sender(server)))
 
+        # **Constructed here, started in `start()`** (creating the idle Activity publishes a
+        # DomainEvent, which needs a running loop). Startup sequence step 9
+        # → docs/architecture/core.md §7
+        self._arbiter = AttentionArbiter(bus)
+
         pack = _load_pack()
         self._loop = (
             None
             if pack is None
             else ReactiveLoop(
-                arbiter=AttentionArbiter(bus),
+                arbiter=self._arbiter,
                 providers=self._providers,
                 tools=tools,
                 pack=pack,
@@ -110,9 +124,20 @@ class ConversationRuntime:
             )
         )
 
+    @property
+    def arbiter(self) -> AttentionArbiter:
+        """**Read-only.** What the Inspector reads the Activity tree from (roadmap Phase 1).
+        Transitions stay the Arbiter's alone (Invariant 4).
+        """
+        return self._arbiter
+
     async def start(self) -> None:
         """**Starts regardless of whether it can speak.** Missing pieces show up in logs/state."""
         self._register_providers()
+        # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
+        # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
+        # rest of the session (observed 2026-08-17).
+        await self._arbiter.start()
         await self._audio.start()
         # **The engine is started here, not at the first utterance.** The boot phase the
         # Stage shows is derived from this process state, so with nobody starting it and
@@ -131,6 +156,10 @@ class ConversationRuntime:
             log.warning("conversation.disabled", reason="content pack")
             return
         self._task = asyncio.create_task(self._loop.run(), name="reactive")
+        # **A dead reactive loop means Lumi is deaf, and nothing else notices.** asyncio only
+        # surfaces an unretrieved task exception at GC, which is how the missing
+        # `arbiter.start()` stayed invisible. **Never let this exit quietly.**
+        self._task.add_done_callback(_report_reactive_exit)
         log.info("conversation.started", can_listen=self._audio.can_listen)
 
     def _register_providers(self) -> None:
@@ -169,6 +198,21 @@ class ConversationRuntime:
         except TimeoutError:
             log.warning("providers.unload_timeout")
         self._database.close()
+
+
+def _report_reactive_exit(task: asyncio.Task[None]) -> None:
+    """**Being deaf is a failure, not a quiet state.**
+
+    Normal shutdown cancels the task, which is the one exit that isn't news.
+    """
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        log.error("reactive.crashed", error=str(error), exc_info=error)
+    else:
+        # `run()` returns on its own only when there is no input device
+        log.info("reactive.stopped")
 
 
 async def warm_tts(providers: ProviderRegistry, setup: SetupCoordinator) -> None:
