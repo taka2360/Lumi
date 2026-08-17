@@ -609,6 +609,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) | LLM ランタイムと推論モデルを配布物に含めず、種類ごとに取得方法を変える |
 | [024](decisions/ADR-024-activity-priority.md) | Activity の priority を表から決め、割り込み可否を単一の閾値で判定する |
 | [025](decisions/ADR-025-tts-on-gpu.md) | **TTS に GPU を使えるようにする**（ADR-008 の「VRAM を消費しない」を実測により撤回） |
+| [026](decisions/ADR-026-polyphase-resampler.md) | サンプルレート変換を自前の polyphase FIR にし、VAD 経路では状態を持たせる（STT 精度の主因） |
 
 ---
 

@@ -31,6 +31,23 @@ const VRM_EXPRESSION: Readonly<Record<Viseme, string>> = {
  */
 export const DEFAULT_VRM_URL = "/character.vrm";
 
+/** 腕を下ろしたデフォルトポーズを適用 */
+function applyDefaultPose(vrm: VRM): void {
+  const humanoid = vrm.humanoid;
+  if (!humanoid) {
+    return;
+  }
+  const leftUpperArm = humanoid.getNormalizedBoneNode("leftUpperArm");
+  const rightUpperArm = humanoid.getNormalizedBoneNode("rightUpperArm");
+  if (leftUpperArm) {
+    leftUpperArm.rotation.z = 1.25;
+  }
+  if (rightUpperArm) {
+    rightUpperArm.rotation.z = -1.25;
+  }
+  humanoid.update();
+}
+
 export async function loadVrm(url: string): Promise<CharacterModel> {
   const loader = new GLTFLoader();
   loader.register((parser) => new VRMLoaderPlugin(parser));
@@ -47,6 +64,9 @@ export async function loadVrm(url: string): Promise<CharacterModel> {
 
   // Faces it toward us. VRM 1.0 faces -Z.
   vrm.scene.rotation.y = Math.PI;
+
+  // 初期姿勢として腕を下ろす
+  applyDefaultPose(vrm);
 
   const baseY = vrm.scene.position.y;
 

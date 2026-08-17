@@ -16,9 +16,9 @@ export interface IdlePose {
   breathScale: number;
 }
 
-/** The breathing period (seconds). Without keeping it slow, it looks like "trembling" instead of "alive." */
+/** 呼吸周期（秒） */
 const BREATH_PERIOD_S = 4.0;
-/** The body-sway period (seconds). Kept indivisible with the breathing period so the motions never sync up. */
+/** 体の揺れ周期（秒） */
 const SWAY_PERIOD_S = 6.7;
 
 export function computeIdlePose(elapsedSeconds: number): IdlePose {

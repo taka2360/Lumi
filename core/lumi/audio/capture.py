@@ -24,7 +24,7 @@ import numpy as np
 
 from lumi import logging as lumi_logging
 from lumi.audio.devices import StreamPlan
-from lumi.audio.resample import resample, to_mono
+from lumi.audio.resample import StreamingResampler, to_mono
 from lumi.audio.ring import RingBuffer, Samples
 from lumi.audio.vad import (
     FRAME_MS,
@@ -170,6 +170,7 @@ class VadWorker:
         "_listener",
         "_mute_flag",
         "_pending",
+        "_resampler",
         "_resume",
         "_ring",
         "_segmenter",
@@ -192,6 +193,11 @@ class VadWorker:
     ) -> None:
         self._ring = ring
         self._source_rate = source_rate
+        #: **One instance, kept for the whole session.** Converting each 32 ms chunk with a
+        #: stateless function restarts the filter at every boundary, which put a discontinuity
+        #: into the signal 31 times a second (22.8 dB SNR, measured 2026-08-17) and was one of
+        #: the two reasons STT accuracy was bad.
+        self._resampler = StreamingResampler(source_rate, SAMPLE_RATE)
         self._mute_flag = mute_flag
         self._listener = listener
         self._vad = vad
@@ -229,7 +235,7 @@ class VadWorker:
             # audio ended this far in the past. **Without this the backlog is invisible** and
             # every latency would be reported as if the VAD were always caught up.
             audio_at = read_at - self._ring.available / self._source_rate
-            converted = resample(raw, self._source_rate, SAMPLE_RATE)
+            converted = self._resampler.process(raw)
             self._pending = (
                 converted if len(self._pending) == 0 else np.concatenate((self._pending, converted))
             )

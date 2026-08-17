@@ -9,11 +9,13 @@
 
 import { useEffect, useRef } from "react";
 import {
+  AmbientLight,
   Box3,
   DirectionalLight,
-  HemisphereLight,
+  NoToneMapping,
   PerspectiveCamera,
   Scene,
+  SRGBColorSpace,
   Vector3,
   WebGLRenderer,
 } from "three";
@@ -59,15 +61,18 @@ export function CharacterCanvas({
     const renderer = new WebGLRenderer({ canvas, alpha: true, antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setClearAlpha(0);
+    renderer.outputColorSpace = SRGBColorSpace;
+    renderer.toneMapping = NoToneMapping;
 
     const scene = new Scene();
     const camera = new PerspectiveCamera(28, 1, 0.1, 20);
     camera.position.set(0, 1.05, 2.6);
     camera.lookAt(0, 1.0, 0);
 
-    scene.add(new HemisphereLight(0xffffff, 0x445566, 2.0));
-    const key = new DirectionalLight(0xffffff, 1.4);
-    key.position.set(1, 2, 2);
+    // アニメ調モデルの陰影を綺麗に出すため均一な白色の環境光と正面寄りの平行光を設定
+    scene.add(new AmbientLight(0xffffff, 0.8));
+    const key = new DirectionalLight(0xffffff, 1.2);
+    key.position.set(0.25, 1.0, 1.5).normalize();
     scene.add(key);
 
     const resize = () => {

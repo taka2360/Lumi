@@ -80,6 +80,15 @@ def stt_models_dir() -> Path:
     return models_dir() / "whisper"
 
 
+def stt_dump_dir() -> Path:
+    """Where `LUMI_DEBUG_STT_DUMP=1` writes the audio STT received → `lumi.audio.dump`.
+
+    **Under user data, not a temp dir**, so it survives long enough to be listened to and
+    is somewhere the user can find and delete.
+    """
+    return data_dir() / "debug" / "stt"
+
+
 def setup_state_file() -> Path:
     """File that remembers whether first-run setup has been "answered."
 

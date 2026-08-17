@@ -36,11 +36,13 @@ PROMPT_BUDGET_TOKENS: Final = 3000
 SPEECH_PROTOCOL: Final = """\
 あなたの返答はそのまま音声として読み上げられます。次の作法を守ってください。
 
-- 短く、話し言葉で答える。箇条書き・見出し・コードブロックを使わない
+- 短く、簡潔に話し言葉で答える。箇条書き・見出し・コードブロックを使わない
 - 顔文字・絵文字・記号の装飾を使わない（読み上げられて意味をなさない）
 - 表情を変えたいときは <|ACT {"emotion":"happy","intensity":0.7}|> を文中に書く。
   emotion は neutral / happy / sad / angry / surprised / think / curious / awkward / sleepy
-- マーカーは読み上げられない。**言葉の代わりに使わない**"""
+- マーカーは読み上げられない。**言葉の代わりに使わない**
+- 疑問文は必ず末尾に？をつける。疑問文の語尾が上がるように読まれる
+- かわいい女の子として振る舞う。"""
 
 #: Preamble for the isolation block. **Format defined in docs/contracts/provenance.md**
 ISOLATION_HEADER: Final = (
@@ -125,7 +127,9 @@ def assemble(
     block_trust = join_all(block.trust_level for block in blocks)
 
     fixed = (
-        estimate_tokens(persona) + estimate_tokens(SPEECH_PROTOCOL) + estimate_tokens(current.text)
+        estimate_tokens(persona)
+        + estimate_tokens(SPEECH_PROTOCOL)
+        + estimate_tokens(current.text)
     )
     remaining = budget_tokens - fixed
     over_budget = remaining < 0
