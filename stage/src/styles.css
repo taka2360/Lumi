@@ -99,6 +99,25 @@ body {
   color: #ffb4b4;
 }
 
+/* A command to run, or where to get something. Monospace so it can be typed accurately. */
+.panel__hint {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 11px;
+  /* The one thing here worth selecting — it exists to be copied. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Several components can have something to say at once. */
+.panel--compact .panel__status + .panel__status {
+  margin-top: 8px;
+}
+
 /* **Presents "grant" and "decline" as equals** (ADR-019 principle 2).
    Same size, same color. Never make one stand out over the other. */
 .panel__actions {
@@ -210,6 +229,46 @@ body {
   height: 100%;
   background: rgba(180, 215, 255, 0.95);
   transition: width 200ms ease-out;
+}
+
+/* The speech bubble (docs/architecture/ui.md "The bubble also lives inside the `stage` window").
+   Sits above the character, inside the window.
+   **`pointer-events: none` is deliberate.** The bubble is never handed to Shell as part
+   of the hit region, so letting the WebView pick up clicks here would make the two
+   disagree about what is clickable. */
+.bubble {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  box-sizing: border-box;
+  max-width: calc(100% - 16px);
+  width: max-content;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(20, 24, 34, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  color: #f2f5fb;
+  font-size: 13px;
+  line-height: 1.6;
+  /* Japanese has no spaces, so the default would overflow rather than wrap. */
+  overflow-wrap: anywhere;
+  animation: bubble-in 120ms ease-out;
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble {
+    animation: none;
+  }
 }
 
 /* A notice that no VRM is placed yet. **Never hide it.** */

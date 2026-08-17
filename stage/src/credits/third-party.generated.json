@@ -1,5 +1,5 @@
 {
-  "total": 284,
+  "total": 303,
   "ecosystems": [
     {
       "name": "Lumi Shell（Rust / exe にリンクされるもの）",
@@ -1240,6 +1240,11 @@
           "license": "MIT"
         },
         {
+          "name": "av",
+          "version": "18.1.0",
+          "license": "BSD-3-Clause"
+        },
+        {
           "name": "certifi",
           "version": "2026.7.22",
           "license": "MPL-2.0"
@@ -1250,9 +1255,49 @@
           "license": "MIT-0"
         },
         {
+          "name": "click",
+          "version": "8.4.2",
+          "license": "BSD-3-Clause"
+        },
+        {
+          "name": "colorama",
+          "version": "0.4.6",
+          "license": "BSD License"
+        },
+        {
+          "name": "ctranslate2",
+          "version": "4.8.1",
+          "license": "MIT"
+        },
+        {
+          "name": "faster-whisper",
+          "version": "1.2.1",
+          "license": "MIT"
+        },
+        {
+          "name": "filelock",
+          "version": "3.32.3",
+          "license": "MIT"
+        },
+        {
+          "name": "flatbuffers",
+          "version": "25.12.19",
+          "license": "Apache 2.0"
+        },
+        {
+          "name": "fsspec",
+          "version": "2026.7.0",
+          "license": "BSD-3-Clause"
+        },
+        {
           "name": "h11",
           "version": "0.16.0",
           "license": "MIT"
+        },
+        {
+          "name": "hf-xet",
+          "version": "1.6.0",
+          "license": "Apache-2.0"
         },
         {
           "name": "httpcore",
@@ -1265,14 +1310,49 @@
           "license": "BSD-3-Clause"
         },
         {
+          "name": "huggingface-hub",
+          "version": "1.27.0",
+          "license": "Apache-2.0"
+        },
+        {
           "name": "idna",
           "version": "3.18",
           "license": "BSD-3-Clause"
         },
         {
+          "name": "numpy",
+          "version": "2.5.2",
+          "license": "BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0"
+        },
+        {
+          "name": "onnxruntime",
+          "version": "1.28.0",
+          "license": "MIT License"
+        },
+        {
+          "name": "packaging",
+          "version": "26.3",
+          "license": "Apache-2.0 OR BSD-2-Clause"
+        },
+        {
+          "name": "protobuf",
+          "version": "7.35.1",
+          "license": "3-Clause BSD License"
+        },
+        {
           "name": "pycparser",
           "version": "3.0",
           "license": "BSD-3-Clause"
+        },
+        {
+          "name": "pyyaml",
+          "version": "6.0.3",
+          "license": "MIT"
+        },
+        {
+          "name": "setuptools",
+          "version": "84.0.0",
+          "license": "MIT"
         },
         {
           "name": "sounddevice",
@@ -1288,6 +1368,16 @@
           "name": "structlog",
           "version": "26.1.0",
           "license": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "tokenizers",
+          "version": "0.23.1",
+          "license": "Apache Software License"
+        },
+        {
+          "name": "tqdm",
+          "version": "4.70.0",
+          "license": "MPL-2.0 AND MIT"
         },
         {
           "name": "typing-extensions",
@@ -1436,6 +1526,12 @@
           "version": "V19.7.0",
           "license": "MIT",
           "note": "sounddevice が同梱するバイナリ。**ASIO 版は同梱しない**（Steinberg の SDK は非 OSS）"
+        },
+        {
+          "name": "Silero VAD",
+          "version": "v6 (ONNX)",
+          "license": "MIT",
+          "note": "Copyright (c) 2020-present Silero Team。**faster-whisper が同梱する ONNX モデル**であり、依存宣言には現れないため手で足している（docs/licensing.md §4.6）"
         },
         {
           "name": "PyInstaller bootloader",

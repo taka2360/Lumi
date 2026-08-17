@@ -21,14 +21,23 @@ from typing import Any
 
 import pytest
 
+from lumi.character import METHOD_EXPRESSION, Emotion
 from lumi.providers.tts.viseme import Viseme
 from lumi.setup.coordinator import (
     CHOICE_INSTALL,
     CHOICE_SKIP,
+    COMPONENT_STT,
+    COMPONENT_TTS,
     METHOD_PROMPT,
     METHOD_STATE,
 )
-from lumi.setup.state import BootPhase, EngineRuntime, TtsSetupState
+from lumi.setup.state import (
+    BootPhase,
+    EngineRuntime,
+    LlmSetupState,
+    SttSetupState,
+    TtsSetupState,
+)
 from lumi.transport.protocol import NAMESPACE_BY_ROLE, PROTOCOL_VERSION, Role
 
 # : The repo's `docs/contracts/wire.json`. **Never read at runtime** (docs aren't bundled in the
@@ -89,11 +98,22 @@ class TestCoreMatchesTheContract:
         # The speech method moved to `agent/speech.py` (PlaybackScheduler) in Phase 1.
         from lumi.agent.speech import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED
 
-        declared = {METHOD_STATE, METHOD_PROMPT, METHOD_SPEECH_STARTED, METHOD_SPEECH_ENDED}
+        declared = {
+            METHOD_STATE,
+            METHOD_PROMPT,
+            METHOD_SPEECH_STARTED,
+            METHOD_SPEECH_ENDED,
+            METHOD_EXPRESSION,
+        }
         assert declared == set(wire["methods"]["stage"])
 
     def test_setup_prompt_choices(self, wire: dict[str, Any]) -> None:
         assert {"install": CHOICE_INSTALL, "skip": CHOICE_SKIP} == wire["setup_prompt_choices"]
+
+    def test_setup_components(self, wire: dict[str, Any]) -> None:
+        # **What is being asked about has to be on the contract too.** The panel picks its
+        # wording from this value; a drift would ask permission to fetch the wrong thing.
+        assert [COMPONENT_TTS, COMPONENT_STT] == wire["setup_components"]
 
     @pytest.mark.parametrize(
         ("enum", "key"),
@@ -101,6 +121,9 @@ class TestCoreMatchesTheContract:
             (TtsSetupState, "tts_setup_state"),
             (EngineRuntime, "engine_runtime"),
             (BootPhase, "boot_phase"),
+            (LlmSetupState, "llm_setup_state"),
+            (SttSetupState, "stt_setup_state"),
+            (Emotion, "emotion"),
             (Viseme, "viseme"),
         ],
     )

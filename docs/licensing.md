@@ -264,7 +264,9 @@ faster_whisper/assets/silero_vad_v6.onnx   1.2 MB
 MIT は著作権表示の保持を求めるが、**Silero Team の表示は依存グラフに現れない**
 （faster-whisper の同梱物であって、依存宣言ではない）。
 §6 の `scripts/generate-oss-notice.mjs` は依存グラフから作るので、**ここだけ手で足す。**
-〔Phase 1 の宿題。Step G（クレジット接続）で対応する〕
+
+**✓ 対応済み**〔2026-08-17 / Step G〕。生成スクリプトの `MANUAL` に追加した
+（CPython / SQLite / PortAudio / PyInstaller bootloader と同じ扱い）。
 
 ---
 

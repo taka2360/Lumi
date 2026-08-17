@@ -17,12 +17,30 @@ import {
   SphereGeometry,
 } from "three";
 
+import type { ExpressionWeights, VrmPreset } from "./expression";
+import { VRM_PRESETS } from "./expression";
 import { computeIdlePose } from "./idle";
 import type { MouthWeights } from "./lipsync";
 import type { CharacterModel } from "./types";
 
 const SKIN = new Color("#8fb4ff");
 const ACCENT = new Color("#ffffff");
+
+/**
+ * What each preset tints the body toward. **A stand-in, not a design.**
+ *
+ * The placeholder exists so the pipeline is visible without a VRM
+ * (Phase 0 verification step 6 did the same for lip sync). **An expression path that
+ * shows nothing at all can't be told apart from one that isn't wired up.**
+ */
+const EXPRESSION_TINT: Readonly<Record<VrmPreset, Color>> = {
+  neutral: SKIN,
+  happy: new Color("#ffd76a"),
+  sad: new Color("#6a86ff"),
+  angry: new Color("#ff6a6a"),
+  surprised: new Color("#b78dff"),
+  relaxed: new Color("#7fe0c0"),
+};
 
 export function createPlaceholder(): CharacterModel {
   const root = new Group();
@@ -83,6 +101,16 @@ export function createPlaceholder(): CharacterModel {
       const wide = Math.max(weights.I, weights.E);
       const round = Math.max(weights.U, weights.O);
       mouth.scale.set(1.0 + wide * 0.5 - round * 0.35, 0.12 + open * 1.1, 0.5);
+    },
+    applyExpression(weights: ExpressionWeights) {
+      // Mixes each preset's tint in by its weight, starting from the base colour.
+      const tinted = SKIN.clone();
+      for (const preset of VRM_PRESETS) {
+        if (preset !== "neutral" && weights[preset] > 0) {
+          tinted.lerp(EXPRESSION_TINT[preset], weights[preset]);
+        }
+      }
+      material.color.copy(tinted);
     },
     dispose() {
       root.traverse((child) => {

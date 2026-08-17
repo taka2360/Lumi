@@ -13,6 +13,7 @@ from pathlib import Path
 import httpx
 import pytest
 
+from lumi import paths as paths_module
 from lumi.setup.install import SetupError, install_stt_model, is_model_installed
 from lumi.setup.models import (
     STT_MODELS,
@@ -213,3 +214,43 @@ async def _install(
         transport=httpx.MockTransport(handler),
         **kwargs,  # type: ignore[arg-type]
     )
+
+
+class TestModelLocation:
+    """★ Regression (observed 2026-08-17): **the setup panel offered to fetch a model
+    that was already installed.**
+
+    The fetcher looked under `models/` and the Provider under `models/whisper/`. Nothing
+    failed — the consent question simply came back on a machine that had everything it
+    needed, which is the kind of wrong nobody reports as a bug.
+    """
+
+    def test_speech_models_have_their_own_directory(self) -> None:
+        """Models are deleted per kind. **Replacing the speech model has nothing to do
+        with an embedding model** (Phase 2).
+        """
+        assert paths_module.stt_models_dir().parent == paths_module.models_dir()
+
+    def test_nobody_builds_the_path_by_hand(self) -> None:
+        """**One definition, both call sites.** A path assembled independently in two
+        places is a path that will drift by one segment.
+        """
+        root = Path(__file__).resolve().parents[1] / "lumi"
+        offenders = [
+            path.relative_to(root).as_posix()
+            for path in root.rglob("*.py")
+            # `paths.py` is where the one definition lives
+            if path.name != "paths.py" and 'models_dir() / "whisper"' in path.read_text("utf-8")
+        ]
+        assert offenders == [], f"paths.stt_models_dir() を使うこと: {offenders}"
+
+    def test_the_fetcher_and_the_provider_are_given_the_same_root(self) -> None:
+        """The fetcher (`SetupCoordinator`) and the reader (`FasterWhisperProvider`) have
+        to be handed the identical directory, or one of them is always wrong.
+        """
+        sources = {
+            name: (Path(__file__).resolve().parents[1] / "lumi" / name).read_text(encoding="utf-8")
+            for name in ("setup/coordinator.py", "agent/runtime.py")
+        }
+        for name, text in sources.items():
+            assert "paths.stt_models_dir()" in text, f"{name} が共通の定義を使っていない"

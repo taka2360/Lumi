@@ -13,9 +13,8 @@
 
 import { useEffect } from "react";
 
-import { parseTimeline } from "../character/lipsync";
 import { connectToCore } from "./connection";
-import { type SetupPrompt, toTtsSnapshot, useStageStore } from "./store";
+import { toExpression, toSetupPrompt, toSetupSnapshot, toSpeech, useStageStore } from "./store";
 
 /**
  * The `stage.*` method names Core sends. **`docs/contracts/wire.json` is authoritative** (→ ADR-022).
@@ -29,6 +28,7 @@ export const METHOD_SETUP_STATE = "stage.setup.state";
 export const METHOD_SETUP_PROMPT = "stage.setup.prompt";
 export const METHOD_SPEECH_STARTED = "stage.speech.started";
 export const METHOD_SPEECH_ENDED = "stage.speech.ended";
+export const METHOD_EXPRESSION = "stage.character.expression";
 
 /** The answer to whether to fetch. Core only compares against `CHOICE_INSTALL` (anything else means "don't"). */
 export const CHOICE_INSTALL = "install";
@@ -54,29 +54,23 @@ export function useCoreConnection(): void {
     const connection = connectToCore({
       onConnectedChange: (connected) => store.setConnected(connected),
       notifications: {
-        [METHOD_SETUP_STATE]: (payload) => store.setTts(toTtsSnapshot(payload)),
-        [METHOD_SPEECH_STARTED]: (payload) => {
-          const timeline = parseTimeline(payload);
-          if (!timeline) {
-            // Never moves the mouth for an unreadable timeline. **The sound itself is played by Core.**
-            return;
-          }
-          store.setSpeech({
-            text: typeof payload.text === "string" ? payload.text : "",
-            timeline,
-            // **Time advances on the Stage's own clock** (docs/interfaces/renderer.md).
-            startedAtMs: performance.now(),
-          });
-        },
+        [METHOD_SETUP_STATE]: (payload) => store.setSetup(toSetupSnapshot(payload)),
+        // **Time advances on the Stage's own clock** (docs/interfaces/renderer.md).
+        // An unreadable timeline leaves the mouth still; **the text is shown regardless**
+        [METHOD_SPEECH_STARTED]: (payload) => store.setSpeech(toSpeech(payload, performance.now())),
         [METHOD_SPEECH_ENDED]: () => store.setSpeech(null),
+        // **An unreadable payload leaves the face as it is.** Resetting to neutral on
+        // drift would look like a working expression and hide the drift entirely
+        [METHOD_EXPRESSION]: (payload) => {
+          const expression = toExpression(payload, performance.now());
+          if (expression) {
+            store.setExpression(expression);
+          }
+        },
       },
       commands: {
         [METHOD_SETUP_PROMPT]: (payload) => {
-          const prompt: SetupPrompt = {
-            retry: payload.retry === true,
-            reason: typeof payload.reason === "string" ? payload.reason : null,
-          };
-          store.setPrompt(prompt);
+          store.setPrompt(toSetupPrompt(payload));
           return new Promise((resolve) => {
             pendingAnswer = (answer) => resolve({ choice: answer });
           });

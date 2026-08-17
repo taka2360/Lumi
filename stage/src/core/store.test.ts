@@ -6,20 +6,50 @@
 
 import { describe, expect, it } from "vitest";
 
-import { toTtsSnapshot } from "./store";
+import { visemeAt } from "../character/lipsync";
+import { toSetupPrompt, toSetupSnapshot, toSpeech, toTtsSnapshot } from "./store";
 
 describe("boot phase", () => {
   it("holds the phase Core broadcast, unchanged", () => {
     for (const boot of ["setup", "installing", "starting", "ready"]) {
-      expect(toTtsSnapshot({ boot, state: "installed" }).boot).toBe(boot);
+      expect(toSetupSnapshot({ boot }).boot).toBe(boot);
     }
   });
 
   it("never rounds an unknown phase to ready", () => {
     // **fail-closed.** Rounding to ready would show the character before it's ready.
-    expect(toTtsSnapshot({ boot: "???", state: "installed" }).boot).toBe("starting");
-    expect(toTtsSnapshot({ state: "installed" }).boot).toBe("starting");
-    expect(toTtsSnapshot({ boot: 1, state: "installed" }).boot).toBe("starting");
+    expect(toSetupSnapshot({ boot: "???" }).boot).toBe("starting");
+    expect(toSetupSnapshot({}).boot).toBe("starting");
+    expect(toSetupSnapshot({ boot: 1 }).boot).toBe("starting");
+  });
+
+  it("reads all three components from one message", () => {
+    // **The phase is a function of all three.** Reading them from separate messages
+    // could not guarantee ordering.
+    const setup = toSetupSnapshot({
+      boot: "ready",
+      tts: { state: "installed", runtime: "ready" },
+      llm: { state: "model_missing", model: "qwen3.5:9b" },
+      stt: { state: "not_configured", model: "small" },
+    });
+    expect(setup.tts.state).toBe("installed");
+    expect(setup.llm.state).toBe("model_missing");
+    expect(setup.llm.model).toBe("qwen3.5:9b");
+    expect(setup.stt.state).toBe("not_configured");
+  });
+
+  it("treats a missing component as unknown, never as a failure", () => {
+    // An older Core, or one mid-detection. **Unknown is a state, not a fault.**
+    const setup = toSetupSnapshot({ boot: "ready" });
+    expect(setup.llm.state).toBe("unknown");
+    expect(setup.stt.state).toBe("unknown");
+  });
+
+  it("refuses a state that belongs to a different component", () => {
+    // `detected` is TTS-only and `model_missing` is LLM-only. **Cross-assignment
+    // falls back to unknown** rather than rendering a sentence that cannot be true.
+    expect(toSetupSnapshot({ llm: { state: "installing" } }).llm.state).toBe("unknown");
+    expect(toSetupSnapshot({ stt: { state: "detected" } }).stt.state).toBe("unknown");
   });
 });
 
@@ -52,5 +82,53 @@ describe("TTS state", () => {
     expect(snapshot.engine_name).toBeNull();
     expect(snapshot.port).toBeNull();
     expect(snapshot.progress).toBeNull();
+  });
+});
+
+describe("speech", () => {
+  const spans = [{ viseme: "A", start_ms: 0, duration_ms: 100 }];
+
+  it("reads the text and the mouth timeline", () => {
+    const speech = toSpeech({ text: "こんにちは。", spans, total_ms: 100 }, 42);
+    expect(speech.text).toBe("こんにちは。");
+    expect(speech.timeline.totalMs).toBe(100);
+    expect(speech.startedAtMs).toBe(42);
+  });
+
+  it("still shows the text when there is no timeline", () => {
+    // Core omits `spans` whenever the engine returns no timing. **A still mouth and a
+    // blank bubble are different failures** — dropping the event caused both.
+    const speech = toSpeech({ text: "聞こえてる？" }, 0);
+    expect(speech.text).toBe("聞こえてる？");
+    expect(speech.timeline.spans).toEqual([]);
+  });
+
+  it("leaves the mouth closed for the whole of an absent timeline", () => {
+    const { timeline } = toSpeech({ text: "あ" }, 0);
+    for (const at of [0, 100, 10_000]) {
+      expect(visemeAt(timeline, at)).toBeNull();
+    }
+  });
+
+  it("turns a missing text into an empty string (never `undefined` on screen)", () => {
+    expect(toSpeech({ spans, total_ms: 100 }, 0).text).toBe("");
+    expect(toSpeech({ text: 42 }, 0).text).toBe("");
+  });
+});
+
+describe("the setup question", () => {
+  it("reads which component is being asked about", () => {
+    expect(toSetupPrompt({ component: "stt" }).component).toBe("stt");
+    expect(toSetupPrompt({ component: "tts", retry: true, reason: "http_error" })).toEqual({
+      component: "tts",
+      retry: true,
+      reason: "http_error",
+    });
+  });
+
+  it("names a component even when the payload does not", () => {
+    // **A consent dialog with no subject is worse than one naming the likely subject.**
+    expect(toSetupPrompt({}).component).toBe("tts");
+    expect(toSetupPrompt({ component: "gpu" }).component).toBe("tts");
   });
 });

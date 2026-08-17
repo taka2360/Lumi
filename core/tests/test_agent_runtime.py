@@ -167,7 +167,7 @@ class TestWarmTts:
         await warm_tts(providers, coordinator)
 
         assert provider.load_calls == 1, "最初の発話まで起動を先送りしていない"
-        assert coordinator.state.runtime is EngineRuntime.READY
+        assert coordinator.state.tts.runtime is EngineRuntime.READY
         assert server.boots[0] == "starting", "起動中であることを先に見せる"
         assert server.boots[-1] == "ready"
 
@@ -185,7 +185,7 @@ class TestWarmTts:
 
         await warm_tts(providers, coordinator)
 
-        assert coordinator.state.runtime is EngineRuntime.FAILED
+        assert coordinator.state.tts.runtime is EngineRuntime.FAILED
         assert server.boots[-1] == "ready"
 
     async def test_does_not_claim_to_be_starting_what_it_cannot_start(
@@ -200,5 +200,5 @@ class TestWarmTts:
 
         await warm_tts(ProviderRegistry(), coordinator)
 
-        assert coordinator.state.runtime is EngineRuntime.STOPPED
+        assert coordinator.state.tts.runtime is EngineRuntime.STOPPED
         assert server.boots == ["ready"]

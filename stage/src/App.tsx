@@ -15,6 +15,7 @@ import type { CssRect } from "./platform/geometry";
 import { useHitRegionReporter, useHoverState, useWindowGestures } from "./platform/useStageShell";
 import { BootScreen } from "./setup/BootScreen";
 import { SetupPanel } from "./setup/SetupPanel";
+import { Bubble } from "./speech/Bubble";
 
 /** Tracks an element's on-screen rectangle. Updates whenever the layout changes. */
 function useElementRect(element: HTMLElement | null): CssRect | null {
@@ -50,11 +51,10 @@ export function App() {
   const gestures = useWindowGestures();
 
   // **Core decides whether the character may be shown** (docs/architecture/ui.md "Boot phases").
-  const tts = useStageStore((state) => state.tts);
+  const setup = useStageStore((state) => state.setup);
   const connected = useStageStore((state) => state.connected);
   const prompt = useStageStore((state) => state.prompt);
-  const phase = tts.boot;
-  const showCharacter = connected && phase === "ready";
+  const showCharacter = connected && setup.boot === "ready";
 
   const [status, setStatus] = useState<CharacterStatus>({ kind: null, fallbackReason: null });
   const onStatus = useCallback((next: CharacterStatus) => setStatus(next), []);
@@ -91,11 +91,18 @@ export function App() {
           <CharacterCanvas onStatus={onStatus} onBounds={onBounds} />
         </div>
       )}
+      {/* Only while the character is out. A bubble floating over a loading screen would
+          be speech with nobody visibly saying it. */}
+      {showCharacter && <Bubble />}
       <div className="overlay" ref={setPanel}>
         {/* While preparing, shows what's happening instead of the character.
             **Always shows exactly one thing** (docs/architecture/ui.md "Boot phases").
             Showing loading and the panel side by side would describe the same situation twice. */}
-        {showCharacter || prompt ? <SetupPanel /> : <BootScreen tts={tts} connected={connected} />}
+        {showCharacter || prompt ? (
+          <SetupPanel />
+        ) : (
+          <BootScreen setup={setup} connected={connected} />
+        )}
         {/* **Never silently degrades.** Shows that a placeholder is running instead of the production VRM. */}
         {status.fallbackReason && <p className="notice">{status.fallbackReason}</p>}
       </div>

@@ -66,6 +66,20 @@ def models_dir() -> Path:
     return data_dir() / "models"
 
 
+def stt_models_dir() -> Path:
+    """Where speech-recognition models live.
+
+    **One definition, used by both the fetcher and the Provider.** They had drifted by a
+    single path segment, and the only symptom was the setup panel offering to fetch a
+    model that was already on disk (observed 2026-08-17) — nothing failed, it just
+    quietly asked again.
+
+    Kept under its own subdirectory because **models are deleted per kind**: replacing
+    the speech model has nothing to do with an embedding model (Phase 2).
+    """
+    return models_dir() / "whisper"
+
+
 def setup_state_file() -> Path:
     """File that remembers whether first-run setup has been "answered."
 

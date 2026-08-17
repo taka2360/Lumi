@@ -18,6 +18,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import StrEnum
+from typing import Final
+
+#: Sent to the Stage when the expression changes. **A notify, not a command** — Core never
+#: waits to be told a face finished changing (docs/contracts/wire.json)
+METHOD_EXPRESSION: Final = "stage.character.expression"
 
 
 class Emotion(StrEnum):

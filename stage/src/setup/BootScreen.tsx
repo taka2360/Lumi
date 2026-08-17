@@ -15,7 +15,7 @@
  * it never judges "it's probably okay to show it now."
  */
 
-import type { TtsSetupSnapshot } from "../core/store";
+import type { SetupSnapshot } from "../core/store";
 
 const TITLE = "Lumi を起動しています…";
 
@@ -23,32 +23,53 @@ function percent(progress: number | null): string {
   return `${Math.round((progress ?? 0) * 100)}%`;
 }
 
-/** Which detail step is currently in progress. **Not the heading — a line attached below it.** */
-function step(tts: TtsSetupSnapshot, connected: boolean): { step: string; note: string } {
-  if (!connected) {
-    return { step: "Lumi Core に接続しています…", note: "" };
-  }
-  const engine = tts.engine_name ?? "音声合成エンジン";
-  switch (tts.boot) {
-    case "installing":
-      return {
-        step: `${engine} を取得しています… ${percent(tts.progress)}`,
-        note: "公式の配布元から取得しています。約 200MB あります。",
-      };
-    case "starting":
-      return {
-        step: `${engine} を起動しています…`,
-        // **States up front that the first run takes a while.** Without this it looks frozen (observed at 2 minutes).
-        note: "初回はエンジンが音声モデルを取得するため、数分かかることがあります。",
-      };
-    default:
-      return { step: "準備しています…", note: "" };
-  }
+interface Step {
+  step: string;
+  note: string;
+  /** The bar's value, or `null` for no bar. */
+  progress: number | null;
 }
 
-export function BootScreen({ tts, connected }: { tts: TtsSetupSnapshot; connected: boolean }) {
-  const { step: current, note } = step(tts, connected);
-  const progress = connected && tts.boot === "installing" ? (tts.progress ?? 0) : null;
+/**
+ * Which detail step is currently in progress. **Not the heading — a line attached below it.**
+ *
+ * `installing` covers two different fetches now, so **which one is running is read from
+ * the component states**, never guessed. Saying "fetching the engine" while the speech
+ * model downloads would be a plain lie about what the network is doing.
+ */
+function step(setup: SetupSnapshot, connected: boolean): Step {
+  if (!connected) {
+    return { step: "Lumi Core に接続しています…", note: "", progress: null };
+  }
+  const engine = setup.tts.engine_name ?? "音声合成エンジン";
+  if (setup.boot === "installing") {
+    if (setup.stt.state === "installing") {
+      return {
+        step: `音声認識モデルを取得しています… ${percent(setup.stt.progress)}`,
+        note: "公式の配布元から取得しています。約 480MB あります。",
+        progress: setup.stt.progress ?? 0,
+      };
+    }
+    return {
+      step: `${engine} を取得しています… ${percent(setup.tts.progress)}`,
+      note: "公式の配布元から取得しています。約 200MB あります。",
+      progress: setup.tts.progress ?? 0,
+    };
+  }
+  if (setup.boot === "starting") {
+    return {
+      step: `${engine} を起動しています…`,
+      // **States up front that the first run takes a while.** Without this it looks frozen
+      // (observed at 2 minutes).
+      note: "初回はエンジンが音声モデルを取得するため、数分かかることがあります。",
+      progress: null,
+    };
+  }
+  return { step: "準備しています…", note: "", progress: null };
+}
+
+export function BootScreen({ setup, connected }: { setup: SetupSnapshot; connected: boolean }) {
+  const { step: current, note, progress } = step(setup, connected);
 
   return (
     <div className="boot">

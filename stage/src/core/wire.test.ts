@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { EMOTIONS } from "../character/expression";
 import { VISEMES } from "../character/lipsync";
 import {
   CMD_DRAG_START,
@@ -27,10 +28,18 @@ import {
 } from "../platform/tauri";
 import { CMD_CORE_ENDPOINT, EVENT_CORE_ENDPOINT } from "./connection";
 import { PROTOCOL_VERSION } from "./protocol";
-import { BOOT_PHASES, ENGINE_RUNTIMES, TTS_SETUP_STATES } from "./store";
+import {
+  BOOT_PHASES,
+  ENGINE_RUNTIMES,
+  LLM_SETUP_STATES,
+  SETUP_COMPONENTS,
+  STT_SETUP_STATES,
+  TTS_SETUP_STATES,
+} from "./store";
 import {
   CHOICE_INSTALL,
   CHOICE_SKIP,
+  METHOD_EXPRESSION,
   METHOD_SETUP_PROMPT,
   METHOD_SETUP_STATE,
   METHOD_SPEECH_ENDED,
@@ -47,8 +56,12 @@ interface Wire {
     tts_setup_state: string[];
     engine_runtime: string[];
     boot_phase: string[];
+    llm_setup_state: string[];
+    stt_setup_state: string[];
+    emotion: string[];
     viseme: string[];
   };
+  setup_components: string[];
 }
 
 /** The repo's `docs/contracts/wire.json`. **Never read at runtime** (docs aren't bundled in the distributable). */
@@ -71,6 +84,7 @@ describe("wire contract", () => {
         METHOD_SETUP_PROMPT,
         METHOD_SPEECH_STARTED,
         METHOD_SPEECH_ENDED,
+        METHOD_EXPRESSION,
       ]),
     ).toEqual(new Set(wire.methods.stage));
   });
@@ -83,10 +97,17 @@ describe("wire contract", () => {
       METHOD_SETUP_PROMPT,
       METHOD_SPEECH_STARTED,
       METHOD_SPEECH_ENDED,
+      METHOD_EXPRESSION,
     ];
     for (const method of wire.methods.os) {
       expect(stageConstants).not.toContain(method);
     }
+  });
+
+  it("what a fetch question can be about", () => {
+    // The panel picks its wording from this value. **Drift would ask permission to
+    // fetch the wrong thing.**
+    expect(SETUP_COMPONENTS).toEqual(wire.setup_components);
   });
 
   it("the fetch-or-not choices", () => {
@@ -113,6 +134,9 @@ describe("wire contract", () => {
     expect(TTS_SETUP_STATES).toEqual(wire.enums.tts_setup_state);
     expect(ENGINE_RUNTIMES).toEqual(wire.enums.engine_runtime);
     expect(BOOT_PHASES).toEqual(wire.enums.boot_phase);
+    expect(LLM_SETUP_STATES).toEqual(wire.enums.llm_setup_state);
+    expect(STT_SETUP_STATES).toEqual(wire.enums.stt_setup_state);
+    expect(EMOTIONS).toEqual(wire.enums.emotion);
     expect(VISEMES).toEqual(wire.enums.viseme);
   });
 });

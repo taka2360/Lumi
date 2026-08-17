@@ -9,6 +9,7 @@
 import { type VRM, VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
+import { type ExpressionWeights, VRM_PRESETS } from "./expression";
 import { computeIdlePose } from "./idle";
 import type { MouthWeights, Viseme } from "./lipsync";
 import type { CharacterModel } from "./types";
@@ -67,6 +68,17 @@ export async function loadVrm(url: string): Promise<CharacterModel> {
       }
       for (const [viseme, name] of Object.entries(VRM_EXPRESSION)) {
         expressions.setValue(name, weights[viseme as Viseme]);
+      }
+    },
+    applyExpression(weights: ExpressionWeights) {
+      const expressions = vrm.expressionManager;
+      if (!expressions) {
+        return;
+      }
+      for (const preset of VRM_PRESETS) {
+        // **A model missing this preset is not an error.** three-vrm ignores an unknown
+        // name, which is exactly the "fall back on your own" the contract asks for
+        expressions.setValue(preset, weights[preset]);
       }
     },
     dispose() {

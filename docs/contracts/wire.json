@@ -10,13 +10,18 @@
       "stage.setup.state",
       "stage.setup.prompt",
       "stage.speech.started",
-      "stage.speech.ended"
+      "stage.speech.ended",
+      "stage.character.expression"
     ],
     "os": [
       "os.window.get_position",
       "os.window.set_position"
     ]
   },
+  "setup_components": [
+    "tts",
+    "stt"
+  ],
   "setup_prompt_choices": {
     "install": "install",
     "skip": "skip"
@@ -57,6 +62,30 @@
       "installing",
       "starting",
       "ready"
+    ],
+    "llm_setup_state": [
+      "unknown",
+      "not_configured",
+      "detected",
+      "model_missing"
+    ],
+    "stt_setup_state": [
+      "unknown",
+      "not_configured",
+      "installing",
+      "installed",
+      "failed"
+    ],
+    "emotion": [
+      "neutral",
+      "happy",
+      "sad",
+      "angry",
+      "surprised",
+      "think",
+      "curious",
+      "awkward",
+      "sleepy"
     ],
     "viseme": [
       "A",

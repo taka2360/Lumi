@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Final
 
@@ -26,7 +27,7 @@ from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.session import Session
 from lumi.audio.devices import AudioPlan
 from lumi.audio.io import AudioIO
-from lumi.character import ExpressionIntent
+from lumi.character import METHOD_EXPRESSION, ExpressionIntent
 from lumi.content.pack import CharacterPack, ContentPackError, load_character
 from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.event import EventBus
@@ -35,19 +36,20 @@ from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
-from lumi.providers.base import ProviderError, ProviderKind
+from lumi.providers.base import ProviderError, ProviderKind, ProviderNotConfigured
 from lumi.providers.llm.base import LLMOptions
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
-from lumi.setup.state import EngineRuntime
+from lumi.setup.state import EngineRuntime, LlmSetupState
 from lumi.storage.audit import SqliteAuditLog
 from lumi.storage.events import SqliteEventStore
 from lumi.storage.sqlite import Database
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
+from lumi.transport.protocol import Role
 from lumi.transport.server import WsServer
 
 log = lumi_logging.get_logger(__name__)
@@ -72,6 +74,7 @@ class ConversationRuntime:
         "_audio",
         "_database",
         "_loop",
+        "_model",
         "_providers",
         "_setup",
         "_task",
@@ -80,6 +83,7 @@ class ConversationRuntime:
 
     def __init__(self, server: WsServer, setup: SetupCoordinator, plan: AudioPlan) -> None:
         self._setup = setup
+        self._model = os.environ.get(MODEL_ENV, DEFAULT_MODEL)
         self._task: asyncio.Task[None] | None = None
         self._warmup: asyncio.Task[None] | None = None
         self._audio = AudioIO(plan)
@@ -118,7 +122,7 @@ class ConversationRuntime:
                 tools=tools,
                 pack=pack,
                 notifier=server,
-                options=LLMOptions(model=os.environ.get(MODEL_ENV, DEFAULT_MODEL)),
+                options=LLMOptions(model=self._model),
                 session=Session(),
                 audio=self._audio,
             )
@@ -149,7 +153,7 @@ class ConversationRuntime:
         # **Not awaited.** Listening and the reactive loop don't depend on the engine, and
         # blocking here would hold up capture for the whole startup.
         self._warmup = asyncio.create_task(
-            warm_tts(self._providers, self._setup), name="tts-warmup"
+            _warm(self._providers, self._setup, self._model), name="warmup"
         )
 
         if self._loop is None:
@@ -166,18 +170,18 @@ class ConversationRuntime:
         """**Registered even when not set up.** Failure happens at `load()` time, which
         is the first point where "what's missing" can be stated concretely.
         """
-        state = self._setup.state
-        if state.usable and state.port is not None:
-            executable = Path(state.executable) if state.executable else None
-            self._providers.register(AivisSpeechProvider(state.port, executable=executable))
+        tts = self._setup.state.tts
+        if tts.usable and tts.port is not None:
+            executable = Path(tts.executable) if tts.executable else None
+            self._providers.register(AivisSpeechProvider(tts.port, executable=executable))
         else:
-            log.info("tts.not_registered", state=str(state.state))
+            log.info("tts.not_registered", state=str(tts.state))
 
-        self._providers.register(OllamaProvider(os.environ.get(MODEL_ENV, DEFAULT_MODEL)))
+        self._providers.register(OllamaProvider(self._model))
         self._providers.register(
             FasterWhisperProvider(
                 os.environ.get(STT_MODEL_ENV, DEFAULT_STT_MODEL),
-                paths.models_dir() / "whisper",
+                paths.stt_models_dir(),
             )
         )
 
@@ -213,6 +217,41 @@ def _report_reactive_exit(task: asyncio.Task[None]) -> None:
     else:
         # `run()` returns on its own only when there is no input device
         log.info("reactive.stopped")
+
+
+async def _warm(providers: ProviderRegistry, setup: SetupCoordinator, model: str) -> None:
+    """Brings the engines up and **reports what each one turned out to be.**
+
+    Sequential, not concurrent: the TTS engine saturates the GPU while it starts, and
+    probing the LLM in the middle of that measures the contention rather than the LLM.
+    """
+    await warm_tts(providers, setup)
+    await warm_llm(providers, setup, model)
+
+
+async def warm_llm(providers: ProviderRegistry, setup: SetupCoordinator, model: str) -> None:
+    """Finds out whether the LLM can actually answer, and says so.
+
+    **Detection alone cannot see `model_missing`** — that needs Ollama's API, which only
+    the Provider talks to (docs/architecture/setup.md §2b). So the state is settled here,
+    where the answer is known.
+
+    **Never blocks the character.** No LLM means a Lumi that listens and doesn't answer;
+    the SetupPanel is what says so (docs/architecture/ui.md).
+    """
+    try:
+        await providers.get(ProviderKind.LLM)
+    except ProviderNotConfigured as error:
+        # Ollama answered, but the model isn't pulled. **A different instruction entirely**
+        await setup.report_llm(LlmSetupState.MODEL_MISSING, reason=error.detail, model=model)
+        return
+    except ProviderError as error:
+        # Not running (or answering abnormally). **Never reported as "not installed"** —
+        # detection already established whether it is on the machine
+        log.info("llm.warmup_failed", reason=error.reason, detail=error.detail)
+        await setup.report_llm(LlmSetupState.NOT_CONFIGURED, reason=error.detail, model=model)
+        return
+    await setup.report_llm(LlmSetupState.DETECTED, reason=None, model=model)
 
 
 async def warm_tts(providers: ProviderRegistry, setup: SetupCoordinator) -> None:
@@ -253,17 +292,16 @@ def _load_pack() -> CharacterPack | None:
         return None
 
 
-def _expression_sender(server: WsServer):  # type: ignore[no-untyped-def]
+def _expression_sender(server: WsServer) -> Callable[[ExpressionIntent], Awaitable[None]]:
     """Exit point for `character.set_expression`. **The Tool knows nothing about WS or
     the Stage** (it's injected).
 
-    [Step G] `stage.character.expression` isn't in `wire.json` yet, so this only logs
-    for now. **The path is the same as production** (marker → invoke → here); all
-    that's missing is the Stage-side receiver and the contract addition.
+    Sent as a notify, never a command: **Core does not wait to hear that a face changed.**
+    Blocking the LLM stream on the Stage's acknowledgement would put rendering on the
+    barge-in critical path.
     """
-    del server
 
     async def send(intent: ExpressionIntent) -> None:
-        log.info("character.expression", **intent.to_payload())
+        await server.notify(Role.STAGE, METHOD_EXPRESSION, intent.to_payload())
 
     return send

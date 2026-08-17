@@ -20,6 +20,12 @@ import {
 
 import { useStageStore } from "../core/store";
 import type { CssRect } from "../platform/geometry";
+import {
+  advanceExpression,
+  EXPRESSION_NEUTRAL,
+  type ExpressionWeights,
+  targetWeights,
+} from "./expression";
 import { advanceMouth, MOUTH_CLOSED, type MouthWeights, visemeAt } from "./lipsync";
 import { loadCharacter } from "./loadCharacter";
 import { hasMovedEnough, type NdcPoint, screenRectFromNdcPoints } from "./projection";
@@ -97,10 +103,12 @@ export function CharacterCanvas({
       let previousTime = performance.now();
       const startedAt = previousTime;
       let mouth: MouthWeights = MOUTH_CLOSED;
+      let face: ExpressionWeights = EXPRESSION_NEUTRAL;
 
       const tick = (now: number) => {
         animationFrame = requestAnimationFrame(tick);
         const delta = Math.min((now - previousTime) / 1000, 0.1);
+        const previousFrameAt = previousTime;
         previousTime = now;
 
         // **Decides the mouth before calling update.** VRM applies expressions
@@ -109,6 +117,16 @@ export function CharacterCanvas({
         const target = speech ? visemeAt(speech.timeline, now - speech.startedAtMs) : null;
         mouth = advanceMouth(mouth, target, delta);
         model.applyMouth(mouth);
+
+        // Same rule as the mouth: **Core states the target once, the Stage advances time.**
+        const expression = useStageStore.getState().expression;
+        face = advanceExpression(
+          face,
+          targetWeights(expression, now),
+          now - previousFrameAt,
+          expression?.intent.blendMs ?? 0,
+        );
+        model.applyExpression(face);
 
         model.update(delta, (now - startedAt) / 1000);
         renderer.render(scene, camera);
