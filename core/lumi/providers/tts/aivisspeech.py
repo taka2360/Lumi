@@ -103,6 +103,27 @@ class AivisSpeechClient:
                     return int(style["id"])
         return None
 
+    async def initialize_speaker(self, speaker: int) -> None:
+        """Loads the speaker's voice model **now**, so the first sentence doesn't.
+
+        The engine loads a speaker lazily on its first `audio_query`, and that lands squarely
+        inside `tts_first_audio_ms`: **measured 3092 ms** against a 200 ms budget
+        (2026-08-18). Doing it at startup is the same work, paid where nobody is waiting.
+
+        `skip_reinit` makes this a no-op (2 ms) for a speaker that's already loaded, so it is
+        safe to call whenever the voice might have changed.
+        """
+        try:
+            response = await self._session().post(
+                f"{self._base}/initialize_speaker",
+                params={"speaker": speaker, "skip_reinit": "true"},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            # **Not fatal.** The engine answered `/speakers`, so it works; the first sentence
+            # simply pays what it used to. **Never silently look like a warm start**
+            raise TtsError("speaker_init_failed", str(error)) from error
+
     async def synthesize(self, text: str, speaker: int, volume_scale: float = 0.4) -> SpeechAudio:
         """Turns text into WAV. **Returns the mouth timeline together with it.**
 

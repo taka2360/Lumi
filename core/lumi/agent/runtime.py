@@ -80,6 +80,7 @@ class ConversationRuntime:
         "_inspector",
         "_loop",
         "_model",
+        "_pack",
         "_providers",
         "_server",
         "_settings",
@@ -125,6 +126,10 @@ class ConversationRuntime:
         self._arbiter = AttentionArbiter(bus)
 
         pack = _load_pack()
+        #: Held because `_register_providers` needs the voice. **Which speaker Lumi uses is
+        #: the Content Pack's decision**, and the Provider has to know it at `load()` time to
+        #: initialize that voice rather than a different one
+        self._pack = pack
         self._loop = (
             None
             if pack is None
@@ -228,7 +233,16 @@ class ConversationRuntime:
         tts = self._setup.state.tts
         if tts.usable and tts.port is not None:
             executable = Path(tts.executable) if tts.executable else None
-            self._providers.register(AivisSpeechProvider(tts.port, executable=executable))
+            self._providers.register(
+                AivisSpeechProvider(
+                    tts.port,
+                    executable=executable,
+                    # `None` = defer to the engine's default (`voice.toml` may not pin one).
+                    # **The same speaker `ReactiveLoop._voice()` will ask for** — initializing
+                    # a different voice than the one that speaks would warm the wrong model
+                    speaker=self._pack.voice.speaker if self._pack else None,
+                )
+            )
         else:
             log.info("tts.not_registered", state=str(tts.state))
 
@@ -280,9 +294,15 @@ async def _warm(providers: ProviderRegistry, setup: SetupCoordinator, model: str
 
     Sequential, not concurrent: the TTS engine saturates the GPU while it starts, and
     probing the LLM in the middle of that measures the contention rather than the LLM.
+
+    **All three, not just the two that report state.** Warming means the weights are in
+    memory — anything left cold is simply a bill handed to the first reply
+    (docs/interfaces/provider.md "`load()` は接続確認ではない"), and STT was the one nobody
+    was warming at all.
     """
     await warm_tts(providers, setup)
     await warm_llm(providers, setup, model)
+    await warm_stt(providers)
 
 
 async def warm_llm(providers: ProviderRegistry, setup: SetupCoordinator, model: str) -> None:
@@ -308,6 +328,23 @@ async def warm_llm(providers: ProviderRegistry, setup: SetupCoordinator, model: 
         await setup.report_llm(LlmSetupState.NOT_CONFIGURED, reason=error.detail, model=model)
         return
     await setup.report_llm(LlmSetupState.DETECTED, reason=None, model=model)
+
+
+async def warm_stt(providers: ProviderRegistry) -> None:
+    """Builds the speech-recognition model **before** the first utterance needs it.
+
+    **This was the `unaccounted_ms`.** `stt_ms` times `transcribe`, so the 2489 ms model
+    build sat between the spans and showed up only as unattributed time (2321 ms observed
+    2026-08-18) — the reserve's warning light lit by something that was never a mystery.
+
+    **Reports nothing.** Unlike the LLM, whether the model is present is decided by looking
+    at the disk, which detection already did (docs/architecture/setup.md §2b). A failure
+    here means an installed model that won't build, and that is a log line, not a state.
+    """
+    try:
+        await providers.get(ProviderKind.STT)
+    except ProviderError as error:
+        log.warning("stt.warmup_failed", reason=error.reason, detail=error.detail)
 
 
 async def warm_tts(providers: ProviderRegistry, setup: SetupCoordinator) -> None:

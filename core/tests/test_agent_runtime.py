@@ -18,7 +18,7 @@ from typing import Any, cast
 import pytest
 
 from lumi import paths as paths_module
-from lumi.agent.runtime import ConversationRuntime, warm_tts
+from lumi.agent.runtime import ConversationRuntime, _warm, warm_stt, warm_tts
 from lumi.audio.devices import AudioPlan
 from lumi.kernel.activity import ActivityKind, ActivityState
 from lumi.providers.base import (
@@ -68,7 +68,9 @@ class FakeTts:
     id = "fake-tts"
     kind = ProviderKind.TTS
 
-    def __init__(self, *, fails: bool = False) -> None:
+    def __init__(self, *, fails: bool = False, kind: ProviderKind = ProviderKind.TTS) -> None:
+        self.kind = kind
+        self.id = f"fake-{kind.value}"
         self._fails = fails
         self._loaded = False
         self.load_calls = 0
@@ -158,6 +160,50 @@ class TestAssembly:
             assert foreground.state is ActivityState.RUNNING, "idle は running で生成される"
         finally:
             await runtime.stop()
+
+
+class TestEverythingIsWarmed:
+    """★ **Whatever is left cold is a bill handed to the first reply.**
+
+    docs/interfaces/provider.md（表 2d）. Observed 2026-08-18: the first answer took 7.5 s,
+    of which 3767 ms was the LLM's weights, 3092 ms the TTS voice model, and 2489 ms the STT
+    model — **and the STT one was invisible**, because `stt_ms` times `transcribe` while the
+    model was built just outside it (it surfaced only as `unaccounted_ms`).
+    """
+
+    async def test_all_three_kinds_are_warmed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+        providers = ProviderRegistry()
+        registered = {
+            kind: FakeTts(kind=kind)
+            for kind in (ProviderKind.TTS, ProviderKind.LLM, ProviderKind.STT)
+        }
+        for provider in registered.values():
+            providers.register(provider)
+
+        await _warm(providers, coordinator, "qwen3:8b")
+
+        cold = [kind.value for kind, provider in registered.items() if not provider.is_loaded()]
+        assert not cold, f"起動時に温めていない Provider がある: {cold}"
+
+    async def test_a_cold_stt_model_does_not_stop_startup(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """**Slow is not broken, and broken is not silent.** A model that won't build is a
+        log line — whether it is *installed* was already settled by looking at the disk.
+        """
+        detects(monkeypatch, [])
+        server = FakeServer()
+        providers = ProviderRegistry()
+        providers.register(FakeTts(fails=True, kind=ProviderKind.STT))
+
+        await warm_stt(providers)  # **raises nothing**
+
+        assert server.boots == []
 
 
 class TestWarmTts:

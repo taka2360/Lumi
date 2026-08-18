@@ -35,12 +35,15 @@ from lumi.providers.llm.base import (
     TextDelta,
     ToolCall,
 )
-from lumi.providers.llm.ollama import OllamaProvider
+from lumi.providers.llm.ollama import KEEP_ALIVE, OllamaProvider
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import SAMPLE_RATE
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
+from lumi.providers.tts.aivisspeech import TtsError
+from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup import detect as detect_module
 from lumi.setup.detect import detect_ollama, find_on_path
+from lumi.setup.state import EngineRuntime
 from lumi.tools.base import ToolDescriptor, ToolKind
 
 
@@ -255,7 +258,167 @@ async def test_ollama_always_states_whether_to_think() -> None:
         ):
             pass
 
-    assert [payload["think"] for payload in sent] == [False, True]
+    # `load()` also posts to `/api/chat` (the preload). **Only the turns carry `think`**
+    turns = [payload for payload in sent if payload["messages"]]
+    assert [payload["think"] for payload in turns] == [False, True]
+
+
+class TestTtsSpeakerIsActuallyLoaded:
+    """★ **Deciding a speaker is not loading it** — docs/interfaces/provider.md（表 2c）.
+
+    The engine loads a voice model on its first `audio_query`, which put **3092 ms** inside
+    `tts_first_audio_ms` on the first sentence (measured 2026-08-18) against a 200 ms budget.
+    """
+
+    def build(self, provider: AivisSpeechProvider, *, engine_default: int) -> list[int]:
+        """Substitutes the engine process and the HTTP client. **Neither is started.**"""
+        initialized: list[int] = []
+
+        class FakeEngine:
+            async def ensure_running(self) -> EngineRuntime:
+                return EngineRuntime.READY
+
+        class FakeClient:
+            async def default_speaker(self) -> int:
+                return engine_default
+
+            async def initialize_speaker(self, speaker: int) -> None:
+                initialized.append(speaker)
+
+        object.__setattr__(provider, "_engine", FakeEngine())
+        object.__setattr__(provider, "_client", FakeClient())
+        return initialized
+
+    async def test_load_initializes_the_voice(self) -> None:
+        provider = AivisSpeechProvider(10101)
+        initialized = self.build(provider, engine_default=888)
+
+        await provider.load()
+
+        assert initialized == [888], "話者 ID を決めただけで、声を載せていない"
+
+    async def test_it_initializes_the_voice_the_pack_chose(self) -> None:
+        """★ **Warming the wrong voice is not warming.**
+
+        `ReactiveLoop._voice()` prefers the Content Pack's speaker, so initializing the
+        engine's default instead would leave the voice that actually speaks cold — and the
+        first sentence would pay the full 3 s anyway.
+        """
+        provider = AivisSpeechProvider(10101, speaker=42)
+        initialized = self.build(provider, engine_default=888)
+
+        await provider.load()
+
+        assert initialized == [42]
+        assert provider.default_voice().speaker == 42
+
+    async def test_a_voice_that_will_not_load_is_not_fatal(self) -> None:
+        """**Slow is not broken.** The engine answers, so Lumi still speaks — it just pays
+        what it used to. Never silently, though (`tts.speaker_init_failed`).
+        """
+        provider = AivisSpeechProvider(10101)
+        self.build(provider, engine_default=888)
+
+        async def refuse(speaker: int) -> None:
+            raise TtsError("speaker_init_failed", "500")
+
+        object.__setattr__(provider._client, "initialize_speaker", refuse)
+
+        await provider.load()
+
+        assert provider.is_loaded(), "初期化に失敗しただけで喋れなくしてはいけない"
+
+
+class TestOllamaIsActuallyLoaded:
+    """★ **`load()` は接続確認ではない** — docs/interfaces/provider.md（表 2c）.
+
+    Confirming that a model exists takes milliseconds while its weights are still on disk.
+    A `load()` that stopped there reported success and **handed the first reply a 3767 ms
+    bill** (measured 2026-08-18). Every test here fails against that version.
+    """
+
+    def recorder(self) -> tuple[list[dict[str, object]], object]:
+        sent: list[dict[str, object]] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/api/version":
+                return httpx.Response(200, json={"version": "0.5.0"})
+            if request.url.path == "/api/tags":
+                return httpx.Response(200, json={"models": [{"name": "qwen3:8b"}]})
+            sent.append(json.loads(request.content))
+            return httpx.Response(200, content=ndjson({"done": True}))
+
+        return sent, handler
+
+    async def test_load_puts_the_weights_in_memory(self) -> None:
+        """**Empty `messages` is Ollama's own "load without generating".**"""
+        sent, handler = self.recorder()
+        provider = OllamaProvider("qwen3:8b", transport=transport(handler))
+
+        await provider.load()
+
+        assert sent, "load() が推論エンジンに何も要求していない = 重みは載っていない"
+        assert sent[0]["messages"] == [], "プリロードのつもりで生成させてはいけない"
+
+    async def test_the_model_is_kept_resident(self) -> None:
+        """★ Ollama evicts after 5 minutes by default. **A desktop character idles longer
+        than that**, so every conversation after a gap was paying the reload again.
+        """
+        sent, handler = self.recorder()
+        provider = OllamaProvider("qwen3:8b", transport=transport(handler))
+        await provider.load()
+
+        async for _ in provider.stream(
+            [Message(role="user", content="?")], None, LLMOptions(model="qwen3:8b"), CancelToken()
+        ):
+            pass
+
+        # **Every request, not just the preload** — the countdown restarts from the last call
+        assert [payload["keep_alive"] for payload in sent] == [KEEP_ALIVE, KEEP_ALIVE]
+
+    async def test_unload_gives_the_residency_back(self) -> None:
+        """★ Lumi asked for several GB to stay resident. **Lumi gives it back.**
+
+        Without this, quitting Lumi leaves the memory pinned — and it is not Lumi's to keep.
+        """
+        sent, handler = self.recorder()
+        provider = OllamaProvider("qwen3:8b", transport=transport(handler))
+        await provider.load()
+
+        await provider.unload()
+
+        assert sent[-1]["keep_alive"] == 0, "常駐を解放していない"
+
+    async def test_the_http_client_is_reused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """★ **Constructing an `AsyncClient` costs ~0.2 s** (SSL context + proxy env).
+
+        One per request put that inside `llm_first_token_ms` on **every** turn: 569 ms → 411 ms
+        just by reusing it (2026-08-18). `aivisspeech.py` avoids exactly this; this module
+        was doing it.
+        """
+        built = 0
+        real = httpx.AsyncClient
+
+        def counting(*args: object, **kwargs: object) -> httpx.AsyncClient:
+            nonlocal built
+            built += 1
+            return real(*args, **kwargs)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(httpx, "AsyncClient", counting)
+        _sent, handler = self.recorder()
+        provider = OllamaProvider("qwen3:8b", transport=transport(handler))
+
+        await provider.load()
+        for _ in range(3):
+            async for _event in provider.stream(
+                [Message(role="user", content="?")],
+                None,
+                LLMOptions(model="qwen3:8b"),
+                CancelToken(),
+            ):
+                pass
+
+        assert built == 1, f"ターンごとにクライアントを作り直している（{built} 個）"
 
 
 async def test_ollama_separates_reasoning_from_text() -> None:

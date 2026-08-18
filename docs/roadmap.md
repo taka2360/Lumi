@@ -410,7 +410,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 6 | 🔴 **プライバシーとデータ保存の方針**（`contracts/privacy.md` を書く） | **Phase 2 着手前** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
 | 8 | **DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる） | Phase 3 着手前 |
-| 8b | 🔴 **区間合計が p50 目標を超えている**（1.27s / 106%）。8d の決着で Phase 2 を待たず**もう破れている**。p50 目標を実測に合わせるか、`llm_first_token` / `tts_first_audio` を縮めるか | **Phase 1 を閉じる前**（完了条件 p95 2.0s は満たしている。**常に赤い SLO は警告灯として死ぬ**） → [architecture/audio.md](architecture/audio.md) §7 |
+| 8b | 🔴 **区間合計が p50 目標を超えている**（1.27s / 106%）。`llm_first_token` は 537→**421 ms** に縮めた〔2026-08-18〕が、**106% は予算表の算術なので動かない**。`vad_ms` 0.43s と p50 目標 1.20s が両立しない | **Phase 1 を閉じる前**（完了条件 p95 2.0s は満たしている。**常に赤い SLO は警告灯として死ぬ**）。残るのは「p50 目標を 1.5s に置き直すか」の判断のみ → [architecture/audio.md](architecture/audio.md) §7 |
 | ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
 | ~~8d~~ | ~~🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**~~ | **✓ 解消**〔2026-08-17〕→ [architecture/audio.md](architecture/audio.md) §7。**予算の側が誤り**。パラメータは 400 ms のまま（下げると文中の間で区間が切れる。実測済み）。**表には数値を書かず §5 を参照する**（同じ値を2箇所に書いたのが原因） |
 | ~~9~~ | ~~設定の保存形式とスキーマ~~ | **✓ 解消**〔2026-08-17 / Step G〕→ [architecture/core.md](architecture/core.md) §6b。**JSON / `<data_dir>/settings.json`**。壊れたファイルは上書きしない・知らないキーは保持・環境変数の上書きは表示する。変更経路（Stage → Core の `request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md) |

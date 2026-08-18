@@ -28,6 +28,7 @@ That way "sending to the outside" shows up on screen as a Provider choice.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator, Mapping, Sequence
 from typing import Any, Final
 
@@ -67,6 +68,21 @@ PROBE_TIMEOUT_S: Final = 2.0
 #: Stream wait time. The SLO for first token is 0.28s, but the first model load can
 #: take tens of seconds. **Never wait forever**
 STREAM_TIMEOUT_S: Final = 120.0
+#: Putting the weights in memory. Reading tens of GB off a cold disk is minutes on the first
+#: run, and **this happens at startup where nobody is waiting on a reply**
+LOAD_TIMEOUT_S: Final = 600.0
+
+#: How long Ollama keeps the weights resident after the last request. **`-1` = for as long as
+#: Lumi runs**, which is what `UnloadPolicy.PINNED` below already claims.
+#:
+#: Ollama's own default is 5 minutes. **A desktop character idles far longer than that** — every
+#: gap over 5 minutes was silently paying a 3767 ms reload on the next reply (measured
+#: 2026-08-18), which is the "why is the first answer so slow" the user actually feels.
+#:
+#: **Released in `unload()`.** Lumi asked for the residency, so Lumi gives it back. An unclean
+#: exit leaves it resident until Ollama is restarted — accepted, because the alternative is
+#: making the user wait 4 seconds every time they come back from lunch.
+KEEP_ALIVE: Final = -1
 
 
 class OllamaProvider:
@@ -74,7 +90,7 @@ class OllamaProvider:
 
     kind = ProviderKind.LLM
 
-    __slots__ = ("_base", "_loaded", "_model", "_transport", "id")
+    __slots__ = ("_base", "_http", "_loaded", "_model", "_transport", "id")
 
     def __init__(
         self,
@@ -89,15 +105,38 @@ class OllamaProvider:
         self._loaded = False
         #: Hook for tests to substitute HTTP. **`None` in production**
         self._transport = transport
+        self._http: httpx.AsyncClient | None = None
 
-    def _client(self, timeout: float) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=timeout, transport=self._transport)
+    def _session(self) -> httpx.AsyncClient:
+        """**One client, reused.** Created lazily so that importing the module isn't already
+        preparing to talk to the network (docs/architecture/setup.md §1 Principle 1).
+
+        **Constructing an `AsyncClient` costs ~0.2 s** (SSL context + proxy environment), and
+        with one per request that lands inside `llm_first_token_ms` on **every** turn:
+        measured 569 ms → 411 ms just by reusing it (2026-08-18).
+
+        `aivisspeech.py` already says this in its own docstring — "a client per request pays
+        connection setup on every sentence, and that cost lands on `tts_first_audio_ms`".
+        **This module was doing exactly what that warning describes**, on the span with the
+        tighter budget.
+        """
+        if self._http is None or self._http.is_closed:
+            self._http = httpx.AsyncClient(timeout=STREAM_TIMEOUT_S, transport=self._transport)
+        return self._http
 
     # ── Lifecycle ────────────────────────────────────
 
     async def load(self) -> None:
-        """**Idempotent.** Only confirms connectivity and that the model exists (weights live in
-        Ollama).
+        """**Idempotent.** Confirms connectivity, that the model exists, **and puts the weights
+        in memory.**
+
+        Confirming existence is not loading. `/api/tags` answers in milliseconds while the
+        weights are still on disk, so a `load()` that stopped there was **handing the first
+        reply a 3767 ms bill** (measured 2026-08-18). "The weights live in Ollama, so it isn't
+        Lumi's problem" doesn't survive contact with the user: the wait is the same either way,
+        and **which process allocated the memory is invisible to them.**
+
+        → docs/interfaces/provider.md "`load()` は接続確認ではない"
         """
         if self._loaded:
             return
@@ -116,12 +155,22 @@ class OllamaProvider:
                 "model_missing", f"{self._model} が見つからない。`ollama pull {self._model}`"
             )
 
+        await self._preload()
         self._loaded = True
         log.info("llm.loaded", provider=self.id, version=version)
 
     async def unload(self) -> None:
-        """**Never touches the Ollama process** (ADR-023). Only releases Lumi's own state."""
+        """**Never touches the Ollama process** (ADR-023). Only releases Lumi's own state —
+        **including the residency Lumi itself asked for.**
+
+        Skipping the release would leave several GB pinned after Lumi exits, which is not
+        Lumi's memory to keep.
+        """
         self._loaded = False
+        await self._release()
+        if self._http is not None and not self._http.is_closed:
+            await self._http.aclose()
+        self._http = None
 
     def is_loaded(self) -> bool:
         return self._loaded
@@ -163,6 +212,10 @@ class OllamaProvider:
             "messages": [_message_payload(m) for m in messages],
             "stream": True,
             "options": {"temperature": options.temperature},
+            # **Sent on every request, not just the preload.** Ollama restarts the countdown
+            # from the last call, so omitting it here would silently fall back to the 5-minute
+            # default and evict the model between conversations
+            "keep_alive": KEEP_ALIVE,
         }
         if options.max_tokens is not None:
             payload["options"]["num_predict"] = options.max_tokens
@@ -176,10 +229,9 @@ class OllamaProvider:
             payload["tools"] = [_tool_payload(t) for t in tools]
 
         try:
-            async with (
-                self._client(STREAM_TIMEOUT_S) as client,
-                client.stream("POST", f"{self._base}/api/chat", json=payload) as response,
-            ):
+            async with self._session().stream(
+                "POST", f"{self._base}/api/chat", json=payload
+            ) as response:
                 if response.status_code >= 400:
                     body = (await response.aread()).decode("utf-8", "replace")
                     raise ProviderUnavailable("ollama_http_error", f"{response.status_code} {body}")
@@ -202,23 +254,62 @@ class OllamaProvider:
 
     # ── Internal ──────────────────────────────────────────────
 
+    async def _preload(self) -> None:
+        """Puts the weights in memory **now**, so the first reply doesn't.
+
+        `messages: []` is Ollama's own way to load a model without generating anything.
+
+        **A failure here is not a failure to load.** `/api/tags` already said the model
+        exists, so the worst case is that the first turn pays what it used to pay — slow, not
+        broken. **It still says so out loud** rather than looking like a warm start.
+        """
+        started = time.perf_counter()
+        try:
+            response = await self._session().post(
+                f"{self._base}/api/chat",
+                json={"model": self._model, "messages": [], "keep_alive": KEEP_ALIVE},
+                timeout=LOAD_TIMEOUT_S,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            log.warning("llm.preload_failed", provider=self.id, detail=str(error))
+            return
+        log.info(
+            "llm.preloaded", provider=self.id, ms=round((time.perf_counter() - started) * 1000)
+        )
+
+    async def _release(self) -> None:
+        """Gives the residency back (`keep_alive: 0`). **Best effort** — Lumi is shutting down,
+        and failing to reach a service that may already be gone is not news.
+        """
+        if self._http is None or self._http.is_closed:
+            return
+        try:
+            await self._http.post(
+                f"{self._base}/api/chat",
+                json={"model": self._model, "messages": [], "keep_alive": 0},
+                timeout=PROBE_TIMEOUT_S,
+            )
+        except httpx.HTTPError as error:
+            log.info("llm.release_failed", provider=self.id, detail=str(error))
+
     async def _version(self) -> str | None:
         """`None` if not running (**not raised as an exception** — used for polling)."""
         try:
-            async with self._client(PROBE_TIMEOUT_S) as client:
-                response = await client.get(f"{self._base}/api/version")
-                response.raise_for_status()
-                data = response.json()
+            response = await self._session().get(
+                f"{self._base}/api/version", timeout=PROBE_TIMEOUT_S
+            )
+            response.raise_for_status()
+            data = response.json()
         except (httpx.HTTPError, ValueError):
             return None
         return str(data.get("version", "")) if isinstance(data, dict) else None
 
     async def _models(self) -> list[str]:
         try:
-            async with self._client(PROBE_TIMEOUT_S) as client:
-                response = await client.get(f"{self._base}/api/tags")
-                response.raise_for_status()
-                data = response.json()
+            response = await self._session().get(f"{self._base}/api/tags", timeout=PROBE_TIMEOUT_S)
+            response.raise_for_status()
+            data = response.json()
         except (httpx.HTTPError, ValueError) as error:
             raise ProviderUnavailable("ollama_tags_failed", str(error)) from error
 

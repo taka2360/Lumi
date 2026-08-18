@@ -11,6 +11,7 @@ Design → docs/interfaces/provider.md / Ownership and lifetime → docs/archite
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Final
 
@@ -44,7 +45,15 @@ class AivisSpeechProvider:
     id = "aivisspeech"
     kind = ProviderKind.TTS
 
-    __slots__ = ("_client", "_default_speaker", "_device", "_engine", "_loaded", "_speaker_name")
+    __slots__ = (
+        "_client",
+        "_default_speaker",
+        "_device",
+        "_engine",
+        "_loaded",
+        "_preferred",
+        "_speaker_name",
+    )
 
     def __init__(
         self,
@@ -52,10 +61,15 @@ class AivisSpeechProvider:
         *,
         executable: Path | None = None,
         device: DeviceChoice | str = DeviceChoice.AUTO,
+        speaker: int | None = None,
     ) -> None:
         self._client = AivisSpeechClient(port)
         self._engine = EngineProcess(executable, port, device=device)
         self._device = resolve(device)
+        #: The Content Pack's choice, or `None` to defer to the engine's default.
+        #: **Passed in rather than read here** — the pack belongs to the runtime, and a
+        #: Provider that reads it would be deciding which character it is speaking as
+        self._preferred = speaker
         self._default_speaker: int | None = None
         self._speaker_name = ""
         self._loaded = False
@@ -72,13 +86,32 @@ class AivisSpeechProvider:
             raise ProviderUnavailable("engine_not_ready", f"エンジンの状態: {runtime}")
 
         try:
-            speaker = await self._client.default_speaker()
+            speaker = self._preferred
+            if speaker is None:
+                speaker = await self._client.default_speaker()
         except TtsError as error:
             raise ProviderUnavailable(error.reason, error.detail) from error
 
         if speaker is None:
             # Installed but can't speak = **broken** (different from not-set-up)
             raise ProviderUnavailable("no_speaker", "エンジンに音声モデルが登録されていません")
+
+        # **Deciding the speaker is not loading it.** The engine loads the voice model on its
+        # first `audio_query`, which put 3092 ms inside `tts_first_audio_ms` on the first
+        # sentence (2026-08-18) → docs/interfaces/provider.md "`load()` は接続確認ではない"
+        started = time.perf_counter()
+        try:
+            await self._client.initialize_speaker(speaker)
+        except TtsError as error:
+            # **Slow, not broken.** The engine is answering; the first sentence just pays what
+            # it used to. Never let that pass as a warm start
+            log.warning("tts.speaker_init_failed", speaker=speaker, detail=error.detail)
+        else:
+            log.info(
+                "tts.speaker_initialized",
+                speaker=speaker,
+                ms=round((time.perf_counter() - started) * 1000),
+            )
 
         self._default_speaker = speaker
         self._loaded = True
