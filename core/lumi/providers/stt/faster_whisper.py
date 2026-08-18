@@ -46,7 +46,25 @@ log = lumi_logging.get_logger(__name__)
 #: Compute type per device. DESIGN.md §7 places STT on the GPU when there is room.
 #: Measured 2026-08-16: **GPU 60 ms vs CPU 920 ms** for the same clip — 15x, for 0.4 GB
 #: (docs/measurements/phase1.md). The 0.22 s budget is unreachable on CPU.
+#:
+#: **`int8_float16` rather than `float16` for large-v3-turbo** 〔2026-08-17 実測 → ADR-027〕:
+#: identical CER (3.6%), slightly faster (p50 143 vs 150 ms), and **half the VRAM**
+#: (1.0 vs 1.9 GB). There is nothing to buy by keeping the weights in float16.
 COMPUTE_TYPE: Final = {DeviceChoice.CUDA: "int8_float16", DeviceChoice.CPU: "int8"}
+
+#: VRAM per model on CUDA, measured (docs/measurements/phase1.md). **Not derived from the
+#: file size** — CTranslate2 quantizes on load, so the two are not proportional.
+#:
+#: **The upper end of what was measured**, not the average. large-v3-turbo came in at
+#: 1024 and 1243 MiB across two runs (the spread is cuBLAS workspace, which depends on
+#: the clip); a planner that reserves the average discovers the difference as an
+#: allocation failure in the middle of a turn.
+VRAM_ESTIMATE_MB: Final = {"large-v3-turbo": 1280, "small": 420}
+
+#: Fallback for a model with no measurement. **Deliberately the larger figure**: a planner
+#: that under-reserves VRAM gets an allocation failure mid-turn, which is far worse than
+#: reserving too much.
+DEFAULT_VRAM_ESTIMATE_MB: Final = 1280
 
 #: Tuned after measurement [Provisional]. SLO is p50 0.22 s (docs/architecture/audio.md §7)
 DEFAULT_BEAM_SIZE: Final = 1
@@ -183,9 +201,13 @@ class FasterWhisperProvider:
                 if self._device is DeviceChoice.CPU
                 else DevicePref.GPU_PREFERRED
             ),
-            # Measured 2026-08-16: small / int8_float16 → 417 MiB
-            vram_estimate_mb=0 if self._device is DeviceChoice.CPU else 420,
-            load_time_estimate_ms=2000,
+            vram_estimate_mb=(
+                0
+                if self._device is DeviceChoice.CPU
+                else VRAM_ESTIMATE_MB.get(self._size, DEFAULT_VRAM_ESTIMATE_MB)
+            ),
+            # Measured 2026-08-17: large-v3-turbo 2.4 s including warmup, small 0.8 s
+            load_time_estimate_ms=3000,
             unload_policy=UnloadPolicy.PINNED,
         )
 

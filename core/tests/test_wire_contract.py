@@ -96,6 +96,7 @@ class TestCoreMatchesTheContract:
 
     def test_stage_methods(self, wire: dict[str, Any]) -> None:
         # The speech method moved to `agent/speech.py` (PlaybackScheduler) in Phase 1.
+        from lumi.agent.reactive import METHOD_USER_SAID
         from lumi.agent.speech import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED
 
         declared = {
@@ -103,6 +104,7 @@ class TestCoreMatchesTheContract:
             METHOD_PROMPT,
             METHOD_SPEECH_STARTED,
             METHOD_SPEECH_ENDED,
+            METHOD_USER_SAID,
             METHOD_EXPRESSION,
         }
         assert declared == set(wire["methods"]["stage"])

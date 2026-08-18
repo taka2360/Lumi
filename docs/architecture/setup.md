@@ -201,9 +201,18 @@ LLM が無い状態は「聞けるが喋らない Lumi」であり、**壊れて
 | 項目 | 値 |
 |---|---|
 | 対象 | faster-whisper の CTranslate2 変換済みモデル |
-| 配布元 | HuggingFace `Systran/faster-whisper-<size>` |
-| ライセンス | **MIT**（OpenAI Whisper の重みを CTranslate2 に変換したもの） |
-| 実体 | `core/lumi/setup/models.py` の `STT_MODELS` |
+| 配布元 | HuggingFace。**リポジトリはモデルごとに違う**（`Systran/...` / `dropbox-dash/...`）。実体は下記 |
+| ライセンス | **MIT**（OpenAI Whisper の重みを CTranslate2 に変換したもの。変換物も MIT で配布されている） |
+| 実体 | `core/lumi/setup/models.py` の `STT_MODELS`。既定は `large-v3-turbo`（[ADR-027](../decisions/ADR-027-stt-model-large-v3-turbo.md)） |
+
+**ファイル構成はモデルごとに違う。** `small` は `vocabulary.txt`、`large-v3-turbo` は
+`vocabulary.json` と `preprocessor_config.json` を持つ。`ModelArtifact` が**ファイル単位で**
+ピン留めしているのはこのためで、「どのモデルも同じ5ファイル」を仮定しない。
+
+**配布元の組織名は改名されうる。** `large-v3-turbo` は faster-whisper 内部の表
+（`mobiuslabsgmbh/...`）と現在の id（`dropbox-dash/...`）が食い違っている〔2026-08-17〕。
+**ピン留めするのは現在実在する方**であり、旧名が消えても commit sha と SHA-256 で
+**失敗するだけで、違うものが入ることはない**。
 
 **エンジンと形が違う。** 単一のアーカイブではなく**複数ファイルのディレクトリ**である。
 したがってピン留めは**ファイルごとに サイズ + SHA-256**、加えて**リビジョン**を固定する。

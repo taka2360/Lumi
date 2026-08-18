@@ -66,11 +66,19 @@ from lumi.providers.stt.base import AudioBuffer, STTProvider
 from lumi.providers.tts.base import TTSProvider, VoiceConfig
 from lumi.tools.base import ToolContext, ToolResult
 from lumi.tools.registry import ToolRegistry
+from lumi.transport.protocol import Role
 
 log = lumi_logging.get_logger(__name__)
 
 #: Language passed to STT. Fixed to Japanese in Phase 1 [Provisional]
 LANGUAGE: Final = "ja"
+
+#: What the user said (Core → Stage). Contract → docs/interfaces/renderer.md
+#:
+#: **Sent before the Activity is proposed**, so what Lumi heard is on screen even when the
+#: turn goes nowhere (proposal rejected, LLM down). Seeing the misheard text is most of the
+#: value: "why did it answer that" and "it didn't hear me at all" look identical otherwise.
+METHOD_USER_SAID: Final = "stage.user.said"
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,6 +174,17 @@ class ReactiveLoop:
                 task.add_done_callback(turns.discard)
                 task.add_done_callback(_report_turn)
 
+    async def _show_user_said(self, text: str) -> None:
+        """Put the user's utterance in a bubble. **Never costs a turn.**
+
+        The Stage is expression only, so a failure to draw must not become a failure to
+        answer — the reply is the thing that matters, the caption is not.
+        """
+        try:
+            await self._notifier.notify(Role.STAGE, METHOD_USER_SAID, {"text": text})
+        except Exception:
+            log.warning("reactive.user_said_failed", exc_info=True)
+
     async def on_speech_started(self) -> None:
         """**Barge-in.** The sound has already stopped (VAD thread). Stop the Activity."""
         result = await self._arbiter.interrupt("user_speech")
@@ -227,6 +246,7 @@ class ReactiveLoop:
         them as 0 would drag the percentiles toward a speed the voice path never reaches.
         """
         timer = timer or TurnTimer(new_correlation_id())
+        await self._show_user_said(text)
         # Phase 1 has no memory retrieval. **Recorded explicitly so the spans stay contiguous**
         timer.record("retrieve_ms", 0)
         proposal = ActivityProposal(

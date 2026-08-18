@@ -10,6 +10,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
+from lumi.audio import dump as dump_module
 from lumi.audio.dump import ENV_FLAG, MAX_SEGMENTS, SttDump, open_dump
 from lumi.audio.wav import decode_wav, encode_wav
 
@@ -29,16 +30,29 @@ def test_encode_clips_rather_than_normalising() -> None:
     assert list(np.frombuffer(frames, dtype="<i2")) == [32767, -32767]
 
 
-def test_dump_is_off_unless_the_flag_is_set(
+def test_a_source_checkout_dumps_and_the_distributable_does_not(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """**Recording that runs without the user knowing is not allowed to be quiet.**"""
+    """**The person running from source is the person debugging it.**
+
+    A shipped Lumi is a different situation: nothing gets recorded there unasked.
+    """
     monkeypatch.delenv(ENV_FLAG, raising=False)
+    monkeypatch.setattr(dump_module, "is_frozen", lambda: False)
+    assert open_dump(tmp_path) is not None
+    monkeypatch.setattr(dump_module, "is_frozen", lambda: True)
     assert open_dump(tmp_path) is None
-    monkeypatch.setenv(ENV_FLAG, "0")
-    assert open_dump(tmp_path) is None
+
+
+def test_the_env_flag_overrides_in_both_directions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(dump_module, "is_frozen", lambda: True)
     monkeypatch.setenv(ENV_FLAG, "1")
     assert open_dump(tmp_path) is not None
+    monkeypatch.setattr(dump_module, "is_frozen", lambda: False)
+    monkeypatch.setenv(ENV_FLAG, "0")
+    assert open_dump(tmp_path) is None
 
 
 def test_a_segment_lands_next_to_what_stt_made_of_it(tmp_path: Path) -> None:

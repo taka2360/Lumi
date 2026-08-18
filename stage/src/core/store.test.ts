@@ -7,7 +7,14 @@
 import { describe, expect, it } from "vitest";
 
 import { visemeAt } from "../character/lipsync";
-import { toSetupPrompt, toSetupSnapshot, toSpeech, toTtsSnapshot } from "./store";
+import {
+  toSetupPrompt,
+  toSetupSnapshot,
+  toSpeech,
+  toTtsSnapshot,
+  toUserSaid,
+  useStageStore,
+} from "./store";
 
 describe("boot phase", () => {
   it("holds the phase Core broadcast, unchanged", () => {
@@ -113,6 +120,35 @@ describe("speech", () => {
   it("turns a missing text into an empty string (never `undefined` on screen)", () => {
     expect(toSpeech({ spans, total_ms: 100 }, 0).text).toBe("");
     expect(toSpeech({ text: 42 }, 0).text).toBe("");
+  });
+});
+
+describe("what the user said", () => {
+  it("reads the text", () => {
+    expect(toUserSaid({ text: "おはよう" }, 7)).toEqual({ text: "おはよう", startedAtMs: 7 });
+  });
+
+  it("a drifted payload becomes a blank bubble rather than none", () => {
+    // Core only sends this once STT produced something, so an empty string means drift.
+    // **A blank bubble says that far more loudly than no bubble at all.**
+    expect(toUserSaid({}, 0).text).toBe("");
+    expect(toUserSaid({ text: 42 }, 0).text).toBe("");
+  });
+
+  it("Lumi starting to speak clears it", () => {
+    // **The turn changing hands is a Core event, not a Stage-side timer.**
+    const store = useStageStore.getState();
+    store.setUserSaid({ text: "おはよう", startedAtMs: 0 });
+    store.setSpeech(toSpeech({ text: "おはよう！" }, 1));
+    expect(useStageStore.getState().userSaid).toBeNull();
+  });
+
+  it("speech ending does not bring it back and does not clear it either", () => {
+    const store = useStageStore.getState();
+    store.setSpeech(null);
+    store.setUserSaid({ text: "きこえてる？", startedAtMs: 0 });
+    useStageStore.getState().setSpeech(null);
+    expect(useStageStore.getState().userSaid).toEqual({ text: "きこえてる？", startedAtMs: 0 });
   });
 });
 

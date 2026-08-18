@@ -258,10 +258,34 @@ body {
   animation: bubble-in 120ms ease-out;
 }
 
+/* What Core heard the user say. **Deliberately different from Lumi's**: it sits at the
+   bottom, reads lighter, and is right-aligned, so a misrecognition is never mistaken for
+   something Lumi said. */
+.bubble--user {
+  top: auto;
+  bottom: 8px;
+  left: auto;
+  right: 8px;
+  transform: none;
+  max-width: calc(100% - 16px);
+  background: rgba(226, 233, 245, 0.94);
+  border-color: rgba(20, 24, 34, 0.14);
+  color: #1b2130;
+  font-size: 12px;
+  animation-name: bubble-in-user;
+}
+
 @keyframes bubble-in {
   from {
     opacity: 0;
     transform: translateX(-50%) translateY(4px);
+  }
+}
+
+@keyframes bubble-in-user {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
   }
 }
 

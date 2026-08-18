@@ -9,8 +9,22 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.9 |
+| Revision | rev.10 |
 | 実装フェーズ | **Phase 0 の完了条件を達成。Phase 1（MVP: Talking Desktop Character）着手。** セットアップ周りの検証手順 15〜18 が残る → [roadmap.md](roadmap.md) |
+
+> **rev.10 の変更点**（音声入力の精度を実測で追い込んだ。**3つとも「測って初めて分かった」もの**）
+> 1. **サンプルレート変換を自前の polyphase FIR にした** → [ADR-026](decisions/ADR-026-polyphase-resampler.md)。
+>    3-tap 移動平均は **8 kHz 上の成分を −6 dB しか落とさず音声帯域へ折り返していた**。
+>    日本語の摩擦音（し / す / つ）の鏡像が子音識別帯域に重なっており、**STT 精度が悪かった主因**。
+>    加えて VAD スレッドが 32 ms ごとに純関数を呼んでいたため、毎秒 31 回フィルタが再スタートしていた
+> 2. **VAD のプリロールを 80 → 400 ms にした** → [architecture/audio.md](architecture/audio.md) §5。
+>    **Silero の確率は無声子音では上がらない**ので、「ちょっと」「さっき」「机」のような語は
+>    閾値を超える時点で語頭が区間の外にあった。**落ちた語は全部無声子音で始まっていた**
+> 3. **STT の既定モデルを `small` → `large-v3-turbo` にした** → [ADR-027](decisions/ADR-027-stt-model-large-v3-turbo.md)。
+>    1 と 2 で語頭欠落は消えたが、**残った誤りが語彙の取り違えでパラメータでは消えなかった**。
+>    CER 7.2% → 3.6%。§7 の VRAM 実測を 0.4 → 1.0-1.2 GB に更新（**合計 6.9 → 7.5 / 12 GB**）
+> 4. **ユーザーの発話も吹き出しに出すことにした**（`stage.user.said`）→ [interfaces/renderer.md](interfaces/renderer.md)。
+>    **「聞き違えた」と「聞こえていなかった」は外から見ると区別がつかない**
 
 > **rev.9 の変更点**（Phase 1 の実測が設計を1つ覆した）
 > 1. **TTS に GPU を使えるようにした** → [ADR-025](decisions/ADR-025-tts-on-gpu.md)。
@@ -341,13 +355,15 @@ Core内部:
 | モデル | 配置 | VRAM（見積） | **Phase 1 実測** |
 |---|---|---|---|
 | LLM (Qwen3.5 9B Q4_K_M) | GPU / pinned | ~6.5 GB | **5.5 GB** |
-| STT (faster-whisper int8) | GPU（空きがあれば）/ CPU | ~1.0 GB | **0.4 GB** |
+| STT (faster-whisper int8) | GPU（空きがあれば）/ CPU | ~1.0 GB | **1.0-1.2 GB**〔ADR-027〕 |
 | VAD (Silero ONNX) | **CPU固定** | 0 | 0 |
 | Embedding (ONNX) | **CPU固定** | 0 | — |
 | **TTS (AivisSpeech/VOICEVOX)** | **別プロセス。GPU があれば使う**〔ADR-025〕 | ~1.0 GB | **1.0 GB** |
 | Vision (Phase 5) | オンデマンド、使用後アンロード | ~3-4 GB | — |
 
-**合計 6.9 / 12 GB**〔2026-08-16 実測 → [measurements/phase1.md](measurements/phase1.md)〕。
+**合計 7.5 / 12 GB**〔2026-08-17 実測 → [measurements/phase1.md](measurements/phase1.md)〕。
+STT を `small`（0.4 GB）から `large-v3-turbo` に変えたぶん増えた（[ADR-027](decisions/ADR-027-stt-model-large-v3-turbo.md)）。
+**見積 ~1.0 GB の枠に対して実測が 0.4 GB だっただけで、枠を広げたわけではない。**
 
 **当初は「TTS を CPU に置いて LLM に VRAM を全振りする」を TTS 選定の主因としていたが、
 Phase 1 の実測で撤回した**（[ADR-025](decisions/ADR-025-tts-on-gpu.md)）。
@@ -610,6 +626,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [024](decisions/ADR-024-activity-priority.md) | Activity の priority を表から決め、割り込み可否を単一の閾値で判定する |
 | [025](decisions/ADR-025-tts-on-gpu.md) | **TTS に GPU を使えるようにする**（ADR-008 の「VRAM を消費しない」を実測により撤回） |
 | [026](decisions/ADR-026-polyphase-resampler.md) | サンプルレート変換を自前の polyphase FIR にし、VAD 経路では状態を持たせる（STT 精度の主因） |
+| [027](decisions/ADR-027-stt-model-large-v3-turbo.md) | STT の既定モデルを `small` から `large-v3-turbo` にする（語彙混同。CER 半減） |
 
 ---
 

@@ -1,7 +1,16 @@
-"""Writes out what STT actually received. **Disabled by default.**
+"""Writes out what STT actually received. **On in dev, off in the distributable.**
 
-Only when `LUMI_DEBUG_STT_DUMP=1` does each confirmed speech segment get written to
-`<data_dir>/debug/stt/`, as a WAV plus a sidecar `.txt` holding what STT made of it.
+Each confirmed speech segment is written to `<data_dir>/debug/stt/` as a **16 kHz mono
+WAV** (playable in anything) plus a sidecar `.txt` holding what STT made of it.
+
+| Where | Default | Override |
+|---|---|---|
+| Running from source (`uv run lumi-core`, `pnpm dev`) | **on** | `LUMI_DEBUG_STT_DUMP=0` |
+| The frozen distributable | **off** | `LUMI_DEBUG_STT_DUMP=1` |
+
+**Whoever runs Core from source is the person developing it**, and the one diagnostic
+that matters most for voice input should not need a flag they have to remember. A shipped
+Lumi is a different situation: nothing records there unless someone asks for it.
 
 ## Why this exists
 
@@ -14,17 +23,18 @@ every metric Core emits and obvious within one second of listening.
 
 ## Not product behavior
 
-Same standing as `lumi.dev_probe`. **Off unless the flag is set**, and it says so at
-startup when it is on — a recording that runs without the user knowing is not something
-that gets to be quiet.
+Same standing as `lumi.dev_probe`. **It says so at startup whenever it is on**, and names
+the directory — a recording that runs without the user knowing is not something that gets
+to be quiet.
 
-**Never enabled from a config file or by a provider.** An env var means the person who
-turned it on was at a terminal.
+**Never enabled from a config file or by a provider.** Source-vs-frozen and an env var are
+both things only the person at the terminal controls.
 """
 
 from __future__ import annotations
 
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Final
@@ -42,8 +52,21 @@ ENV_FLAG: Final = "LUMI_DEBUG_STT_DUMP"
 MAX_SEGMENTS: Final = 200
 
 
+def is_frozen() -> bool:
+    """Whether this is the PyInstaller distributable rather than a source checkout.
+
+    `_MEIPASS` is the extraction directory, and **only exists in the frozen build**
+    (same signal `paths.content_dir` uses → ADR-021).
+    """
+    return getattr(sys, "_MEIPASS", None) is not None
+
+
 def is_enabled() -> bool:
-    return os.environ.get(ENV_FLAG, "") == "1"
+    """**Default on from source, off when frozen.** `LUMI_DEBUG_STT_DUMP` overrides either way."""
+    override = os.environ.get(ENV_FLAG, "")
+    if override:
+        return override != "0"
+    return not is_frozen()
 
 
 class SttDump:

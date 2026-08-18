@@ -110,9 +110,65 @@ FASTER_WHISPER_SMALL: Final = ModelArtifact(
     license_url="https://huggingface.co/Systran/faster-whisper-small",
 )
 
+#: faster-whisper large-v3-turbo 〔2026-08-17 採用 → ADR-027〕.
+#:
+#: `small` の語彙混同が実用に耐えなかった。同一の発話区間で **CER 7.2% → 3.6%**、
+#: p95 100 → 149 ms（`stt_ms` 予算 220 ms の内側）、VRAM 0.4 → 1.0 GB
+#: (docs/measurements/phase1.md)。
+#:
+#: **repo 名は `dropbox-dash/...` を使う。** faster-whisper 内部の `_MODELS` は
+#: `mobiuslabsgmbh/...` を指しているが、**その組織は改名済み**で HuggingFace の API は
+#: どちらの名前でも同じ id (`dropbox-dash/...`) と同じ commit を返す〔2026-08-17 確認〕。
+#: 旧名は別名にすぎないので、**実在する方**を固定する。
+#:
+#: SHA-256 は取得した1回から計算した〔2026-08-17〕。**保証するのは「pin した時点の配布物と
+#: 同一であること」だけ**（docs/architecture/setup.md §3b）。
+FASTER_WHISPER_LARGE_V3_TURBO: Final = ModelArtifact(
+    name="large-v3-turbo",
+    repo="dropbox-dash/faster-whisper-large-v3-turbo",
+    revision="0a363e9161cbc7ed1431c9597a8ceaf0c4f78fcf",
+    files=(
+        ModelFile(
+            name="config.json",
+            size=2263,
+            sha256="b0253ea6c0d3bea6b1e19e91a02acfd3b53f4467362efcb5a3e6b16c9b3a9b7e",
+        ),
+        ModelFile(
+            name="model.bin",
+            size=1_617_884_929,
+            sha256="e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
+        ),
+        # : `small` に無いファイル。**特徴抽出の設定**（mel フィルタ数）がここにあり、
+        # : 欠けると読み込みが失敗する
+        ModelFile(
+            name="preprocessor_config.json",
+            size=340,
+            sha256="7ccc62c6f2765af1f3b46c00c9b5894426835a05021c8b9c01eecb6dfb542711",
+        ),
+        ModelFile(
+            name="tokenizer.json",
+            size=2_710_337,
+            sha256="297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd",
+        ),
+        # **`.txt` ではなく `.json`。** `small` と配布の形が違う
+        ModelFile(
+            name="vocabulary.json",
+            size=1_068_114,
+            sha256="c69260f2ab26d659b7c398f9a2b2b48ed0df16c3b47d7326782fd9cba71690c1",
+        ),
+    ),
+    license_name="MIT",
+    license_url="https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo",
+)
+
 #: Fetchable models, by name. **Not configurable** — a user-supplied URL would turn this into
 #: "a feature where Lumi downloads arbitrary files"
-STT_MODELS: Final[dict[str, ModelArtifact]] = {FASTER_WHISPER_SMALL.name: FASTER_WHISPER_SMALL}
+#:
+#: `small` stays listed so `LUMI_STT_MODEL=small` remains a working way back (ADR-027).
+STT_MODELS: Final[dict[str, ModelArtifact]] = {
+    FASTER_WHISPER_LARGE_V3_TURBO.name: FASTER_WHISPER_LARGE_V3_TURBO,
+    FASTER_WHISPER_SMALL.name: FASTER_WHISPER_SMALL,
+}
 
 
 def model_directory(artifact: ModelArtifact, models_dir: Path) -> Path:

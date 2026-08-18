@@ -389,7 +389,9 @@ class TestSpeechModel:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert fetched == ["small"]
+        # **Not hardcoded.** Which model ships is a decision that moves (ADR-027); that this
+        # path fetches *the one the rest of Core will look for* is what must not move
+        assert fetched == [coordinator_module.STT_ARTIFACT.name]
         assert coordinator.state.stt.state is SttSetupState.INSTALLED
         assert states_of(server, "stt")[-1] == "installed"
 

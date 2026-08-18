@@ -64,10 +64,10 @@ def test_the_url_pins_the_revision_not_a_branch() -> None:
 
     Pinning the commit is what makes "the same as when we pinned it" mean anything.
     """
-    model = STT_MODELS["small"]
-    url = model.url_for(model.files[0])
-    assert f"/resolve/{model.revision}/" in url
-    assert "/main/" not in url
+    for model in STT_MODELS.values():
+        url = model.url_for(model.files[0])
+        assert f"/resolve/{model.revision}/" in url, model.name
+        assert "/main/" not in url, model.name
 
 
 def test_every_pinned_file_carries_a_size_and_a_hash() -> None:
@@ -243,6 +243,20 @@ class TestModelLocation:
             if path.name != "paths.py" and 'models_dir() / "whisper"' in path.read_text("utf-8")
         ]
         assert offenders == [], f"paths.stt_models_dir() を使うこと: {offenders}"
+
+    def test_the_fetched_model_is_the_one_the_provider_will_look_for(self) -> None:
+        """**The two ends of the same decision.**
+
+        `SetupCoordinator` fetches `STT_ARTIFACT`; `AgentRuntime` constructs the provider with
+        `DEFAULT_STT_MODEL`. Drift between them fails the way a missing model fails — the setup
+        panel offers to fetch something that is already on disk, and nothing errors
+        (the same shape of bug as the directory drift observed 2026-08-17).
+        """
+        from lumi.agent.runtime import DEFAULT_STT_MODEL
+        from lumi.setup.coordinator import STT_ARTIFACT
+
+        assert DEFAULT_STT_MODEL == STT_ARTIFACT.name
+        assert DEFAULT_STT_MODEL in STT_MODELS
 
     def test_the_fetcher_and_the_provider_are_given_the_same_root(self) -> None:
         """The fetcher (`SetupCoordinator`) and the reader (`FasterWhisperProvider`) have

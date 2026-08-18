@@ -42,7 +42,7 @@ from lumi.setup.install import (
     install_stt_model,
     is_model_installed,
 )
-from lumi.setup.models import FASTER_WHISPER_SMALL, ModelArtifact
+from lumi.setup.models import FASTER_WHISPER_LARGE_V3_TURBO, ModelArtifact
 from lumi.setup.state import (
     EngineRuntime,
     LlmSetup,
@@ -83,7 +83,7 @@ COMPONENT_STT = "stt"
 
 #: The speech-recognition model Lumi fetches. **Pinned** (docs/architecture/setup.md §3b);
 #: a different `LUMI_STT_MODEL` is not something this offers to fetch
-STT_ARTIFACT: ModelArtifact = FASTER_WHISPER_SMALL
+STT_ARTIFACT: ModelArtifact = FASTER_WHISPER_LARGE_V3_TURBO
 
 
 class SetupCoordinator:

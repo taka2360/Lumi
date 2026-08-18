@@ -18,7 +18,7 @@ from typing import Any
 import numpy as np
 import pytest
 
-from lumi.agent.reactive import LoopLimits, ReactiveLoop
+from lumi.agent.reactive import METHOD_USER_SAID, LoopLimits, ReactiveLoop
 from lumi.agent.session import Session
 from lumi.agent.speech import METHOD_SPEECH_STARTED
 from lumi.audio.devices import AudioPlan, Device, StreamPlan
@@ -305,6 +305,43 @@ async def test_speech_ended_goes_through_stt() -> None:
     await rig.loop.on_speech_ended(np.zeros(1600, dtype=np.float32))
 
     assert rig.session.turns[0].text == "おはよう"
+
+
+async def test_what_was_heard_reaches_the_stage_before_the_activity() -> None:
+    """**Ordering matters.** Core sends it before proposing, so a turn that goes nowhere
+    still leaves the heard text on screen — the only thing separating "misheard you" from
+    "never heard you" (docs/interfaces/renderer.md).
+    """
+    rig = Rig(FakeLlm([text("聞こえたよ。")]), stt_text="おはよう")
+    await rig.start()
+
+    await rig.loop.on_speech_ended(np.zeros(1600, dtype=np.float32))
+
+    methods = [method for method, _ in rig.notifier.sent]
+    assert METHOD_USER_SAID in methods
+    said = next(payload for method, payload in rig.notifier.sent if method == METHOD_USER_SAID)
+    assert said["text"] == "おはよう"
+    assert methods.index(METHOD_USER_SAID) < methods.index(METHOD_SPEECH_STARTED)
+
+
+async def test_a_stage_that_cannot_draw_never_costs_the_reply() -> None:
+    """The caption is not the reply. **A failed notify must not fail the turn.**"""
+    rig = Rig(FakeLlm([text("聞こえたよ。")]), stt_text="おはよう")
+    await rig.start()
+
+    original = rig.notifier.notify
+
+    async def refuse_the_caption(
+        role: Role, method: str, payload: dict[str, Any] | None = None
+    ) -> None:
+        if method == METHOD_USER_SAID:
+            raise RuntimeError("stage is gone")
+        await original(role, method, payload)
+
+    rig.notifier.notify = refuse_the_caption  # type: ignore[method-assign]
+    await rig.loop.handle_text("やあ")
+
+    assert rig.notifier.spoken() == ["聞こえたよ。"]
 
 
 async def test_an_empty_transcription_creates_no_activity() -> None:

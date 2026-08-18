@@ -59,8 +59,11 @@ class VadParams:
     exit_threshold: float = 0.1
     min_speech_duration_ms: int = 250
     min_silence_duration_ms: int = 400
-    #: Preroll to avoid cutting off word onsets
-    speech_pad_ms: int = 80
+    #: Preroll to avoid cutting off word onsets. **400 ms, not 80** 〔2026-08-17 実測〕 —
+    #: Silero's probability only rises at the *vowel*, so a word opening on a voiceless
+    #: consonant (ちょっと / さっき / 机) has already lost it by the time the threshold is
+    #: crossed. 80 ms measured CER 10.6%, 400 ms measured 7.0% (docs/measurements/phase1.md)
+    speech_pad_ms: int = 400
     #: **Revert the mute** if no segment is confirmed within this time
     false_trigger_ms: int = 300
     #: **EchoGuard L1.** Multiplier applied to the threshold during playback. **Not suppression**

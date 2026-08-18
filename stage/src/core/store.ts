@@ -86,6 +86,20 @@ export interface SetupSnapshot {
   stt: SttSetupSnapshot;
 }
 
+/**
+ * What Core heard the user say. **Kept until Lumi answers**, not on a timer.
+ *
+ * Core sends this before the Activity is even proposed, so a turn that goes nowhere
+ * (proposal rejected, LLM down) still leaves the heard text on screen. **"It answered
+ * something unrelated" and "it never heard me" look identical without this**, and the
+ * first thing anyone needs to know is which one happened.
+ */
+export interface UserSaid {
+  text: string;
+  /** The time it was received (`performance.now()`). Restarts the entry animation. */
+  startedAtMs: number;
+}
+
 /** That speech is in progress, and its mouth timeline. **Time advances on the Stage's own clock.** */
 export interface Speech {
   text: string;
@@ -116,11 +130,13 @@ interface StageState {
   setup: SetupSnapshot;
   prompt: SetupPrompt | null;
   speech: Speech | null;
+  userSaid: UserSaid | null;
   expression: ExpressionState | null;
   setConnected(connected: boolean): void;
   setSetup(snapshot: SetupSnapshot): void;
   setPrompt(prompt: SetupPrompt | null): void;
   setSpeech(speech: Speech | null): void;
+  setUserSaid(said: UserSaid | null): void;
   setExpression(expression: ExpressionState | null): void;
 }
 
@@ -162,11 +178,15 @@ export const useStageStore = create<StageState>((set) => ({
   setup: UNKNOWN_SETUP,
   prompt: null,
   speech: null,
+  userSaid: null,
   expression: null,
   setConnected: (connected) => set({ connected }),
   setSetup: (setup) => set({ setup }),
   setPrompt: (prompt) => set({ prompt }),
-  setSpeech: (speech) => set({ speech }),
+  // **Lumi starting to speak clears what the user said.** That is the turn changing hands,
+  // and it comes from a Core event rather than a Stage-side timer — the Stage decides nothing
+  setSpeech: (speech) => set(speech ? { speech, userSaid: null } : { speech }),
+  setUserSaid: (userSaid) => set({ userSaid }),
   setExpression: (expression) => set({ expression }),
 }));
 
@@ -292,6 +312,20 @@ export function toSpeech(payload: Record<string, unknown>, startedAtMs: number):
   return {
     text: typeof payload.text === "string" ? payload.text : "",
     timeline: parseTimeline(payload) ?? NO_TIMELINE,
+    startedAtMs,
+  };
+}
+
+/**
+ * Reads a `stage.user.said` payload.
+ *
+ * **Empty text is still an event.** Core only sends this once STT produced something, so
+ * an empty string here means the payload drifted — and a blank bubble says that far more
+ * loudly than no bubble at all.
+ */
+export function toUserSaid(payload: Record<string, unknown>, startedAtMs: number): UserSaid {
+  return {
+    text: typeof payload.text === "string" ? payload.text : "",
     startedAtMs,
   };
 }

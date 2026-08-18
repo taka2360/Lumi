@@ -393,7 +393,7 @@ Core = MIT の境界を、レビューではなくビルドで守るため。
 | 8 | Live2D Cubism Core の配布形態ごとの条件 | Live2D 導入時 | Phase 9 |
 | ~~9~~ | ~~Silero VAD（ONNX モデルファイル本体）の LICENSE 本文~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**MIT**（Silero Team）。faster-whisper が同梱 |
 | ~~10~~ | ~~faster-whisper / CTranslate2 / onnxruntime のライセンス~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**すべて MIT / BSD / Apache-2.0** |
-| 10b | **取得する STT モデル**（`Systran/faster-whisper-*`）のライセンス | 取得先をピン留めするとき | Phase 1（STT セットアップ実装時） |
+| ~~10b~~ | ~~**取得する STT モデル**のライセンス~~ | — | **✓ 解消**〔2026-08-17〕。ピン留めした2つとも **MIT**。`Systran/faster-whisper-small` / `dropbox-dash/faster-whisper-large-v3-turbo`（[ADR-027](decisions/ADR-027-stt-model-large-v3-turbo.md)）。**配布物には含めず、同意に基づいて取得する**ので再配布義務は生じない |
 | 11 | 案内する LLM モデルの利用条件（Qwen3 系 / Gemma3 系） | **配布はしないが、既定として案内する責任がある** | Phase 1（モデル選定時。未確定事項 #5 と同時） |
 
 ---

@@ -11,6 +11,7 @@
       "stage.setup.prompt",
       "stage.speech.started",
       "stage.speech.ended",
+      "stage.user.said",
       "stage.character.expression"
     ],
     "os": [

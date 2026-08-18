@@ -44,6 +44,7 @@ import {
   METHOD_SETUP_STATE,
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
+  METHOD_USER_SAID,
 } from "./useCoreConnection";
 
 interface Wire {
@@ -84,6 +85,7 @@ describe("wire contract", () => {
         METHOD_SETUP_PROMPT,
         METHOD_SPEECH_STARTED,
         METHOD_SPEECH_ENDED,
+        METHOD_USER_SAID,
         METHOD_EXPRESSION,
       ]),
     ).toEqual(new Set(wire.methods.stage));
@@ -97,6 +99,7 @@ describe("wire contract", () => {
       METHOD_SETUP_PROMPT,
       METHOD_SPEECH_STARTED,
       METHOD_SPEECH_ENDED,
+      METHOD_USER_SAID,
       METHOD_EXPRESSION,
     ];
     for (const method of wire.methods.os) {

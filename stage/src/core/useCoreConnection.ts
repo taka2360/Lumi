@@ -9,12 +9,20 @@
  * | `stage.setup.prompt` | command | Asked whether to fetch. **The answer is returned as the result** |
  * | `stage.speech.started` | notify | Speech started. Comes with the mouth timeline |
  * | `stage.speech.ended` | notify | Speech ended |
+ * | `stage.user.said` | notify | What Core heard the user say |
  */
 
 import { useEffect } from "react";
 
 import { connectToCore } from "./connection";
-import { toExpression, toSetupPrompt, toSetupSnapshot, toSpeech, useStageStore } from "./store";
+import {
+  toExpression,
+  toSetupPrompt,
+  toSetupSnapshot,
+  toSpeech,
+  toUserSaid,
+  useStageStore,
+} from "./store";
 
 /**
  * The `stage.*` method names Core sends. **`docs/contracts/wire.json` is authoritative** (→ ADR-022).
@@ -28,6 +36,7 @@ export const METHOD_SETUP_STATE = "stage.setup.state";
 export const METHOD_SETUP_PROMPT = "stage.setup.prompt";
 export const METHOD_SPEECH_STARTED = "stage.speech.started";
 export const METHOD_SPEECH_ENDED = "stage.speech.ended";
+export const METHOD_USER_SAID = "stage.user.said";
 export const METHOD_EXPRESSION = "stage.character.expression";
 
 /** The answer to whether to fetch. Core only compares against `CHOICE_INSTALL` (anything else means "don't"). */
@@ -59,6 +68,9 @@ export function useCoreConnection(): void {
         // An unreadable timeline leaves the mouth still; **the text is shown regardless**
         [METHOD_SPEECH_STARTED]: (payload) => store.setSpeech(toSpeech(payload, performance.now())),
         [METHOD_SPEECH_ENDED]: () => store.setSpeech(null),
+        // **Not cleared on a timer.** `setSpeech` drops it when Lumi answers; until then
+        // what was heard stays readable, which is the whole point when it was misheard
+        [METHOD_USER_SAID]: (payload) => store.setUserSaid(toUserSaid(payload, performance.now())),
         // **An unreadable payload leaves the face as it is.** Resetting to neutral on
         // drift would look like a working expression and hide the drift entirely
         [METHOD_EXPRESSION]: (payload) => {

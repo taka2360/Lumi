@@ -61,7 +61,7 @@ MODEL_ENV: Final = "LUMI_LLM_MODEL"
 DEFAULT_MODEL: Final = "qwen3.5:9b"
 #: STT model size [Provisional]. To be finalized after measurement
 STT_MODEL_ENV: Final = "LUMI_STT_MODEL"
-DEFAULT_STT_MODEL: Final = "small"
+DEFAULT_STT_MODEL: Final = "large-v3-turbo"
 
 
 class ConversationRuntime:
