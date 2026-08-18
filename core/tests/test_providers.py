@@ -470,3 +470,57 @@ async def test_detect_returns_none_when_ollama_is_absent(monkeypatch: pytest.Mon
 
 def test_find_on_path_uses_the_given_environment() -> None:
     assert find_on_path("definitely-not-a-real-command", {"PATH": ""}) is None
+
+
+# ── AivisSpeech ──────────────────────────────────────────
+
+
+async def test_aivisspeech_synthesize_sets_volume_scale() -> None:
+    # Verify volumeScale from audio_query is overwritten during synthesis
+    import io
+    import wave
+
+    sent_query: dict[str, object] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/audio_query":
+            return httpx.Response(
+                200,
+                json={
+                    "accent_phrases": [
+                        {
+                            "moras": [
+                                {
+                                    "text": "コ",
+                                    "consonant": "k",
+                                    "vowel": "o",
+                                    "vowel_length": 0.1,
+                                }
+                            ]
+                        }
+                    ],
+                    "volumeScale": 1.0,
+                },
+            )
+        if request.url.path == "/synthesis":
+            nonlocal sent_query
+            sent_query = json.loads(request.content)
+            buf = io.BytesIO()
+            with wave.open(buf, "wb") as sink:
+                sink.setnchannels(1)
+                sink.setsampwidth(2)
+                sink.setframerate(24000)
+                sink.writeframes(b"\x00\x00" * 100)
+            return httpx.Response(200, content=buf.getvalue())
+        return httpx.Response(404)
+
+    from lumi.providers.tts.aivisspeech import AivisSpeechClient
+
+    client = AivisSpeechClient(port=10101)
+    client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    try:
+        audio = await client.synthesize("こんにちは", speaker=0, volume_scale=0.4)
+        assert sent_query.get("volumeScale") == 0.4
+        assert audio.wav
+    finally:
+        await client.aclose()

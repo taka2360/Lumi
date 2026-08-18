@@ -111,7 +111,9 @@ class AivisSpeechProvider:
         if cancel_token.is_set:
             raise ProviderFailed("cancelled", cancel_token.reason or "")
         try:
-            return await self._client.synthesize(text, voice.speaker)
+            return await self._client.synthesize(
+                text, voice.speaker, volume_scale=voice.volume_scale
+            )
         except TtsError as error:
             raise ProviderFailed(error.reason, error.detail) from error
 

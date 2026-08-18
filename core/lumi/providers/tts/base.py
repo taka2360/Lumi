@@ -43,6 +43,7 @@ class VoiceConfig:
 
     speaker: int
     name: str = ""
+    volume_scale: float = 0.4
 
 
 class TTSProvider(Provider, Protocol):

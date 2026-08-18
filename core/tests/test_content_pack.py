@@ -43,11 +43,22 @@ def test_a_minimal_pack_loads(tmp_path: Path) -> None:
     assert loaded.persona == "あなたは Lumi。"
     assert loaded.voice.speaker is None
     assert loaded.voice.credit.credit_text == "音声: AivisSpeech"
+    assert loaded.voice.volume == 0.4
 
 
 def test_a_speaker_id_is_read(tmp_path: Path) -> None:
     root = pack(tmp_path, voice=VOICE.replace("[voice]", "[voice]\nspeaker = 42"))
     assert load_character(root).voice.speaker == 42
+
+
+def test_a_volume_is_read(tmp_path: Path) -> None:
+    root = pack(tmp_path, voice=VOICE.replace("[voice]", "[voice]\nvolume = 0.8"))
+    assert load_character(root).voice.volume == 0.8
+
+
+def test_an_integer_volume_is_read_as_float(tmp_path: Path) -> None:
+    root = pack(tmp_path, voice=VOICE.replace("[voice]", "[voice]\nvolume = 1"))
+    assert load_character(root).voice.volume == 1.0
 
 
 # ── fail-closed ─────────────────────────────────────────────
@@ -115,6 +126,24 @@ def test_a_missing_persona_is_reported(tmp_path: Path) -> None:
         load_character(pack(tmp_path, character='[character]\nname = "Lumi"\n'))
 
 
+def test_an_invalid_volume_type_is_rejected(tmp_path: Path) -> None:
+    root = pack(tmp_path, voice=VOICE.replace("[voice]", '[voice]\nvolume = "loud"'))
+    with pytest.raises(ContentPackError, match="volume"):
+        load_character(root)
+
+
+def test_a_negative_volume_is_rejected(tmp_path: Path) -> None:
+    root = pack(tmp_path, voice=VOICE.replace("[voice]", "[voice]\nvolume = -0.1"))
+    with pytest.raises(ContentPackError, match="volume"):
+        load_character(root)
+
+
+def test_a_too_large_volume_is_rejected(tmp_path: Path) -> None:
+    root = pack(tmp_path, voice=VOICE.replace("[voice]", "[voice]\nvolume = 2.1"))
+    with pytest.raises(ContentPackError, match="volume"):
+        load_character(root)
+
+
 # ── The bundled default pack ────────────────────────────────
 
 
@@ -127,3 +156,4 @@ def test_the_bundled_default_pack_loads() -> None:
     loaded = load_character(paths.default_character_dir())
     assert loaded.persona
     assert loaded.voice.credit.credit_text
+    assert loaded.voice.volume == 0.4

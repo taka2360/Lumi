@@ -52,6 +52,10 @@ CODE_SUFFIXES: Final = frozenset(
 )
 
 
+#: Default volume scale
+DEFAULT_VOLUME: Final = 0.4
+
+
 class ContentPackError(RuntimeError):
     """Couldn't be loaded. **Never silently substitutes a default.**"""
 
@@ -72,6 +76,7 @@ class VoiceSettings:
     #: `None` = uses the engine's default speaker (stays default in Phase 1)
     speaker: int | None
     credit: Credit
+    volume: float = DEFAULT_VOLUME
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,14 +101,16 @@ def load_character(root: Path) -> CharacterPack:
     section = _table(character, "character", root)
     name = _text(section, "name", root / "character.toml")
     persona = _text(section, "persona", root / "character.toml")
+    voice_section = _table(voice, "voice", root)
 
     pack = CharacterPack(
         root=root,
         name=name,
         persona=persona,
         voice=VoiceSettings(
-            speaker=_optional_int(_table(voice, "voice", root).get("speaker")),
+            speaker=_optional_int(voice_section.get("speaker")),
             credit=_credit(_table(voice, "credit", root), root / "voice.toml"),
+            volume=_parse_volume(voice_section.get("volume"), root / "voice.toml"),
         ),
     )
     log.info("content.loaded", name=pack.name, root=str(root))
@@ -153,3 +160,17 @@ def _credit(section: dict[str, Any], path: Path) -> Credit:
         license_file=str(section.get("license_file", "")),
         license_url=str(section.get("license_url", "")),
     )
+
+
+def _parse_volume(value: Any, path: Path) -> float:
+    # Fall back to default when omitted
+    if value is None:
+        return DEFAULT_VOLUME
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        val = float(value)
+        if 0.0 <= val <= 2.0:
+            return val
+        raise ContentPackError(
+            f"{path.name}: volume は 0.0 から 2.0 の範囲で指定してください（指定値: {value}）"
+        )
+    raise ContentPackError(f"{path.name}: volume には数値を指定してください（指定値: {value}）")

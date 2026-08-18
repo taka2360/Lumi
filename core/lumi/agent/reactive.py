@@ -437,12 +437,22 @@ class ReactiveLoop:
         environment** (AivisSpeech fetches models at runtime).
         """
         speaker = self._pack.voice.speaker
+        volume = self._pack.voice.volume
         if speaker is not None:
-            return VoiceConfig(speaker=speaker, name=self._pack.voice.credit.name)
+            return VoiceConfig(
+                speaker=speaker,
+                name=self._pack.voice.credit.name,
+                volume_scale=volume,
+            )
         default = getattr(tts, "default_voice", None)
         if default is None:
             raise ProviderError("no_voice", "話者を決められない")
-        return cast("VoiceConfig", default())
+        voice = cast("VoiceConfig", default())
+        return VoiceConfig(
+            speaker=voice.speaker,
+            name=voice.name,
+            volume_scale=volume,
+        )
 
     def _require_playback(self) -> SpeakerPlayback:
         """If there's no output, **fail explicitly.** Never silently converse in silence."""
