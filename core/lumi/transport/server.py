@@ -23,6 +23,7 @@ Nothing beyond that (e.g. verifying process signatures) is done here.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
@@ -38,6 +39,7 @@ from lumi.transport.protocol import (
     Command,
     Notify,
     ProtocolError,
+    Request,
     Result,
     Role,
     Welcome,
@@ -55,6 +57,19 @@ CLOSE_PROTOCOL_ERROR = 4400
 
 #: The default timeout for a command. **Never waits silently forever** for a response.
 DEFAULT_COMMAND_TIMEOUT_S = 10.0
+
+
+#: A handler for a Stage → Core request. Returns the payload to answer with, or raises
+#: `RequestRefused` to answer with an error (ADR-028).
+InboundHandler = Callable[[dict[str, Any]], Awaitable[dict[str, Any]]]
+
+
+class RequestRefused(Exception):
+    """The handler refused. **The reason travels back to the client**, never just "failed"."""
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 class NotConnectedError(RuntimeError):
@@ -122,7 +137,13 @@ class WsServer:
         self._on_connect = on_connect
         self._on_disconnect = on_disconnect
         self._connections: dict[Role, _Connection] = {}
+        # : **The allowlist for the Stage → Core direction** (ADR-028). A method not
+        # : registered here is unreachable — the allowlist is the registry itself, so
+        # : adding a route is always a deliberate act rather than a missing check.
+        self._inbound: dict[str, InboundHandler] = {}
         self._server: Server | None = None
+        #: In-flight inbound requests. **Kept referenced or the GC collects them**
+        self._requests: set[asyncio.Task[None]] = set()
         self._port: int | None = None
 
     @property
@@ -158,6 +179,60 @@ class WsServer:
     # ASYNC109: Leaving `asyncio.timeout` to the caller means **it waits forever**
     # whenever it's forgotten. To "never silently degrade," the API carries a
     # timeout with a default.
+    def on_request(self, method: str, handler: InboundHandler) -> None:
+        """Registers a method the client may initiate. **The allowlist is this registry**
+        (ADR-028) — anything unregistered is answered `unknown_method`.
+
+        Registering is deliberately explicit: **a route that nobody wrote down does not
+        exist**, which is the fail-closed shape the boundary needs.
+        """
+        if method in self._inbound:
+            raise ValueError(f"{method} は既に登録されている")
+        self._inbound[method] = handler
+
+    async def _serve_request(self, connection: _Connection, request: Request) -> None:
+        """Answers one inbound request. **Always answers** — a client left waiting forever
+        is indistinguishable from a hung Core.
+        """
+        handler = self._inbound.get(request.method)
+        if handler is None or not method_matches_role(request.method, connection.role):
+            # **fail-closed.** An unregistered method, or one outside this role's
+            # namespace, is refused without ever reaching any handler
+            log.warning(
+                "transport.request.refused",
+                role=connection.role.value,
+                method=request.method,
+                registered=handler is not None,
+            )
+            await self._answer(connection, request, ok=False, error="unknown_method")
+            return
+
+        try:
+            payload = await handler(request.payload)
+        except RequestRefused as refused:
+            log.info("transport.request.refused", method=request.method, reason=refused.reason)
+            await self._answer(connection, request, ok=False, error=refused.reason)
+        except Exception:
+            # **Never leaks the exception text to the client.** It is logged in full here
+            log.exception("transport.request.failed", method=request.method)
+            await self._answer(connection, request, ok=False, error="internal_error")
+        else:
+            await self._answer(connection, request, ok=True, payload=payload)
+
+    async def _answer(
+        self,
+        connection: _Connection,
+        request: Request,
+        *,
+        ok: bool,
+        payload: dict[str, Any] | None = None,
+        error: str | None = None,
+    ) -> None:
+        frame = Result(corr_id=request.id, ok=ok, payload=payload or {}, error=error)
+        with contextlib.suppress(Exception):
+            # The client may have gone away mid-request. **Not worth failing over**
+            await connection.ws.send(frame.encode())
+
     async def invoke(
         self,
         role: Role,
@@ -276,7 +351,7 @@ class WsServer:
                 await connection.ws.close(code=CLOSE_PROTOCOL_ERROR, reason="text only")
                 return
             try:
-                result = parse_client_message(raw)
+                message = parse_client_message(raw)
             except ProtocolError as exc:
                 # The client broke the contract. **Closed instead of being swallowed.**
                 log.warning(
@@ -285,11 +360,22 @@ class WsServer:
                 await connection.ws.close(code=CLOSE_PROTOCOL_ERROR, reason="protocol error")
                 return
 
-            if not connection.resolve(result):
+            if isinstance(message, Request):
+                # **Handled in its own task.** A slow handler must not stop this
+                # connection from reading the next frame (a `result` Core is waiting on
+                # could be queued behind it)
+                task = asyncio.create_task(
+                    self._serve_request(connection, message), name="ws-request"
+                )
+                self._requests.add(task)
+                task.add_done_callback(self._requests.discard)
+                continue
+
+            if not connection.resolve(message):
                 log.warning(
                     "transport.result.unknown_corr_id",
                     role=connection.role.value,
-                    corr_id=result.corr_id,
+                    corr_id=message.corr_id,
                 )
 
 

@@ -27,7 +27,16 @@ export interface CoreWelcome {
   kind: "welcome";
 }
 
-export type CoreMessage = CoreCommand | CoreNotify | CoreWelcome;
+/** Core's answer to a `request` the Stage sent (ADR-028). */
+export interface CoreResult {
+  kind: "result";
+  corrId: string;
+  ok: boolean;
+  payload: Record<string, unknown>;
+  error: string | null;
+}
+
+export type CoreMessage = CoreCommand | CoreNotify | CoreWelcome | CoreResult;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -63,6 +72,20 @@ export function parseCoreMessage(raw: string): CoreMessage | null {
       }
       return { kind: "command", id, method, payload: asRecord(message.payload) };
     }
+    case "result": {
+      // The answer to something **the Stage asked for** (ADR-028).
+      const { corr_id: corrId, ok } = message;
+      if (typeof corrId !== "string" || typeof ok !== "boolean") {
+        return null;
+      }
+      return {
+        kind: "result",
+        corrId,
+        ok,
+        payload: asRecord(message.payload),
+        error: typeof message.error === "string" ? message.error : null,
+      };
+    }
     case "notify": {
       const { method } = message;
       if (typeof method !== "string" || !method.startsWith("stage.")) {
@@ -92,4 +115,18 @@ export function resultMessage(
     payload,
     ...(ok ? {} : { error: error ?? "unknown_error" }),
   });
+}
+
+/**
+ * A request from the Stage to Core (ADR-028).
+ *
+ * **Deliberately not called a command.** Core → Stage is a command (Core decided); this
+ * direction is a request (Core decides). The names keep that asymmetry readable.
+ */
+export function requestMessage(
+  id: string,
+  method: string,
+  payload: Record<string, unknown>,
+): string {
+  return JSON.stringify({ v: PROTOCOL_VERSION, kind: "request", id, method, payload });
 }

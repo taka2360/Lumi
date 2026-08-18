@@ -15,6 +15,7 @@ from lumi.transport.server import (
     CLOSE_PROTOCOL_ERROR,
     CLOSE_UNAUTHORIZED,
     NotConnectedError,
+    RequestRefused,
     WsServer,
     tokens_from_env,
 )
@@ -212,3 +213,152 @@ class TestNotify:
     async def test_still_refuses_namespace_violations(self, server: WsServer) -> None:
         with pytest.raises(ValueError, match="namespace"):
             await server.notify(Role.STAGE, "os.input.click", {})
+
+
+class TestInboundRequests:
+    """Stage → Core. **ADR-028.**
+
+    Every test here is about the same thing: **the Stage may ask, and Core decides.**
+    """
+
+    async def send_request(
+        self, client: ClientConnection, method: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        await client.send(
+            json.dumps(
+                {
+                    "v": PROTOCOL_VERSION,
+                    "kind": "request",
+                    "id": "r1",
+                    "method": method,
+                    "payload": payload or {},
+                }
+            )
+        )
+        answer: dict[str, object] = json.loads(await client.recv())
+        return answer
+
+    async def test_a_registered_method_is_served(self, server: WsServer) -> None:
+        async def handler(payload: dict[str, object]) -> dict[str, object]:
+            return {"echo": payload.get("x")}
+
+        server.on_request("stage.settings.update", handler)
+        client = await open_client(server, role="stage")
+        await client.recv()
+
+        answer = await self.send_request(client, "stage.settings.update", {"x": 42})
+
+        assert answer["ok"] is True
+        assert answer["payload"] == {"echo": 42}
+        assert answer["corr_id"] == "r1"
+
+    async def test_an_unregistered_method_is_refused(self, server: WsServer) -> None:
+        """★ **The allowlist is the registry.** A route nobody wrote down does not exist."""
+        client = await open_client(server, role="stage")
+        await client.recv()
+
+        answer = await self.send_request(client, "stage.anything.at.all")
+
+        assert answer["ok"] is False
+        assert answer["error"] == "unknown_method"
+
+    async def test_the_connection_survives_a_refusal(self, server: WsServer) -> None:
+        """**Refusing is not the same as being attacked.** A typo must not drop the Stage,
+        or one bad request would take the character off screen.
+        """
+        client = await open_client(server, role="stage")
+        await client.recv()
+
+        await self.send_request(client, "stage.nope")
+        server.on_request("stage.settings.update", lambda _payload: _ok())
+        answer = await self.send_request(client, "stage.settings.update")
+
+        assert answer["ok"] is True
+
+    async def test_the_other_namespace_is_refused_even_if_registered(
+        self, server: WsServer
+    ) -> None:
+        """★ **`stage.*` must never request OS privileges** (docs/architecture/core.md §3).
+
+        Registration alone is not enough: the namespace has to match the role that asked.
+        """
+        server.on_request("os.window.set_position", lambda _payload: _ok())
+        client = await open_client(server, role="stage")
+        await client.recv()
+
+        answer = await self.send_request(client, "os.window.set_position")
+
+        assert answer["ok"] is False
+        assert answer["error"] == "unknown_method"
+
+    async def test_a_refusing_handler_sends_its_reason_back(self, server: WsServer) -> None:
+        async def handler(_payload: dict[str, object]) -> dict[str, object]:
+            raise RequestRefused("SettingsUnreadable")
+
+        server.on_request("stage.settings.update", handler)
+        client = await open_client(server, role="stage")
+        await client.recv()
+
+        answer = await self.send_request(client, "stage.settings.update")
+
+        assert answer["ok"] is False
+        assert answer["error"] == "SettingsUnreadable"
+
+    async def test_a_crashing_handler_never_leaks_its_message(self, server: WsServer) -> None:
+        """**The client is not told what broke.** The full exception is logged instead."""
+
+        async def handler(_payload: dict[str, object]) -> dict[str, object]:
+            raise RuntimeError("C:/Users/secret/path が開けない")
+
+        server.on_request("stage.settings.update", handler)
+        client = await open_client(server, role="stage")
+        await client.recv()
+
+        answer = await self.send_request(client, "stage.settings.update")
+
+        assert answer["ok"] is False
+        assert answer["error"] == "internal_error"
+
+    async def test_a_slow_handler_does_not_block_the_next_frame(self, server: WsServer) -> None:
+        """**Each request is served in its own task.** Otherwise a slow handler would queue
+        behind it the `result` that Core itself is waiting on.
+        """
+        started = asyncio.Event()
+
+        async def slow(_payload: dict[str, object]) -> dict[str, object]:
+            started.set()
+            await asyncio.sleep(5.0)
+            return {}
+
+        server.on_request("stage.settings.update", slow)
+        client = await open_client(server, role="stage")
+        await client.recv()
+
+        await client.send(
+            json.dumps(
+                {
+                    "v": PROTOCOL_VERSION,
+                    "kind": "request",
+                    "id": "slow",
+                    "method": "stage.settings.update",
+                    "payload": {},
+                }
+            )
+        )
+        async with asyncio.timeout(2.0):
+            await started.wait()
+            # The connection is still reading: a second request gets its own answer
+            answer = await self.send_request(client, "stage.other")
+        assert answer["error"] == "unknown_method"
+
+    def test_registering_the_same_method_twice_is_refused(self, server: WsServer) -> None:
+        """**Two owners for one route** is how a request quietly stops reaching the handler
+        someone expected.
+        """
+        server.on_request("stage.settings.update", lambda _payload: _ok())
+        with pytest.raises(ValueError, match=r"stage\.settings\.update"):
+            server.on_request("stage.settings.update", lambda _payload: _ok())
+
+
+async def _ok() -> dict[str, object]:
+    return {}

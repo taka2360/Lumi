@@ -144,6 +144,39 @@ class Result:
     payload: dict[str, Any]
     error: str | None = None
 
+    def encode(self) -> str:
+        """Core → client, answering a `Request` (ADR-028).
+
+        The same frame the client sends back for a `Command`. **Deliberately one shape** —
+        a caller waiting for an answer should not have to care which direction started it.
+        """
+        return json.dumps(
+            {
+                "v": PROTOCOL_VERSION,
+                "kind": "result",
+                "corr_id": self.corr_id,
+                "ok": self.ok,
+                "payload": self.payload,
+                "error": self.error,
+            },
+            ensure_ascii=False,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class Request:
+    """A request **from** a client. **The Stage asks; Core decides** (ADR-028).
+
+    Deliberately not called `Command`. Core → Stage is a `Command` (Core decided, the
+    Stage obeys); Stage → Core is a `Request` (the Stage asked, Core decides).
+    **Sharing one name would make the direction unreadable in code and in logs**, and the
+    asymmetry is the whole point of the boundary.
+    """
+
+    id: str
+    method: str
+    payload: dict[str, Any]
+
 
 @dataclass(frozen=True, slots=True)
 class Welcome:
@@ -188,14 +221,21 @@ def parse_hello(raw: str) -> Hello:
     return Hello(role=role, token=token)
 
 
-def parse_client_message(raw: str) -> Result:
+def parse_client_message(raw: str) -> Result | Request:
     """Parses a message arriving from the client after authentication.
 
-    Phase 0 only accepts `result`. **A `command` from the client is never accepted**
-    (guaranteeing that Core is the origin of decisions by the mere absence of that path).
+    Two kinds are accepted: `result` (an answer to Core's `Command`) and **`request`**
+    (the client asking something → ADR-028).
+
+    **A `command` from the client is still never accepted.** Core decides; a client may
+    ask. That asymmetry is what keeps Invariant 1 intact once the direction exists —
+    it is no longer guaranteed by the absence of the path, so it has to be guaranteed
+    by what Core will and will not accept.
     """
     message = _require_object(raw)
     kind = message.get("kind")
+    if kind == "request":
+        return _parse_request(message)
     if kind != "result":
         raise ProtocolError(f"クライアントから受理しない kind: {kind!r}")
 
@@ -218,3 +258,23 @@ def parse_client_message(raw: str) -> Result:
         raise ProtocolError("失敗した result に error が無い")
 
     return Result(corr_id=corr_id, ok=ok, payload=payload, error=error)
+
+
+def _parse_request(message: dict[str, Any]) -> Request:
+    """Reads a `request` frame. **Never checks whether the method is allowed** — that is
+    the server's registry (ADR-028), and keeping it there means the allowlist lives in
+    exactly one place.
+    """
+    request_id = message.get("id")
+    if not isinstance(request_id, str) or not request_id:
+        raise ProtocolError("id が無い")
+
+    method = message.get("method")
+    if not isinstance(method, str) or not method:
+        raise ProtocolError("method が無い")
+
+    payload = message.get("payload", {})
+    if not isinstance(payload, dict):
+        raise ProtocolError("payload がオブジェクトではない")
+
+    return Request(id=request_id, method=method, payload=payload)

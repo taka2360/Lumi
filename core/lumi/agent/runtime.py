@@ -51,13 +51,17 @@ from lumi.storage.sqlite import Database
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
 from lumi.transport.protocol import Role
-from lumi.transport.server import WsServer
+from lumi.transport.server import RequestRefused, WsServer
 
 log = lumi_logging.get_logger(__name__)
 
 #: Core → Stage. The effective settings and **where each value came from**
 #: (contract → docs/contracts/wire.json)
 METHOD_SETTINGS: Final = "stage.settings.state"
+
+#: Stage → Core. **The one method registered as inbound in Phase 1** (ADR-028).
+#: The Stage asks; Core validates, decides, writes, and broadcasts the result
+METHOD_SETTINGS_UPDATE: Final = "stage.settings.update"
 
 #: What is configurable, and each key's environment override and default, live in
 #: `lumi.settings.KEYS`. **Declared once** — a second copy here drifted the moment the
@@ -142,6 +146,38 @@ class ConversationRuntime:
             self._arbiter, server, lambda: self._loop.last_latency if self._loop else None
         )
         bus.subscribe(self._inspector.on_event)
+
+        # **The only inbound route in Phase 1** (ADR-028). Registering is what makes it
+        # reachable at all — anything unregistered is answered `unknown_method`
+        server.on_request(METHOD_SETTINGS_UPDATE, self._update_settings)
+
+    async def _update_settings(self, payload: dict[str, object]) -> dict[str, object]:
+        """The Stage asked to change a setting. **Core validates and decides** (ADR-028).
+
+        **Takes effect on the next start, and says so.** Swapping a loaded model out from
+        under a turn is Phase 5's `ModelResourceManager` problem; pretending it applied
+        now would make the displayed value a lie.
+        """
+        changes = payload.get("changes")
+        if not isinstance(changes, dict):
+            raise RequestRefused("invalid_payload")
+        readable = all(
+            isinstance(key, str) and isinstance(value, str) for key, value in changes.items()
+        )
+        if not readable:
+            raise RequestRefused("invalid_payload")
+
+        try:
+            self._settings = await asyncio.to_thread(
+                settings_module.save, paths.settings_file(), self._settings, changes
+            )
+        except settings_module.SettingsError as error:
+            # **The reason travels back**, never just "failed"
+            raise RequestRefused(type(error).__name__) from error
+
+        payload_out = self._settings.to_payload()
+        await self._server.notify(Role.STAGE, METHOD_SETTINGS, payload_out)
+        return {"applied_at_next_start": True}
 
     @property
     def arbiter(self) -> AttentionArbiter:

@@ -22,7 +22,7 @@ from typing import Any
 import pytest
 
 from lumi.agent.inspector import METHOD_INSPECTOR
-from lumi.agent.runtime import METHOD_SETTINGS
+from lumi.agent.runtime import METHOD_SETTINGS, METHOD_SETTINGS_UPDATE
 from lumi.character import METHOD_EXPRESSION, Emotion
 from lumi.providers.tts.viseme import Viseme
 from lumi.settings import Source
@@ -116,6 +116,21 @@ class TestCoreMatchesTheContract:
 
     def test_setup_prompt_choices(self, wire: dict[str, Any]) -> None:
         assert {"install": CHOICE_INSTALL, "skip": CHOICE_SKIP} == wire["setup_prompt_choices"]
+
+    def test_inbound_methods(self, wire: dict[str, Any]) -> None:
+        """★ **What the Stage may initiate** (ADR-028).
+
+        The real allowlist is `WsServer.on_request`'s registry; this pins the contract
+        alongside it. **A method appearing here that Core never registers is unreachable**,
+        and one Core registers that is not here is an undocumented route — both are drift
+        worth failing on.
+        """
+        assert [METHOD_SETTINGS_UPDATE] == wire["inbound_methods"]
+
+    def test_inbound_methods_are_stage_namespace(self, wire: dict[str, Any]) -> None:
+        """**`stage.*` must never request OS privileges** (docs/architecture/core.md §3)."""
+        for method in wire["inbound_methods"]:
+            assert method.startswith("stage."), f"{method} は stage.* ではない"
 
     def test_setup_components(self, wire: dict[str, Any]) -> None:
         # **What is being asked about has to be on the contract too.** The panel picks its

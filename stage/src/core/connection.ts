@@ -12,7 +12,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { isTauri } from "../platform/tauri";
-import { type CoreMessage, helloMessage, parseCoreMessage, resultMessage } from "./protocol";
+import {
+  type CoreMessage,
+  type CoreResult,
+  helloMessage,
+  parseCoreMessage,
+  requestMessage,
+  resultMessage,
+} from "./protocol";
 
 /** The corresponding constant on the Shell side is `shell/src-tauri/src/core_endpoint.rs`. **`wire.json` is authoritative** (ADR-022). */
 export const CMD_CORE_ENDPOINT = "shell_core_endpoint";
@@ -37,7 +44,16 @@ export interface CoreConnectionHandlers {
 
 export interface CoreConnection {
   close(): void;
+  /**
+   * Asks Core to do something (ADR-028). **Rejects rather than resolving on refusal** —
+   * a caller that forgets to check `ok` would otherwise report success for a change Core
+   * declined to make.
+   */
+  request(method: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
+
+/** How long to wait for Core's answer. **Never waits forever** — the UI has to move on. */
+const REQUEST_TIMEOUT_MS = 10_000;
 
 /**
  * Starts the connection and keeps reconnecting if it drops.
@@ -47,13 +63,26 @@ export interface CoreConnection {
  */
 export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection {
   if (!isTauri()) {
-    return { close: () => {} };
+    return {
+      close: () => {},
+      request: () => Promise.reject(new Error("not_connected")),
+    };
   }
 
   let closed = false;
   let socket: WebSocket | null = null;
   let retryTimer: number | null = null;
   let unlistenEndpoint: (() => void) | null = null;
+  let nextRequestId = 0;
+  const waiting = new Map<string, (result: CoreResult) => void>();
+
+  /** Fails everything in flight. **A dropped connection must not leave a promise hanging.** */
+  const abandonPending = (reason: string) => {
+    for (const [id, resolve] of waiting) {
+      resolve({ kind: "result", corrId: id, ok: false, payload: {}, error: reason });
+    }
+    waiting.clear();
+  };
 
   const setConnected = (value: boolean) => handlers.onConnectedChange?.(value);
 
@@ -64,6 +93,18 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
     }
     if (message.kind === "notify") {
       handlers.notifications[message.method]?.(message.payload);
+      return;
+    }
+    if (message.kind === "result") {
+      // The answer to something the Stage asked for (ADR-028).
+      const pending = waiting.get(message.corrId);
+      if (!pending) {
+        // Nobody is waiting. **Normal after a reconnect** (the caller was already
+        // rejected with `disconnected`), so this is not worth reporting
+        return;
+      }
+      waiting.delete(message.corrId);
+      pending(message);
       return;
     }
 
@@ -118,6 +159,7 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
       if (socket === ws) {
         socket = null;
       }
+      abandonPending("disconnected");
       setConnected(false);
       scheduleRetry();
     });
@@ -148,8 +190,35 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
         window.clearTimeout(retryTimer);
       }
       unlistenEndpoint?.();
+      abandonPending("closed");
       socket?.close();
       socket = null;
+    },
+
+    request(method, payload = {}) {
+      const live = socket;
+      if (!live || live.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new Error("not_connected"));
+      }
+      const id = `s${nextRequestId++}`;
+      return new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          waiting.delete(id);
+          reject(new Error("timeout"));
+        }, REQUEST_TIMEOUT_MS);
+
+        waiting.set(id, (result) => {
+          window.clearTimeout(timer);
+          // **Refusal rejects.** Resolving would let a caller that forgets to check `ok`
+          // report success for a change Core declined to make
+          if (result.ok) {
+            resolve(result.payload);
+          } else {
+            reject(new Error(result.error ?? "refused"));
+          }
+        });
+        live.send(requestMessage(id, method, payload));
+      });
     },
   };
 }

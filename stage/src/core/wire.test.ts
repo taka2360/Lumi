@@ -43,6 +43,7 @@ import {
   METHOD_EXPRESSION,
   METHOD_INSPECTOR,
   METHOD_SETTINGS,
+  METHOD_SETTINGS_UPDATE,
   METHOD_SETUP_PROMPT,
   METHOD_SETUP_STATE,
   METHOD_SPEECH_ENDED,
@@ -67,6 +68,7 @@ interface Wire {
     viseme: string[];
   };
   setup_components: string[];
+  inbound_methods: string[];
 }
 
 /** The repo's `docs/contracts/wire.json`. **Never read at runtime** (docs aren't bundled in the distributable). */
@@ -113,6 +115,13 @@ describe("wire contract", () => {
     for (const method of wire.methods.os) {
       expect(stageConstants).not.toContain(method);
     }
+  });
+
+  it("what the Stage may ask Core to do", () => {
+    // ★ **The Stage → Core direction** (ADR-028). The real allowlist is Core's registry;
+    // this pins the Stage's constant against the same contract, so a rename on one side
+    // fails here instead of turning into a silent `unknown_method` at runtime.
+    expect([METHOD_SETTINGS_UPDATE]).toEqual(wire.inbound_methods);
   });
 
   it("what a fetch question can be about", () => {

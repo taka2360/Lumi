@@ -281,16 +281,38 @@ TOML で書くにはキー数個のために依存を1つ増やすことにな�
 丸ごと書いて rename する。**途中まで書けたファイルは次回起動で「壊れている」と判定され、
 上の1つ目の規則により以後ずっと保存できなくなる。**
 
-### 変更経路はまだ無い〔Phase 1 時点〕
+### 変更経路 — Stage → Core の `request`〔[ADR-028](../decisions/ADR-028-stage-initiated-request.md)〕
 
-現在の WS は **クライアントから `hello` と `result` しか受理しない**
-（`transport/protocol.py`）。設定の変更には **Stage → Core の要求方向**が要る。
+設定を変えるには **Stage → Core の要求方向**が要る。Phase 0 の WS はクライアントから
+`hello` と `result` しか受理しておらず、**設定 UI が原理的に作れなかった。**
 
-この方向自体は設計に存在する — [security-boundaries.md](../contracts/security-boundaries.md) B2 は
-「`stage.*` namespace のみ受理」と書いており、Widget Broker の経路
-（`Widget → Broker → Core`）も同じ方向を前提にしている。**実装が未着手なだけ。**
+```
+Stage → Core:  kind = "request"   （Stage は問う）
+Core → Stage:  kind = "result"    （Core が決めて答える）
+```
 
-**それまで設定 UI は読み取り専用にする。** 押しても何も起きない操作子を置く方が悪い。
+**`command` は依然としてクライアントから受理しない。** Core が決め、クライアントは問う
+—— この非対称が、経路が存在するようになった後も Invariant 1 を保つものである。
+
+| 受理の条件 | 実装 |
+|---|---|
+| `stage.*` namespace であること | `method_matches_role` |
+| **Core が明示的に登録した method** | `WsServer.on_request` のレジストリ。**未登録は `unknown_method`** |
+| payload が正しいこと | **各ハンドラの責任**（transport は検証しない） |
+
+**登録レジストリが allowlist そのものである。** 書かれていない経路は存在しない。
+
+Phase 1 で登録されているのは **`stage.settings.update` の1つだけ**。
+一覧は [../contracts/wire.json](../contracts/wire.json) の `inbound_methods` が持ち、
+**3言語のテストで固定している。**
+
+**この経路に Tool 実行を載せるときは、必ず新しい ADR を書く**（Invariant 2）。
+
+### 変更は次回起動から効く
+
+**動作中のモデルを差し替えない。** ターンの途中でモデルが入れ替わるのは
+Phase 5 の `ModelResourceManager` の仕事であり、**今それを装うと表示値が嘘になる。**
+UI はそう明記する。
 
 ---
 

@@ -14,7 +14,7 @@
 
 import { useEffect } from "react";
 
-import { connectToCore } from "./connection";
+import { type CoreConnection, connectToCore } from "./connection";
 import {
   toExpression,
   toInspectorSnapshot,
@@ -42,6 +42,8 @@ export const METHOD_USER_SAID = "stage.user.said";
 export const METHOD_EXPRESSION = "stage.character.expression";
 export const METHOD_INSPECTOR = "stage.inspector.state";
 export const METHOD_SETTINGS = "stage.settings.state";
+/** Stage → Core (ADR-028). **The only inbound method in Phase 1.** */
+export const METHOD_SETTINGS_UPDATE = "stage.settings.update";
 
 /** The answer to whether to fetch. Core only compares against `CHOICE_INSTALL` (anything else means "don't"). */
 export const CHOICE_INSTALL = "install";
@@ -51,6 +53,23 @@ type Answer = typeof CHOICE_INSTALL | typeof CHOICE_SKIP;
 
 /** The "function that returns an answer," populated only while being asked. Called by a UI button. */
 let pendingAnswer: ((answer: Answer) => void) | null = null;
+
+/**
+ * The live connection's `request`, for UI that asks Core to change something (ADR-028).
+ *
+ * Module-level for the same reason `pendingAnswer` is: **a button deep in the tree needs
+ * it, and threading a callback through every component to reach one button is worse than
+ * this.** `null` while disconnected, and callers must handle that.
+ */
+let requestToCore: CoreConnection["request"] | null = null;
+
+/** Asks Core to change settings. **Rejects if Core refused** (never silently no-ops). */
+export async function updateSettings(changes: Record<string, string>): Promise<void> {
+  if (!requestToCore) {
+    throw new Error("not_connected");
+  }
+  await requestToCore(METHOD_SETTINGS_UPDATE, { changes });
+}
 
 /** Returns the user's choice to Core. **Core waits until answered** (there is a timeout). */
 export function answerSetupPrompt(answer: Answer): void {
@@ -96,8 +115,11 @@ export function useCoreConnection(): void {
       },
     });
 
+    requestToCore = connection.request;
+
     return () => {
       pendingAnswer = null;
+      requestToCore = null;
       connection.close();
     };
   }, []);

@@ -21,6 +21,10 @@
       "os.window.set_position"
     ]
   },
+  "$comment_inbound": "Stage → Core の要求（ADR-028）。**ここに無い method は届かない**（WsServer.on_request の登録が allowlist そのもの）",
+  "inbound_methods": [
+    "stage.settings.update"
+  ],
   "setup_components": [
     "tts",
     "stt"

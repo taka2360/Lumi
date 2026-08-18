@@ -11,6 +11,7 @@ connected at all*. Both regressions below were invisible to every other test:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any, cast
 
@@ -34,19 +35,28 @@ from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
 from lumi.setup.state import EngineRuntime
 from lumi.transport.protocol import Role
-from lumi.transport.server import WsServer
+from lumi.transport.server import RequestRefused, WsServer
 
 
 class FakeServer:
-    """Holds only the one method the Coordinator uses for broadcasting."""
+    """Holds only what the Coordinator and the runtime touch."""
 
     def __init__(self) -> None:
         self.boots: list[str] = []
+        #: Inbound routes the runtime registered. **The allowlist is this registry** (ADR-028)
+        self.inbound: dict[str, Any] = {}
+        #: Every settings payload broadcast. **Changing one has to reach everybody**
+        self.settings: list[dict[str, Any]] = []
+
+    def on_request(self, method: str, handler: Any) -> None:
+        self.inbound[method] = handler
 
     async def notify(self, role: Role, method: str, payload: dict[str, Any] | None = None) -> None:
         assert role is Role.STAGE
         if method == "stage.setup.state" and payload is not None:
             self.boots.append(str(payload["boot"]))
+        if method == "stage.settings.state" and payload is not None:
+            self.settings.append(payload)
 
     def as_server(self) -> WsServer:
         return cast(WsServer, self)
@@ -202,3 +212,77 @@ class TestWarmTts:
 
         assert coordinator.state.tts.runtime is EngineRuntime.STOPPED
         assert server.boots == ["ready"]
+
+
+class TestSettingsUpdate:
+    """The Stage → Core direction, at the runtime level. **ADR-028.**
+
+    What is protected here is that **Core decides**: it validates, it may refuse, and the
+    Stage never writes anything itself.
+    """
+
+    async def build(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Any:
+        detects(monkeypatch, [])
+        monkeypatch.setattr(paths_module, "settings_file", lambda: tmp_path / "settings.json")
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+        return runtime, server
+
+    async def test_the_route_is_registered(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ **The allowlist is the registry** (ADR-028). Unregistered means unreachable."""
+        _runtime, server = await self.build(monkeypatch, tmp_path)
+        assert "stage.settings.update" in server.inbound
+
+    async def test_a_change_is_written_and_broadcast(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        runtime, server = await self.build(monkeypatch, tmp_path)
+        handler = server.inbound["stage.settings.update"]
+
+        answer = await handler({"changes": {"llm_model": "gemma3:12b"}})
+
+        assert answer == {"applied_at_next_start": True}
+        stored = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        assert stored["llm_model"] == "gemma3:12b"
+        # **Everyone sees the new state**, not just whoever asked
+        assert server.settings[-1]["values"]["llm_model"]["value"] == "gemma3:12b"
+        del runtime
+
+    async def test_a_key_that_is_not_a_setting_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ **fail-closed.** The Stage asking for something is not a reason to write it."""
+        _runtime, server = await self.build(monkeypatch, tmp_path)
+
+        with pytest.raises(RequestRefused, match="UnknownSetting"):
+            await server.inbound["stage.settings.update"]({"changes": {"shell_command": "rm"}})
+
+    async def test_a_malformed_payload_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """**The transport does not validate payloads** (ADR-028) — the handler does."""
+        _runtime, server = await self.build(monkeypatch, tmp_path)
+        handler = server.inbound["stage.settings.update"]
+
+        for payload in ({}, {"changes": "all of them"}, {"changes": {"llm_model": 42}}):
+            with pytest.raises(RequestRefused, match="invalid_payload"):
+                await handler(payload)
+
+    async def test_an_unreadable_file_is_never_overwritten(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ **The user's own configuration outranks one update.** It stays fixable by hand."""
+        broken = tmp_path / "settings.json"
+        broken.write_text("{ broken", encoding="utf-8")
+        _runtime, server = await self.build(monkeypatch, tmp_path)
+
+        with pytest.raises(RequestRefused, match="SettingsUnreadable"):
+            await server.inbound["stage.settings.update"]({"changes": {"llm_model": "x"}})
+
+        assert broken.read_text(encoding="utf-8") == "{ broken"

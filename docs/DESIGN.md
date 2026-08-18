@@ -9,9 +9,24 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.10 |
+| Revision | rev.11 |
 | 実装フェーズ | **Phase 0 の完了条件を達成。Phase 1（MVP: Talking Desktop Character）着手。** セットアップ周りの検証手順 15〜18 が残る → [roadmap.md](roadmap.md) |
 
+> **rev.11 の変更点**（Step G。Stage 側を作ったら、設計の穴が2つ出た）
+> 1. **Stage → Core の要求方向を作った**（`request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md)。
+>    設定 UI が**原理的に作れなかった**（クライアントからは `hello` と `result` しか受理していなかった）。
+>    「経路が無いことで決定の起点が Core であることを保証する」という Phase 0 の記述を撤回する。
+>    **守りたいのは Invariant 1 であって、経路の不在はその手段でしかない。**
+>    **登録した method しか届かない**（fail-closed）
+> 2. **設定の保存形式を決めた** → [architecture/core.md](architecture/core.md) §6b（未確定事項 #9 の決着）。
+>    **JSON / `<data_dir>/settings.json`**。壊れたファイルは**絶対に上書きしない**（ユーザーの意図の唯一の写しを壊す）
+> 3. **`vad_ms` の予算を実測に合わせた** → [architecture/audio.md](architecture/audio.md) §7。
+>    予算 0.18 s と `min_silence_duration_ms` 400 ms は**同じ待ち時間を2箇所に別の数値で書いていた**。
+>    **`vad_ms` は実装のコストではなくターンテイキングの方針**であり、最適化で消えない。
+>    帰結として区間合計が p50 目標を超えた（106%）→ 未確定事項 8b
+> 4. **Inspector と吹き出しは `stage` ウィンドウの中に置く** → [architecture/ui.md](architecture/ui.md) §5。
+>    `WsServer` は **role ごとに接続を1本しか持たない**ので、別ウィンドウはキャラクターの接続を奪う
+>
 > **rev.10 の変更点**（音声入力の精度を実測で追い込んだ。**3つとも「測って初めて分かった」もの**）
 > 1. **サンプルレート変換を自前の polyphase FIR にした** → [ADR-026](decisions/ADR-026-polyphase-resampler.md)。
 >    3-tap 移動平均は **8 kHz 上の成分を −6 dB しか落とさず音声帯域へ折り返していた**。

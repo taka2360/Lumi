@@ -9,6 +9,8 @@ import pytest
 from lumi.transport.protocol import (
     PROTOCOL_VERSION,
     ProtocolError,
+    Request,
+    Result,
     Role,
     method_matches_role,
     parse_client_message,
@@ -71,15 +73,52 @@ class TestParseClientMessage:
     def test_accepts_result(self) -> None:
         raw = json.dumps({"kind": "result", "corr_id": "abc", "ok": True, "payload": {"x": 1}})
         result = parse_client_message(raw)
+        assert isinstance(result, Result)
         assert result.corr_id == "abc"
         assert result.ok
         assert result.payload == {"x": 1}
 
     def test_rejects_command_from_client(self) -> None:
-        """A client can never issue a `command` to Core. **No such path is ever built.**"""
+        """★ **A client still never issues a `command`.**
+
+        A `request` was added (ADR-028), and the distinction is the point: Core → Stage is
+        a command (Core decided), Stage → Core is a request (Core decides). **Accepting a
+        `command` here would erase that asymmetry** and with it Invariant 1's guarantee.
+        """
         raw = json.dumps({"kind": "command", "id": "1", "method": "os.input.click", "payload": {}})
         with pytest.raises(ProtocolError):
             parse_client_message(raw)
+
+    def test_accepts_request(self) -> None:
+        raw = json.dumps(
+            {"kind": "request", "id": "r1", "method": "stage.settings.update", "payload": {"a": 1}}
+        )
+        request = parse_client_message(raw)
+        assert isinstance(request, Request)
+        assert request.method == "stage.settings.update"
+        assert request.payload == {"a": 1}
+
+    def test_a_request_without_an_id_is_refused(self) -> None:
+        """**Core must always be able to answer.** A request nobody can reply to leaves the
+        client waiting forever.
+        """
+        raw = json.dumps({"kind": "request", "method": "stage.settings.update"})
+        with pytest.raises(ProtocolError):
+            parse_client_message(raw)
+
+    def test_a_request_without_a_method_is_refused(self) -> None:
+        raw = json.dumps({"kind": "request", "id": "r1"})
+        with pytest.raises(ProtocolError):
+            parse_client_message(raw)
+
+    def test_the_parser_never_decides_whether_a_method_is_allowed(self) -> None:
+        """**The allowlist is the server's registry** (ADR-028), in one place.
+
+        Parsing an unregistered method is fine; *serving* it is what gets refused.
+        Splitting the check across both would make "is this reachable" a two-file question.
+        """
+        raw = json.dumps({"kind": "request", "id": "r1", "method": "stage.anything", "payload": {}})
+        assert isinstance(parse_client_message(raw), Request)
 
     def test_failed_result_must_carry_a_reason(self) -> None:
         raw = json.dumps({"kind": "result", "corr_id": "abc", "ok": False, "payload": {}})
