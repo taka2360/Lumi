@@ -21,8 +21,11 @@ from typing import Any
 
 import pytest
 
+from lumi.agent.inspector import METHOD_INSPECTOR
+from lumi.agent.runtime import METHOD_SETTINGS
 from lumi.character import METHOD_EXPRESSION, Emotion
 from lumi.providers.tts.viseme import Viseme
+from lumi.settings import Source
 from lumi.setup.coordinator import (
     CHOICE_INSTALL,
     CHOICE_SKIP,
@@ -106,6 +109,8 @@ class TestCoreMatchesTheContract:
             METHOD_SPEECH_ENDED,
             METHOD_USER_SAID,
             METHOD_EXPRESSION,
+            METHOD_INSPECTOR,
+            METHOD_SETTINGS,
         }
         assert declared == set(wire["methods"]["stage"])
 
@@ -125,6 +130,7 @@ class TestCoreMatchesTheContract:
             (BootPhase, "boot_phase"),
             (LlmSetupState, "llm_setup_state"),
             (SttSetupState, "stt_setup_state"),
+            (Source, "settings_source"),
             (Emotion, "emotion"),
             (Viseme, "viseme"),
         ],

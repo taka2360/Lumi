@@ -306,3 +306,157 @@ body {
   background: rgba(0, 0, 0, 0.45);
   border-radius: 6px;
 }
+
+/* Wrapper whose rectangle is handed to Shell as part of the hit region.
+   **Shrinks to its contents** — any wider and it would release click-through over
+   empty desktop for no reason.
+   Hidden by default and shown only on hover or when focused/expanded to preserve immersion. */
+.inspect-anchor {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: max-content;
+  max-width: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+
+.inspect-anchor--visible,
+.inspect-anchor:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inspect-anchor {
+    transition: none;
+  }
+}
+
+/* Inspector (docs/architecture/ui.md §5). **A development view**, so it is dense and plain.
+   Sits in the corner, collapsed, and is only rendered once Core has sent something. */
+.inspect {
+  margin: 6px;
+  max-width: calc(100% - 12px);
+  font-size: 10px;
+  line-height: 1.45;
+  color: #dfe6f5;
+}
+
+.inspect__toggle {
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(12, 15, 22, 0.85);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.inspect__body {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(12, 15, 22, 0.92);
+  max-height: 46vh;
+  overflow: auto;
+  /* Numbers are read by eye and compared down the column. */
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.inspect__acts,
+.inspect__children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inspect__children {
+  margin-left: 12px;
+  opacity: 0.85;
+}
+
+.inspect__act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 1px 0;
+}
+
+/* **The foreground Activity is always exactly one** (Invariant 4). Marked so that a
+   view showing two would be obvious at a glance rather than needing to be read. */
+.inspect__act--fg .inspect__kind {
+  color: #9fd0ff;
+  font-weight: 700;
+}
+
+.inspect__state {
+  opacity: 0.75;
+}
+
+.inspect__intent,
+.inspect__contract {
+  opacity: 0.6;
+}
+
+.inspect__lat {
+  margin-top: 6px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.inspect__lat th {
+  text-align: left;
+  font-weight: 400;
+  opacity: 0.75;
+  padding-right: 10px;
+}
+
+.inspect__lat td {
+  text-align: right;
+}
+
+.inspect__lat-sum th,
+.inspect__lat-sum td {
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  opacity: 1;
+}
+
+.inspect__lat-cut th {
+  color: #ffd9a0;
+}
+
+.inspect__empty {
+  margin: 6px 0 0;
+  opacity: 0.6;
+}
+
+/* Settings (roadmap open item #9). Shares the Inspector's dense look — both are
+   information panels, not places to linger. */
+.settings {
+  margin: 6px;
+  max-width: calc(100% - 12px);
+  font-size: 10px;
+  line-height: 1.45;
+  color: #dfe6f5;
+}
+
+.settings__value {
+  text-align: left;
+  padding-right: 10px;
+}
+
+.settings__src {
+  text-align: right;
+  opacity: 0.6;
+}
+
+/* **An override has to stand out.** Otherwise "I changed it and nothing happened". */
+.settings__src--env {
+  color: #ffd9a0;
+  opacity: 1;
+}

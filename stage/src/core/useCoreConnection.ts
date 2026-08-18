@@ -17,6 +17,8 @@ import { useEffect } from "react";
 import { connectToCore } from "./connection";
 import {
   toExpression,
+  toInspectorSnapshot,
+  toSettingsSnapshot,
   toSetupPrompt,
   toSetupSnapshot,
   toSpeech,
@@ -38,6 +40,8 @@ export const METHOD_SPEECH_STARTED = "stage.speech.started";
 export const METHOD_SPEECH_ENDED = "stage.speech.ended";
 export const METHOD_USER_SAID = "stage.user.said";
 export const METHOD_EXPRESSION = "stage.character.expression";
+export const METHOD_INSPECTOR = "stage.inspector.state";
+export const METHOD_SETTINGS = "stage.settings.state";
 
 /** The answer to whether to fetch. Core only compares against `CHOICE_INSTALL` (anything else means "don't"). */
 export const CHOICE_INSTALL = "install";
@@ -64,6 +68,8 @@ export function useCoreConnection(): void {
       onConnectedChange: (connected) => store.setConnected(connected),
       notifications: {
         [METHOD_SETUP_STATE]: (payload) => store.setSetup(toSetupSnapshot(payload)),
+        [METHOD_INSPECTOR]: (payload) => store.setInspector(toInspectorSnapshot(payload)),
+        [METHOD_SETTINGS]: (payload) => store.setSettings(toSettingsSnapshot(payload)),
         // **Time advances on the Stage's own clock** (docs/interfaces/renderer.md).
         // An unreadable timeline leaves the mouth still; **the text is shown regardless**
         [METHOD_SPEECH_STARTED]: (payload) => store.setSpeech(toSpeech(payload, performance.now())),

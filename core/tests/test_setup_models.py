@@ -248,15 +248,16 @@ class TestModelLocation:
         """**The two ends of the same decision.**
 
         `SetupCoordinator` fetches `STT_ARTIFACT`; `AgentRuntime` constructs the provider with
-        `DEFAULT_STT_MODEL`. Drift between them fails the way a missing model fails — the setup
+        `settings.KEYS`. Drift between them fails the way a missing model fails — the setup
         panel offers to fetch something that is already on disk, and nothing errors
         (the same shape of bug as the directory drift observed 2026-08-17).
         """
-        from lumi.agent.runtime import DEFAULT_STT_MODEL
+        from lumi.settings import KEYS
         from lumi.setup.coordinator import STT_ARTIFACT
 
-        assert DEFAULT_STT_MODEL == STT_ARTIFACT.name
-        assert DEFAULT_STT_MODEL in STT_MODELS
+        _variable, default = KEYS["stt_model"]
+        assert default == STT_ARTIFACT.name
+        assert default in STT_MODELS
 
     def test_the_fetcher_and_the_provider_are_given_the_same_root(self) -> None:
         """The fetcher (`SetupCoordinator`) and the reader (`FasterWhisperProvider`) have

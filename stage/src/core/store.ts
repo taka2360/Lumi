@@ -125,15 +125,73 @@ export interface SetupPrompt {
   reason: string | null;
 }
 
+/**
+ * One Activity as the Inspector shows it. **Mirrors Core's `activity_payload`.**
+ *
+ * Several exist at once without violating Invariant 4 — `cancelling` and `suspended` are
+ * not `running`. **Seeing that divergence is the point of the view.**
+ */
+export interface InspectorActivity {
+  id: string;
+  kind: string;
+  actor: string;
+  intent: string;
+  state: string;
+  priority: number;
+  foreground: boolean;
+  cancellables: { label: string; contract: string; finished: boolean }[];
+}
+
+/** The latency breakdown of the most recent turn. Mirrors Core's `TurnLatency.to_payload`. */
+export interface InspectorLatency {
+  correlation_id: string;
+  spans: Record<string, number>;
+  measured_sum_ms: number;
+  total_ms: number;
+  /** **The reserve's warning light.** Can be negative, and is not clamped. */
+  unaccounted_ms: number;
+  completed: boolean;
+}
+
+export interface InspectorSnapshot {
+  activities: InspectorActivity[];
+  latency: InspectorLatency | null;
+}
+
+/** Where an effective setting came from. **Values on the wire** → docs/contracts/wire.json. */
+export type SettingsSource = "default" | "file" | "env";
+export const SETTINGS_SOURCES: readonly SettingsSource[] = ["default", "file", "env"];
+
+export interface SettingValue {
+  value: string;
+  source: SettingsSource;
+}
+
+/**
+ * The effective settings. **Core resolves them; the Stage only shows them** — including
+ * which ones an environment variable is overriding, since a setting that is being
+ * overridden without saying so is worse than no setting at all.
+ */
+export interface SettingsSnapshot {
+  version: number;
+  /** The file existed but could not be read. **Core will refuse to save over it.** */
+  unreadable: boolean;
+  values: Record<string, SettingValue>;
+}
+
 interface StageState {
   connected: boolean;
+  settings: SettingsSnapshot | null;
   setup: SetupSnapshot;
+  inspector: InspectorSnapshot | null;
   prompt: SetupPrompt | null;
   speech: Speech | null;
   userSaid: UserSaid | null;
   expression: ExpressionState | null;
   setConnected(connected: boolean): void;
   setSetup(snapshot: SetupSnapshot): void;
+  setInspector(snapshot: InspectorSnapshot): void;
+  setSettings(snapshot: SettingsSnapshot): void;
   setPrompt(prompt: SetupPrompt | null): void;
   setSpeech(speech: Speech | null): void;
   setUserSaid(said: UserSaid | null): void;
@@ -176,12 +234,16 @@ export const UNKNOWN_SETUP: SetupSnapshot = {
 export const useStageStore = create<StageState>((set) => ({
   connected: false,
   setup: UNKNOWN_SETUP,
+  inspector: null,
+  settings: null,
   prompt: null,
   speech: null,
   userSaid: null,
   expression: null,
   setConnected: (connected) => set({ connected }),
   setSetup: (setup) => set({ setup }),
+  setInspector: (inspector) => set({ inspector }),
+  setSettings: (settings) => set({ settings }),
   setPrompt: (prompt) => set({ prompt }),
   // **Lumi starting to speak clears what the user said.** That is the turn changing hands,
   // and it comes from a Core event rather than a Stage-side timer — the Stage decides nothing
@@ -340,4 +402,92 @@ export function toExpression(
 ): ExpressionState | null {
   const intent = parseExpression(payload);
   return intent ? { intent, startedAtMs } : null;
+}
+
+/**
+ * Reads a `stage.inspector.state` payload.
+ *
+ * **Everything is read defensively even though Core is a trusted peer.** The Inspector is
+ * the view people reach for *while something is already wrong*; it throwing on a
+ * half-written payload would take away the tool exactly when it is needed.
+ */
+export function toInspectorSnapshot(payload: Record<string, unknown>): InspectorSnapshot {
+  const activities = Array.isArray(payload.activities) ? payload.activities : [];
+  return {
+    activities: activities.filter(isRecord).map(toInspectorActivity),
+    latency: isRecord(payload.latency) ? toInspectorLatency(payload.latency) : null,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function toInspectorActivity(raw: Record<string, unknown>): InspectorActivity {
+  const cancellables = Array.isArray(raw.cancellables) ? raw.cancellables : [];
+  return {
+    id: asString(raw.id) ?? "",
+    kind: asString(raw.kind) ?? "?",
+    actor: asString(raw.actor) ?? "?",
+    intent: asString(raw.intent) ?? "",
+    state: asString(raw.state) ?? "?",
+    priority: asNumber(raw.priority) ?? 0,
+    foreground: raw.foreground === true,
+    cancellables: cancellables.filter(isRecord).map((item) => ({
+      label: asString(item.label) ?? "",
+      contract: asString(item.contract) ?? "?",
+      finished: item.finished === true,
+    })),
+  };
+}
+
+function toInspectorLatency(raw: Record<string, unknown>): InspectorLatency {
+  // Core flattens the spans into the payload, so **anything numeric that is not one of
+  // the summary fields is a span.** Adding a span on the Core side then needs no change here.
+  const summary = new Set([
+    "correlation_id",
+    "measured_sum_ms",
+    "total_ms",
+    "unaccounted_ms",
+    "completed",
+  ]);
+  const spans: Record<string, number> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!summary.has(key) && typeof value === "number") {
+      spans[key] = value;
+    }
+  }
+  return {
+    correlation_id: asString(raw.correlation_id) ?? "",
+    spans,
+    measured_sum_ms: asNumber(raw.measured_sum_ms) ?? 0,
+    total_ms: asNumber(raw.total_ms) ?? 0,
+    unaccounted_ms: asNumber(raw.unaccounted_ms) ?? 0,
+    completed: raw.completed === true,
+  };
+}
+
+/**
+ * Reads a `stage.settings.state` payload.
+ *
+ * **A value whose source cannot be read falls back to `default`.** Claiming it came from
+ * the file would tell the user their setting is in effect when it may not be.
+ */
+export function toSettingsSnapshot(payload: Record<string, unknown>): SettingsSnapshot {
+  const raw = isRecord(payload.values) ? payload.values : {};
+  const values: Record<string, SettingValue> = {};
+  for (const [key, entry] of Object.entries(raw)) {
+    if (!isRecord(entry)) {
+      continue;
+    }
+    values[key] = {
+      value: asString(entry.value) ?? "",
+      source: SETTINGS_SOURCES.find((candidate) => candidate === entry.source) ?? "default",
+    };
+  }
+  return {
+    version: asNumber(payload.version) ?? 0,
+    unreadable: payload.unreadable === true,
+    values,
+  };
 }

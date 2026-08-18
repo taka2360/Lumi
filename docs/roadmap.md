@@ -149,13 +149,13 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
 - [x] **Provenance の型と伝播**（L0 しか無くても型を後入れしない）〔Step B/E〕
   - [x] `block_trust` / `history_trust` / `session_trust`（sticky）の3スコープ
 - [x] Provider interface（`load` / `unload` / `resource_hint` / **`attribution`** を含む）〔Step C〕
-- [ ] **推論スタックのセットアップ**〔[ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) / [architecture/setup.md](architecture/setup.md) §2b〕
-  - [x] **Ollama の検出**（取得もインストールもしない）と `model_missing` の判定 〔Step C / **Step F で実機確認**（[measurements/phase1.md](measurements/phase1.md)）〕 / [ ] Stage への**提示**（Step G）
-  - [ ] **STT モデルの取得**（ピン留め + SHA-256 + ロールバック）。**ライブラリの自動ダウンロードを無効化する**
-  - [x] **Silero VAD を配布物に同梱** 〔Step D/E。faster-whisper 同梱の ONNX（MIT）を使う。**OSS 通知への Silero Team のクレジット追加が残っている** → Step G〕
-  - [ ] 起動フェーズ（`boot`）を **LLM / STT / TTS の3つから導出**する。「喋れるが聞けない」を正常な状態として出す
+- [x] **推論スタックのセットアップ**〔[ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) / [architecture/setup.md](architecture/setup.md) §2b〕
+  - [x] **Ollama の検出**（取得もインストールもしない）と `model_missing` の判定 〔Step C / **Step F で実機確認**（[measurements/phase1.md](measurements/phase1.md)）〕 / [x] Stage への**提示**〔Step G〕
+  - [x] **STT モデルの取得**（ピン留め + SHA-256 + ロールバック）。**ライブラリの自動ダウンロードを無効化する**〔Step F/G。同意フローに接続済み〕
+  - [x] **Silero VAD を配布物に同梱** 〔Step D/E。faster-whisper 同梱の ONNX（MIT）を使う。**OSS 通知への Silero Team のクレジット追加は Step G で完了** → [licensing.md](licensing.md) §4.6〕
+  - [x] 起動フェーズ（`boot`）を **LLM / STT / TTS の3つから導出**する。「喋れるが聞けない」を正常な状態として出す〔Step G。**待たせるのは「今まさに使えるようになる」ときだけ** → [architecture/setup.md](architecture/setup.md) §2b〕
 - [x] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）〔Step F で `turn_latency` / `vad.mute` を実装。**数値の記録はモデル取得後**〕
-- [ ] Inspector 最小版（Activity ツリー / レイテンシ内訳）〔Step G〕
+- [x] Inspector 最小版（Activity ツリー / レイテンシ内訳）〔Step G。**`stage` ウィンドウ内**。送信は EventBus 購読 → 別タスクで、barge-in の経路に載せない → [architecture/ui.md](architecture/ui.md) §5〕
 - [ ] **Content Pack の既定キャラクター**〔Step E で `content/characters/lumi/` を作成。**VRM 本体はまだ置いていない**（下記の持ち越し）〕
 
 ### Phase 0 からの持ち越し
@@ -166,7 +166,7 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
 - [ ] release ビルドでのカーソル監視 CPU 実測（debug では 1コア 2.8%）
 
 ### Stretch（詰まったら落とす）
-- [ ] 表情変化（`<|ACT|>` マーカー → ExpressionIntent → VRM ブレンドシェイプ）
+- [x] 表情変化（`<|ACT|>` マーカー → ExpressionIntent → VRM ブレンドシェイプ）〔Step G。VRM に無い4つは Renderer 側で控えめに借りる → [interfaces/renderer.md](interfaces/renderer.md)〕
 
 ### 完了条件
 話しかけると **p95 2.0 秒以内**に喋り始め、**途中で遮ると止まる**。
@@ -413,7 +413,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 8b | 🔴 **記憶検索を足すと区間合計が 85% 規則を破る**（1.07s / 89%）。区間を縮めるか p50 目標を見直すか | **Phase 2 着手前** → [architecture/audio.md](architecture/audio.md) §7 |
 | ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
 | 8d | 🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**。予算を直すか、パラメータを下げるか | **Phase 1 完了判定の前** → [measurements/phase1.md](measurements/phase1.md) |
-| 9 | 設定の保存形式とスキーマ | Phase 1（必要になった時点） |
+| ~~9~~ | ~~設定の保存形式とスキーマ~~ | **✓ 解消**〔2026-08-17 / Step G〕→ [architecture/core.md](architecture/core.md) §6b。**JSON / `<data_dir>/settings.json`**。壊れたファイルは上書きしない・知らないキーは保持・環境変数の上書きは表示する。**変更経路（Stage → Core）は未実装** |
 | ~~10~~ | ~~**`Activity.priority` の数値体系と `interruptible_by` を集合にする必要性**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-024](decisions/ADR-024-activity-priority.md)。**`interruptible_at: int` の単一閾値**（`>=` で判定）。値は [architecture/agent.md](architecture/agent.md) §1 |
 | 11 | キャラクター人格の記述形式（独自 vs 既存カード互換） | Phase 1 後半 |
 | 12 | Canonicalizer / BindVerifier の具体的アルゴリズム | Phase 4a |

@@ -11,8 +11,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { CharacterCanvas, type CharacterStatus } from "./character/CharacterCanvas";
 import { useStageStore } from "./core/store";
 import { useCoreConnection } from "./core/useCoreConnection";
+import { Inspector } from "./inspector/Inspector";
 import type { CssRect } from "./platform/geometry";
 import { useHitRegionReporter, useHoverState, useWindowGestures } from "./platform/useStageShell";
+import { Settings } from "./settings/Settings";
 import { BootScreen } from "./setup/BootScreen";
 import { SetupPanel } from "./setup/SetupPanel";
 import { Bubble } from "./speech/Bubble";
@@ -67,16 +69,43 @@ export function App() {
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
   const panelRect = useElementRect(panel);
 
+  // The Inspector is a real control. **Without its rect in the hit region the toggle
+  // cannot be clicked at all** — Shell makes everything outside the region click-through.
+  // When hidden, its rect is excluded to prevent blocking click-through over empty space.
+  const [inspector, setInspector] = useState<HTMLDivElement | null>(null);
+  const inspectorRect = useElementRect(inspector);
+
+  const [inspectorOpen, setInspectorOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [anchorHovered, setAnchorHovered] = useState(false);
+
+  const isActivelyHovered = hover === "inside" || anchorHovered || inspectorOpen || settingsOpen;
+  const [inspectVisible, setInspectVisible] = useState(false);
+
+  useEffect(() => {
+    if (isActivelyHovered) {
+      setInspectVisible(true);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setInspectVisible(false);
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [isActivelyHovered]);
+
   const lastReported = useRef<string>("");
   useEffect(() => {
-    const rects = [characterRect, panelRect].filter((rect): rect is CssRect => rect !== null);
+    const activeInspectorRect = inspectVisible ? inspectorRect : null;
+    const rects = [characterRect, panelRect, activeInspectorRect].filter(
+      (rect): rect is CssRect => rect !== null,
+    );
     const signature = JSON.stringify(rects);
     if (signature === lastReported.current) {
       return;
     }
     lastReported.current = signature;
     reportHitRegion(rects);
-  }, [characterRect, panelRect, reportHitRegion]);
+  }, [characterRect, panelRect, inspectorRect, inspectVisible, reportHitRegion]);
 
   return (
     <div className={hover === "inside" ? "stage stage--hover" : "stage"}>
@@ -105,6 +134,18 @@ export function App() {
         )}
         {/* **Never silently degrades.** Shows that a placeholder is running instead of the production VRM. */}
         {status.fallbackReason && <p className="notice">{status.fallbackReason}</p>}
+      </div>
+      {/* **A development view** (docs/architecture/ui.md §5). Inside the `stage` window
+          because `WsServer` keeps one connection per role — a second window would take
+          the character's connection. Shown on hover or when expanded. */}
+      <div
+        ref={setInspector}
+        className={inspectVisible ? "inspect-anchor inspect-anchor--visible" : "inspect-anchor"}
+        onPointerEnter={() => setAnchorHovered(true)}
+        onPointerLeave={() => setAnchorHovered(false)}
+      >
+        <Inspector onOpenChange={setInspectorOpen} />
+        <Settings onOpenChange={setSettingsOpen} />
       </div>
     </div>
   );

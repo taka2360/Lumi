@@ -196,6 +196,18 @@ class AttentionArbiter:
     def get(self, activity_id: ActivityId) -> Activity:
         return self._activities[activity_id]
 
+    def activities(self) -> tuple[Activity, ...]:
+        """Every Activity the Arbiter knows about. **Read-only.**
+
+        What the Inspector reads the tree from (docs/architecture/ui.md §5). Several can
+        exist at once without violating Invariant 4 — `cancelling` and `suspended` ones
+        are not `running`, and **seeing that divergence is the point of the view.**
+
+        Returned as a tuple so a caller cannot reach in and mutate the Arbiter's own list.
+        State transitions remain the Arbiter's alone.
+        """
+        return tuple(self._activities.values())
+
     @property
     def deferred_count(self) -> int:
         return len(self._deferred)

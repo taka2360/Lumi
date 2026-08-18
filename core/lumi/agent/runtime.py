@@ -16,13 +16,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Final
 
 from lumi import logging as lumi_logging
 from lumi import paths
+from lumi import settings as settings_module
+from lumi.agent.inspector import InspectorPublisher
 from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.session import Session
 from lumi.audio.devices import AudioPlan
@@ -54,14 +55,13 @@ from lumi.transport.server import WsServer
 
 log = lumi_logging.get_logger(__name__)
 
-#: The LLM to use. **Lumi doesn't fetch the model itself** (ADR-023)
-MODEL_ENV: Final = "LUMI_LLM_MODEL"
-#: [Provisional] 2026-08-16: Qwen3.5 9B (Q4_K_M, 6.6 GB). Fits a 12 GB card whole,
-#: which is what makes the first-token budget reachable (DESIGN.md §7: LLM gets the VRAM)
-DEFAULT_MODEL: Final = "qwen3.5:9b"
-#: STT model size [Provisional]. To be finalized after measurement
-STT_MODEL_ENV: Final = "LUMI_STT_MODEL"
-DEFAULT_STT_MODEL: Final = "large-v3-turbo"
+#: Core → Stage. The effective settings and **where each value came from**
+#: (contract → docs/contracts/wire.json)
+METHOD_SETTINGS: Final = "stage.settings.state"
+
+#: What is configurable, and each key's environment override and default, live in
+#: `lumi.settings.KEYS`. **Declared once** — a second copy here drifted the moment the
+#: STT model changed (docs/DESIGN.md §12).
 
 
 class ConversationRuntime:
@@ -73,17 +73,25 @@ class ConversationRuntime:
         "_arbiter",
         "_audio",
         "_database",
+        "_inspector",
         "_loop",
         "_model",
         "_providers",
+        "_server",
+        "_settings",
         "_setup",
         "_task",
         "_warmup",
     )
 
     def __init__(self, server: WsServer, setup: SetupCoordinator, plan: AudioPlan) -> None:
+        self._server = server
         self._setup = setup
-        self._model = os.environ.get(MODEL_ENV, DEFAULT_MODEL)
+        # **Read once, at startup.** A setting that changed mid-session while the model
+        # stayed loaded would make the displayed value a lie (applying it is Phase 2's
+        # `ModelResourceManager` problem, not something to fake here)
+        self._settings = settings_module.load(paths.settings_file())
+        self._model = self._settings.llm_model.value
         self._task: asyncio.Task[None] | None = None
         self._warmup: asyncio.Task[None] | None = None
         self._audio = AudioIO(plan)
@@ -128,6 +136,13 @@ class ConversationRuntime:
             )
         )
 
+        # **Subscribed, not called from the Arbiter.** The Arbiter does not know the Stage
+        # exists, and the send must stay off the barge-in path (`agent/inspector.py`)
+        self._inspector = InspectorPublisher(
+            self._arbiter, server, lambda: self._loop.last_latency if self._loop else None
+        )
+        bus.subscribe(self._inspector.on_event)
+
     @property
     def arbiter(self) -> AttentionArbiter:
         """**Read-only.** What the Inspector reads the Activity tree from (roadmap Phase 1).
@@ -142,6 +157,10 @@ class ConversationRuntime:
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
         # rest of the session (observed 2026-08-17).
         await self._arbiter.start()
+        self._inspector.start()
+        # **Sent once at startup.** The Stage shows values, not judgments — including
+        # which of them an environment variable is currently overriding
+        await self._server.notify(Role.STAGE, METHOD_SETTINGS, self._settings.to_payload())
         await self._audio.start()
         # **The engine is started here, not at the first utterance.** The boot phase the
         # Stage shows is derived from this process state, so with nobody starting it and
@@ -180,7 +199,7 @@ class ConversationRuntime:
         self._providers.register(OllamaProvider(self._model))
         self._providers.register(
             FasterWhisperProvider(
-                os.environ.get(STT_MODEL_ENV, DEFAULT_STT_MODEL),
+                self._settings.stt_model.value,
                 paths.stt_models_dir(),
             )
         )
@@ -195,6 +214,7 @@ class ConversationRuntime:
                 await task
         self._warmup = None
         self._task = None
+        await self._inspector.stop()
         await self._audio.stop()
         try:
             async with asyncio.timeout(30.0):

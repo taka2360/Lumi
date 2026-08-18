@@ -32,6 +32,7 @@ import {
   BOOT_PHASES,
   ENGINE_RUNTIMES,
   LLM_SETUP_STATES,
+  SETTINGS_SOURCES,
   SETUP_COMPONENTS,
   STT_SETUP_STATES,
   TTS_SETUP_STATES,
@@ -40,6 +41,8 @@ import {
   CHOICE_INSTALL,
   CHOICE_SKIP,
   METHOD_EXPRESSION,
+  METHOD_INSPECTOR,
+  METHOD_SETTINGS,
   METHOD_SETUP_PROMPT,
   METHOD_SETUP_STATE,
   METHOD_SPEECH_ENDED,
@@ -59,6 +62,7 @@ interface Wire {
     boot_phase: string[];
     llm_setup_state: string[];
     stt_setup_state: string[];
+    settings_source: string[];
     emotion: string[];
     viseme: string[];
   };
@@ -87,6 +91,8 @@ describe("wire contract", () => {
         METHOD_SPEECH_ENDED,
         METHOD_USER_SAID,
         METHOD_EXPRESSION,
+        METHOD_INSPECTOR,
+        METHOD_SETTINGS,
       ]),
     ).toEqual(new Set(wire.methods.stage));
   });
@@ -101,6 +107,8 @@ describe("wire contract", () => {
       METHOD_SPEECH_ENDED,
       METHOD_USER_SAID,
       METHOD_EXPRESSION,
+      METHOD_INSPECTOR,
+      METHOD_SETTINGS,
     ];
     for (const method of wire.methods.os) {
       expect(stageConstants).not.toContain(method);
@@ -139,6 +147,7 @@ describe("wire contract", () => {
     expect(BOOT_PHASES).toEqual(wire.enums.boot_phase);
     expect(LLM_SETUP_STATES).toEqual(wire.enums.llm_setup_state);
     expect(STT_SETUP_STATES).toEqual(wire.enums.stt_setup_state);
+    expect(SETTINGS_SOURCES).toEqual(wire.enums.settings_source);
     expect(EMOTIONS).toEqual(wire.enums.emotion);
     expect(VISEMES).toEqual(wire.enums.viseme);
   });

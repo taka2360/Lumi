@@ -12,7 +12,9 @@
       "stage.speech.started",
       "stage.speech.ended",
       "stage.user.said",
-      "stage.character.expression"
+      "stage.character.expression",
+      "stage.inspector.state",
+      "stage.settings.state"
     ],
     "os": [
       "os.window.get_position",
@@ -76,6 +78,11 @@
       "installing",
       "installed",
       "failed"
+    ],
+    "settings_source": [
+      "default",
+      "file",
+      "env"
     ],
     "emotion": [
       "neutral",

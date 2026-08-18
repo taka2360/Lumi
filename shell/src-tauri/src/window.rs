@@ -180,9 +180,9 @@ pub struct ScreenArea {
 
 /// The ratio of the character window's height to the screen's height.
 ///
-/// Works out to 720px at 1440p (the previous default) and 540px at 1080p.
+/// Works out to 540px at 1440p (the previous default) and 405px at 1080p.
 /// A ratio chosen so **the look stays consistent across different screens.**
-const STAGE_HEIGHT_RATIO: f64 = 0.3;
+const STAGE_HEIGHT_RATIO: f64 = 0.4;
 
 /// The aspect ratio (width ÷ height). Portrait, since the character stands upright.
 const STAGE_ASPECT: f64 = 2.0 / 3.0;

@@ -89,6 +89,16 @@ def stt_dump_dir() -> Path:
     return data_dir() / "debug" / "stt"
 
 
+def settings_file() -> Path:
+    """User settings → `lumi.settings` / docs/architecture/core.md
+
+    **Separate from `setup_state_file`.** That one records what has been *asked*; this one
+    records what the user *chose*. Deleting either has a different meaning, so they are
+    different files.
+    """
+    return data_dir() / "settings.json"
+
+
 def setup_state_file() -> Path:
     """File that remembers whether first-run setup has been "answered."
 

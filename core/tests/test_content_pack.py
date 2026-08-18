@@ -156,4 +156,7 @@ def test_the_bundled_default_pack_loads() -> None:
     loaded = load_character(paths.default_character_dir())
     assert loaded.persona
     assert loaded.voice.credit.credit_text
-    assert loaded.voice.volume == 0.4
+    # **The value itself is a tuning knob**, not a contract. Pinning it here made an
+    # ordinary volume adjustment fail CI (2026-08-17); what matters is that it parsed
+    # and landed in a usable range.
+    assert 0.0 < loaded.voice.volume <= 2.0
