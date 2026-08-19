@@ -42,6 +42,13 @@ function applyDefaultPose(vrm: VRM): void {
     rightUpperArm.rotation.z = -1.25;
   }
   humanoid.update();
+
+  // VRMLoaderPlugin captures SpringBone's initial matrices while loading. This pose is
+  // applied afterwards, so keeping that old state makes the first physics update solve
+  // from a pose that no longer exists (hair and skirts can be flung upward, then fall).
+  // Rebuild the world matrices and make the visible pose the physics baseline.
+  vrm.scene.updateMatrixWorld(true);
+  vrm.springBoneManager?.setInitState();
 }
 
 export async function loadVrm(url: string): Promise<CharacterModel> {

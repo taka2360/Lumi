@@ -36,6 +36,9 @@ import type { CharacterKind } from "./types";
 /** Recomputation interval for the hit region (in frames). Recomputing the bounding box every frame is expensive. */
 const BOUNDS_RECOMPUTE_INTERVAL = 10;
 
+/** SpringBone uses an explicit integrator; a long first/resume frame must not become one huge step. */
+const MAX_CHARACTER_DELTA_SECONDS = 1 / 30;
+
 export interface CharacterStatus {
   kind: CharacterKind | null;
   fallbackReason: string | null;
@@ -118,7 +121,7 @@ export function CharacterCanvas({
 
       const tick = (now: number) => {
         animationFrame = requestAnimationFrame(tick);
-        const delta = Math.min((now - previousTime) / 1000, 0.1);
+        const delta = Math.min((now - previousTime) / 1000, MAX_CHARACTER_DELTA_SECONDS);
         const previousFrameAt = previousTime;
         previousTime = now;
 
