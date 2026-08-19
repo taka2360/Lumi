@@ -201,13 +201,22 @@ def test_a_too_large_volume_is_rejected(tmp_path: Path) -> None:
 # ── The bundled default pack ────────────────────────────────
 
 
-def test_the_bundled_default_pack_loads() -> None:
-    """**Confirms in CI that what ships in the distributable can actually be read.**
+def test_the_bundled_default_pack_loads(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**Confirms in CI that the tracked part of the default pack can be read.**
 
-    A failure here means either the `content/` toml got broken, or code was
-    accidentally placed inside it.
+    The real VRM is deliberately absent from git (docs/licensing.md §4.5). Its presence in
+    the distributable is checked by ``lumi-core.spec``; this test checks the tracked TOML and
+    still scans the real pack directory for accidentally committed code.
     """
-    loaded = load_character(paths.default_character_dir())
+    root = paths.default_character_dir()
+    model_path = root / "model.vrm"
+    path_is_file = Path.is_file
+
+    def is_file_with_bundled_model_stub(path: Path) -> bool:
+        return path == model_path or path_is_file(path)
+
+    monkeypatch.setattr(Path, "is_file", is_file_with_bundled_model_stub)
+    loaded = load_character(root)
     assert loaded.persona
     assert loaded.voice.credit.credit_text
     # **The value itself is a tuning knob**, not a contract. Pinning it here made an
@@ -218,5 +227,5 @@ def test_the_bundled_default_pack_loads() -> None:
     # `[model]` はトップレベルの表なので、`[character]` の中を探すと黙って `None` になる
     # （実際にそう書いて、この行が無ければ気づかなかった。2026-08-19）
     assert loaded.model is not None, "既定 Content Pack がモデルを宣言していない"
-    assert loaded.model.path.is_file()
+    assert loaded.model.path == model_path
     assert loaded.model.credit.credit_text

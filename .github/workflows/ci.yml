@@ -59,6 +59,11 @@ jobs:
         with:
           workspaces: shell/src-tauri
 
+      # Tauri validates configured bundle resources even for clippy and tests.
+      # The actual PyInstaller output is only produced by release builds.
+      - name: Prepare Core resource directory
+        run: New-Item -ItemType Directory -Force ..\..\core\dist\lumi-core | Out-Null
+
       - name: Format check (cargo fmt)
         run: cargo fmt --check
 
