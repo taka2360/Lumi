@@ -330,8 +330,12 @@ def test_audio_callbacks_do_no_inference_or_io(filename: str, method: str) -> No
 class ExplodingVad:
     """Only the shape `VadWorker` uses. **Raises where inference would happen.**"""
 
+    def __init__(self) -> None:
+        self.entered = threading.Event()
+
     def probability(self, window: np.ndarray) -> float:
         del window
+        self.entered.set()
         raise RuntimeError("推論が落ちた")
 
 
@@ -348,14 +352,16 @@ def test_a_crashing_vad_thread_never_leaves_playback_muted() -> None:
     mute_flag.set()
     events: list[VadEvent] = []
 
+    vad = ExplodingVad()
     worker = VadWorker(
         ring,
         SAMPLE_RATE,
         mute_flag,
         lambda event, _audio, _at: events.append(event),
-        vad=cast(SileroVad, ExplodingVad()),
+        vad=cast(SileroVad, vad),
     )
     worker.start()
+    assert vad.entered.wait(timeout=2.0), "VADスレッドが推論に到達しないまま停止した"
     worker.stop()
 
     assert not mute_flag.is_set(), "落ちたスレッドがミュートを握ったままにしない"

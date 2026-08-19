@@ -121,6 +121,17 @@ def test_clear_does_not_rewind_a_consumer_that_ran_ahead() -> None:
     assert list(out) == [4, 5]
 
 
+def test_available_never_reports_negative_audio_for_a_torn_clear_snapshot() -> None:
+    """A clear mark observed before an older write cursor is still an empty ring."""
+    ring = RingBuffer(8)
+    # This is the impossible-in-one-thread state a lock-free reader can observe while the
+    # producer advances `_write` and publishes `_discard` between the reader's snapshots.
+    ring._write = 4
+    ring._discard = 8
+
+    assert ring.available == 0
+
+
 def test_a_window_torn_by_the_producer_is_refused_not_returned() -> None:
     """★ **A window stitched from two moments is worse than a missing one.**
 
@@ -158,11 +169,22 @@ def assigned_attributes(method: str) -> list[str]:
     source = (Path(__file__).resolve().parents[1] / "lumi" / "audio" / "ring.py").read_text(
         encoding="utf-8"
     )
-    for node in ast.walk(ast.parse(source)):
-        if isinstance(node, ast.FunctionDef) and node.name == method:
-            break
-    else:
-        raise AssertionError(f"ring.py: {method} が見つからない")
+    ring = next(
+        (
+            n
+            for n in ast.parse(source).body
+            if isinstance(n, ast.ClassDef) and n.name == "RingBuffer"
+        ),
+        None,
+    )
+    assert ring is not None, "ring.py: RingBuffer が見つからない"
+    defs = [
+        n
+        for n in ring.body
+        if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == method
+    ]
+    assert len(defs) == 1, f"ring.py: RingBuffer.{method} が {len(defs)} 個"
+    node = defs[0]
 
     targets: list[ast.expr] = []
     for child in ast.walk(node):

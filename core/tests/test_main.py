@@ -88,8 +88,7 @@ async def test_two_stage_connects_start_exactly_one_conversation(
 
     core = asyncio.create_task(main_module._run())
     try:
-        first = await open_stage(port)
-        second = await open_stage(port)
+        first, second = await asyncio.gather(open_stage(port), open_stage(port))
         await asyncio.sleep(0.3)
         await first.close()
         await second.close()

@@ -10,6 +10,13 @@
 
 export const PROTOCOL_VERSION = 1;
 
+export class ProtocolVersionMismatch extends Error {
+  constructor(received: unknown) {
+    super(`protocol version mismatch: received ${String(received)}`);
+    this.name = "ProtocolVersionMismatch";
+  }
+}
+
 export interface CoreCommand {
   kind: "command";
   id: string;
@@ -46,6 +53,7 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 /**
  * Parses a received message. **`null` if it can't be parsed** (never executes anything silently).
+ * A version mismatch throws `ProtocolVersionMismatch` so the connection can reject it visibly.
  *
  * A method not starting with `stage.` is discarded. Core shouldn't send one, but
  * **even if it did, both the type and the implementation guarantee the Stage never receives it.**
@@ -59,7 +67,7 @@ export function parseCoreMessage(raw: string): CoreMessage | null {
   }
   const message = asRecord(value);
   if (message.v !== PROTOCOL_VERSION) {
-    return null;
+    throw new ProtocolVersionMismatch(message.v);
   }
 
   switch (message.kind) {

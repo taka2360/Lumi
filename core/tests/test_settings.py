@@ -85,6 +85,19 @@ def test_a_json_array_is_treated_as_unreadable(tmp_path: Path) -> None:
     assert settings.unreadable
 
 
+def test_invalid_utf8_is_treated_as_unreadable(tmp_path: Path) -> None:
+    file = tmp_path / "settings.json"
+    file.write_bytes(b"{\x80")
+
+    settings = load(file, {})
+
+    assert settings.unreadable
+    assert settings.llm_model.source is Source.DEFAULT
+    with pytest.raises(SettingsUnreadable):
+        save(file, settings, {"llm_model": "x"})
+    assert file.read_bytes() == b"{\x80"
+
+
 # ── Writing ──────────────────────────────────────────────
 
 

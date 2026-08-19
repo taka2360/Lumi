@@ -74,7 +74,13 @@ class RingBuffer:
         """**Reads only.** Clamped to the capacity: whatever the producer wrote more than one
         lap ago is already gone, whether or not the consumer has noticed yet.
         """
-        return min(self._write - max(self._read, self._discard), self._capacity)
+        # Read the producer's discard mark before its write cursor. **If clear() lands between
+        # these reads, the snapshot may be from different moments, but it must not report a
+        # negative amount of audio.**
+        discard = self._discard
+        read = self._read
+        write = self._write
+        return max(0, min(write - max(read, discard), self._capacity))
 
     @property
     def dropped(self) -> int:

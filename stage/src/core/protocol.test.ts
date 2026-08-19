@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   helloMessage,
   PROTOCOL_VERSION,
+  ProtocolVersionMismatch,
   parseCoreMessage,
   requestMessage,
   resultMessage,
@@ -43,8 +44,13 @@ describe("parseCoreMessage", () => {
   it("discards malformed input", () => {
     expect(parseCoreMessage("not json")).toBeNull();
     expect(parseCoreMessage(envelope({ kind: "command", method: "stage.x" }))).toBeNull();
-    expect(parseCoreMessage(JSON.stringify({ v: 2, kind: "welcome" }))).toBeNull();
     expect(parseCoreMessage(envelope({ kind: "unknown" }))).toBeNull();
+  });
+
+  it("explicitly rejects a version mismatch", () => {
+    expect(() => parseCoreMessage(JSON.stringify({ v: 2, kind: "welcome" }))).toThrow(
+      ProtocolVersionMismatch,
+    );
   });
 });
 

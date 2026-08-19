@@ -31,10 +31,12 @@ jobs:
         uses: astral-sh/setup-uv@v5
         with:
           enable-cache: true
-          cache-dependency-glob: core/pyproject.toml
+          cache-dependency-glob: |
+            core/pyproject.toml
+            core/uv.lock
 
       - name: Sync dependencies
-        run: uv sync
+        run: uv sync --locked
 
       - name: Lint (ruff check)
         run: uv run ruff check

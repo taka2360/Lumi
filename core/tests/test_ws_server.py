@@ -90,6 +90,7 @@ class TestInvoke:
 
         async def respond() -> None:
             command = json.loads(await client.recv())
+            assert command["v"] == PROTOCOL_VERSION
             assert command["method"] == "os.window.set_position"
             await client.send(
                 json.dumps(
@@ -150,6 +151,36 @@ class TestClientMessages:
             await client.recv()
         assert client.close_code == CLOSE_PROTOCOL_ERROR
 
+    async def test_a_version_mismatch_is_logged_and_closes_the_connection(
+        self, server: WsServer, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """**A frame with an unknown meaning is not dropped and ignored.**"""
+        client = await open_client(server)
+        await client.recv()
+        await client.send(
+            json.dumps(
+                {
+                    "v": PROTOCOL_VERSION + 1,
+                    "kind": "request",
+                    "id": "bad-version",
+                    "method": "stage.settings.update",
+                    "payload": {},
+                }
+            )
+        )
+
+        with pytest.raises(ConnectionClosed):
+            await client.recv()
+        assert client.close_code == CLOSE_PROTOCOL_ERROR
+
+        captured = ""
+        for _ in range(100):
+            captured += capsys.readouterr().out
+            if "transport.message.invalid" in captured:
+                break
+            await asyncio.sleep(0.01)
+        assert "transport.message.invalid" in captured
+
 
 class TestReconnect:
     async def test_new_connection_replaces_the_old_one(self, server: WsServer) -> None:
@@ -208,6 +239,7 @@ class TestNotify:
 
         await server.notify(Role.STAGE, "stage.setup.state", {"state": "not_configured"})
         message = json.loads(await client.recv())
+        assert message["v"] == PROTOCOL_VERSION
         assert message["kind"] == "notify"
         assert message["method"] == "stage.setup.state"
         assert message["payload"] == {"state": "not_configured"}
@@ -243,6 +275,7 @@ class TestInboundRequests:
             )
         )
         answer: dict[str, object] = json.loads(await client.recv())
+        assert answer["v"] == PROTOCOL_VERSION
         return answer
 
     async def test_a_registered_method_is_served(self, server: WsServer) -> None:
@@ -383,12 +416,10 @@ class TestInboundRequests:
         assert answer["ok"] is False
         assert answer["error"] == "timeout"
 
-    async def test_an_unencodable_payload_does_not_go_out_silently(
-        self, server: WsServer, capsys: pytest.CaptureFixture[str]
+    async def test_an_unencodable_payload_gets_an_internal_error_fallback(
+        self, server: WsServer
     ) -> None:
-        """**Suppressing every exception hid Core's own bugs.** A payload that cannot be
-        encoded leaves the client with no answer, so it has to be logged at least.
-        """
+        """**The client must not wait forever when Core cannot encode its answer.**"""
 
         async def returns_garbage(_payload: dict[str, object]) -> dict[str, object]:
             return {"not_json": object()}
@@ -408,15 +439,45 @@ class TestInboundRequests:
                 }
             )
         )
-        # structlog prints to stdout (`PrintLoggerFactory`), so the log is read from there
-        captured = ""
-        for _ in range(100):
-            captured += capsys.readouterr().out
-            if "transport.answer.failed" in captured:
-                break
-            await asyncio.sleep(0.01)
+        answer = json.loads(await client.recv())
+        assert answer["ok"] is False
+        assert answer["payload"] == {}
+        assert answer["error"] == "internal_error"
 
-        assert "transport.answer.failed" in captured
+    async def test_stop_cancels_and_awaits_inbound_handlers(self, server: WsServer) -> None:
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def hangs(_payload: dict[str, object]) -> dict[str, object]:
+            started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            return {}
+
+        server.on_request("stage.settings.update", hangs)
+        client = await open_client(server, role="stage")
+        await client.recv()
+        await client.send(
+            json.dumps(
+                {
+                    "v": PROTOCOL_VERSION,
+                    "kind": "request",
+                    "id": "shutdown",
+                    "method": "stage.settings.update",
+                    "payload": {},
+                }
+            )
+        )
+        async with asyncio.timeout(2.0):
+            await started.wait()
+
+        await server.stop()
+
+        assert cancelled.is_set()
+        assert not server._requests
 
     def test_registering_the_same_method_twice_is_refused(self, server: WsServer) -> None:
         """**Two owners for one route** is how a request quietly stops reaching the handler

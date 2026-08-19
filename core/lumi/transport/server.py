@@ -180,6 +180,16 @@ class WsServer:
             await self._server.wait_closed()
             self._server = None
 
+        # A request runs independently of the receive loop. **Closing the listener does not
+        # cancel a handler that is already awaiting**, and allowing it to continue would let
+        # Core state change after shutdown has begun.
+        current = asyncio.current_task()
+        pending = tuple(task for task in self._requests if task is not current)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
     # ASYNC109: Leaving `asyncio.timeout` to the caller means **it waits forever**
     # whenever it's forgotten. To "never silently degrade," the API carries a
     # timeout with a default.
@@ -240,13 +250,28 @@ class WsServer:
     ) -> None:
         frame = Result(corr_id=request.id, ok=ok, payload=payload or {}, error=error)
         try:
-            await connection.ws.send(frame.encode())
+            encoded = frame.encode()
+        except Exception:
+            # **The client must not wait forever because Core produced an invalid payload.**
+            # Keep the original exception in the log, then answer with a fixed JSON-safe error.
+            log.exception(
+                "transport.answer.failed", role=connection.role.value, method=request.method
+            )
+            encoded = Result(
+                corr_id=request.id,
+                ok=False,
+                payload={},
+                error="internal_error",
+            ).encode()
+
+        try:
+            await connection.ws.send(encoded)
         except ConnectionClosed:
             # The client went away mid-request. **Not worth failing over**
             log.debug("transport.answer.closed", role=connection.role.value, method=request.method)
         except Exception:
-            # Anything else — an unencodable payload above all — is a Core-side bug that
-            # **leaves the client waiting.** Suppressing it silently is how it stays invisible
+            # A send failure is independent of encoding. **It is still logged, but never allowed
+            # to mask the original handler or encoding failure.**
             log.exception(
                 "transport.answer.failed", role=connection.role.value, method=request.method
             )
