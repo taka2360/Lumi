@@ -40,11 +40,16 @@ class SpeechAudio:
 
 @dataclass(frozen=True, slots=True)
 class VoiceConfig:
-    """Which voice to speak with. **Selecting it is the Content Pack's job** (`voice.toml`)."""
+    """Which voice to speak with.
+
+    The Content Pack selects the speaker (`voice.toml`); Core-owned settings select the
+    playback-independent speed for the current conversation.
+    """
 
     speaker: int
     name: str = ""
     volume_scale: float = 0.4
+    speed_scale: float = 1.0
 
 
 class TTSProvider(Provider, Protocol):

@@ -124,7 +124,13 @@ class AivisSpeechClient:
             # simply pays what it used to. **Never silently look like a warm start**
             raise TtsError("speaker_init_failed", str(error)) from error
 
-    async def synthesize(self, text: str, speaker: int, volume_scale: float = 0.4) -> SpeechAudio:
+    async def synthesize(
+        self,
+        text: str,
+        speaker: int,
+        volume_scale: float = 0.4,
+        speed_scale: float = 1.0,
+    ) -> SpeechAudio:
         """Turns text into WAV. **Returns the mouth timeline together with it.**
 
         The engine's contract is to pass `audio_query`'s response straight into `synthesis`.
@@ -144,6 +150,7 @@ class AivisSpeechClient:
 
             if isinstance(query, dict):
                 query["volumeScale"] = volume_scale
+                query["speedScale"] = speed_scale
 
             audio_response = await client.post(
                 f"{self._base}/synthesis", params={"speaker": speaker}, json=query

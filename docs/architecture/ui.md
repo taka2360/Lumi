@@ -122,6 +122,10 @@ Lumi ではなく外部エンジンを起動しているように見える。
 **キャラクターが先に出て、少し間があってから喋り出す方が自然**である。
 逆にしてはいけないのは「喋り終わってから出る」で、これは音と姿が結びつかない。
 
+**`ready` は音声入力開始のゲートでもある。** Core は `boot: ready` の配信が完了するまで
+マイクと Reactive Loop を開始しない。ローディング画面の裏で発話を受理しない
+（[ADR-033](../decisions/ADR-033-gate-voice-input-until-ready.md)）。
+
 ### キャラクターのモデルは Core が決め、Shell が配信する〔Phase 1・[ADR-029](../decisions/ADR-029-content-pack-asset-delivery.md)〕
 
 | 誰が | 何を |

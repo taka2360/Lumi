@@ -12,7 +12,7 @@
  * temporary escape hatch into the file permanently.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import type { SettingsSource } from "../core/store";
 import { useStageStore } from "../core/store";
@@ -26,15 +26,26 @@ const CHOICES: Record<string, string[]> = {
   locale: ["auto", "ja", "en"],
 };
 
+const TTS_SPEED_MIN = 0.5;
+const TTS_SPEED_MAX = 2.0;
+const TTS_SPEED_STEP = 0.1;
+
+function formatSpeed(value: string): string {
+  const speed = Number(value);
+  return Number.isFinite(speed) ? `${speed.toFixed(1)}x` : value;
+}
+
 function Row({ name, value, source }: { name: string; value: string; source: SettingsSource }) {
   const locale = useLocale();
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const lastCommitted = useRef(value);
   const snapshot = useMemo(() => ({ value, source }), [value, source]);
   useEffect(() => {
     // Core owns the value. A new snapshot supersedes any local draft or status.
     setDraft(snapshot.value);
+    lastCommitted.current = snapshot.value;
     setError(null);
     setSaved(false);
   }, [snapshot]);
@@ -42,6 +53,10 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
   const locked = source === "env";
 
   const commit = async (next: string) => {
+    if (next === lastCommitted.current) {
+      return;
+    }
+    lastCommitted.current = next;
     setDraft(next);
     setError(null);
     setSaved(false);
@@ -51,11 +66,13 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
     } catch (failure: unknown) {
       // **The reason Core gave, shown as-is.** Never "failed to save" with nothing else
       setError(failure instanceof Error ? failure.message : translate(locale, "settings.refused"));
+      lastCommitted.current = value;
       setDraft(value);
     }
   };
 
   const choices = CHOICES[name];
+  const isSpeed = name === "tts_speed";
 
   return (
     <tr>
@@ -63,13 +80,31 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
         {name === "inference_device" ||
         name === "llm_model" ||
         name === "stt_model" ||
-        name === "locale"
+        name === "locale" ||
+        name === "tts_speed"
           ? translate(locale, `settings.label.${name}`)
           : name}
       </th>
       <td className="settings__value">
         {locked ? (
           value
+        ) : isSpeed ? (
+          <div className="settings__speed">
+            <input
+              className="settings__input settings__speed-input"
+              type="range"
+              min={TTS_SPEED_MIN}
+              max={TTS_SPEED_MAX}
+              step={TTS_SPEED_STEP}
+              value={draft}
+              aria-label={translate(locale, "settings.label.tts_speed")}
+              onChange={(event) => setDraft(event.target.value)}
+              onPointerUp={(event) => void commit(event.currentTarget.value)}
+              onKeyUp={(event) => void commit(event.currentTarget.value)}
+              onBlur={() => void commit(draft)}
+            />
+            <output>{formatSpeed(draft)}</output>
+          </div>
         ) : choices ? (
           <select
             className="settings__input"
@@ -96,7 +131,10 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
       <td className={locked ? "settings__src settings__src--env" : "settings__src"}>
         {error ??
           (saved
-            ? translate(locale, name === "locale" ? "settings.applied" : "settings.saved")
+            ? translate(
+                locale,
+                name === "locale" || name === "tts_speed" ? "settings.applied" : "settings.saved",
+              )
             : translate(locale, `settings.source.${source}`))}
       </td>
     </tr>

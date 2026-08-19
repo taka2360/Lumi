@@ -55,6 +55,10 @@ AudioIO
                           **実体は `agent/speech.py`。** audio/ には置かない（§6）
 ```
 
+**起動時は `boot: ready` の配信後に AudioIO を開始する。** ローディング中は capture stream と
+VAD スレッドを開始せず、音声入力を受け付けない
+（[ADR-033](../decisions/ADR-033-gate-voice-input-until-ready.md)）。
+
 **capture と playback は別のコールバックで動く**（別ストリームなので）。
 両者の整合は、**各コールバックで採る共通の実時間とフレーム番号**で取る（→ [ADR-020](../decisions/ADR-020-split-audio-streams.md)）。
 

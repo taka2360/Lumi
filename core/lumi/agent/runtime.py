@@ -141,6 +141,7 @@ class ConversationRuntime:
                 options=LLMOptions(model=self._model),
                 session=Session(),
                 audio=self._audio,
+                tts_speed=float(self._settings.tts_speed.value),
             )
         )
 
@@ -179,9 +180,14 @@ class ConversationRuntime:
             # **The reason travels back**, never just "failed"
             raise RequestRefused(type(error).__name__) from error
 
+        if "tts_speed" in changes and self._loop is not None:
+            self._loop.set_tts_speed(float(self._settings.tts_speed.value))
+
         payload_out = self._settings.to_payload()
         await self._server.notify(Role.STAGE, METHOD_SETTINGS, payload_out)
-        return {"applied_at_next_start": any(key != "locale" for key in changes)}
+        return {
+            "applied_at_next_start": any(key not in {"locale", "tts_speed"} for key in changes)
+        }
 
     async def _announce_model(self) -> None:
         """Tells the Stage **which model to draw, and the credit that goes with it** (ADR-029).
@@ -223,7 +229,6 @@ class ConversationRuntime:
         # which of them an environment variable is currently overriding
         await self._server.notify(Role.STAGE, METHOD_SETTINGS, self._settings.to_payload())
         await self._announce_model()
-        await self._audio.start()
         # **The engine is started here, not at the first utterance.** The boot phase the
         # Stage shows is derived from this process state, so with nobody starting it and
         # reporting back, `installed × stopped` keeps rendering "starting" forever
@@ -231,15 +236,26 @@ class ConversationRuntime:
         # add the engine's startup — tens of seconds, minutes on the first run — onto the
         # first reply.
         #
-        # **Not awaited.** Listening and the reactive loop don't depend on the engine, and
-        # blocking here would hold up capture for the whole startup.
+        # **Not awaited.** The Stage connection handler must stay responsive while the engine
+        # starts. `_warm` opens audio and starts the reactive loop only after `warm_tts` has
+        # broadcast `boot: ready` (ADR-033).
         self._warmup = asyncio.create_task(
-            _warm(self._providers, self._setup, self._model), name="warmup"
+            _warm(
+                self._providers,
+                self._setup,
+                self._model,
+                on_ready=self._start_listening,
+            ),
+            name="warmup",
         )
         # **Nobody awaits this task while it runs.** Without a callback an unexpected failure
         # stays invisible until GC, and `stop()` is where it would finally surface — as an
         # exception that aborts the rest of shutdown
         self._warmup.add_done_callback(_report_warmup_exit)
+
+    async def _start_listening(self) -> None:
+        """Open voice input only after Core has broadcast `boot: ready` (ADR-033)."""
+        await self._audio.start()
 
         if self._loop is None:
             log.warning("conversation.disabled", reason="content pack")
@@ -334,7 +350,13 @@ def _report_reactive_exit(task: asyncio.Task[None]) -> None:
         log.info("reactive.stopped")
 
 
-async def _warm(providers: ProviderRegistry, setup: SetupCoordinator, model: str) -> None:
+async def _warm(
+    providers: ProviderRegistry,
+    setup: SetupCoordinator,
+    model: str,
+    *,
+    on_ready: Callable[[], Awaitable[None]] | None = None,
+) -> None:
     """Brings the engines up and **reports what each one turned out to be.**
 
     Sequential, not concurrent: the TTS engine saturates the GPU while it starts, and
@@ -346,6 +368,10 @@ async def _warm(providers: ProviderRegistry, setup: SetupCoordinator, model: str
     was warming at all.
     """
     await warm_tts(providers, setup)
+    # `warm_tts` does not return until `boot: ready` has been broadcast. Audio capture must
+    # stay closed before this boundary so a loading screen never accepts hidden speech.
+    if on_ready is not None:
+        await on_ready()
     await warm_llm(providers, setup, model)
     await warm_stt(providers)
 

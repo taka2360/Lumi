@@ -471,3 +471,21 @@ body {
   color: inherit;
   font: inherit;
 }
+
+.settings__speed {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 150px;
+}
+
+.settings__speed-input {
+  padding: 0;
+  accent-color: #a9c7ff;
+}
+
+.settings__speed output {
+  min-width: 28px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}

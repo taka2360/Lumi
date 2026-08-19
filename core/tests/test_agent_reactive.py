@@ -155,12 +155,14 @@ class FakeTts(_Base):
     def __init__(self) -> None:
         super().__init__()
         self.texts: list[str] = []
+        self.voices: list[VoiceConfig] = []
 
     async def synthesize(
         self, text: str, voice: VoiceConfig, cancel_token: CancelToken
     ) -> SpeechAudio:
-        del voice, cancel_token
+        del cancel_token
         self.texts.append(text)
+        self.voices.append(voice)
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as sink:
             sink.setnchannels(1)
@@ -199,7 +201,14 @@ class FakeNotifier:
 class Rig:
     """The complete set of things needed to run one conversation."""
 
-    def __init__(self, llm: FakeLlm, *, stt_text: str = "やあ", limits: LoopLimits | None = None):
+    def __init__(
+        self,
+        llm: FakeLlm,
+        *,
+        stt_text: str = "やあ",
+        limits: LoopLimits | None = None,
+        tts_speed: float = 1.2,
+    ):
         self.database = Database.open(":memory:")
         self.database.migrate()
         bus = EventBus(SqliteEventStore(self.database))
@@ -238,6 +247,7 @@ class Rig:
             session=self.session,
             limits=limits,
             audio=self.audio,
+            tts_speed=tts_speed,
         )
 
     async def start(self) -> None:
@@ -286,6 +296,15 @@ async def test_a_turn_speaks_and_records() -> None:
 
     assert rig.notifier.spoken() == ["こんにちは。", "げんきだよ。"]
     assert [t.text for t in rig.session.turns] == ["やあ", "こんにちは。げんきだよ。"]
+
+
+async def test_the_core_tts_speed_reaches_the_voice_config() -> None:
+    rig = Rig(FakeLlm([text("ゆっくり話すね。")]), tts_speed=1.4)
+    await rig.start()
+
+    await rig.loop.handle_text("速度を変えて")
+
+    assert rig.tts.voices[0].speed_scale == 1.4
 
 
 async def test_the_activity_returns_to_idle() -> None:

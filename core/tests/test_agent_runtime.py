@@ -193,6 +193,40 @@ class TestEverythingIsWarmed:
         cold = [kind.value for kind, provider in registered.items() if not provider.is_loaded()]
         assert not cold, f"起動時に温めていない Provider がある: {cold}"
 
+    async def test_voice_input_starts_only_after_loading_is_ready(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ The loading screen must never accept speech behind the character's back.
+
+        `warm_tts` owns the `starting` → `ready` transition, so the callback that opens
+        AudioIO must run after that broadcast and before the remaining warmups.
+        """
+        detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+        providers = ProviderRegistry()
+        registered = {
+            kind: FakeTts(kind=kind)
+            for kind in (ProviderKind.TTS, ProviderKind.LLM, ProviderKind.STT)
+        }
+        for provider in registered.values():
+            providers.register(provider)
+
+        callback_observation: list[tuple[str, bool, bool]] = []
+
+        async def start_listening() -> None:
+            callback_observation.append(
+                (
+                    server.boots[-1],
+                    registered[ProviderKind.LLM].is_loaded(),
+                    registered[ProviderKind.STT].is_loaded(),
+                )
+            )
+
+        await _warm(providers, coordinator, "qwen3:8b", on_ready=start_listening)
+
+        assert callback_observation == [("ready", False, False)]
+
     async def test_a_cold_stt_model_does_not_stop_startup(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
@@ -347,6 +381,18 @@ class TestSettingsUpdate:
 
         assert answer == {"applied_at_next_start": False}
         assert server.settings[-1]["values"]["locale"]["value"] == "en"
+        del runtime
+
+    async def test_tts_speed_is_marked_as_applied_immediately(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        runtime, server = await self.build(monkeypatch, tmp_path)
+        answer = await server.inbound["stage.settings.update"](
+            {"changes": {"tts_speed": "1.4"}}
+        )
+
+        assert answer == {"applied_at_next_start": False}
+        assert server.settings[-1]["values"]["tts_speed"]["value"] == "1.4"
         del runtime
 
     async def test_a_key_that_is_not_a_setting_is_refused(

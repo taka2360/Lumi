@@ -52,6 +52,7 @@ const ja = {
   "settings.label.llm_model": "LLM モデル",
   "settings.label.stt_model": "音声認識モデル",
   "settings.label.locale": "表示言語",
+  "settings.label.tts_speed": "読み上げ速度",
   "settings.choice.auto": "自動（システム設定）",
   "settings.choice.ja": "日本語",
   "settings.choice.en": "English",
@@ -60,7 +61,7 @@ const ja = {
   "settings.refused": "拒否されました",
   "settings.unreadable":
     "設定ファイルを読めませんでした。既定値で動いています（上書きはしないので、手で直せます）",
-  "settings.restart": "モデルとデバイスの変更は次回起動から効きます",
+  "settings.restart": "モデルとデバイスの変更は次回起動から、読み上げ速度はすぐに反映されます",
   "inspector.empty": "まだ1ターンも終わっていない",
   "inspector.interrupted": "途中で止まったターン",
   "boot.title": "Lumi を起動しています…",
@@ -155,6 +156,7 @@ const en: Record<keyof typeof ja, string> = {
   "settings.label.llm_model": "LLM model",
   "settings.label.stt_model": "Speech recognition model",
   "settings.label.locale": "Display language",
+  "settings.label.tts_speed": "Speech speed",
   "settings.choice.auto": "Automatic (system)",
   "settings.choice.ja": "日本語",
   "settings.choice.en": "English",
@@ -163,7 +165,8 @@ const en: Record<keyof typeof ja, string> = {
   "settings.refused": "Refused",
   "settings.unreadable":
     "The settings file could not be read. Lumi is using defaults and will not overwrite the file, so you can repair it manually.",
-  "settings.restart": "Model and device changes take effect after restarting.",
+  "settings.restart":
+    "Model and device changes take effect after restarting; speech speed applies immediately.",
   "inspector.empty": "No turn has finished yet",
   "inspector.interrupted": "Interrupted turn",
   "boot.title": "Starting Lumi…",

@@ -105,6 +105,7 @@ class ReactiveLoop:
         "_providers",
         "_session",
         "_tools",
+        "_tts_speed",
     )
 
     def __init__(
@@ -119,6 +120,7 @@ class ReactiveLoop:
         session: Session | None = None,
         limits: LoopLimits | None = None,
         audio: AudioIO | None = None,
+        tts_speed: float = 1.2,
     ) -> None:
         self._arbiter = arbiter
         self._providers = providers
@@ -129,6 +131,7 @@ class ReactiveLoop:
         self._session = session or Session()
         self._limits = limits or LoopLimits()
         self._audio = audio
+        self._tts_speed = tts_speed
         self._last_latency: TurnLatency | None = None
         #: `None` unless `LUMI_DEBUG_STT_DUMP=1`. **The only diagnostic that separates
         #: "the audio was already damaged" from "the model got clean audio and still
@@ -143,6 +146,10 @@ class ReactiveLoop:
     def last_latency(self) -> TurnLatency | None:
         """The most recent turn's breakdown. **What the Inspector shows** (roadmap Phase 1)."""
         return self._last_latency
+
+    def set_tts_speed(self, speed: float) -> None:
+        """Uses a new Core-owned speed for the next scheduler that is created."""
+        self._tts_speed = speed
 
     # ── Entry point ──────────────────────────────────────────────
 
@@ -443,6 +450,7 @@ class ReactiveLoop:
                 speaker=speaker,
                 name=self._pack.voice.credit.name,
                 volume_scale=volume,
+                speed_scale=self._tts_speed,
             )
         default = getattr(tts, "default_voice", None)
         if default is None:
@@ -452,6 +460,7 @@ class ReactiveLoop:
             speaker=voice.speaker,
             name=voice.name,
             volume_scale=volume,
+            speed_scale=self._tts_speed,
         )
 
     def _require_playback(self) -> SpeakerPlayback:
