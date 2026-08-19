@@ -56,7 +56,11 @@ export function App() {
   const setup = useStageStore((state) => state.setup);
   const connected = useStageStore((state) => state.connected);
   const prompt = useStageStore((state) => state.prompt);
-  const showCharacter = connected && setup.boot === "ready";
+  // **Which model is Core's decision** (ADR-029). `null` = not told yet, which is not the
+  // same as "there is no model" — waiting avoids showing the placeholder for a moment and
+  // then swapping it, which would read as a glitch rather than as a state
+  const model = useStageStore((state) => state.model);
+  const showCharacter = connected && setup.boot === "ready" && model !== null;
 
   const [status, setStatus] = useState<CharacterStatus>({ kind: null, fallbackReason: null });
   const onStatus = useCallback((next: CharacterStatus) => setStatus(next), []);
@@ -117,7 +121,7 @@ export function App() {
           onPointerDown={gestures.onPointerDown}
           onWheel={gestures.onWheel}
         >
-          <CharacterCanvas onStatus={onStatus} onBounds={onBounds} />
+          <CharacterCanvas source={model} onStatus={onStatus} onBounds={onBounds} />
         </div>
       )}
       {/* Only while the character is out. A bubble floating over a loading screen would

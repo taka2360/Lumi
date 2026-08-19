@@ -156,13 +156,13 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
   - [x] 起動フェーズ（`boot`）を **LLM / STT / TTS の3つから導出**する。「喋れるが聞けない」を正常な状態として出す〔Step G。**待たせるのは「今まさに使えるようになる」ときだけ** → [architecture/setup.md](architecture/setup.md) §2b〕
 - [x] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）〔Step F で `turn_latency` / `vad.mute` を実装。**数値の記録はモデル取得後**〕
 - [x] Inspector 最小版（Activity ツリー / レイテンシ内訳）〔Step G。**`stage` ウィンドウ内**。送信は EventBus 購読 → 別タスクで、barge-in の経路に載せない → [architecture/ui.md](architecture/ui.md) §5〕
-- [ ] **Content Pack の既定キャラクター**〔Step E で `content/characters/lumi/` を作成。**VRM 本体はまだ置いていない**（下記の持ち越し）〕
+- [x] **Content Pack の既定キャラクター**〔Step E で `content/characters/lumi/` を作成。**VRM 本体も配置済み**〔2026-08-19〕。`character.toml` の `[model]` が持つ〕
 
 ### Phase 0 からの持ち越し
 
 - [ ] **検証手順 15〜18 を別マシンで通す**（取得の経路。**LLM / STT のセットアップが同じ経路に乗った後**にまとめて回す）
 - [ ] **ネットワーク断線の実試験**（単体テストでは `.tmp-*` が残らないことを確認済み。実断線は未実施）
-- [ ] **既定同梱 VRM モデル（光莉 / 作者: あわ）を `content/` に置き、配布物に含める経路を通す**（リポジトリにはコミットしない → [licensing.md](licensing.md) §4.5）
+- [x] **既定同梱 VRM モデル（光莉 / 作者: あわ）を `content/` に置き、配布物に含める経路を通す**（リポジトリにはコミットしない → [licensing.md](licensing.md) §4.5）〔2026-08-19。**Core が決め、Shell が配信し、Stage が描く** → [ADR-029](decisions/ADR-029-content-pack-asset-delivery.md)。PyInstaller spec が `model.vrm` の同梱を fail-closed で確認する〕
 - [ ] release ビルドでのカーソル監視 CPU 実測（debug では 1コア 2.8%）
 
 ### Stretch（詰まったら落とす）
@@ -410,7 +410,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 6 | 🔴 **プライバシーとデータ保存の方針**（`contracts/privacy.md` を書く） | **Phase 2 着手前** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
 | 8 | **DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる） | Phase 3 着手前 |
-| 8b | 🔴 **区間合計が p50 目標を超えている**（1.27s / 106%）。`llm_first_token` は 537→**421 ms** に縮めた〔2026-08-18〕が、**106% は予算表の算術なので動かない**。`vad_ms` 0.43s と p50 目標 1.20s が両立しない | **Phase 1 を閉じる前**（完了条件 p95 2.0s は満たしている。**常に赤い SLO は警告灯として死ぬ**）。残るのは「p50 目標を 1.5s に置き直すか」の判断のみ → [architecture/audio.md](architecture/audio.md) §7 |
+| ~~8b~~ | ~~区間合計が p50 目標を超えている~~ | **✓ 解消**〔2026-08-18〕。`llm_first_token` を 537→**421 ms** に縮めたうえで、**p50 目標を 1.2s → 1.5s に置き直した**（1.27/1.50 = 85%）。`vad_ms` 0.43s はターンテイキングの方針で動かせず、旧目標と両立しなかったため。**p95 2.0s（完了条件）と区間別予算は据え置き** → [architecture/audio.md](architecture/audio.md) §7 |
 | ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
 | ~~8d~~ | ~~🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**~~ | **✓ 解消**〔2026-08-17〕→ [architecture/audio.md](architecture/audio.md) §7。**予算の側が誤り**。パラメータは 400 ms のまま（下げると文中の間で区間が切れる。実測済み）。**表には数値を書かず §5 を参照する**（同じ値を2箇所に書いたのが原因） |
 | ~~9~~ | ~~設定の保存形式とスキーマ~~ | **✓ 解消**〔2026-08-17 / Step G〕→ [architecture/core.md](architecture/core.md) §6b。**JSON / `<data_dir>/settings.json`**。壊れたファイルは上書きしない・知らないキーは保持・環境変数の上書きは表示する。変更経路（Stage → Core の `request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md) |

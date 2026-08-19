@@ -28,7 +28,7 @@ from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.session import Session
 from lumi.audio.devices import AudioPlan
 from lumi.audio.io import AudioIO
-from lumi.character import METHOD_EXPRESSION, ExpressionIntent
+from lumi.character import METHOD_EXPRESSION, METHOD_MODEL, ExpressionIntent
 from lumi.content.pack import CharacterPack, ContentPackError, load_character
 from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.event import EventBus
@@ -184,6 +184,27 @@ class ConversationRuntime:
         await self._server.notify(Role.STAGE, METHOD_SETTINGS, payload_out)
         return {"applied_at_next_start": True}
 
+    async def _announce_model(self) -> None:
+        """Tells the Stage **which model to draw, and the credit that goes with it** (ADR-029).
+
+        **Sent even when there is no model** (`path: null`). "Nothing has arrived yet" and
+        "this Content Pack ships no model" are different states, and only the second one
+        should put the placeholder on screen with a reason (docs/architecture/ui.md).
+
+        An absolute path, not a URL — **Core does not serve files** and does not know how
+        Shell addresses them.
+        """
+        model = self._pack.model if self._pack else None
+        if model is None:
+            reason = (
+                "Content Pack がモデルを含んでいない" if self._pack else "Content Pack が読めない"
+            )
+            await self._server.notify(Role.STAGE, METHOD_MODEL, {"path": None, "reason": reason})
+            log.info("character.model.absent", reason=reason)
+            return
+        await self._server.notify(Role.STAGE, METHOD_MODEL, model.to_payload())
+        log.info("character.model", path=str(model.path), format=model.format)
+
     @property
     def arbiter(self) -> AttentionArbiter:
         """**Read-only.** What the Inspector reads the Activity tree from (roadmap Phase 1).
@@ -202,6 +223,7 @@ class ConversationRuntime:
         # **Sent once at startup.** The Stage shows values, not judgments — including
         # which of them an environment variable is currently overriding
         await self._server.notify(Role.STAGE, METHOD_SETTINGS, self._settings.to_payload())
+        await self._announce_model()
         await self._audio.start()
         # **The engine is started here, not at the first utterance.** The boot phase the
         # Stage shows is derived from this process state, so with nobody starting it and

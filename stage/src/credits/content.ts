@@ -161,6 +161,22 @@ export const EXTERNAL: readonly ExternalComponent[] = [
       "禁止事項があります（下記）。",
     ],
   },
+  {
+    // **表記は義務ではない。それでも出す**（docs/licensing.md §4.5）。
+    // 義務の有無と、出すかどうかは別の判断。
+    name: "3Dモデル「光莉 / ひかり」（あわ）",
+    license: "VRoid Hub 利用条件（モデル登録者が設定）",
+    // **全文は同梱していない。** 同梱を求められていないため（docs/licensing.md §4.5）。
+    // 求められる条件のモデルに差し替えるなら、ここに全文を足す義務が発生する
+    licenses: [],
+    appliesWhen:
+      "既定の Content Pack を使う場合（別のモデルに差し替えた場合は、そのモデルの利用条件が適用されます）",
+    source: "https://hub.vroid.com/characters/7574619046991064867/models/3031358336334644609",
+    obligations: [
+      "クレジット表記は不要です（2026-08-16 時点の条件）。",
+      "再配布・改変が許諾されているため、Lumi の配布物に含まれています。",
+    ],
+  },
 ];
 
 /** Examples of how to write voice-source credit. **Addresses the obligation to place it "somewhere findable with a bit of effort."** */

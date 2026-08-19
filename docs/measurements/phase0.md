@@ -406,6 +406,12 @@ per-process の GPU カウンタは Windows では取得が重く実用になら
   **本番ビルドにはこの経路が存在しない**ので、構造的に混入しない
 - ソースマップを本番ビルドで無効化（5 MB）
 
+> **〔2026-08-19 追記〕この対処は Phase 1 で役目を終えた。** 同梱してよいモデルが決まり
+> （[../licensing.md](../licensing.md) §4.5。再配布 OK）、モデルは Content Pack に入って
+> **配布物に含まれるようになった**。`stage/dev-assets/` と dev サーバのプラグインは削除。
+> 実体を配るのは Shell（[../decisions/ADR-029-content-pack-asset-delivery.md](../decisions/ADR-029-content-pack-asset-delivery.md)）。
+> **ここは当時の記録なので書き換えない。**
+
 ### プロセスの後始末（検証手順 8・パッケージ版）
 
 `lumi-shell.exe` を `Stop-Process -Force` → **Core も TTS エンジンも消えた。** ゾンビなし。

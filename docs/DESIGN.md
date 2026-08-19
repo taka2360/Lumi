@@ -642,6 +642,8 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [025](decisions/ADR-025-tts-on-gpu.md) | **TTS に GPU を使えるようにする**（ADR-008 の「VRAM を消費しない」を実測により撤回） |
 | [026](decisions/ADR-026-polyphase-resampler.md) | サンプルレート変換を自前の polyphase FIR にし、VAD 経路では状態を持たせる（STT 精度の主因） |
 | [027](decisions/ADR-027-stt-model-large-v3-turbo.md) | STT の既定モデルを `small` から `large-v3-turbo` にする（語彙混同。CER 半減） |
+| [028](decisions/ADR-028-stage-initiated-request.md) | Stage → Core の要求方向（`request`）を作る。**`command` は片方向のまま**（Core が決める非対称を名前で保つ） |
+| [029](decisions/ADR-029-content-pack-asset-delivery.md) | Content Pack のアセットは Shell が WebView に配信する（**Core をファイルサーバにしない**） |
 
 ---
 

@@ -42,6 +42,7 @@ import {
   CHOICE_SKIP,
   METHOD_EXPRESSION,
   METHOD_INSPECTOR,
+  METHOD_MODEL,
   METHOD_SETTINGS,
   METHOD_SETTINGS_UPDATE,
   METHOD_SETUP_PROMPT,
@@ -95,6 +96,7 @@ describe("wire contract", () => {
         METHOD_EXPRESSION,
         METHOD_INSPECTOR,
         METHOD_SETTINGS,
+        METHOD_MODEL,
       ]),
     ).toEqual(new Set(wire.methods.stage));
   });

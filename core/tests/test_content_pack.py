@@ -28,11 +28,31 @@ license_name = "ACML 1.0"
 """
 
 
-def pack(tmp_path: Path, *, character: str = CHARACTER, voice: str = VOICE) -> Path:
+MODEL = """
+[model]
+file = "model.vrm"
+format = "vrm0"
+
+[model.credit]
+name = "光莉 / ひかり"
+credit_text = "3Dモデル: 光莉 / ひかり（あわ）"
+license_name = "VRoid Hub 利用条件（作者設定）"
+"""
+
+
+def pack(
+    tmp_path: Path,
+    *,
+    character: str = CHARACTER,
+    voice: str = VOICE,
+    model_file: bool = False,
+) -> Path:
     root = tmp_path / "lumi"
     root.mkdir()
     (root / "character.toml").write_text(character, encoding="utf-8")
     (root / "voice.toml").write_text(voice, encoding="utf-8")
+    if model_file:
+        (root / "model.vrm").write_bytes(b"glTF")
     return root
 
 
@@ -59,6 +79,40 @@ def test_a_volume_is_read(tmp_path: Path) -> None:
 def test_an_integer_volume_is_read_as_float(tmp_path: Path) -> None:
     root = pack(tmp_path, voice=VOICE.replace("[voice]", "[voice]\nvolume = 1"))
     assert load_character(root).voice.volume == 1.0
+
+
+# ── 見た目（[model]） ────────────────────────────────────────
+
+
+def test_a_pack_without_a_model_is_valid(tmp_path: Path) -> None:
+    """**声だけの Content Pack も Content Pack である。** プレースホルダで動く。"""
+    assert load_character(pack(tmp_path)).model is None
+
+
+def test_a_declared_model_is_read(tmp_path: Path) -> None:
+    loaded = load_character(pack(tmp_path, character=CHARACTER + MODEL, model_file=True))
+
+    assert loaded.model is not None
+    assert loaded.model.path.name == "model.vrm"
+    assert loaded.model.format == "vrm0"
+    assert loaded.model.credit.credit_text == "3Dモデル: 光莉 / ひかり（あわ）"
+
+
+def test_a_model_that_is_not_shipped_is_rejected(tmp_path: Path) -> None:
+    """**黙ってプレースホルダに落とさない。** 名前を書いたのに実体が無いのは壊れている。"""
+    with pytest.raises(ContentPackError, match=r"model\.vrm"):
+        load_character(pack(tmp_path, character=CHARACTER + MODEL))
+
+
+def test_a_model_without_credit_is_rejected(tmp_path: Path) -> None:
+    """★ **アセットを同梱するなら、クレジットを宣言する** (extension.md §9).
+
+    `voice.toml` の `[credit]` と同じ規則。**「後で足す」ができない性質のもの**であり、
+    その license がクレジットを要求するかどうかとは別の判断（Lumi はどちらでも出す）。
+    """
+    declared = CHARACTER + '\n[model]\nfile = "model.vrm"\n'
+    with pytest.raises(ContentPackError, match=r"\[credit\]"):
+        load_character(pack(tmp_path, character=declared, model_file=True))
 
 
 # ── fail-closed ─────────────────────────────────────────────
@@ -160,3 +214,9 @@ def test_the_bundled_default_pack_loads() -> None:
     # ordinary volume adjustment fail CI (2026-08-17); what matters is that it parsed
     # and landed in a usable range.
     assert 0.0 < loaded.voice.volume <= 2.0
+    # ★ **既定キャラクターには見た目がある** — docs/licensing.md §4.5（光莉 / ひかり）。
+    # `[model]` はトップレベルの表なので、`[character]` の中を探すと黙って `None` になる
+    # （実際にそう書いて、この行が無ければ気づかなかった。2026-08-19）
+    assert loaded.model is not None, "既定 Content Pack がモデルを宣言していない"
+    assert loaded.model.path.is_file()
+    assert loaded.model.credit.credit_text

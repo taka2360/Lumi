@@ -70,6 +70,18 @@ class Credit:
     license_file: str = ""
     license_url: str = ""
 
+    def to_payload(self) -> dict[str, str]:
+        """**Passed through verbatim.** The wording a license demands is the rights holder's
+        to choose; reformatting it can stop satisfying the requirement
+        (docs/architecture/extension.md §9).
+        """
+        return {
+            "name": self.name,
+            "credit_text": self.credit_text,
+            "license_name": self.license_name,
+            "license_url": self.license_url,
+        }
+
 
 @dataclass(frozen=True, slots=True)
 class VoiceSettings:
@@ -80,12 +92,43 @@ class VoiceSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class ModelSettings:
+    """What the character looks like. **The Content Pack chooses the model**
+    (docs/architecture/extension.md §9) — hardcoding one in Core would make the credit a lie
+    the moment it is swapped.
+    """
+
+    #: Absolute path to the model file. **Resolved at load**, so a pack that declares a model
+    #: it doesn't ship fails here rather than as a blank character later
+    path: Path
+    #: `vrm0` / `vrm1`. **Read but not acted on in Phase 1** — `@pixiv/three-vrm` handles both,
+    #: and Live2D is Phase 9 (docs/architecture/ui.md §3)
+    format: str
+    credit: Credit
+
+    def to_payload(self) -> dict[str, object]:
+        """What the Stage needs to draw it, and what the credits screen needs to say.
+
+        **An absolute path, not a URL.** Turning it into something the WebView can fetch is
+        Shell's job — Core neither serves files nor knows how Shell addresses them (ADR-029).
+        """
+        return {
+            "path": str(self.path),
+            "format": self.format,
+            "credit": self.credit.to_payload(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class CharacterPack:
     root: Path
     name: str
     #: Persona prompt. **Becomes PromptAssembly's persona** (trusted)
     persona: str
     voice: VoiceSettings
+    #: `None` = no model declared. **The placeholder runs, and the Stage says so**
+    #: (docs/architecture/ui.md). A voice-only pack is a legitimate pack
+    model: ModelSettings | None = None
 
 
 def load_character(root: Path) -> CharacterPack:
@@ -112,9 +155,39 @@ def load_character(root: Path) -> CharacterPack:
             credit=_credit(_table(voice, "credit", root), root / "voice.toml"),
             volume=_parse_volume(voice_section.get("volume"), root / "voice.toml"),
         ),
+        # **`[model]` はトップレベル**（`[character]` の中ではない）。voice.toml の
+        # `[voice]` / `[credit]` と同じ並び
+        model=_model(character, root),
     )
     log.info("content.loaded", name=pack.name, root=str(root))
     return pack
+
+
+def _model(document: dict[str, Any], root: Path) -> ModelSettings | None:
+    """Reads `[model]`. **Absent is fine; incomplete is not.**
+
+    Declaring a model and shipping no credit is the same failure `[credit]` in `voice.toml`
+    guards against: **crediting is not something that can be added after distribution**
+    (docs/architecture/extension.md §9). Whether a given license *requires* the credit is a
+    separate question from whether Lumi shows it — Lumi shows it either way.
+    """
+    model = document.get("model")
+    if model is None:
+        return None
+    if not isinstance(model, dict):
+        raise ContentPackError("character.toml の [model] がテーブルではない")
+
+    path = root / _text(model, "file", root / "character.toml")
+    if not path.is_file():
+        # **Never fall back silently.** A pack that names a model it doesn't ship is broken,
+        # and a blank character is the least informative way to report it
+        raise ContentPackError(f"[model] が指すファイルが無い: {path}")
+
+    return ModelSettings(
+        path=path,
+        format=str(model.get("format", "")),
+        credit=_credit(_table(model, "credit", root), root / "character.toml"),
+    )
 
 
 def _reject_code(root: Path) -> None:

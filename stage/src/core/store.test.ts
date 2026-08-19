@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 
 import { visemeAt } from "../character/lipsync";
 import {
+  toCharacterModel,
   toSetupPrompt,
   toSetupSnapshot,
   toSpeech,
@@ -166,5 +167,34 @@ describe("the setup question", () => {
     // **A consent dialog with no subject is worse than one naming the likely subject.**
     expect(toSetupPrompt({}).component).toBe("tts");
     expect(toSetupPrompt({ component: "gpu" }).component).toBe("tts");
+  });
+});
+
+describe("which model to draw", () => {
+  it("reads the path and format Core decided", () => {
+    const model = toCharacterModel({
+      path: "C:Lumicontentcharacterslumimodel.vrm",
+      format: "vrm0",
+      credit: { name: "光莉 / ひかり", credit_text: "3Dモデル: 光莉 / ひかり（あわ）" },
+    });
+
+    expect(model.path).toBe("C:Lumicontentcharacterslumimodel.vrm");
+    expect(model.format).toBe("vrm0");
+    expect(model.reason).toBe("");
+  });
+
+  it("★ carries the reason when the pack ships no model", () => {
+    // **A voice-only Content Pack is a legitimate pack.** The placeholder needs a reason,
+    // or it reads as a bug rather than as a state (docs/DESIGN.md「黙って劣化しない」).
+    const model = toCharacterModel({ path: null, reason: "Content Pack がモデルを含んでいない" });
+
+    expect(model.path).toBeNull();
+    expect(model.reason).toBe("Content Pack がモデルを含んでいない");
+  });
+
+  it("never leaves the placeholder unexplained", () => {
+    // Even a payload with nothing usable in it produces something to show.
+    expect(toCharacterModel({}).reason).not.toBe("");
+    expect(toCharacterModel({ path: "" }).reason).not.toBe("");
   });
 });

@@ -1,9 +1,12 @@
 /**
  * Loading VRM. **The single point where a production model is received.**
  *
- * `@pixiv/three-vrm` is MIT. **The model file itself is never included in the
- * distributable** (already `.gitignore`d in the repo too → docs/licensing.md §2).
- * Once a default bundled model is decided, change what `DEFAULT_VRM_URL` points at to the Content Pack.
+ * `@pixiv/three-vrm` is MIT. **The model file is never committed to the repository**
+ * (`.gitignore`d), but it *is* in the distributable — the bundled default is redistributable
+ * (docs/licensing.md §4.5) and ships inside the Content Pack.
+ *
+ * **This module doesn't know where the model is.** Core decides which one, Shell serves it,
+ * and `loadCharacter` is handed a URL (ADR-029).
  */
 
 import { type VRM, VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
@@ -22,14 +25,6 @@ const VRM_EXPRESSION: Readonly<Record<Viseme, string>> = {
   E: "ee",
   O: "oh",
 };
-
-/**
- * The provisional location for Phase 0. Placing a `.vrm` here loads it as the production model.
- *
- * From Phase 1 onward, model selection is a Content Pack setting **decided by
- * Core and broadcast via `stage.*`.** The Stage deciding its own path is Phase 0's provisional measure.
- */
-export const DEFAULT_VRM_URL = "/character.vrm";
 
 /** 腕を下ろしたデフォルトポーズを適用 */
 function applyDefaultPose(vrm: VRM): void {

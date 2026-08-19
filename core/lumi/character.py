@@ -24,6 +24,10 @@ from typing import Final
 #: waits to be told a face finished changing (docs/contracts/wire.json)
 METHOD_EXPRESSION: Final = "stage.character.expression"
 
+#: Sent once at startup. **Which model, and the credit that goes with it** (ADR-029).
+#: Core decides; Shell serves the bytes; the Stage draws it
+METHOD_MODEL: Final = "stage.character.model"
+
 
 class Emotion(StrEnum):
     NEUTRAL = "neutral"

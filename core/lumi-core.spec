@@ -147,6 +147,9 @@ _require(a.binaries, "sqlite_vec/vec0", "sqlite-vec の拡張が配布物に入�
 _require(a.binaries + a.datas, "libportaudio64bit.dll", "PortAudio が配布物に入っていない")
 _require(a.datas, "silero_vad_v6.onnx", "Silero VAD が配布物に入っていない（barge-in が死ぬ）")
 _require(a.datas, "content/characters/lumi/character.toml", "既定の Content Pack が入っていない")
+# **既定キャラクターの体。** 再配布が許諾されているので配布物に入る（docs/licensing.md §4.5）。
+# 抜けても Lumi は起動してしまう（プレースホルダになる）ので、**ここで止める**
+_require(a.datas, "content/characters/lumi/model.vrm", "既定の VRM が入っていない（プレースホルダで配布される）")
 _require(a.binaries, "onnxruntime", "ONNX Runtime が配布物に入っていない")
 if any("asio" in entry[0].lower() for entry in a.binaries + a.datas):
     raise SystemExit("ASIO 版の PortAudio が残っている（再配布条件が別にある）")

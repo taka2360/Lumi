@@ -41,6 +41,14 @@ pub struct CoreTokens {
 pub struct CoreLaunchSpec {
     pub program: PathBuf,
     pub args: Vec<String>,
+    /// Where **the Core being launched** keeps its Content Pack (ADR-029).
+    ///
+    /// **Derived from the same decision that picked which Core runs**, so the two cannot
+    /// disagree. Resolving it separately allowed the WebView to be pointed at a stale
+    /// `target/debug/core/_internal/content` while Core read the repository's — the character
+    /// then never appeared, and the only sign was `asset protocol not configured to allow the
+    /// path` (2026-08-19).
+    pub content_dir: PathBuf,
 }
 
 /// The sidecar executable name bundled into the distributable.
@@ -85,10 +93,21 @@ pub fn resolve_launch_spec(
                 project.to_string_lossy().into_owned(),
                 "lumi-core".into(),
             ],
+            // The repository keeps `content/` beside `core/`, not inside it. **`parent()`
+            // rather than joining `..`** — a path with `..` still in it doesn't match the
+            // normalized path Tauri checks the asset scope against
+            content_dir: project
+                .parent()
+                .map_or_else(|| project.join("../content"), |repo| repo.join("content")),
         });
     }
     let path = sidecar?;
-    Some(CoreLaunchSpec { program: path.to_path_buf(), args: Vec::new() })
+    // PyInstaller's onedir layout: the Content Pack sits beside the executable it was
+    // frozen into
+    let content_dir = path
+        .parent()
+        .map_or_else(|| PathBuf::from("_internal/content"), |dir| dir.join("_internal/content"));
+    Some(CoreLaunchSpec { program: path.to_path_buf(), args: Vec::new(), content_dir })
 }
 
 /// Looks for the bundled sidecar. `None` if it doesn't exist (= falls back to the dev path).
@@ -296,6 +315,41 @@ mod tests {
         let spec = resolve_launch_spec(Some(Path::new("C:/app/lumi-core.exe")), None).unwrap();
         assert_eq!(spec.program, PathBuf::from("C:/app/lumi-core.exe"));
         assert!(spec.args.is_empty());
+    }
+
+    /// ★ Regression (2026-08-19): **the character never appeared.**
+    ///
+    /// The Content Pack directory was resolved by its own search, which found a stale
+    /// `target/debug/core/_internal/content` from an earlier build — while Core, launched
+    /// from source, read the repository's. The WebView was then allowed to read a directory
+    /// that didn't hold the model Core had named, and the only sign was Tauri's
+    /// `asset protocol not configured to allow the path`.
+    ///
+    /// **One decision, one source** (ADR-029).
+    #[test]
+    fn the_content_pack_belongs_to_the_core_that_runs() {
+        let from_source = resolve_launch_spec(
+            Some(Path::new("C:/app/lumi-core.exe")),
+            Some(Path::new("C:/repo/core")),
+        )
+        .unwrap();
+        // Launching from source ⇒ the repository's Content Pack, **never the built one**
+        assert_eq!(from_source.content_dir, PathBuf::from("C:/repo").join("content"));
+
+        let bundled = resolve_launch_spec(Some(Path::new("C:/app/lumi-core.exe")), None).unwrap();
+        assert_eq!(bundled.content_dir, PathBuf::from("C:/app").join("_internal/content"));
+    }
+
+    #[test]
+    fn the_content_pack_path_carries_no_parent_segments() {
+        // **A path with `..` still in it doesn't match** the normalized path Tauri checks the
+        // asset scope against — it would be allowed and then refused.
+        let spec = resolve_launch_spec(None, Some(Path::new("C:/repo/core"))).unwrap();
+        assert!(
+            !spec.content_dir.components().any(|c| c.as_os_str() == ".."),
+            "scope に渡すパスに .. が残っている: {}",
+            spec.content_dir.display()
+        );
     }
 
     #[test]

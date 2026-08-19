@@ -29,7 +29,7 @@ import {
   targetWeights,
 } from "./expression";
 import { advanceMouth, MOUTH_CLOSED, type MouthWeights, visemeAt } from "./lipsync";
-import { loadCharacter } from "./loadCharacter";
+import { loadCharacter, type ModelSource } from "./loadCharacter";
 import { hasMovedEnough, type NdcPoint, screenRectFromNdcPoints } from "./projection";
 import type { CharacterKind } from "./types";
 
@@ -42,14 +42,20 @@ export interface CharacterStatus {
 }
 
 export function CharacterCanvas({
+  source,
   onStatus,
   onBounds,
 }: {
+  /** Which model to draw. **Core's decision** (ADR-029) — the Stage never picks one. */
+  source: ModelSource;
   onStatus?: (status: CharacterStatus) => void;
   /** The on-screen rectangle the character occupies. **The material for hit-testing** (the test itself runs in Shell). */
   onBounds?: (rect: CssRect | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // **Depended on as primitives, not as the object.** A caller that rebuilds `source` every
+  // render would otherwise tear down the scene and re-download 25 MB on each one
+  const { path, reason } = source;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -92,7 +98,7 @@ export function CharacterCanvas({
     let animationFrame = 0;
     let disposeModel: (() => void) | null = null;
 
-    void loadCharacter().then(({ model, fallbackReason }) => {
+    void loadCharacter({ path, reason }).then(({ model, fallbackReason }) => {
       if (disposed) {
         model.dispose();
         return;
@@ -173,7 +179,7 @@ export function CharacterCanvas({
       // where the character no longer is, and click-through would stop working there.
       onBounds?.(null);
     };
-  }, [onStatus, onBounds]);
+  }, [path, reason, onStatus, onBounds]);
 
   return <canvas ref={canvasRef} className="character" />;
 }

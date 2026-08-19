@@ -16,6 +16,7 @@ import { useEffect } from "react";
 
 import { type CoreConnection, connectToCore } from "./connection";
 import {
+  toCharacterModel,
   toExpression,
   toInspectorSnapshot,
   toSettingsSnapshot,
@@ -39,6 +40,7 @@ export const METHOD_SETUP_PROMPT = "stage.setup.prompt";
 export const METHOD_SPEECH_STARTED = "stage.speech.started";
 export const METHOD_SPEECH_ENDED = "stage.speech.ended";
 export const METHOD_USER_SAID = "stage.user.said";
+export const METHOD_MODEL = "stage.character.model";
 export const METHOD_EXPRESSION = "stage.character.expression";
 export const METHOD_INSPECTOR = "stage.inspector.state";
 export const METHOD_SETTINGS = "stage.settings.state";
@@ -89,6 +91,9 @@ export function useCoreConnection(): void {
         [METHOD_SETUP_STATE]: (payload) => store.setSetup(toSetupSnapshot(payload)),
         [METHOD_INSPECTOR]: (payload) => store.setInspector(toInspectorSnapshot(payload)),
         [METHOD_SETTINGS]: (payload) => store.setSettings(toSettingsSnapshot(payload)),
+        // **Which model to draw is Core's decision** (ADR-029). Sent once at startup,
+        // including when there is none — the placeholder needs a reason to show
+        [METHOD_MODEL]: (payload) => store.setModel(toCharacterModel(payload)),
         // **Time advances on the Stage's own clock** (docs/interfaces/renderer.md).
         // An unreadable timeline leaves the mouth still; **the text is shown regardless**
         [METHOD_SPEECH_STARTED]: (payload) => store.setSpeech(toSpeech(payload, performance.now())),

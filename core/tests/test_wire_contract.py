@@ -23,7 +23,7 @@ import pytest
 
 from lumi.agent.inspector import METHOD_INSPECTOR
 from lumi.agent.runtime import METHOD_SETTINGS, METHOD_SETTINGS_UPDATE
-from lumi.character import METHOD_EXPRESSION, Emotion
+from lumi.character import METHOD_EXPRESSION, METHOD_MODEL, Emotion
 from lumi.providers.tts.viseme import Viseme
 from lumi.settings import Source
 from lumi.setup.coordinator import (
@@ -108,6 +108,7 @@ class TestCoreMatchesTheContract:
             METHOD_SPEECH_STARTED,
             METHOD_SPEECH_ENDED,
             METHOD_USER_SAID,
+            METHOD_MODEL,
             METHOD_EXPRESSION,
             METHOD_INSPECTOR,
             METHOD_SETTINGS,

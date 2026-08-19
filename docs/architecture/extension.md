@@ -269,6 +269,25 @@ license_url   = "https://..."
 | **`[credit]` が無い Content Pack は読み込まない**（fail-closed） | クレジット表記は音源規約上の義務であり、欠けたまま配布すると違反になる。**「後で足す」ができない性質のもの** |
 | 同梱アセットは**ライセンス全文を `LICENSE/` に含める** | ACML「配布する場合は必ずライセンス文書も一緒に添付してください」 |
 | **Core は `credit_text` を解釈しない。** そのまま Stage に渡す | 規約が要求する表記は権利者が決める。Core が整形すると要求を満たさなくなりうる |
+| **`[model]` を宣言するなら `[model.credit]` も宣言する**（fail-closed） | 同上。**その license がクレジットを要求するかどうかとは別の判断**（既定同梱モデルは表記不要だが Lumi は出す） |
+| `[model]` が無い Content Pack は**読める**（プレースホルダで動く） | 声だけの Content Pack は正当な Content Pack。**モデルを宣言したのに実体が無い**場合だけ失敗させる |
+
+```toml
+# character.toml — [character] と並ぶトップレベルの表
+[model]
+file = "model.vrm"
+format = "vrm0"          # vrm0 / vrm1
+
+[model.credit]
+name        = "光莉 / ひかり"
+credit_text = "3Dモデル: 光莉 / ひかり（あわ）"
+license_name = "VRoid Hub 利用条件（作者設定）"
+license_url  = "https://..."
+license_file = ""        # 同梱するなら LICENSE/ の全文パスが必須
+```
+
+**モデルの実体を WebView に届けるのは Shell**（[ADR-029](../decisions/ADR-029-content-pack-asset-delivery.md)）。
+Core は「どれか」を決めてパスを配り、**ファイルを配信しない**。
 
 エンジン側のクレジットは Content Pack ではなく `Provider.attribution()` が持つ（[../interfaces/provider.md](../interfaces/provider.md)）。**モデルは Content Pack が選び、エンジンは Provider が決めるため。**
 

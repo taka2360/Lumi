@@ -179,6 +179,19 @@ export interface SettingsSnapshot {
   values: Record<string, SettingValue>;
 }
 
+/**
+ * Which model to draw, decided by Core from the Content Pack (ADR-029).
+ *
+ * `path` is an **absolute filesystem path, not a URL** — Core does not serve files. Turning
+ * it into something the WebView can fetch is Shell's job, and the Stage asks Shell to do it.
+ */
+export interface CharacterModel {
+  path: string | null;
+  format: string;
+  /** Why there is no model. Only set when `path` is `null`. **Shown, never swallowed.** */
+  reason: string;
+}
+
 interface StageState {
   connected: boolean;
   settings: SettingsSnapshot | null;
@@ -188,6 +201,8 @@ interface StageState {
   speech: Speech | null;
   userSaid: UserSaid | null;
   expression: ExpressionState | null;
+  /** `null` = Core hasn't said yet. **Different from "there is no model"** (`path: null`) */
+  model: CharacterModel | null;
   setConnected(connected: boolean): void;
   setSetup(snapshot: SetupSnapshot): void;
   setInspector(snapshot: InspectorSnapshot): void;
@@ -196,6 +211,7 @@ interface StageState {
   setSpeech(speech: Speech | null): void;
   setUserSaid(said: UserSaid | null): void;
   setExpression(expression: ExpressionState | null): void;
+  setModel(model: CharacterModel): void;
 }
 
 const UNKNOWN_TTS: TtsSetupSnapshot = {
@@ -240,6 +256,7 @@ export const useStageStore = create<StageState>((set) => ({
   speech: null,
   userSaid: null,
   expression: null,
+  model: null,
   setConnected: (connected) => set({ connected }),
   setSetup: (setup) => set({ setup }),
   setInspector: (inspector) => set({ inspector }),
@@ -250,6 +267,7 @@ export const useStageStore = create<StageState>((set) => ({
   setSpeech: (speech) => set(speech ? { speech, userSaid: null } : { speech }),
   setUserSaid: (userSaid) => set({ userSaid }),
   setExpression: (expression) => set({ expression }),
+  setModel: (model) => set({ model }),
 }));
 
 /**
@@ -389,6 +407,31 @@ export function toUserSaid(payload: Record<string, unknown>, startedAtMs: number
   return {
     text: typeof payload.text === "string" ? payload.text : "",
     startedAtMs,
+  };
+}
+
+/**
+ * Reads a `stage.character.model` payload (ADR-029).
+ *
+ * **A missing path is a state, not a parse failure.** A Content Pack without a model is a
+ * legitimate pack, and saying so is what keeps the placeholder from looking like a bug.
+ * A pack that declares a model it doesn't ship never reaches here — Core refuses to load it.
+ *
+ * **The payload also carries the model's credit, and this deliberately ignores it.** The
+ * credits window is static and doesn't connect to Core by design (docs/architecture/ui.md
+ * "`credits` を Core に繋がない理由"), so the credit obligation is met there, not here.
+ * Parsing a field nothing renders would be an abstraction waiting for a use.
+ */
+export function toCharacterModel(payload: Record<string, unknown>): CharacterModel {
+  const path = typeof payload.path === "string" && payload.path ? payload.path : null;
+  const reason = typeof payload.reason === "string" ? payload.reason : "";
+  if (!path) {
+    return { path: null, format: "", reason: reason || "モデルが指定されていない" };
+  }
+  return {
+    path,
+    format: typeof payload.format === "string" ? payload.format : "",
+    reason: "",
   };
 }
 
