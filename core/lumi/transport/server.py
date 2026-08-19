@@ -148,6 +148,7 @@ class WsServer:
         self._server: Server | None = None
         #: In-flight inbound requests. **Kept referenced or the GC collects them**
         self._requests: set[asyncio.Task[None]] = set()
+        self._shutting_down = False
         self._port: int | None = None
 
     @property
@@ -161,6 +162,7 @@ class WsServer:
 
     async def start(self) -> int:
         """Starts listening and returns the actual port number."""
+        self._shutting_down = False
         self._server = await serve(
             self._handle,
             self._host,
@@ -175,10 +177,12 @@ class WsServer:
         return self._port
 
     async def stop(self) -> None:
-        if self._server is not None:
-            self._server.close()
-            await self._server.wait_closed()
-            self._server = None
+        self._shutting_down = True
+        server = self._server
+        if server is not None:
+            # Stop accepting connections immediately, but don't wait for closure until all
+            # inbound request handlers have been canceled and awaited below.
+            server.close()
 
         # A request runs independently of the receive loop. **Closing the listener does not
         # cancel a handler that is already awaiting**, and allowing it to continue would let
@@ -189,6 +193,10 @@ class WsServer:
             task.cancel()
         if pending:
             await asyncio.gather(*pending, return_exceptions=True)
+
+        if server is not None:
+            await server.wait_closed()
+            self._server = None
 
     # ASYNC109: Leaving `asyncio.timeout` to the caller means **it waits forever**
     # whenever it's forgotten. To "never silently degrade," the API carries a
@@ -389,6 +397,8 @@ class WsServer:
 
     async def _receive_loop(self, connection: _Connection) -> None:
         async for raw in connection.ws:
+            if self._shutting_down:
+                return
             if isinstance(raw, bytes):
                 log.warning("transport.message.binary", role=connection.role.value)
                 await connection.ws.close(code=CLOSE_PROTOCOL_ERROR, reason="text only")

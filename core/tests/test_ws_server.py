@@ -444,7 +444,9 @@ class TestInboundRequests:
         assert answer["payload"] == {}
         assert answer["error"] == "internal_error"
 
-    async def test_stop_cancels_and_awaits_inbound_handlers(self, server: WsServer) -> None:
+    async def test_stop_cancels_and_awaits_inbound_handlers(
+        self, server: WsServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         started = asyncio.Event()
         cancelled = asyncio.Event()
 
@@ -474,7 +476,17 @@ class TestInboundRequests:
         async with asyncio.timeout(2.0):
             await started.wait()
 
-        await server.stop()
+        ws_server = server._server
+        assert ws_server is not None
+        wait_closed = ws_server.wait_closed
+
+        async def wait_closed_after_handlers() -> None:
+            await cancelled.wait()
+            await wait_closed()
+
+        monkeypatch.setattr(ws_server, "wait_closed", wait_closed_after_handlers)
+        async with asyncio.timeout(2.0):
+            await server.stop()
 
         assert cancelled.is_set()
         assert not server._requests
