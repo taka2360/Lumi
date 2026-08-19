@@ -48,8 +48,8 @@ describe("parseCoreMessage", () => {
   });
 
   it("explicitly rejects a version mismatch", () => {
-    expect(
-      () => parseCoreMessage(JSON.stringify({ v: PROTOCOL_VERSION + 1, kind: "welcome" })),
+    expect(() =>
+      parseCoreMessage(JSON.stringify({ v: PROTOCOL_VERSION + 1, kind: "welcome" })),
     ).toThrow(ProtocolVersionMismatch);
   });
 });
