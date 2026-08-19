@@ -145,6 +145,15 @@ Capability Ext
 - **同一 `stream_key` 内では順序を保証する**（配送も処理も）
 - **異なる `stream_key` 間では順序を保証しない**
 - 消費側は `sequence_id` の欠番・逆転を検出したら**エラーにする**（黙って処理しない）
+- **購読者は、いま処理している `stream_key` へ publish してはならない**（→ [ADR-030](../decisions/ADR-030-per-stream-dispatch.md)）
+
+「配送も処理も」を満たすには、**配送が終わるまで次の採番を始めてはならない。**
+配送をロックの外に出すと、`await` する購読者が次のイベントに追い越される。
+
+**購読者が処理中の stream へ publish できないのはこの帰結である。** そこで発行される
+イベントは定義上「処理中のイベントの後ろ」に順序づけられるが、その処理はまだ終わっていない。
+**順序を与えられない。** 実装は待たせずに例外を投げる（待たせれば無言のデッドロックになり、
+「黙って劣化しない」に反する）。**別の `stream_key` への publish は自由。**
 
 ### stream_key の設計
 
@@ -189,12 +198,13 @@ extension:<ext_id>          ExtensionLoaded / ExtensionFailed / ExtensionUnloade
 class EventBus:
     async def publish(self, draft: DomainEventDraft) -> DomainEvent:
         """draft は sequence_id を持たない。"""
+        self._refuse_reentry(draft.stream_key)        # 処理中の stream へは publish できない
         async with self._lock_for(draft.stream_key):
             async with self._store.transaction() as tx:
                 seq = await tx.next_sequence(draft.stream_key)
                 event = DomainEvent(sequence_id=seq, **draft.fields())
                 await tx.append(event)
-        await self._dispatch(event)   # 永続化後に配送
+            await self._dispatch(event)   # 永続化後に配送。**ロック内**（→ ADR-030）
         return event
 ```
 
@@ -274,4 +284,6 @@ Hook は DomainEvent とは別の仕組み。**同期的・順序保証あり・
 | 7 | Extension プロトコルに `DomainEvent` を送る経路が無い（静的検査） |
 | 8 | 採番後・配送前にクラッシュしても永続化済みであること |
 | 9 | `ActivityStarted` / `ActivityEnded` の順序が保証される |
+| 9b | **遅い購読者が居ても、同一 stream の配送順が入れ替わらない**（購読者が `await` している間に次の publish が追い越さない → [ADR-030](../decisions/ADR-030-per-stream-dispatch.md)） |
+| 9c | **購読者が処理中の stream へ publish すると、待たされずに例外になる**（無言のデッドロックにしない） |
 | 10 | `before_tool` Hook の veto がツール実行を止める |

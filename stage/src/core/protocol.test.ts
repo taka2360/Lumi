@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { helloMessage, PROTOCOL_VERSION, parseCoreMessage, resultMessage } from "./protocol";
+import {
+  helloMessage,
+  PROTOCOL_VERSION,
+  parseCoreMessage,
+  requestMessage,
+  resultMessage,
+} from "./protocol";
 
 const envelope = (extra: Record<string, unknown>) =>
   JSON.stringify({ v: PROTOCOL_VERSION, ...extra });
@@ -62,10 +68,23 @@ describe("outgoing messages", () => {
 
   it("a successful result never carries error", () => {
     expect(JSON.parse(resultMessage("c", true, { choice: "skip" }))).toEqual({
+      v: PROTOCOL_VERSION,
       kind: "result",
       corr_id: "c",
       ok: true,
       payload: { choice: "skip" },
     });
+  });
+
+  it("every frame carries the protocol version", () => {
+    // Core refuses a frame whose version it cannot agree on (ADR-022). `result` used to be
+    // the one frame that omitted it, which only worked because Core did not look.
+    for (const frame of [
+      helloMessage("t"),
+      resultMessage("c", true),
+      requestMessage("i", "m", {}),
+    ]) {
+      expect(JSON.parse(frame).v).toBe(PROTOCOL_VERSION);
+    }
   });
 });

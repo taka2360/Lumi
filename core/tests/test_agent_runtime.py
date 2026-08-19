@@ -11,13 +11,16 @@ connected at all*. Both regressions below were invisible to every other test:
 
 from __future__ import annotations
 
+import asyncio
 import json
+import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from lumi import paths as paths_module
+from lumi.agent import runtime as runtime_module
 from lumi.agent.runtime import ConversationRuntime, _warm, warm_stt, warm_tts
 from lumi.audio.devices import AudioPlan
 from lumi.kernel.activity import ActivityKind, ActivityState
@@ -258,6 +261,42 @@ class TestWarmTts:
 
         assert coordinator.state.tts.runtime is EngineRuntime.STOPPED
         assert server.boots == ["ready"]
+
+
+class TestShutdown:
+    """**Stopping has to finish.** Everything after the task cancels releases something."""
+
+    async def test_a_crashed_warmup_does_not_abort_the_rest_of_shutdown(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ Regression: **an unexpected warmup failure was re-raised out of `stop()`.**
+
+        The task is never awaited while it runs, so its exception surfaced only when
+        `stop()` awaited the cancelled task — and from there it skipped the audio device,
+        the engine process and the DB handle, all of which `stop()` is the one to release.
+        """
+
+        async def explodes(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("想定外")
+
+        detects(monkeypatch, [])
+        monkeypatch.setattr(runtime_module, "_warm", explodes)
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+        await runtime.start()
+        # Let the warmup task run and fail before the cancel lands on an already-done task
+        await asyncio.sleep(0)
+        await asyncio.sleep(0)
+
+        await runtime.stop()  # **raises nothing**
+
+        # The DB handle is the last thing `stop()` releases: closed means it ran to the end
+        with pytest.raises(sqlite3.ProgrammingError):
+            runtime._database._conn.execute("SELECT 1")
 
 
 class TestSettingsUpdate:

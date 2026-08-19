@@ -120,19 +120,25 @@ async def _download(
             digest = hashlib.sha256()
             written = 0
             reported = -1
-            with destination.open("wb") as file:
+            # **Disk I/O goes to a thread, like every other filesystem call here.** A
+            # 480 MB fetch onto a slow disk otherwise stalls the event loop in 256 KB
+            # steps — and what shares that loop is capture, VAD hand-off and barge-in
+            file = await asyncio.to_thread(destination.open, "wb")
+            try:
                 async for chunk in response.aiter_bytes(CHUNK_SIZE):
                     written += len(chunk)
                     if written > size:
                         # Larger than expected. **Aborted before reading to the end.**
                         raise SetupError("size_mismatch", f"received>{size}")
-                    file.write(chunk)
+                    await asyncio.to_thread(file.write, chunk)
                     digest.update(chunk)
                     if progress is not None:
                         percent = written * 100 // size
                         if percent != reported:
                             reported = percent
                             await progress(written / size)
+            finally:
+                await asyncio.to_thread(file.close)
 
             if written != size:
                 raise SetupError("size_mismatch", f"received={written} expected={size}")
@@ -212,7 +218,7 @@ async def install_engine(
         # Only the extracted contents are committed (the archive is not carried over).
         # **This is the sole commit operation.** Nothing is left behind if it fails before this.
         relative = executable.relative_to(extracted)
-        await asyncio.to_thread(extracted.rename, final_dir)
+        await asyncio.to_thread(_commit, extracted, final_dir)
         log.info("setup.install.committed", path=str(final_dir))
         return final_dir / relative
     finally:
@@ -275,11 +281,30 @@ async def install_stt_model(
         log.info("setup.model.download.verified", model=artifact.name, files=len(artifact.files))
 
         # **The sole commit operation.** Nothing is left behind if it fails before this.
-        await asyncio.to_thread(work_dir.rename, final_dir)
+        await asyncio.to_thread(_commit, work_dir, final_dir)
         log.info("setup.model.committed", path=str(final_dir))
         return final_dir
     finally:
         await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
+
+
+def _commit(verified: Path, final_dir: Path) -> None:
+    """Puts the verified directory in place, **replacing an incomplete one.**
+
+    Both callers only get here after deciding the destination is *not* usable — a
+    cancelled fetch, a half-extracted archive, a hand-edited directory. `rename` refuses
+    a destination that already exists, so without this **a retry could never repair it**:
+    every attempt would re-download and then fail at the last step, and the user would
+    have to find and delete a directory nobody told them about.
+
+    Removing first leaves a window with nothing installed. That is acceptable **because
+    what is being removed was already unusable** — and the replacement is verified and
+    sitting right there.
+    """
+    if final_dir.exists():
+        log.warning("setup.install.replacing_incomplete", path=str(final_dir))
+        shutil.rmtree(final_dir)
+    verified.rename(final_dir)
 
 
 def is_model_installed(artifact: ModelArtifact, models_dir: Path) -> bool:

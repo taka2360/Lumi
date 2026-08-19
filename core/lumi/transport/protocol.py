@@ -233,6 +233,11 @@ def parse_client_message(raw: str) -> Result | Request:
     by what Core will and will not accept.
     """
     message = _require_object(raw)
+    if message.get("v") != PROTOCOL_VERSION:
+        # `hello` already pins the version for the connection, so this is a client that
+        # contradicts itself mid-stream. **Answered the same way as a wrong hello** —
+        # a frame whose meaning is not agreed on is not one to guess at (ADR-022)
+        raise ProtocolError(f"プロトコルバージョンが違う: {message.get('v')!r}")
     kind = message.get("kind")
     if kind == "request":
         return _parse_request(message)

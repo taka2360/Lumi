@@ -12,6 +12,7 @@ from lumi.kernel.event import (
     DomainEvent,
     DomainEventDraft,
     EventBus,
+    ReentrantPublishError,
     SequenceChecker,
     SequenceError,
     Signal,
@@ -98,6 +99,65 @@ async def test_events_are_persisted_before_dispatch(bus: EventBus, database: Dat
     assert seen == [1]
 
 
+async def test_a_slow_subscriber_cannot_be_overtaken_on_the_same_stream(bus: EventBus) -> None:
+    """★ Regression: **`publish` released the lock before dispatching** (ADR-030).
+
+    The contract is "same `stream_key`, ordered — delivery and processing both". With the
+    lock released first, a subscriber that awaits gets passed by the next event, and the
+    `SequenceChecker` the same contract mandates then reports the Bus's own violation.
+    """
+    seen: list[int] = []
+
+    async def slow(event: DomainEvent) -> None:
+        # The window the bug lived in: anything that yields is enough
+        await asyncio.sleep(0.02 if event.sequence_id == 1 else 0)
+        seen.append(event.sequence_id)
+
+    bus.subscribe(slow)
+    await asyncio.gather(*(bus.publish(draft("activity:x", f"E{n}")) for n in range(3)))
+
+    assert seen == [1, 2, 3]
+
+
+async def test_publishing_to_the_stream_being_handled_is_refused(bus: EventBus) -> None:
+    """**A silent deadlock is the worst outcome** (ADR-030).
+
+    The event a subscriber would publish has to be ordered after the one it is handling,
+    which has not finished — there is no order that satisfies the contract. Refused with
+    an exception rather than waiting on a lock that is not reentrant.
+    """
+    failures: list[BaseException] = []
+
+    async def republish(event: DomainEvent) -> None:
+        if event.type != "First":
+            return
+        try:
+            await bus.publish(draft(event.stream_key, "Second"))
+        except ReentrantPublishError as error:
+            failures.append(error)
+
+    bus.subscribe(republish)
+    async with asyncio.timeout(2.0):
+        await bus.publish(draft("activity:x", "First"))
+
+    assert len(failures) == 1
+
+
+async def test_another_stream_is_still_publishable_from_a_subscriber(bus: EventBus) -> None:
+    """**Only the stream being handled is off limits.** Different streams have their own order."""
+    published: list[str] = []
+
+    async def relay(event: DomainEvent) -> None:
+        if event.stream_key == "activity:x":
+            published.append((await bus.publish(draft("session:s", "Echo"))).stream_key)
+
+    bus.subscribe(relay)
+    async with asyncio.timeout(2.0):
+        await bus.publish(draft("activity:x", "First"))
+
+    assert published == ["session:s"]
+
+
 async def test_a_failing_subscriber_does_not_stop_the_bus(bus: EventBus) -> None:
     delivered: list[str] = []
 
@@ -136,6 +196,23 @@ async def test_payload_that_cannot_be_json_fails_loudly(bus: EventBus) -> None:
     )
     with pytest.raises(StorageError):
         await bus.publish(bad)
+
+
+async def test_a_non_finite_number_is_refused_rather_than_committed(bus: EventBus) -> None:
+    """★ **`NaN` / `Infinity` are not JSON**, but `json.dumps` writes them anyway.
+
+    A committed row that no strict reader can parse fails far away from whoever published
+    it — and by then the event is already history. **Refused at the point of publication.**
+    """
+    for value in (float("nan"), float("inf")):
+        bad = DomainEventDraft(
+            stream_key="activity:x",
+            type="Weird",
+            payload={"n": value},
+            correlation_id=new_correlation_id(),
+        )
+        with pytest.raises(StorageError):
+            await bus.publish(bad)
 
 
 def test_sequence_checker_detects_a_gap() -> None:

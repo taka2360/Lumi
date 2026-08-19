@@ -45,7 +45,9 @@ class ProviderRegistry:
 
     def select(self, kind: ProviderKind, provider_id: str) -> None:
         if provider_id not in self._providers.get(kind, {}):
-            raise ProviderNotConfigured(f"{kind}:{provider_id} は登録されていない")
+            # `reason` is the machine-readable cause (`ProviderError`); it is what the
+            # warmup logs group by. **A whole sentence there makes it ungroupable**
+            raise ProviderNotConfigured("provider_not_registered", f"{kind.value}:{provider_id}")
         self._selected[kind] = provider_id
 
     async def get(self, kind: ProviderKind) -> Provider:
@@ -75,7 +77,7 @@ class ProviderRegistry:
         """Retrieves it **without loading.** Used for status display and `attribution()`."""
         provider_id = self._selected.get(kind)
         if provider_id is None:
-            raise ProviderNotConfigured(f"{kind} の Provider が登録されていない")
+            raise ProviderNotConfigured("no_provider_selected", f"{kind.value} の Provider が無い")
         return self._providers[kind][provider_id]
 
     def has(self, kind: ProviderKind) -> bool:

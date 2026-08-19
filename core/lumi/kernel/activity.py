@@ -105,14 +105,19 @@ def interruptible_at_of(kind: ActivityKind) -> int:
     return _INTERRUPTIBLE_AT[kind]
 
 
-def can_preempt(proposal_priority: int, current: Activity) -> bool:
+def can_preempt(proposal: ActivityProposal, current: Activity) -> bool:
     """Whether preemption is allowed. **`>=`, not `>`.**
 
     barge-in is "a conversation interrupting a conversation" = **a preempt at equal
     priority**, which wouldn't work with `>`. **Between two of equal strength, the
     newer one wins.**
+
+    Takes the proposal, not a number (ADR-024). `ActivityProposal.priority` is derived
+    from `priority_of(kind, actor)` and cannot be set, so **there is no way to hand this
+    a priority nobody decided** — which is what ADR-024 §3 ("priority を外部が提案できない")
+    asks of the boundary. A plain `int` here left that open.
     """
-    return proposal_priority >= current.interruptible_at
+    return proposal.priority >= current.interruptible_at
 
 
 class InvalidTransition(RuntimeError):

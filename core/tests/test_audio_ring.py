@@ -5,6 +5,9 @@ docs/architecture/audio.md §3
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -47,14 +50,21 @@ def test_wrapping_is_contiguous() -> None:
 
 
 def test_overflow_drops_the_oldest_and_counts_it() -> None:
-    """**Prioritizes newer audio.** But counts what got dropped (never silently degrades)."""
+    """**Prioritizes newer audio.** But counts what got dropped (never silently degrades).
+
+    The count lands on the reader, not the writer: **the producer never touches the
+    consumer's cursor** (`ring.py` "Why no lock is needed"), so the drop is recognised
+    where it is noticed.
+    """
     ring = RingBuffer(4)
     ring.write(samples(1, 2, 3, 4))
     ring.write(samples(5, 6))
-    assert ring.dropped == 2
+    assert ring.available == 4, "1周を超えた分は、読み手が気づく前から既に無い"
+
     out = ring.read(4)
     assert out is not None
     assert list(out) == [3, 4, 5, 6]
+    assert ring.dropped == 2
 
 
 def test_a_write_larger_than_the_ring_keeps_the_tail() -> None:
@@ -84,6 +94,96 @@ def test_clear_discards_pending_playback() -> None:
     out = np.ones(2, dtype=np.float32)
     assert ring.read_into(out) == 0
     assert list(out) == [0, 0]
+
+
+def test_clear_discards_what_the_consumer_had_not_reached() -> None:
+    """`clear()` runs on the producer side while the consumer is part-way through."""
+    ring = RingBuffer(8)
+    ring.write(samples(1, 2, 3, 4))
+    out = np.zeros(2, dtype=np.float32)
+    ring.read_into(out)  # the consumer is now at 2
+
+    ring.clear()
+
+    assert ring.available == 0
+    assert ring.read_into(np.ones(2, dtype=np.float32)) == 0
+
+
+def test_clear_does_not_rewind_a_consumer_that_ran_ahead() -> None:
+    """The mark is a floor, never a seek. **Already-played audio is never played twice.**"""
+    ring = RingBuffer(8)
+    ring.write(samples(1, 2, 3))
+    ring.clear()
+    ring.write(samples(4, 5))
+
+    out = ring.read(2)
+    assert out is not None
+    assert list(out) == [4, 5]
+
+
+def test_a_window_torn_by_the_producer_is_refused_not_returned() -> None:
+    """★ **A window stitched from two moments is worse than a missing one.**
+
+    The samples are unsynchronised by design (no lock on the callback path), so a producer
+    that laps the reader mid-copy has to be caught after the fact. **Fail closed.**
+    """
+
+    class LappingRing(RingBuffer):
+        """Stands in for the audio callback firing after the cursor snapshot."""
+
+        def _advance(self) -> int:
+            position = super()._advance()
+            self.write(samples(9, 9, 9, 9))  # a full lap, mid-read
+            return position
+
+    ring = LappingRing(4)
+    ring.write(samples(1, 2, 3, 4))
+
+    assert ring.read(4) is None
+    assert ring.dropped >= 4
+
+
+#: Who may write what. **Two sides doing `x += n` to one counter lose updates**
+#: (`ring.py` "Why no lock is needed"), and a lost update to `_read` never fails loudly
+CURSOR_OWNERS = {
+    "write": ("_read", "_dropped"),
+    "clear": ("_read", "_dropped"),
+    "_advance": ("_write", "_discard"),
+    "read": ("_write", "_discard"),
+    "read_into": ("_write", "_discard"),
+}
+
+
+def assigned_attributes(method: str) -> list[str]:
+    source = (Path(__file__).resolve().parents[1] / "lumi" / "audio" / "ring.py").read_text(
+        encoding="utf-8"
+    )
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.FunctionDef) and node.name == method:
+            break
+    else:
+        raise AssertionError(f"ring.py: {method} が見つからない")
+
+    targets: list[ast.expr] = []
+    for child in ast.walk(node):
+        if isinstance(child, ast.Assign):
+            targets += child.targets
+        elif isinstance(child, ast.AugAssign):
+            targets.append(child.target)
+    return [t.attr for t in targets if isinstance(t, ast.Attribute)]
+
+
+@pytest.mark.parametrize(("method", "forbidden"), list(CURSOR_OWNERS.items()))
+def test_each_cursor_has_exactly_one_writer(method: str, forbidden: tuple[str, ...]) -> None:
+    """★ Regression: **`write()` advanced `_read` on overflow, and `clear()` assigned it.**
+
+    That gave the consumer's cursor two more writers. `x += n` is load-add-store, so a
+    lost update leaves `available` overstated **for the rest of the session** — the VAD
+    then keeps reading samples that were overwritten long ago, and nothing reports it.
+    Checked statically because the race itself is not reproducible on demand.
+    """
+    offenders = [name for name in assigned_attributes(method) if name in forbidden]
+    assert offenders == [], f"{method} が他方のカーソルを書いている: {offenders}"
 
 
 def test_capacity_must_be_positive() -> None:

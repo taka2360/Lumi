@@ -644,6 +644,8 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [027](decisions/ADR-027-stt-model-large-v3-turbo.md) | STT の既定モデルを `small` から `large-v3-turbo` にする（語彙混同。CER 半減） |
 | [028](decisions/ADR-028-stage-initiated-request.md) | Stage → Core の要求方向（`request`）を作る。**`command` は片方向のまま**（Core が決める非対称を名前で保つ） |
 | [029](decisions/ADR-029-content-pack-asset-delivery.md) | Content Pack のアセットは Shell が WebView に配信する（**Core をファイルサーバにしない**） |
+| [030](decisions/ADR-030-per-stream-dispatch.md) | DomainEvent の配送を stream ごとに直列化し、**同一 stream への再入 publish を拒否する** |
+| [031](decisions/ADR-031-request-side-effects.md) | `request` 経路が許す副作用を「**Core が所有する状態の変更**」に限定して定義する（ADR-028 条件4の修正） |
 
 ---
 

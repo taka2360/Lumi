@@ -32,7 +32,7 @@ from dataclasses import replace
 from pathlib import Path
 
 from lumi import logging as lumi_logging
-from lumi import paths
+from lumi import paths, settings
 from lumi.setup.detect import detect_engines, detect_ollama
 from lumi.setup.engines import AIVISSPEECH_ENGINE
 from lumi.setup.install import (
@@ -42,7 +42,7 @@ from lumi.setup.install import (
     install_stt_model,
     is_model_installed,
 )
-from lumi.setup.models import FASTER_WHISPER_LARGE_V3_TURBO, ModelArtifact
+from lumi.setup.models import FASTER_WHISPER_LARGE_V3_TURBO, STT_MODELS, ModelArtifact
 from lumi.setup.state import (
     EngineRuntime,
     LlmSetup,
@@ -81,9 +81,28 @@ CHOICE_SKIP = "skip"
 COMPONENT_TTS = "tts"
 COMPONENT_STT = "stt"
 
-#: The speech-recognition model Lumi fetches. **Pinned** (docs/architecture/setup.md §3b);
-#: a different `LUMI_STT_MODEL` is not something this offers to fetch
-STT_ARTIFACT: ModelArtifact = FASTER_WHISPER_LARGE_V3_TURBO
+#: What `stt_model` resolves to when nothing selects another one. **Pinned**
+#: (docs/architecture/setup.md §3b)
+DEFAULT_STT_ARTIFACT: ModelArtifact = FASTER_WHISPER_LARGE_V3_TURBO
+
+
+def selected_stt_artifact(env: Mapping[str, str]) -> ModelArtifact | None:
+    """Which STT model to check for and fetch — **the one the Provider will look for.**
+
+    `FasterWhisperProvider` is built from `settings.stt_model`, so a fixed artifact here
+    lets setup install one model, report `installed`, and leave the Provider looking for
+    another: **Lumi is deaf while the screen says it is ready.** That also made
+    `LUMI_STT_MODEL=small`, which [ADR-027] keeps as the way back to a lighter model,
+    silently not work — for exactly the users who need it.
+
+    `None` when the selected name is not pinned. **Never substitutes a different model**:
+    fetching something else is the mismatch this exists to prevent.
+    """
+    name = settings.load(paths.settings_file(), env).stt_model.value
+    artifact = STT_MODELS.get(name)
+    if artifact is None:
+        log.warning("setup.stt.unpinned_model", model=name, pinned=sorted(STT_MODELS))
+    return artifact
 
 
 class SetupCoordinator:
@@ -166,10 +185,15 @@ class SetupCoordinator:
         """A file check, not a process check. **Never touches the network** — a half-fetched
         directory reads as not-installed (`is_model_installed` checks every pinned size).
         """
-        installed = is_model_installed(STT_ARTIFACT, paths.stt_models_dir())
+        artifact = selected_stt_artifact(self._env)
+        if artifact is None:
+            # There is nothing to fetch, and the Provider will refuse the same name.
+            # **Said out loud** rather than installing something else and calling it done
+            return SttSetup(state=SttSetupState.NOT_CONFIGURED, model=None, reason="unpinned_model")
+        installed = is_model_installed(artifact, paths.stt_models_dir())
         return SttSetup(
             state=SttSetupState.INSTALLED if installed else SttSetupState.NOT_CONFIGURED,
-            model=STT_ARTIFACT.name,
+            model=artifact.name,
         )
 
     # ── Broadcasting ──────────────────────────────────────────────
@@ -264,6 +288,10 @@ class SetupCoordinator:
 
     async def _ask_for_stt(self) -> None:
         if self._snapshot.stt.state is not SttSetupState.NOT_CONFIGURED:
+            return
+        if self._snapshot.stt.model is None:
+            # The selected name is not pinned, so there is nothing this could fetch.
+            # **A question with no good answer is worse than no question**
             return
         if self._answers.stt_prompt_answered:
             return
@@ -411,7 +439,12 @@ class SetupCoordinator:
         """Fetches the speech-recognition model. **The same rules as the engine**
         (pinned URL + size + SHA-256 + atomic install + rollback → setup.md §3b).
         """
-        artifact = STT_ARTIFACT
+        artifact = selected_stt_artifact(self._env)
+        if artifact is None:
+            await self._update(
+                stt=SttSetup(state=SttSetupState.FAILED, model=None, reason="unpinned_model")
+            )
+            return
         await self._update(
             stt=SttSetup(state=SttSetupState.INSTALLING, model=artifact.name, progress=0.0)
         )

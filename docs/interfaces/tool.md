@@ -121,6 +121,11 @@ class SecurityScope:
 
 Policy が検査した後に scope が書き換わりうると、TOCTOU が成立する。
 
+**`frozen` はフィールドの再束縛を止めるだけで、指している先までは凍らせない。**
+`metadata` は `execute` が生入力を再解決する代わりに読む値であり、中身は LLM の tool call
+から来る。可変な `dict` のままだと `decide` と `execute` の間で引数が書き換えられ、
+**この型が塞ぐはずの窓がそのまま開く。** 構築時に複製して再帰的に読み取り専用にする。
+
 ### 生成者
 
 **`Canonicalizer`（Kernel 所有）のみ。** Tool も LLM も生成できない。

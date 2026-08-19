@@ -109,6 +109,7 @@ export function resultMessage(
   error?: string,
 ): string {
   return JSON.stringify({
+    v: PROTOCOL_VERSION,
     kind: "result",
     corr_id: corrId,
     ok,

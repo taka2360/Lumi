@@ -82,7 +82,7 @@ class AttentionArbiter:
 | `interrupt_requested` | ✗ | 中断が要求された（barge-in 等）。まだ子の処理は始まっていない |
 | `cancelling` | ✗ | 中断処理中。子 Tool の停止を待っている。**background に居る** |
 | `cancelled` | ✗ | 中断完了。**全ての子 Tool が停止または完了した** |
-| `abandoned` | ✗ | 中断したが、`non_cancellable` な子 Tool の完了を**待たずに切り離した** |
+| `abandoned` | ✗ | 中断したが、**まだ動いている子 Tool の完了を待たずに切り離した**（下記） |
 
 ### preempt の遷移順序
 
@@ -96,7 +96,7 @@ class AttentionArbiter:
 5. 新 → running / 旧 → cancelling（background へ）
 6. 旧は background で子の停止を待つ
      猶予時間内に全子が停止 → cancelled
-     non_cancellable な子が残る → abandoned
+     まだ動いている子が残る   → abandoned
 ```
 
 **4 より前に旧を `cancelling` にしない。** そうすると一瞬 `running` が0個になり、Invariant 4 が破れる。
@@ -230,7 +230,7 @@ def current() -> Activity:   # None を返さない
 | `running` | `confirmed` | ツールが終わり、Activity が続いている | ✓ |
 | `cancelling` | `executing` | `cooperative` / `hard` な Tool の停止待ち | ✓ |
 | `cancelled` | `confirmed` | 停止前に完了した。結果は破棄 | ✓ |
-| **`abandoned`** | **`executing`** | **`non_cancellable` が barge-in 後も動いている** | **✓ 正当** |
+| **`abandoned`** | **`executing`** | **切り離した子が barge-in 後も動いている**（`non_cancellable`、または猶予時間内に止まらなかった `cooperative`） | **✓ 正当** |
 | `abandoned` | `confirmed` | 結果は出たが Lumi の文脈に入らない | ✓ |
 | `abandoned` | `unknown` | 切り離し後の追跡を諦めた | ✓ |
 | `completed` | `unknown` | **ありえない。バグ** | ✗ |
@@ -281,8 +281,8 @@ def current() -> Activity:   # None を返さない
   │    ├─ hard な子        → 強制終了
   │    └─ non_cancellable な子 → 切り離し候補
   │
-  ├─ non_cancellable な子が無い → 旧 = cancelled
-  └─ ある                      → 旧 = abandoned（Tool は動き続ける）
+  ├─ まだ動いている子が無い → 旧 = cancelled
+  └─ ある                    → 旧 = abandoned（Tool は動き続ける）
 ```
 
 > **「音が止まる」と「Activity が止まる」は別の経路である。**
@@ -310,6 +310,7 @@ def current() -> Activity:   # None を返さない
 | 3c | **同一 `kind` × `intent` の deferred 提案が重複しない** |
 | 4 | 禁止された組み合わせ（`completed` × `unknown` 等）が型または実行時に作れない |
 | 5 | `non_cancellable` な子がいる Activity の interrupt が `abandoned` になる |
+| 5b | **猶予時間内に止まらなかった `cooperative` な子でも `abandoned` になる**（待ち続けて barge-in を壊さない。警告は残す） |
 | 6 | `abandoned` な Activity の子 Tool の結果が Memory / PromptContext に入らない |
 | 7 | `abandoned_result` が監査ログに記録される |
 | 8 | Activity の状態遷移が Attention Arbiter 以外から実行できない |

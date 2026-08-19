@@ -63,12 +63,32 @@ def test_flush_is_idempotent() -> None:
 def test_a_long_run_is_cut_at_a_soft_break() -> None:
     """Gives up if it grows with no terminator arriving, but **still chooses where to cut**."""
     stream = SentenceStream()
+    stream.feed("はい。")  # the first segment has its own, much shorter cap
     text = "あ" * 40 + "、" + "い" * 40
     sentences = stream.feed(text)
 
     assert sentences
     assert sentences[0].endswith("、")
     assert len(sentences[0]) <= MAX_CHARS
+
+
+def test_a_terminator_past_the_cap_does_not_extend_the_segment() -> None:
+    """★ Regression: **a long chunk was emitted whole, cap and all.**
+
+    The scan ran over the entire buffer, so a chunk that arrived in one piece with its
+    first "。" far past the cap became one segment. TTS time scales with length, so that
+    lands on `llm_first_segment_ms` — the one place the delay is felt. audio.md §6:
+    「LLM が最初の句読点まで長く喋れば、上限文字数で切られるまで待つ」
+    """
+    stream = SentenceStream()
+    assert stream.feed("あ" * 100 + "。")[0] == "あ" * FIRST_MAX_CHARS
+
+
+def test_the_cap_still_holds_after_the_first_segment() -> None:
+    """**Not just the first one.** The normal cap is a bound too, not a suggestion."""
+    stream = SentenceStream()
+    stream.feed("はい。")
+    assert stream.feed("あ" * (MAX_CHARS + 10) + "。")[0] == "あ" * MAX_CHARS
 
 
 def test_a_long_run_without_any_break_is_cut_hard() -> None:

@@ -204,6 +204,20 @@ LLM が無い状態は「聞けるが喋らない Lumi」であり、**壊れて
 | 配布元 | HuggingFace。**リポジトリはモデルごとに違う**（`Systran/...` / `dropbox-dash/...`）。実体は下記 |
 | ライセンス | **MIT**（OpenAI Whisper の重みを CTranslate2 に変換したもの。変換物も MIT で配布されている） |
 | 実体 | `core/lumi/setup/models.py` の `STT_MODELS`。既定は `large-v3-turbo`（[ADR-027](../decisions/ADR-027-stt-model-large-v3-turbo.md)） |
+| どれを取るか | **`settings.stt_model` が選んだもの。** 固定しない（下記） |
+
+#### 取りに行くものと、Provider が探すものを一致させる
+
+**取得対象は `settings.stt_model`（`LUMI_STT_MODEL`）から解決する。**
+`FasterWhisperProvider` はこの設定から作られるので、セットアップ側が別のモデルを
+決め打ちにすると、**入れたものと探すものがずれる**。ずれた結果は
+「STT は `installed`、boot は `ready`、しかし喋っても何も起きない」であり、
+[ADR-027](../decisions/ADR-027-stt-model-large-v3-turbo.md) が戻り道として残した
+`LUMI_STT_MODEL=small` は**まさにそれを必要とする人のところで黙って効かなかった**。
+
+**ピン留めされていない名前が選ばれたら、代わりに別のモデルを取らない。**
+`not_configured`（`reason: unpinned_model`）として提示し、取得も尋ねない。
+別のものを取れば、それは同じずれを一段先に送るだけである。
 
 **ファイル構成はモデルごとに違う。** `small` は `vocabulary.txt`、`large-v3-turbo` は
 `vocabulary.json` と `preprocessor_config.json` を持つ。`ModelArtifact` が**ファイル単位で**
@@ -308,6 +322,13 @@ Python の 7z ライブラリ（py7zr 等）は **LGPL であり、Core = MIT �
 **確定は rename の 1 手だけ。** 途中のどこで失敗しても、`.tmp-*` を消せば元に戻る。
 ロールバックとは「確定前の状態を消すこと」であって、確定後の巻き戻しではない。
 
+**確定先が「在るが不完全」なら、消してから rename する。** 中断されたインストールや
+手で触られたディレクトリがこれにあたる。`rename` は既存の宛先を拒否するので、
+**そのままでは再試行が永久に直せない**（毎回ダウンロードし直して最後の一手で失敗し、
+ユーザーは誰にも知らされていないディレクトリを自分で消すしかない）。
+消してから rename する間は「何も入っていない」状態になるが、
+**消しているものは元から使えないもの**であり、置き換える側は検証済みで隣にある。
+
 起動する実行体は展開後のツリーから `run.exe` を**探して**記録する（配布物の内部構造の変更に追随するため）。
 
 ---
@@ -387,3 +408,5 @@ sqlite-vec / FTS5 / PortAudio / TLS 証明書を、**実際に読み込んで**�
 | 16 | **Ollama を Lumi が起動も停止もしない**（プロセス生成の経路が存在しない。静的検査）〔Phase 1〕 |
 | 17 | **STT モデルが無いとき、ライブラリが勝手にダウンロードせず明示的に失敗する**〔Phase 1〕 |
 | 18 | **Silero VAD が配布物に含まれ、オフラインで barge-in が成立する**〔Phase 1〕 |
+| 19 | **確定先が不完全なとき、再インストールが直せる**（中断・手編集の跡に rename できず、再試行が永久に失敗しない）〔Phase 1〕 |
+| 20 | **`LUMI_STT_MODEL` の上書きが、取得するモデルにも反映される**（Provider が探すものと一致する。ピン留めされていない名前では代わりに別のものを取らない）〔Phase 1〕 |

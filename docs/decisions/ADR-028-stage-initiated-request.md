@@ -1,5 +1,9 @@
 # ADR-028: Stage → Core の要求方向を作る（`request`）
 
+> **[ADR-031](ADR-031-request-side-effects.md) が受理条件4の文言を修正した。**
+> 「副作用を持つ操作を含まないこと」は「**Tool を要する副作用**を含まないこと」と読む。
+> Core が所有する状態（設定）の変更はこの経路で許される。
+
 Status: Accepted
 Date: 2026-08-17
 

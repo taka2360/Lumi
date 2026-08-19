@@ -202,6 +202,19 @@ Lumi が守る約束**なので、予算は Lumi 側が決める。
 **ContextBlock を会話履歴より後に落とすのは、ツールループのため。** ツール結果を先に落とすと、
 LLM は自分が呼んだツールの結果を見ないまま次の判断をする。それは間違った答えを速く出すだけである。
 
+#### 落とせないものだけで予算を超えたとき
+
+persona と現在の発話だけで予算を超えることはありうる（長い persona / 長い発話）。
+このとき**落とせるものは何も残っていない。**
+
+**そのまま組み立てて送る。ターンを拒否しない。** ただし `over_budget` を立て、
+Inspector とログに出す（`prompt.truncated` の `over_budget=true`）。**黙って超えない。**
+
+拒否しない理由は2つある。**予算はモデルの制限ではなく Lumi の遅延の約束**であり、
+超えても文脈長には収まるのが普通である。そして**トークン数は推定である**（下記）。
+近似が閾値をまたいだだけで Lumi が黙り込むのは、遅く答えることより悪い
+——ユーザーから見れば「話しかけたのに何も起きない」であり、理由は画面のどこにも出ない。
+
 **落とすのはプロンプトであって Working Memory ではない。** Session は落とさない。
 したがって `history_trust` も `session_trust` も切り落としで下がらない（Invariant 7）。
 
@@ -365,6 +378,7 @@ async with arbiter.inference_lease(job) as lease:
 | 3 | idle 中の自律提案が `Accepted` になる |
 | 3b | **`priority_of()` が全 kind × actor で表通りの値を返す**（表駆動） |
 | 3c | **`ActivityProposal` に priority を渡す経路が存在しない**（静的検査。ADR-024） |
+| 3d | **`can_preempt` が生の数値ではなく `ActivityProposal` を受け取る**（誰も決めていない priority が比較に届く経路を作らない。ADR-024） |
 | 4 | 会話中のユーザー発話が既存 Activity を preempt する（**同一 priority の `>=` による preempt**） |
 | 4b | **Job が foreground を取らない** |
 | 4c | **foreground が推論を要求すると Job の `inference_lease` が revoke される** |
@@ -374,6 +388,7 @@ async with arbiter.inference_lease(job) as lease:
 | 6 | `InterruptResult` が停止した Tool と abandoned な Tool を正しく報告する |
 | 7 | ツールループが `max_steps` / `deadline` / cancel で正しく抜ける |
 | 8 | PromptAssembly が予算超過時に決定論的に切り落とす（スナップショットテスト） |
+| 8b | **落とせないものだけで予算を超えても、persona と現在の発話は残り、`over_budget` が立つ**（黙って超えず、ターンも拒否しない） |
 | 9 | `<|ACT|>` マーカーが音声化テキストから除去される |
 | 10 | `before_tool` Hook の veto がツール実行を止める |
 | 11 | Activity の状態遷移が Arbiter 以外から実行できない |

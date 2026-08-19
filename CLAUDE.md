@@ -6,7 +6,7 @@
 
 ## 現在の状態
 
-**Phase 1 着手中。** 設計は rev.8 まで完了し承認済み。
+**Phase 1 着手中。** 設計は rev.11 まで完了し承認済み。
 コードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
 
 Phase 1 の進捗と実測値 → [docs/measurements/phase1.md](docs/measurements/phase1.md) / [docs/roadmap.md](docs/roadmap.md)
@@ -35,11 +35,13 @@ Lumi/
 | Memory | SQLite + sqlite-vec + FTS5 |
 | LLM | Ollama（Qwen3系 / Gemma3系） |
 | STT / VAD | faster-whisper (CTranslate2, int8) / Silero VAD (ONNX, CPU) |
-| TTS | AivisSpeech / VOICEVOX（**別プロセス・CPU。VRAM を消費しない**） |
+| TTS | AivisSpeech / VOICEVOX（**別プロセス。CUDA があれば GPU、無ければ CPU**） |
 | Character | VRM（`@pixiv/three-vrm`）→ Live2D は Phase 9 |
 | ライセンス | **Core = MIT。** GPL/AGPL・非OSS を Core に入れない |
 
-**torch に依存しない**（インストーラサイズ R1）。**TTS に GPU を使わない**（LLM に VRAM を全振りする）。
+**Core は torch に依存しない**（インストーラサイズ R1）。TTS のデバイス方針は
+**CUDA があれば GPU、無ければ CPU。設定で CPU を強制でき、実際の配置を状態として公開する**
+（[ADR-025](docs/decisions/ADR-025-tts-on-gpu.md)）。
 
 ## 実装前に読むもの
 

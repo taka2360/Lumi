@@ -13,14 +13,13 @@
  * | **Shell** | serving the bytes — reading a file is an OS privilege, and the path is checked against a scope |
  * | **Stage** | drawing it |
  *
- * **The Stage never picks a path of its own.** `convertFileSrc` only rewrites the path into
- * an address the WebView can fetch; it grants nothing. A path outside the Content Pack is
- * refused by Shell, not by anything here.
+ * **The Stage never picks a path of its own.** `PlatformShell.toAssetUrl` only rewrites the
+ * path into an address the WebView can fetch; it grants nothing. A path outside the Content
+ * Pack is refused by Shell, not by anything here.
  */
 
-import { convertFileSrc } from "@tauri-apps/api/core";
-
 import { cachedLocale, translate } from "../i18n";
+import { getPlatformShell } from "../platform/useStageShell";
 import { createPlaceholder } from "./placeholder";
 import type { CharacterModel } from "./types";
 import { loadVrm } from "./vrm";
@@ -44,8 +43,8 @@ export async function loadCharacter(source: ModelSource): Promise<LoadedCharacte
     return { model: createPlaceholder(), fallbackReason: source.reason };
   }
 
-  const url = convertFileSrc(source.path);
   try {
+    const url = getPlatformShell().toAssetUrl(source.path);
     // Checks existence first instead of waiting for GLTFLoader's exception on a 404.
     // **A refusal by Shell's scope arrives here as a failed response**, not as a throw
     const probe = await fetch(url, { method: "HEAD" });

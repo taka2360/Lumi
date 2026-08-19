@@ -129,6 +129,14 @@ class EventStore(Protocol):
 Subscriber = Callable[[DomainEvent], Awaitable[None]]
 
 
+class ReentrantPublishError(RuntimeError):
+    """A subscriber published to the stream it was handling. **Refused, not awaited** (ADR-030).
+
+    Waiting would deadlock (the per-stream lock is not reentrant) and the event has no
+    valid place in the order anyway.
+    """
+
+
 class SequenceError(RuntimeError):
     """Detected a gap or an out-of-order sequence. **Never processed silently.**"""
 
@@ -163,7 +171,7 @@ class EventBus:
     being careful."
     """
 
-    __slots__ = ("_clock", "_locks", "_store", "_subscribers")
+    __slots__ = ("_clock", "_dispatching", "_locks", "_store", "_subscribers")
 
     def __init__(
         self,
@@ -174,6 +182,8 @@ class EventBus:
         self._store = store
         self._clock = clock
         self._locks: dict[str, asyncio.Lock] = {}
+        #: Which task is mid-dispatch for each stream. **Only used to refuse re-entry**
+        self._dispatching: dict[str, asyncio.Task[Any] | None] = {}
         self._subscribers: list[Subscriber] = []
 
     def subscribe(self, handler: Subscriber) -> Callable[[], None]:
@@ -192,7 +202,13 @@ class EventBus:
         Dispatching before persisting risks a crash where a subscriber observed a
         fact that never got persisted (the subscriber's state and the history would
         then disagree).
+
+        **Dispatch happens under the same lock** (ADR-030). Releasing it first let a
+        subscriber that awaits be overtaken by the next event on the same stream, and
+        the contract is "same `stream_key`, ordered — delivery and processing both"
+        (docs/contracts/event-model.md).
         """
+        self._refuse_reentry(draft.stream_key)
         lock = self._locks.setdefault(draft.stream_key, asyncio.Lock())
         async with lock:
             event_id = new_event_id()
@@ -208,8 +224,25 @@ class EventBus:
                 payload=draft.payload,
                 occurred_at=occurred_at,
             )
-        await self._dispatch(event)
+            self._dispatching[draft.stream_key] = asyncio.current_task()
+            try:
+                await self._dispatch(event)
+            finally:
+                del self._dispatching[draft.stream_key]
         return event
+
+    def _refuse_reentry(self, stream_key: str) -> None:
+        """**A subscriber may not publish to the stream it is currently handling** (ADR-030).
+
+        The event it would publish has to be ordered *after* the one being handled, and
+        that handling has not finished — so there is no ordering that satisfies the
+        contract. The lock is not reentrant either, so allowing it means a **silent
+        deadlock**: Lumi stops, and nothing anywhere says why.
+        """
+        if self._dispatching.get(stream_key) is asyncio.current_task():
+            raise ReentrantPublishError(
+                f"{stream_key}: 配送中の stream へ publish できない（ADR-030）"
+            )
 
     async def _dispatch(self, event: DomainEvent) -> None:
         for handler in list(self._subscribers):

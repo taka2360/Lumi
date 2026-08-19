@@ -39,7 +39,10 @@ class SqliteEventStore:
         self, event_id: EventId, draft: DomainEventDraft, occurred_at: datetime
     ) -> int:
         try:
-            payload = json.dumps(draft.payload, ensure_ascii=False)
+            # `allow_nan=False`: `NaN` / `Infinity` are not JSON, and json.dumps emits
+            # them anyway. **Committing one produces a row no strict reader can parse** —
+            # a failure that surfaces far from whoever published it
+            payload = json.dumps(draft.payload, ensure_ascii=False, allow_nan=False)
         except (TypeError, ValueError) as error:
             # A payload that can't be JSON-encoded is never silently dropped. **Treated as the
             # publisher's design error.**

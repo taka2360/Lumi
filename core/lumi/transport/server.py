@@ -23,7 +23,6 @@ Nothing beyond that (e.g. verifying process signatures) is done here.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import secrets
 from collections.abc import Awaitable, Callable, Mapping
 from typing import Any
@@ -57,6 +56,11 @@ CLOSE_PROTOCOL_ERROR = 4400
 
 #: The default timeout for a command. **Never waits silently forever** for a response.
 DEFAULT_COMMAND_TIMEOUT_S = 10.0
+
+#: How long an inbound handler may take before the request is answered `timeout` anyway.
+#: `_serve_request` promises to always answer, and a handler that blocks forever is the one
+#: way that promise breaks — the client cannot tell it apart from a hung Core.
+INBOUND_REQUEST_TIMEOUT_S = 10.0
 
 
 #: A handler for a Stage → Core request. Returns the payload to answer with, or raises
@@ -208,10 +212,16 @@ class WsServer:
             return
 
         try:
-            payload = await handler(request.payload)
+            async with asyncio.timeout(INBOUND_REQUEST_TIMEOUT_S):
+                payload = await handler(request.payload)
         except RequestRefused as refused:
             log.info("transport.request.refused", method=request.method, reason=refused.reason)
             await self._answer(connection, request, ok=False, error=refused.reason)
+        except TimeoutError:
+            # **The client gets an answer even when the handler never came back.** Waiting
+            # forever on a request is indistinguishable from Core having died
+            log.warning("transport.request.timeout", method=request.method)
+            await self._answer(connection, request, ok=False, error="timeout")
         except Exception:
             # **Never leaks the exception text to the client.** It is logged in full here
             log.exception("transport.request.failed", method=request.method)
@@ -229,9 +239,17 @@ class WsServer:
         error: str | None = None,
     ) -> None:
         frame = Result(corr_id=request.id, ok=ok, payload=payload or {}, error=error)
-        with contextlib.suppress(Exception):
-            # The client may have gone away mid-request. **Not worth failing over**
+        try:
             await connection.ws.send(frame.encode())
+        except ConnectionClosed:
+            # The client went away mid-request. **Not worth failing over**
+            log.debug("transport.answer.closed", role=connection.role.value, method=request.method)
+        except Exception:
+            # Anything else — an unencodable payload above all — is a Core-side bug that
+            # **leaves the client waiting.** Suppressing it silently is how it stays invisible
+            log.exception(
+                "transport.answer.failed", role=connection.role.value, method=request.method
+            )
 
     async def invoke(
         self,

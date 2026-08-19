@@ -12,11 +12,29 @@ Design → docs/architecture/audio.md §3
 take an allocator lock and trigger GC. Either one, under real-time constraints, causes
 buffer underruns (audible crackling), and **breaks even normal playback, let alone barge-in.**
 
-## Why no lock is needed
+## Why no lock is needed — every counter has exactly one writer
 
-This is restricted to a single writer (the audio callback) x a single reader (the VAD
-thread). In CPython, `int` assignment and reads are atomic under the GIL, so
-**consistency holds just from reading/writing the position counters.**
+This is restricted to a single writer (the producer) x a single reader (the consumer),
+and **each counter is owned by one side only**:
+
+| Counter | Owner | Meaning |
+|---|---|---|
+| `_write` | producer | total samples written (monotonic) |
+| `_discard` | producer | `clear()`'s mark: everything below it is given up on |
+| `_read` | **consumer** | total samples consumed (monotonic) |
+| `_dropped` | consumer | how much the producer overwrote before it could be read |
+
+**The producer never advances `_read`, and the consumer never advances `_write`.** `int`
+assignment and reads are atomic under the GIL, but `x += n` is not — it is load, add,
+store. Two sides doing that to one counter lose updates, and a lost update to `_read` does
+not fail loudly: it silently makes `available` wrong for the rest of the session, so the
+consumer keeps handing out samples that were overwritten long ago. Overrun is therefore
+detected by the consumer (`_advance`), and `clear()` publishes a mark instead of writing
+`_read` — **a lost `clear()` is stale audio resuming after a barge-in.**
+
+The samples themselves are still unsynchronised, so a producer that laps the consumer
+mid-copy can tear a window. **That is detected after the copy and fails closed**: no window
+at all beats a window stitched together from two different moments.
 
 > **What this does not guarantee**: multiple writers / readers are not supported.
 > To support more usage patterns, don't add a lock — **split into separate rings.**
@@ -33,7 +51,7 @@ Samples = npt.NDArray[np.float32]
 class RingBuffer:
     """Fixed length. **Drops the oldest on overflow** (prioritizes newer audio)."""
 
-    __slots__ = ("_capacity", "_data", "_dropped", "_read", "_write")
+    __slots__ = ("_capacity", "_data", "_discard", "_dropped", "_read", "_write")
 
     def __init__(self, capacity: int) -> None:
         if capacity <= 0:
@@ -45,20 +63,28 @@ class RingBuffer:
         # modulo)
         self._write = 0
         self._read = 0
+        #: `clear()`'s mark. **Producer-owned** — see the module docstring
+        self._discard = 0
         # : **Count of dropped samples.** Never dropped silently — if this grows, the design or size
         # is wrong
         self._dropped = 0
 
     @property
     def available(self) -> int:
-        return self._write - self._read
+        """**Reads only.** Clamped to the capacity: whatever the producer wrote more than one
+        lap ago is already gone, whether or not the consumer has noticed yet.
+        """
+        return min(self._write - max(self._read, self._discard), self._capacity)
 
     @property
     def dropped(self) -> int:
         return self._dropped
 
     def write(self, samples: Samples) -> None:
-        """**Called from the audio callback.** No allocation, no locking, no exceptions."""
+        """**Called from the audio callback.** No allocation, no locking, no exceptions.
+
+        Touches the samples and `_write` only — **never the consumer's cursor.**
+        """
         count = len(samples)
         if count == 0:
             return
@@ -77,11 +103,22 @@ class RingBuffer:
             self._data[: end - self._capacity] = samples[split:]
 
         self._write += count
-        overflow = self._write - self._read - self._capacity
-        if overflow > 0:
-            # The reader couldn't keep up. **Advance the read position, dropping the oldest**
-            self._read += overflow
-            self._dropped += overflow
+
+    def _advance(self) -> int:
+        """Moves the read cursor up to what is still readable, and returns it.
+
+        **Only the consumer calls this**, which is what keeps `_read` single-owner. Two
+        things move it: `clear()`'s mark, and the producer having lapped us — the latter is
+        the drop, counted here rather than in `write`.
+        """
+        position = max(self._read, self._discard)
+        behind = self._write - position - self._capacity
+        if behind > 0:
+            # The producer couldn't be kept up with. **The oldest is already overwritten**
+            position += behind
+            self._dropped += behind
+        self._read = position
+        return position
 
     def read(self, count: int) -> Samples | None:
         """Returns data if `count` samples are available.
@@ -90,16 +127,24 @@ class RingBuffer:
 
         Allowing partial reads would let VAD's window arrive at an odd size and break inference.
         """
-        if count <= 0 or self.available < count:
+        if count <= 0:
+            return None
+        position = self._advance()
+        if self._write - position < count:
             return None
 
-        start = self._read % self._capacity
+        start = position % self._capacity
         end = start + count
         if end <= self._capacity:
             out = self._data[start:end].copy()
         else:
             out = np.concatenate((self._data[start:], self._data[: end - self._capacity]))
-        self._read += count
+        self._read = position + count
+        if self._write - position > self._capacity:
+            # Lapped **while copying**: the window mixes two moments. **Fail closed** —
+            # inference on a stitched-together window is worse than a missing window
+            self._dropped += count
+            return None
         return out.astype(np.float32, copy=False)
 
     def read_into(self, out: Samples) -> int:
@@ -109,9 +154,10 @@ class RingBuffer:
         (TTS hasn't generated yet, or the utterance has ended).
         """
         count = len(out)
-        filled = min(count, self.available)
+        position = self._advance()
+        filled = min(count, self._write - position)
         if filled > 0:
-            start = self._read % self._capacity
+            start = position % self._capacity
             end = start + filled
             if end <= self._capacity:
                 out[:filled] = self._data[start:end]
@@ -119,13 +165,19 @@ class RingBuffer:
                 split = self._capacity - start
                 out[:split] = self._data[start:]
                 out[split:filled] = self._data[: end - self._capacity]
-            self._read += filled
+            self._read = position + filled
+            if self._write - position > self._capacity:
+                # Lapped while copying. **Silence beats a torn frame**
+                self._dropped += filled
+                out[:] = 0.0
+                return 0
         if filled < count:
             out[filled:] = 0.0
         return filled
 
     def clear(self) -> None:
-        """**Used when discarding playback for a barge-in.** Moves the read position up to the write
-        position.
+        """**Used when discarding playback for a barge-in.** Called from the producer side, so
+        it publishes a mark rather than writing the consumer's cursor: a lost update here is
+        stale audio resuming after the interruption.
         """
-        self._read = self._write
+        self._discard = self._write

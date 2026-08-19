@@ -112,4 +112,7 @@ def _scope_json(scope: SecurityScope) -> str:
         {"lane": scope.lane.value, "canonical": scope.canonical, "metadata": dict(scope.metadata)},
         ensure_ascii=False,
         sort_keys=True,
+        # The audit log is read back by things other than Python. **An unparsable record
+        # is an absent record**, and failing here at least fails closed on the tool call
+        allow_nan=False,
     )

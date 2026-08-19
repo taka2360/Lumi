@@ -16,6 +16,7 @@ import pytest
 from lumi import paths as paths_module
 from lumi.setup.install import SetupError, install_stt_model, is_model_installed
 from lumi.setup.models import (
+    ALLOWED_ORIGIN_PREFIX,
     STT_MODELS,
     ModelArtifact,
     ModelFile,
@@ -81,6 +82,19 @@ def test_the_origin_is_restricted() -> None:
     assert is_allowed_origin("https://huggingface.co/Systran/faster-whisper-small/resolve/x/y")
     assert not is_allowed_origin("https://evil.example.com/model.bin")
     assert not is_allowed_origin("http://huggingface.co/a/b")
+
+
+def test_the_origin_prefix_ends_at_the_authority_boundary() -> None:
+    """★ **The trailing `/` in the prefix is what makes a `startswith` check sound.**
+
+    The authority ends at the first `/` after `//`, so pinning through that slash pins the
+    host exactly. Drop it from `ALLOWED_ORIGIN_PREFIX` and both of these start passing,
+    with `_download` sending its first request to the attacker before any digest is checked.
+    """
+    assert ALLOWED_ORIGIN_PREFIX.endswith("/"), "権威部の終端まで固定していないと下が通る"
+    assert not is_allowed_origin("https://huggingface.co.evil.example/a")
+    assert not is_allowed_origin("https://huggingface.co@evil.example/a")
+    assert not is_allowed_origin("https://huggingface.co:443/a")
 
 
 def test_redirects_are_restricted_to_the_distributor_over_https() -> None:
@@ -175,6 +189,30 @@ async def test_progress_covers_the_whole_model(tmp_path: Path) -> None:
     assert seen[-1] == pytest.approx(1.0)
 
 
+async def test_an_incomplete_directory_is_repaired_by_reinstalling(tmp_path: Path) -> None:
+    """★ Regression: **a retry could never repair a half-finished install.**
+
+    `rename` refuses a destination that already exists, so a cancelled fetch (or a
+    hand-edited directory) made every subsequent attempt re-download the whole model and
+    then fail at the last step — with nothing telling the user that a directory they were
+    never shown was the reason.
+    """
+    model = artifact()
+    directory = model_directory(model, tmp_path)
+    directory.mkdir(parents=True)
+    (directory / "config.json").write_bytes(CONFIG)
+    (directory / "model.bin").write_bytes(b"truncated")
+    assert not is_model_installed(model, tmp_path)
+
+    installed = await _install(
+        model, tmp_path, serve({"config.json": CONFIG, "model.bin": WEIGHTS})
+    )
+
+    assert installed == directory
+    assert is_model_installed(model, tmp_path)
+    assert (directory / "model.bin").read_bytes() == WEIGHTS
+
+
 # ── "Almost installed" is not installed ──────────────────────
 
 
@@ -247,17 +285,35 @@ class TestModelLocation:
     def test_the_fetched_model_is_the_one_the_provider_will_look_for(self) -> None:
         """**The two ends of the same decision.**
 
-        `SetupCoordinator` fetches `STT_ARTIFACT`; `AgentRuntime` constructs the provider with
-        `settings.KEYS`. Drift between them fails the way a missing model fails — the setup
-        panel offers to fetch something that is already on disk, and nothing errors
-        (the same shape of bug as the directory drift observed 2026-08-17).
+        `SetupCoordinator` fetches what `settings.stt_model` selects; `AgentRuntime`
+        constructs the provider from the same setting. Drift between them fails the way a
+        missing model fails — the setup panel offers to fetch something that is already on
+        disk, and nothing errors (the same shape of bug as the directory drift observed
+        2026-08-17).
         """
         from lumi.settings import KEYS
-        from lumi.setup.coordinator import STT_ARTIFACT
+        from lumi.setup.coordinator import DEFAULT_STT_ARTIFACT
 
         _variable, default = KEYS["stt_model"]
-        assert default == STT_ARTIFACT.name
+        assert default == DEFAULT_STT_ARTIFACT.name
         assert default in STT_MODELS
+
+    def test_an_override_selects_the_artifact_setup_will_fetch(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ Regression: **`LUMI_STT_MODEL=small` left Lumi deaf while the screen said ready.**
+
+        Setup checked and fetched a fixed `large-v3-turbo` while the Provider was built from
+        the setting. STT read `installed`, boot reached `ready`, and every utterance died in
+        a log line — for exactly the users the lighter model exists for (ADR-027).
+        """
+        from lumi.setup.coordinator import selected_stt_artifact
+
+        monkeypatch.setattr(paths_module, "settings_file", lambda: tmp_path / "settings.json")
+
+        assert selected_stt_artifact({"LUMI_STT_MODEL": "small"}) is STT_MODELS["small"]
+        # Not pinned: **nothing is fetched in its place** — substituting is the whole bug
+        assert selected_stt_artifact({"LUMI_STT_MODEL": "tiny"}) is None
 
     def test_the_fetcher_and_the_provider_are_given_the_same_root(self) -> None:
         """The fetcher (`SetupCoordinator`) and the reader (`FasterWhisperProvider`) have

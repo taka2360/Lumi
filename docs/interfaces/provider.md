@@ -214,15 +214,19 @@ class TTSProvider(Provider, Protocol):
 
 | Provider | 言語 | 配置 | VRAM |
 |---|---|---|---|
-| `AivisSpeechProvider` | 日本語 | **別プロセス・CPU（HTTP）** | **0** |
-| `VoicevoxProvider` | 日本語 | **別プロセス・CPU（HTTP）** | **0** |
+| `AivisSpeechProvider` | 日本語 | **別プロセス（HTTP）。CUDA があれば GPU、無ければ CPU** | **GPU 約 1.0 GB / CPU 0** |
+| `VoicevoxProvider` | 日本語 | **別プロセス（HTTP）。CUDA があれば GPU、無ければ CPU** | **GPU 約 1.0 GB / CPU 0** |
 | `KokoroProvider` | 英語ほか | Core内 or 別プロセス | 小 |
 
-### なぜ別プロセス CPU が重要か
+### なぜ別プロセスが重要か
 
-**LLM に VRAM を全振りできる。** RTX 4070 の実効 10.8GB のうち 6.5GB を LLM が使うため、TTS が GPU を取ると Vision が載らなくなる。
+別プロセス境界は、Core から TTS エンジンのライフサイクルとライセンスを分離するために維持する。
+デバイス配置はその境界とは独立であり、Phase 1 では **CUDA があれば GPU、無ければ CPU** とする。
+CPU は設定で強制でき、実際の配置を状態として公開する。レイテンシ SLO は GPU 構成での約束である。
+詳細と実測値は [ADR-025](../decisions/ADR-025-tts-on-gpu.md) および
+[measurements/phase1.md](../measurements/phase1.md) を正とする。
 
-Style-Bert-VITS2（日本語品質は最上位クラス）を選ばなかった主因はここ。GPU 4GB を占有する。
+Style-Bert-VITS2（日本語品質は最上位クラス）は GPU 4GB を占有するため、Phase 1 の配置候補にはしない。
 
 ### ライセンス上の意味
 
@@ -316,6 +320,22 @@ class ProviderRegistry:
 
 **黙って劣化しない。** 音声が出ない、返事が来ない、が原因不明になるのが最悪。
 
+### 例外の使い分けと `reason`
+
+| 例外 | 意味 | ユーザーに求めること |
+|---|---|---|
+| `ProviderNotConfigured` | **まだ入っていない** | セットアップを実行する |
+| `ProviderUnavailable` | **入っているが使えない**（起動していない / 壊れている / このデバイスでは動かない） | 起動する・直す |
+| `ProviderFailed` | 推論中に失敗した | — |
+
+**「入っていない」と「壊れている」を混ぜない。** 持っているモデルを「取得してください」と
+案内するのは間違った指示であり、混ぜた時点でどちらの案内も信用できなくなる。
+インストール済みかどうかを確かめた**後**の失敗は、必ず「壊れている」側である。
+
+`ProviderError(reason, detail)` の **`reason` は機械可読な短い符号**（`model_missing` /
+`model_load_failed` など）。ウォームアップのログはこれで分類するので、
+**文章を入れると分類も突き合わせもできなくなる。** 事情は `detail` に書く。
+
 ---
 
 ## Phase 5: ModelResourceManager
@@ -361,6 +381,8 @@ GameAgent セッション中の Vision ロードは予算チェック必須。
 | 2c | **`load()` が返った時点で、次の呼び出しにモデルのロード時間が含まれない**（LLM は重みが常駐、TTS は話者が初期化済み、STT はモデルが構築済み） |
 | 2d | **3つの Provider すべてが起動時にウォームされる**（1つでも漏れると、その分が最初のターンに乗る） |
 | 3 | 外部エンジン未起動時に明示的なエラーになる |
+| 3b | **インストール済みのモデルが構築に失敗したとき、`model_missing` にならない**（「入っていない」と「壊れている」を混ぜない） |
+| 3c | **`reason` が短い符号である**（文章を入れない。ログの分類キー） |
 | 4 | LLM の `cancel_token` でストリームが中断する |
 | 5 | Tool Calling 非対応の検知とフォールバックが動く |
 | 6 | `reasoning` が TTS に流れない |

@@ -130,7 +130,10 @@ pub fn parse_listening_port(line: &str) -> Option<u16> {
         return None;
     }
     let port = value.get("port")?.as_u64()?;
-    u16::try_from(port).ok()
+    // Port 0 means "let the OS choose" on the way in; on the way *out* it is never a real
+    // listener. Publishing it would send `ws_client` reconnecting to `ws://127.0.0.1:0`
+    // forever, which looks exactly like Core being slow to start. **Fail closed.**
+    u16::try_from(port).ok().filter(|port| *port != 0)
 }
 
 /// The restart backoff delay. **A pure function.** Avoids hammering something that keeps failing at 100% CPU.
@@ -401,6 +404,7 @@ mod tests {
         assert_eq!(parse_listening_port(r#"{"event":"core.ws.listening"}"#), None);
         // Doesn't let through a value that isn't a valid port number
         assert_eq!(parse_listening_port(r#"{"event":"core.ws.listening","port":99999}"#), None);
+        assert_eq!(parse_listening_port(r#"{"event":"core.ws.listening","port":0}"#), None);
     }
 
     #[test]

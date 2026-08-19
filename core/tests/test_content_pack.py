@@ -48,7 +48,7 @@ def pack(
     model_file: bool = False,
 ) -> Path:
     root = tmp_path / "lumi"
-    root.mkdir()
+    root.mkdir(parents=True)
     (root / "character.toml").write_text(character, encoding="utf-8")
     (root / "voice.toml").write_text(voice, encoding="utf-8")
     if model_file:
@@ -113,6 +113,24 @@ def test_a_model_without_credit_is_rejected(tmp_path: Path) -> None:
     declared = CHARACTER + '\n[model]\nfile = "model.vrm"\n'
     with pytest.raises(ContentPackError, match=r"\[credit\]"):
         load_character(pack(tmp_path, character=declared, model_file=True))
+
+
+def test_a_model_outside_the_pack_is_rejected(tmp_path: Path) -> None:
+    """★ **Content Pack は再配布されるデータであり、境界の外を指してよい根拠が無い。**
+
+    `root / declared` は絶対パスをそのまま採用し、`..` も素通りする。読めた path は
+    そのまま Stage に配信される（ADR-029）ので、**パックが任意のローカルファイルを
+    名指しできてしまう。** Shell の asset scope が配信を拒むとしても、
+    向こう側も見ているから成立する境界は境界ではない。
+    """
+    outside = tmp_path / "secret.vrm"
+    outside.write_bytes(b"glTF")
+
+    for index, declared in enumerate(("../secret.vrm", outside.as_posix())):
+        character = CHARACTER + MODEL.replace('file = "model.vrm"', f'file = "{declared}"')
+        root = pack(tmp_path / str(index), character=character, model_file=True)
+        with pytest.raises(ContentPackError, match=r"Content Pack の外"):
+            load_character(root)
 
 
 # ── fail-closed ─────────────────────────────────────────────

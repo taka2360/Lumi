@@ -223,6 +223,19 @@ class VadWorker:
             self._thread = None
 
     def _loop(self) -> None:
+        try:
+            self._run()
+        except Exception:
+            # **A dead VAD thread means barge-in is gone for the rest of the session**, and
+            # nothing downstream can tell that apart from silence. Fail loudly rather than
+            # limp on: a thread that raised once is not a thread whose next window is trusted
+            log.exception("vad.thread_crashed")
+        finally:
+            # Whatever killed it, **never leave playback muted by a thread that is gone** —
+            # only this thread clears the flag, so a crash while muted is permanent silence
+            self._mute_flag.clear()
+
+    def _run(self) -> None:
         # Read at the device rate, in chunks equal to one 16 kHz window's worth
         chunk = max(1, WINDOW_SAMPLES * self._source_rate // SAMPLE_RATE)
         while not self._stop.is_set():

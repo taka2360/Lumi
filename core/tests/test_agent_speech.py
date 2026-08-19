@@ -16,9 +16,13 @@ import numpy as np
 
 from lumi.agent.speech import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED, PlaybackScheduler
 from lumi.audio.devices import Device, StreamPlan
-from lumi.audio.playback import SpeakerPlayback
+from lumi.audio.playback import (
+    PLAYBACK_RING_SECONDS,
+    REFERENCE_RING_SECONDS,
+    SpeakerPlayback,
+)
 from lumi.kernel.cancellation import CancelToken
-from lumi.providers.base import ProviderFailed
+from lumi.providers.base import ProviderFailed, ProviderNotConfigured
 from lumi.providers.tts.base import SpeechAudio, VoiceConfig
 from lumi.transport.protocol import Role
 
@@ -182,6 +186,24 @@ async def test_the_ring_gets_one_sample_per_channel() -> None:
     assert speaker.queued == 320
 
 
+def test_the_rings_hold_the_stated_seconds_on_a_stereo_device() -> None:
+    """★ Regression: **sized by samplerate alone, a 2ch device held half the stated length.**
+
+    Both rings store *interleaved* samples — that is what the callback drains and records —
+    so a second costs `samplerate * channels`. The reference ring's 4 s is what Phase 2's
+    AEC delay estimation needs, so halving it silently breaks a stated capacity.
+    """
+    speaker = playback(channels=2)
+
+    reference = np.zeros(int(RATE * 2 * REFERENCE_RING_SECONDS), dtype=np.float32)
+    speaker.reference.write(reference)
+    assert speaker.reference.available == len(reference)
+
+    queued = np.zeros(int(RATE * 2 * PLAYBACK_RING_SECONDS), dtype=np.float32)
+    speaker.write(queued)
+    assert speaker.queued == len(queued)
+
+
 async def test_ended_is_sent_once_at_the_end() -> None:
     """**`started` fires per sentence, `ended` fires once** (docs/interfaces/renderer.md)."""
     notifier = FakeNotifier()
@@ -323,3 +345,52 @@ async def test_an_unsupported_sample_width_is_refused_not_converted() -> None:
 
     assert outcome.failed == 1
     assert outcome.spoken == 0
+
+
+async def test_an_unexpected_provider_error_does_not_hang_the_turn() -> None:
+    """★ Regression: **an unresolved slot froze the whole utterance.**
+
+    `_play_loop` awaits the slot's future and `finish()` awaits `_play_loop`. Only
+    `ProviderFailed` / `ProviderUnavailable` used to settle it, so anything else the
+    Provider raises — `ProviderNotConfigured`, a library bug — left the turn waiting forever.
+    """
+
+    class ExplodingTts(FakeTts):
+        async def synthesize(
+            self, text: str, voice: VoiceConfig, cancel_token: CancelToken
+        ) -> SpeechAudio:
+            del text, voice, cancel_token
+            raise ProviderNotConfigured("engine_missing", "エンジンが無い")
+
+    scheduler = make(ExplodingTts(), FakeNotifier())
+    scheduler.speak("あ。")
+
+    async with asyncio.timeout(2.0):
+        outcome = await scheduler.finish()
+
+    assert outcome.failed == 1
+    assert outcome.spoken == 0
+
+
+async def test_a_crash_in_one_sentence_still_lets_the_next_one_speak() -> None:
+    """**One broken sentence is not a broken utterance.** The rest still reaches the ring."""
+
+    class HalfBrokenTts(FakeTts):
+        async def synthesize(
+            self, text: str, voice: VoiceConfig, cancel_token: CancelToken
+        ) -> SpeechAudio:
+            if text == "こわれる。":
+                raise RuntimeError("想定外")
+            return await super().synthesize(text, voice, cancel_token)
+
+    notifier = FakeNotifier()
+    scheduler = make(HalfBrokenTts(), notifier)
+    scheduler.speak("こわれる。")
+    scheduler.speak("いける。")
+
+    async with asyncio.timeout(2.0):
+        outcome = await scheduler.finish()
+
+    assert outcome.failed == 1
+    assert outcome.spoken == 1
+    assert notifier.texts() == ["いける。"]

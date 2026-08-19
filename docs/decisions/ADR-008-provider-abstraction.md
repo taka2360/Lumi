@@ -51,6 +51,10 @@ Phase 1 には Vision が無いので `ModelResourceManager` は不要。しか�
 
 ### TTS の別プロセス CPU 化が VRAM 戦略の要
 
+> **後続決定:** この節の CPU-only / VRAM 0 方針は、Phase 1 の実測を受けて
+> [ADR-025](ADR-025-tts-on-gpu.md) が置き換えた。現在の配置は「CUDA があれば GPU、無ければ CPU」であり、
+> CPU を設定で強制できる。以下は ADR-008 決定時点の記録として残す。
+
 | モデル | 配置 | VRAM |
 |---|---|---|
 | LLM (Qwen3 8B Q4_K_M) | GPU / pinned | ~6.5 GB |

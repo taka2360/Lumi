@@ -106,7 +106,7 @@ Lumi にとって関係する条項:
 | | |
 |---|---|
 | ライセンス | **LGPL-3.0 単独**〔2026-08-15 確認〕 |
-| 配置 | 別プロセス・CPU・HTTP（[interfaces/provider.md](interfaces/provider.md)） |
+| 配置 | 別プロセス・HTTP。CUDA があれば GPU、無ければ CPU（[ADR-025](decisions/ADR-025-tts-on-gpu.md)） |
 | 配布物に含める | **✗**（実行時取得 → [architecture/setup.md](architecture/setup.md)） |
 
 〔2026-08-15 確認〕リポジトリの `LICENSE` は **GNU LESSER GENERAL PUBLIC LICENSE Version 3, 29 June 2007 の全文**であり、

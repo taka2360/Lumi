@@ -217,7 +217,7 @@ class AttentionArbiter:
     async def propose(self, proposal: ActivityProposal) -> ProposalOutcome:
         current = self.current()
 
-        if not can_preempt(proposal.priority, current):
+        if not can_preempt(proposal, current):
             if proposal.deferrable:
                 return self._deferred.offer(proposal, self._clock())
             return Rejected(reason="busy")

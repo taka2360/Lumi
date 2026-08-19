@@ -285,6 +285,7 @@ AIRI の `computer-use-mcp` の ToolDescriptor レジストリ（メタデータ
 | 3 | 正規化失敗が `deny` になる（fail-closed） |
 | 4 | verify 失敗時に `execute` が呼ばれない |
 | 5 | `SecurityScope` が不変である |
+| 5c | **`metadata` の中身も書き換えられない**（入れ子を含む）。`frozen` はフィールドの再束縛しか止めない |
 | 5b | **Tool が provenance を自己申告できない**（`execute` は `ToolOutcome` を返す。型検査） |
 | 6 | Tool が `PermissionKernel` を呼べない（静的検査） |
 | 6b | **Tool が `Canonicalizer` / `BindVerifier` を実装していない**（静的検査） |

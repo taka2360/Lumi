@@ -8,14 +8,19 @@ from __future__ import annotations
 
 import ast
 import statistics
+import threading
 import time
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pytest
 
+from lumi.audio.capture import VadWorker
+from lumi.audio.ring import RingBuffer
 from lumi.audio.vad import (
     FRAME_MS,
+    SAMPLE_RATE,
     WINDOW_SAMPLES,
     SileroVad,
     SpeechSegmenter,
@@ -317,3 +322,41 @@ def test_audio_callbacks_do_no_inference_or_io(filename: str, method: str) -> No
 
     offenders = [name for name in called if name in FORBIDDEN_IN_CALLBACK]
     assert offenders == [], f"{filename}: {offenders}"
+
+
+# ── The VAD thread's own failure (table 4b's precondition) ──────────────
+
+
+class ExplodingVad:
+    """Only the shape `VadWorker` uses. **Raises where inference would happen.**"""
+
+    def probability(self, window: np.ndarray) -> float:
+        del window
+        raise RuntimeError("推論が落ちた")
+
+
+def test_a_crashing_vad_thread_never_leaves_playback_muted() -> None:
+    """★ Regression: **one exception used to end barge-in for the whole session.**
+
+    `_loop` had no handler, so a single raise killed the thread with no log line and no
+    listener notification. If it happened while muted, the mute flag stayed set and Lumi
+    was silent for good — nothing else clears it.
+    """
+    ring = RingBuffer(SAMPLE_RATE)
+    ring.write(np.zeros(WINDOW_SAMPLES * 4, dtype=np.float32))
+    mute_flag = threading.Event()
+    mute_flag.set()
+    events: list[VadEvent] = []
+
+    worker = VadWorker(
+        ring,
+        SAMPLE_RATE,
+        mute_flag,
+        lambda event, _audio, _at: events.append(event),
+        vad=cast(SileroVad, ExplodingVad()),
+    )
+    worker.start()
+    worker.stop()
+
+    assert not mute_flag.is_set(), "落ちたスレッドがミュートを握ったままにしない"
+    assert events == []

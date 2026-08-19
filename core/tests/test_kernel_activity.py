@@ -7,6 +7,7 @@ Decision → ADR-024
 from __future__ import annotations
 
 import dataclasses
+import inspect
 
 import pytest
 
@@ -35,6 +36,12 @@ def make(kind: ActivityKind, actor: Actor = Actor.USER_INITIATED) -> Activity:
     )
 
 
+def propose(kind: ActivityKind, actor: Actor) -> ActivityProposal:
+    return ActivityProposal(
+        kind=kind, actor=actor, intent="test", correlation_id=new_correlation_id()
+    )
+
+
 @pytest.mark.parametrize(
     ("kind", "actor", "expected"),
     [
@@ -53,23 +60,23 @@ def test_priority_follows_the_table(kind: ActivityKind, actor: Actor, expected: 
 def test_conversation_preempts_conversation() -> None:
     """**barge-in is a preempt at equal priority.** This would fail with `>`."""
     current = make(ActivityKind.CONVERSATION)
-    assert can_preempt(priority_of(ActivityKind.CONVERSATION, Actor.USER_INITIATED), current)
+    assert can_preempt(propose(ActivityKind.CONVERSATION, Actor.USER_INITIATED), current)
 
 
 def test_autonomous_does_not_preempt_conversation() -> None:
     current = make(ActivityKind.CONVERSATION)
-    assert not can_preempt(priority_of(ActivityKind.AUTONOMOUS, Actor.SELF_INITIATED), current)
+    assert not can_preempt(propose(ActivityKind.AUTONOMOUS, Actor.SELF_INITIATED), current)
 
 
 def test_autonomous_does_not_preempt_another_autonomous() -> None:
     current = make(ActivityKind.AUTONOMOUS, Actor.SELF_INITIATED)
-    assert not can_preempt(priority_of(ActivityKind.AUTONOMOUS, Actor.SELF_INITIATED), current)
+    assert not can_preempt(propose(ActivityKind.AUTONOMOUS, Actor.SELF_INITIATED), current)
 
 
 def test_everything_preempts_idle() -> None:
     idle = new_idle_activity(new_correlation_id())
     for kind in ActivityKind:
-        assert can_preempt(priority_of(kind, Actor.SYSTEM), idle)
+        assert can_preempt(propose(kind, Actor.SYSTEM), idle)
 
 
 def test_idle_is_interruptible_at_zero() -> None:
@@ -84,6 +91,17 @@ def test_proposal_cannot_carry_a_priority() -> None:
     fields = {f.name for f in dataclasses.fields(ActivityProposal)}
     assert "priority" not in fields
     assert "interruptible_at" not in fields
+
+
+def test_preemption_is_judged_from_the_proposal_not_a_number() -> None:
+    """★ **`can_preempt` takes the proposal** (ADR-024).
+
+    With a bare `int` the caller supplies the priority, and nothing structurally stops a
+    number nobody decided from reaching the comparison — the exact thing ADR-024 §3
+    ("priority を外部が提案できない") asks the boundary to make impossible.
+    """
+    parameters = list(inspect.signature(can_preempt).parameters.values())
+    assert parameters[0].annotation == "ActivityProposal", "生の数値を受け取らない"
 
 
 def test_idle_starts_running_without_being_proposed() -> None:

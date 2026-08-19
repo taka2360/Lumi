@@ -128,7 +128,7 @@ Lumi ではなく外部エンジンを起動しているように見える。
 |---|---|
 | **Core** | Content Pack を読み、**どのモデルか**を `stage.character.model` で配る（絶対パス） |
 | **Shell** | そのファイルを WebView に読ませる（Tauri asset protocol + scope）。**Content Pack の外は拒否** |
-| **Stage** | 受け取ったパスを描く。**自分でパスを決めない** |
+| **Stage** | `PlatformShell.toAssetUrl` で受け取ったパスを URL 化して描く。**自分でパスを決めない** |
 
 **Phase 0 の `DEFAULT_VRM_URL = "/character.vrm"` は消えた。** Stage が置き場所を知っているのは
 「Stage が判断を持たない」に反していた（Phase 0 の暫定措置と明記されていたもの）。

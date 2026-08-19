@@ -18,8 +18,8 @@ from wherever the previous span ended — is tempting because it can't leave gap
 exactly what makes it useless: **every scheduling delay, event publish and await gets folded
 into whichever span happens to come next**, and `unaccounted_ms` is always zero by construction.
 
-The gaps are the point. `unaccounted_ms` is the reserve's warning light (0.13 s of the 1.20 s
-budget covers DomainEvent persistence, provenance joins, GC, scheduling). It can only warn if
+The gaps are the point. `unaccounted_ms` is the reserve's warning light (0.23 s of the 1.50 s
+p50 budget covers DomainEvent persistence, provenance joins, GC, scheduling). It can only warn if
 unattributed work actually shows up in it.
 
 ## Why the clock is injected

@@ -93,7 +93,7 @@ def test_saving_keeps_keys_this_version_does_not_know(tmp_path: Path) -> None:
 
     Dropping unknown keys silently deletes configuration on every downgrade.
     """
-    file = write(tmp_path, {"version": 99, "from_the_future": {"a": 1}})
+    file = write(tmp_path, {"version": SCHEMA_VERSION, "from_the_future": {"a": 1}})
 
     save(file, load(file, {}), {"llm_model": "gemma3:12b"})
 
@@ -101,6 +101,35 @@ def test_saving_keeps_keys_this_version_does_not_know(tmp_path: Path) -> None:
     assert stored["from_the_future"] == {"a": 1}
     assert stored["llm_model"] == "gemma3:12b"
     assert stored["version"] == SCHEMA_VERSION
+
+
+def test_a_newer_schema_is_never_rewritten_as_this_one(tmp_path: Path) -> None:
+    """★ **The version moves when a key's *meaning* changes** (`SCHEMA_VERSION`).
+
+    So a v99 file cannot be read as v1 — and saving it back stamped `version: 1` onto
+    v99 values, destroying the only record that they were not v1. The newer Lumi would
+    then run its own migration over already-migrated values. **Left alone instead.**
+    """
+    original = {"version": 99, "llm_model": "means-something-else", "from_the_future": {"a": 1}}
+    file = write(tmp_path, original)
+
+    settings = load(file, {})
+
+    assert settings.unreadable, "書き込みを止めるのは unreadable の経路"
+    assert settings.llm_model.source is Source.DEFAULT, "v99 の値を v1 として読まない"
+    with pytest.raises(SettingsUnreadable):
+        save(file, settings, {"llm_model": "gemma3:12b"})
+    assert json.loads(file.read_text(encoding="utf-8")) == original
+
+
+def test_an_environment_override_still_applies_to_a_newer_schema(tmp_path: Path) -> None:
+    """The escape hatch is an explicit act by the user, and **is never written back.**"""
+    file = write(tmp_path, {"version": 99})
+
+    settings = load(file, {"LUMI_LLM_MODEL": "gemma3:12b"})
+
+    assert settings.llm_model.value == "gemma3:12b"
+    assert settings.llm_model.source is Source.ENV
 
 
 def test_an_unreadable_file_is_never_overwritten(tmp_path: Path) -> None:

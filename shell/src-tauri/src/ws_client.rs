@@ -55,12 +55,20 @@ fn hello(token: &str) -> String {
 }
 
 fn ok_result(id: &str, payload: Value) -> String {
-    json!({"kind": "result", "corr_id": id, "ok": true, "payload": payload}).to_string()
+    json!({"v": PROTOCOL_VERSION, "kind": "result", "corr_id": id, "ok": true, "payload": payload})
+        .to_string()
 }
 
 fn error_result(id: &str, reason: &str) -> String {
-    json!({"kind": "result", "corr_id": id, "ok": false, "payload": {}, "error": reason})
-        .to_string()
+    json!({
+        "v": PROTOCOL_VERSION,
+        "kind": "result",
+        "corr_id": id,
+        "ok": false,
+        "payload": {},
+        "error": reason,
+    })
+    .to_string()
 }
 
 /// Starts maintaining the connection. The port arrives via Core's stdout.
@@ -207,5 +215,15 @@ mod tests {
         assert_eq!(value["ok"], false);
         assert_eq!(value["corr_id"], "id1");
         assert_eq!(value["error"], "unknown_method");
+    }
+
+    /// Core refuses a frame whose version it cannot agree on (ADR-022). `result` used to be
+    /// the one frame Shell sent without a version, which only worked because Core did not look.
+    #[test]
+    fn every_frame_carries_the_protocol_version() {
+        for text in [hello("t"), ok_result("id1", json!({})), error_result("id1", "why")] {
+            let value: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(value["v"], PROTOCOL_VERSION, "{text}");
+        }
     }
 }

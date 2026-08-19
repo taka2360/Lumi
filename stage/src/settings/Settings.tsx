@@ -12,7 +12,7 @@
  * temporary escape hatch into the file permanently.
  */
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type { SettingsSource } from "../core/store";
 import { useStageStore } from "../core/store";
@@ -31,6 +31,13 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const snapshot = useMemo(() => ({ value, source }), [value, source]);
+  useEffect(() => {
+    // Core owns the value. A new snapshot supersedes any local draft or status.
+    setDraft(snapshot.value);
+    setError(null);
+    setSaved(false);
+  }, [snapshot]);
   // **Never editable while overridden.** Saving would make the escape hatch permanent
   const locked = source === "env";
 

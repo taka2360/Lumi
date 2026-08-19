@@ -179,22 +179,29 @@ class PlaybackScheduler:
     # ── Generation ──────────────────────────────────────────────
 
     async def _synthesize(self, slot: _Slot) -> None:
-        async with self._semaphore:
-            if self._aborted or self._cancel_token.is_set:
-                _resolve(slot.audio, None)
-                return
-            try:
+        # **The slot is settled in `finally`, whatever happens.** `_play_loop` awaits this
+        # future and `finish()` awaits `_play_loop`, so one unresolved slot hangs the whole
+        # turn — and a Provider raising anything but the two below (`ProviderNotConfigured`,
+        # a library bug) is exactly the case that used to leave it unresolved
+        try:
+            async with self._semaphore:
+                if self._aborted or self._cancel_token.is_set:
+                    return
                 audio = await self._tts.synthesize(slot.text, self._voice, self._cancel_token)
-            except (ProviderFailed, ProviderUnavailable) as error:
-                # **Record that this sentence couldn't be spoken.** Don't silently skip it
-                log.warning("speech.synthesis_failed", index=slot.index, error=str(error))
-                self._failed += 1
-                _resolve(slot.audio, None)
-            else:
                 if slot.index == 0 and self._timer is not None:
                     self._timer.end("tts_first_audio_ms")
                     self._timer.begin("playback_ms")
                 _resolve(slot.audio, audio)
+        except (ProviderFailed, ProviderUnavailable) as error:
+            # **Record that this sentence couldn't be spoken.** Don't silently skip it
+            log.warning("speech.synthesis_failed", index=slot.index, error=str(error))
+            self._failed += 1
+        except Exception:
+            # Not a failure mode the Provider contract names. **Still counted, never swallowed**
+            log.exception("speech.synthesis_crashed", index=slot.index)
+            self._failed += 1
+        finally:
+            _resolve(slot.audio, None)
 
     # ── Playback ──────────────────────────────────────────────
 

@@ -15,7 +15,6 @@ all of these are **normal states**, and startup continues while making that expl
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Final
@@ -237,6 +236,10 @@ class ConversationRuntime:
         self._warmup = asyncio.create_task(
             _warm(self._providers, self._setup, self._model), name="warmup"
         )
+        # **Nobody awaits this task while it runs.** Without a callback an unexpected failure
+        # stays invisible until GC, and `stop()` is where it would finally surface — as an
+        # exception that aborts the rest of shutdown
+        self._warmup.add_done_callback(_report_warmup_exit)
 
         if self._loop is None:
             log.warning("conversation.disabled", reason="content pack")
@@ -282,8 +285,15 @@ class ConversationRuntime:
             if task is None:
                 continue
             task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
+            try:
                 await task
+            except asyncio.CancelledError:
+                pass
+            except Exception:
+                # It already failed before the cancel landed. **Shutdown continues** — the
+                # steps below release a device, an engine process and a DB handle, and none
+                # of them may be skipped because a warmup raised (it is logged, not swallowed)
+                log.exception("conversation.task_failed_on_stop", task=task.get_name())
         self._warmup = None
         self._task = None
         await self._inspector.stop()
@@ -294,6 +304,19 @@ class ConversationRuntime:
         except TimeoutError:
             log.warning("providers.unload_timeout")
         self._database.close()
+
+
+def _report_warmup_exit(task: asyncio.Task[None]) -> None:
+    """**A warmup that died is a cold engine nobody is going to notice.**
+
+    Cancellation is normal shutdown. Anything else means the first reply pays the load cost
+    at best, and the Stage keeps showing a state nobody will move at worst.
+    """
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is not None:
+        log.error("warmup.crashed", error=str(error), exc_info=error)
 
 
 def _report_reactive_exit(task: asyncio.Task[None]) -> None:

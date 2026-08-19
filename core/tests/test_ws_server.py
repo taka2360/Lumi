@@ -10,6 +10,7 @@ import pytest
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
+from lumi.transport import server as server_module
 from lumi.transport.protocol import PROTOCOL_VERSION, Role
 from lumi.transport.server import (
     CLOSE_PROTOCOL_ERROR,
@@ -92,7 +93,13 @@ class TestInvoke:
             assert command["method"] == "os.window.set_position"
             await client.send(
                 json.dumps(
-                    {"kind": "result", "corr_id": command["id"], "ok": True, "payload": {"x": 1}}
+                    {
+                        "v": PROTOCOL_VERSION,
+                        "kind": "result",
+                        "corr_id": command["id"],
+                        "ok": True,
+                        "payload": {"x": 1},
+                    }
                 )
             )
 
@@ -350,6 +357,66 @@ class TestInboundRequests:
             # The connection is still reading: a second request gets its own answer
             answer = await self.send_request(client, "stage.other")
         assert answer["error"] == "unknown_method"
+
+    async def test_a_handler_that_never_returns_is_still_answered(
+        self, server: WsServer, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ Regression: **a hung handler used to leave the client waiting forever.**
+
+        `_serve_request` promises to always answer. Without a bound, a handler that blocks
+        makes Core indistinguishable from a dead one — from the Stage's side there is simply
+        no reply, ever.
+        """
+        monkeypatch.setattr(server_module, "INBOUND_REQUEST_TIMEOUT_S", 0.05)
+
+        async def hangs(_payload: dict[str, object]) -> dict[str, object]:
+            await asyncio.sleep(30.0)
+            return {}
+
+        server.on_request("stage.settings.update", hangs)
+        client = await open_client(server, role="stage")
+        await client.recv()
+
+        async with asyncio.timeout(2.0):
+            answer = await self.send_request(client, "stage.settings.update")
+
+        assert answer["ok"] is False
+        assert answer["error"] == "timeout"
+
+    async def test_an_unencodable_payload_does_not_go_out_silently(
+        self, server: WsServer, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """**Suppressing every exception hid Core's own bugs.** A payload that cannot be
+        encoded leaves the client with no answer, so it has to be logged at least.
+        """
+
+        async def returns_garbage(_payload: dict[str, object]) -> dict[str, object]:
+            return {"not_json": object()}
+
+        server.on_request("stage.settings.update", returns_garbage)
+        client = await open_client(server, role="stage")
+        await client.recv()
+
+        await client.send(
+            json.dumps(
+                {
+                    "v": PROTOCOL_VERSION,
+                    "kind": "request",
+                    "id": "bad",
+                    "method": "stage.settings.update",
+                    "payload": {},
+                }
+            )
+        )
+        # structlog prints to stdout (`PrintLoggerFactory`), so the log is read from there
+        captured = ""
+        for _ in range(100):
+            captured += capsys.readouterr().out
+            if "transport.answer.failed" in captured:
+                break
+            await asyncio.sleep(0.01)
+
+        assert "transport.answer.failed" in captured
 
     def test_registering_the_same_method_twice_is_refused(self, server: WsServer) -> None:
         """**Two owners for one route** is how a request quietly stops reaching the handler

@@ -16,6 +16,7 @@ import { createTauriPlatformShell, isTauri } from "./tauri";
 /** A no-op implementation used outside Tauri (when opened in a browser). Placed explicitly **so it never silently breaks**. */
 const noopShell: PlatformShell = {
   setLocale: async () => {},
+  toAssetUrl: (path) => path,
   setHitRegion: async () => {},
   onHoverState: async () => ({ dispose: () => {} }),
   startWindowDrag: async () => {},

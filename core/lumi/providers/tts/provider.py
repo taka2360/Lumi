@@ -40,7 +40,7 @@ START_TIMEOUT_S: Final = 180.0
 
 
 class AivisSpeechProvider:
-    """Implementation of `TTSProvider`. **A separate CPU process, so it uses no VRAM.**"""
+    """TTS provider backed by a separate process on GPU when available, else CPU."""
 
     id = "aivisspeech"
     kind = ProviderKind.TTS

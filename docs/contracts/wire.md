@@ -28,6 +28,14 @@ Lumi は Python（Core）・TypeScript（Stage）・Rust（Shell）の3言語で
 **片側だけで完結する値を契約に入れない。** 契約が大きくなるほど、
 「契約に載っているが実は片側にしかない」ものが混ざり、契約全体の信用が落ちる。
 
+### `PROTOCOL_VERSION` は**すべてのフレームに載る**
+
+`hello` だけでなく `command` / `notify` / `request` / `result` のすべてが `v` を持ち、
+**受け手は一致しないフレームを捨てる。** 片方向だけ検査すると、検査していない側が
+「載せなくても動く」状態で固まり、**後からバージョンを上げたときにそこだけ素通りする。**
+（Phase 1 実装時、Stage と Shell の `result` だけが `v` を落としており、
+Core が見ていなかったので誰も気づかなかった。）
+
 ### 失敗理由（`reason`）を載せない理由
 
 `SetupError.reason` は Stage の `FAILURE_TEXT` が日本語に直しているが、

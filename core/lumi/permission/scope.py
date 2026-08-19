@@ -19,9 +19,10 @@ by the Kernel** (docs/interfaces/tool.md: "these live in `permission/`, not `too
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence, Set
 from dataclasses import dataclass, field
 from enum import StrEnum
+from types import MappingProxyType
 from typing import Any, Final, Protocol
 
 
@@ -99,6 +100,12 @@ class SecurityScope:
     """**Immutable.** If it could be rewritten after Policy inspects it, TOCTOU becomes possible.
 
     Only `Canonicalizer` (owned by the Kernel) can construct one. Neither Tools nor the LLM can.
+
+    `frozen=True` only stops the fields being rebound — **it does not freeze what they point
+    at.** `metadata` carries the operation's parameters (`verifiers.CharacterCanonicalizer`),
+    it is what `execute` reads instead of re-resolving raw input, and it comes from the LLM's
+    tool call. A `dict` there would be writable between `decide` and `execute`, which is the
+    exact window this type exists to close, so it is **copied and frozen on construction.**
     """
 
     lane: ScopeLane
@@ -106,6 +113,27 @@ class SecurityScope:
     canonical: str
     #: Lane-specific (HWND, PID, etc). **Shows up in audit logs, so never put secrets here**
     metadata: Mapping[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # `slots=True` + `frozen=True`: assignment has to go around the frozen guard
+        object.__setattr__(self, "metadata", _freeze(self.metadata))
+
+
+def _freeze(value: Any) -> Any:
+    """Returns a read-only copy. **Recursive** — a nested `dict` or `list` left writable
+    would reopen the same window one level down.
+
+    `str` and `bytes` are `Sequence`s but already immutable, so they are returned as-is.
+    """
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze(item) for key, item in value.items()})
+    if isinstance(value, str | bytes):
+        return value
+    if isinstance(value, Set):
+        return frozenset(_freeze(item) for item in value)
+    if isinstance(value, Sequence):
+        return tuple(_freeze(item) for item in value)
+    return value
 
 
 class Handle(Protocol):

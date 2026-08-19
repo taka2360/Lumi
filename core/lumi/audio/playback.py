@@ -48,8 +48,13 @@ class SpeakerPlayback:
 
     def __init__(self, plan: StreamPlan, *, mute_flag: threading.Event | None = None) -> None:
         self._plan = plan
-        self._ring = RingBuffer(int(plan.samplerate * PLAYBACK_RING_SECONDS))
-        self._reference = RingBuffer(int(plan.samplerate * REFERENCE_RING_SECONDS))
+        # **Both rings hold interleaved samples**, which is what the callback drains and
+        # records — so a second of audio costs `samplerate * channels`. Sizing them by
+        # samplerate alone made a stereo device hold half the stated seconds, and the
+        # reference ring's length is a Phase 2 AEC requirement, not a round number
+        per_second = plan.samplerate * plan.channels
+        self._ring = RingBuffer(int(per_second * PLAYBACK_RING_SECONDS))
+        self._reference = RingBuffer(int(per_second * REFERENCE_RING_SECONDS))
         # : **Shared with the VAD thread.** Once set, output goes silent from the next callback
         # onward
         self._mute_flag = mute_flag or threading.Event()

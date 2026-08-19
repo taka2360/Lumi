@@ -421,6 +421,27 @@ def test_security_scope_is_immutable() -> None:
         scope.canonical = "character:someone_else"  # type: ignore[misc]
 
 
+def test_scope_metadata_cannot_be_rewritten_after_inspection() -> None:
+    """★ Regression: **`frozen=True` freezes the fields, not what they point at.**
+
+    `metadata` is what `execute` reads instead of re-resolving raw input, and it comes
+    from the LLM's tool call. A writable `dict` there means the arguments can change
+    between `decide` and `execute` — **the exact window this type exists to close.**
+    """
+    source = {"emotion": "happy", "tags": ["a"], "nested": {"k": 1}}
+    scope = SecurityScope(lane=ScopeLane.CHARACTER, canonical=CHARACTER_SELF, metadata=source)
+
+    with pytest.raises(TypeError):
+        scope.metadata["emotion"] = "angry"  # type: ignore[index]
+    with pytest.raises(TypeError):
+        scope.metadata["nested"]["k"] = 2
+    assert isinstance(scope.metadata["tags"], tuple), "入れ子の list も書けてはいけない"
+
+    # The caller's own dict stays its own: mutating it must not reach an inspected scope
+    source["emotion"] = "angry"
+    assert scope.metadata["emotion"] == "happy"
+
+
 def test_tool_cannot_report_its_own_provenance() -> None:
     """`execute`'s return value (`ToolOutcome`) has no provenance fields."""
     import dataclasses

@@ -12,10 +12,11 @@ determined together, so **they're returned as a single result.**
 When `timeline` is `None`, **no visemes are sent** (mouth stays closed).
 Better to not move the mouth than move it on bogus timing.
 
-## What being a separate CPU process means
+## What being a separate process means
 
-**It lets the LLM claim all the VRAM.** That's the entire reason TTS was chosen this
-way (ADR-008). `resource_hint()`'s `EXTERNAL_PROCESS` is that declaration.
+The process boundary isolates the engine lifecycle and license boundary from Core.
+Device placement is independent: ADR-025 prefers CUDA when available and falls back to
+CPU. `resource_hint()` reports the resolved device's VRAM estimate separately.
 """
 
 from __future__ import annotations

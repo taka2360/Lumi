@@ -14,6 +14,7 @@ cannot survive a program rewriting the file anyway.
 | Rule | Why |
 |---|---|
 | A broken file falls back to defaults and is **never overwritten** | It stays recoverable |
+| A **newer schema** is treated the same way | この版としては読めず、書けば嘘の版が刻まれる |
 | Unknown keys are **preserved** on save | A downgrade must not lose them |
 | One bad value **only costs that key** | One typo must not discard every other setting |
 | Environment overrides the file, **visibly** | "I changed it and nothing happened" otherwise |
@@ -122,6 +123,17 @@ def _resolve(key: str, stored: Mapping[str, Any], env: Mapping[str, str]) -> Set
     return Setting(value=fallback, source=Source.DEFAULT)
 
 
+def _is_newer_schema(stored: Mapping[str, Any]) -> bool:
+    """Whether the file claims a schema this version does not know.
+
+    A missing or non-integer `version` is **not** treated as newer — a hand-written file
+    is a normal thing to find, and refusing to save one would be a worse failure than
+    reading it optimistically.
+    """
+    version = stored.get("version")
+    return isinstance(version, int) and not isinstance(version, bool) and version > SCHEMA_VERSION
+
+
 def load(path: Path, env: Mapping[str, str] | None = None) -> Settings:
     """Reads the file. **Never raises** — settings can't be a reason Lumi won't start."""
     environ = env if env is not None else os.environ
@@ -141,6 +153,21 @@ def load(path: Path, env: Mapping[str, str] | None = None) -> Settings:
             else:
                 log.warning("settings.not_an_object", path=str(path))
                 unreadable = True
+
+    if _is_newer_schema(stored):
+        # **A newer Lumi wrote this.** `SCHEMA_VERSION` moves when a key's *meaning* changes,
+        # so these values cannot be read as this schema — and `save` would stamp them as this
+        # one, destroying the only record that they were not. Same treatment as unreadable:
+        # defaults, and the file is left alone. (An environment override still applies; it is
+        # an explicit act by the user and is never written back.)
+        log.warning(
+            "settings.schema_too_new",
+            path=str(path),
+            version=stored.get("version"),
+            known=SCHEMA_VERSION,
+        )
+        stored = {}
+        unreadable = True
 
     known = {*KEYS, "version"}
     return Settings(

@@ -5,7 +5,7 @@
  * Electron, this is the only file that needs replacing (docs/interfaces/shell.md).
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import type { Disposable, HitRect, HoverState, PlatformShell } from "./PlatformShell";
@@ -36,6 +36,10 @@ export function createTauriPlatformShell(): PlatformShell {
   return {
     async setLocale(locale: "ja" | "en"): Promise<void> {
       await invoke(CMD_SET_LOCALE, { locale });
+    },
+
+    toAssetUrl(path: string): string {
+      return convertFileSrc(path);
     },
 
     async setHitRegion(rects: HitRect[]): Promise<void> {

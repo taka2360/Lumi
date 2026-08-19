@@ -33,6 +33,7 @@ from lumi.providers.base import (
     ProviderFailed,
     ProviderKind,
     ProviderNotConfigured,
+    ProviderUnavailable,
     ResourceHint,
     UnloadPolicy,
 )
@@ -125,10 +126,14 @@ class FasterWhisperProvider:
                 local_files_only=True,
             )
         except Exception as error:
-            # The library raises various exceptions. **Translated into "model missing" here**
-            raise ProviderNotConfigured(
-                "model_missing",
-                f"{self._size} が {self._model_dir} に無い（セットアップで取得してください）",
+            # `_resolve` already proved every pinned file is on disk, so this is an install
+            # that will not build — a CUDA/cuDNN load failure, a `compute_type` this device
+            # cannot run, corrupt weights, out of memory. **Not "not set up yet"**
+            # (`providers/base.py`: the two ask different things of the user, and telling
+            # someone to download a model they already have is the wrong instruction)
+            raise ProviderUnavailable(
+                "model_load_failed",
+                f"{self._size} ({self._device.value}/{self._compute_type}): {error}",
             ) from error
 
     def _resolve(self) -> Path:

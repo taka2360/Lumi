@@ -9,8 +9,10 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import sys
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 
 import httpx
 import numpy as np
@@ -168,8 +170,20 @@ async def test_waiting_on_one_kind_does_not_block_another() -> None:
 
 def test_registry_refuses_an_unregistered_kind() -> None:
     """**Never silently degrades.** Never produces an unexplained "why isn't it speaking."""
-    with pytest.raises(ProviderNotConfigured):
+    with pytest.raises(ProviderNotConfigured) as error:
         ProviderRegistry().peek(ProviderKind.TTS)
+    # `reason` is the machine-readable cause and is what the warmup logs group by.
+    # **A whole sentence there is unmatchable and ungroupable** (`providers/base.py`)
+    assert error.value.reason == "no_provider_selected"
+
+
+def test_selecting_an_unregistered_provider_reports_a_stable_reason() -> None:
+    registry = ProviderRegistry()
+    registry.register(Dummy("a"))
+    with pytest.raises(ProviderNotConfigured) as error:
+        registry.select(ProviderKind.LLM, "b")
+    assert error.value.reason == "provider_not_registered"
+    assert "b" in error.value.detail
 
 
 def test_registry_reports_only_the_selected_attributions() -> None:
@@ -578,6 +592,35 @@ async def test_an_unpinned_model_name_is_a_different_failure(empty_model_dir: Pa
     with pytest.raises(ProviderNotConfigured) as error:
         await provider.load()
     assert error.value.reason == "unknown_model"
+
+
+async def test_an_installed_model_that_will_not_build_is_not_reported_as_missing(
+    empty_model_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """★ **"Not set up yet" and "broken" ask different things of the user** (`providers/base.py`).
+
+    `_resolve` has already proved every pinned file is on disk, so a failure past that
+    point is a CUDA/cuDNN load failure, an unsupported `compute_type`, corrupt weights or
+    OOM. Reporting it as `model_missing` tells someone to download a model they have.
+    """
+
+    class Installed(FasterWhisperProvider):
+        """Stands in for a model whose pinned files are all on disk."""
+
+        def _resolve(self) -> Path:
+            return empty_model_dir
+
+    provider = Installed("small", empty_model_dir)
+
+    def explode(*_args: object, **_kwargs: object) -> object:
+        raise RuntimeError("cudnn_ops64_9.dll をロードできない")
+
+    monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=explode))
+
+    with pytest.raises(ProviderUnavailable) as error:
+        await provider.load()
+    assert error.value.reason == "model_load_failed"
+    assert "セットアップで取得" not in error.value.detail
 
 
 async def test_transcribe_before_load_is_refused(empty_model_dir: Path) -> None:

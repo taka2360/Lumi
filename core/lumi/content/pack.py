@@ -177,7 +177,7 @@ def _model(document: dict[str, Any], root: Path) -> ModelSettings | None:
     if not isinstance(model, dict):
         raise ContentPackError("character.toml の [model] がテーブルではない")
 
-    path = root / _text(model, "file", root / "character.toml")
+    path = _inside(root, _text(model, "file", root / "character.toml"))
     if not path.is_file():
         # **Never fall back silently.** A pack that names a model it doesn't ship is broken,
         # and a blank character is the least informative way to report it
@@ -188,6 +188,23 @@ def _model(document: dict[str, Any], root: Path) -> ModelSettings | None:
         format=str(model.get("format", "")),
         credit=_credit(_table(model, "credit", root), root / "character.toml"),
     )
+
+
+def _inside(root: Path, declared: str) -> Path:
+    """Resolves a path the pack declared, and **refuses anything outside the pack.**
+
+    A Content Pack is redistributed data, not code, and `root / declared` alone honours an
+    absolute path (`Path("a") / "C:/x"` is `C:/x`) and `..`. The resolved path is then
+    published to the Stage (ADR-029), so **a pack could name any readable local file**.
+    Shell's asset scope would refuse to serve it, but a boundary that only holds because
+    the far side also checks is not a boundary.
+    """
+    path = (root / declared).resolve()
+    try:
+        path.relative_to(root.resolve())
+    except ValueError as error:
+        raise ContentPackError(f"Content Pack の外を指している: {declared}") from error
+    return path
 
 
 def _reject_code(root: Path) -> None:

@@ -84,9 +84,16 @@ class SentenceStream:
         first = not self._emitted
         limit = FIRST_MAX_CHARS if first else MAX_CHARS
 
-        for index, char in enumerate(self._buffer):
+        # **Only the first `limit` characters are searched.** One long stream chunk can carry
+        # a terminator well past the cap, and scanning to it would emit the whole chunk —
+        # the cap exists precisely because "LLM が最初の句読点まで長く喋れば、上限文字数で
+        # 切られるまで待つ" (docs/architecture/audio.md §6)
+        window = self._buffer[:limit]
+        for index, char in enumerate(window):
             if char in TERMINATORS:
                 end = index + 1
+                # Closers are read past the window: they follow a terminator that is already
+                # inside the cap, and **`」` must not be split off `そうだね！`**
                 while end < len(self._buffer) and self._buffer[end] in CLOSERS:
                     end += 1
                 return end
@@ -98,7 +105,6 @@ class SentenceStream:
             return None
 
         # No terminator arrived. **Give up, but still choose where to cut**
-        window = self._buffer[:limit]
         for index in range(len(window) - 1, 0, -1):
             if window[index] in SOFT_BREAKS:
                 return index + 1

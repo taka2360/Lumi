@@ -60,6 +60,9 @@ def isolated_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     # **Never reads the developer's real model directory.** Doing so makes the outcome
     # depend on whose machine the suite runs on
     monkeypatch.setattr(paths_module, "models_dir", lambda: tmp_path / "models")
+    # Which STT model setup fetches now comes from the settings file, so it has to be
+    # isolated for the same reason
+    monkeypatch.setattr(paths_module, "settings_file", lambda: tmp_path / "settings.json")
 
 
 @pytest.fixture(autouse=True)
@@ -391,9 +394,57 @@ class TestSpeechModel:
 
         # **Not hardcoded.** Which model ships is a decision that moves (ADR-027); that this
         # path fetches *the one the rest of Core will look for* is what must not move
-        assert fetched == [coordinator_module.STT_ARTIFACT.name]
+        assert fetched == [coordinator_module.DEFAULT_STT_ARTIFACT.name]
         assert coordinator.state.stt.state is SttSetupState.INSTALLED
         assert states_of(server, "stt")[-1] == "installed"
+
+    async def test_an_override_changes_which_model_is_fetched(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ Regression: **`LUMI_STT_MODEL=small` fetched `large-v3-turbo` and reported it
+        installed**, while the Provider went looking for `small`.
+
+        Lumi was then deaf with `installed` on screen — and the lighter model is exactly
+        what someone reaches for when the big one does not fit their machine (ADR-027).
+        """
+        one_engine(monkeypatch)
+        no_speech_model(monkeypatch)
+        fetched: list[str] = []
+
+        async def fake_install(artifact: Any, models_dir: Path, *, progress: Any = None) -> Path:
+            del models_dir
+            fetched.append(artifact.name)
+            await progress(1.0)
+            return Path("C:/models/small")
+
+        monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
+        server = FakeServer(["install"])
+        coordinator = SetupCoordinator(server.as_server(), {"LUMI_STT_MODEL": "small"})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert fetched == ["small"]
+
+    async def test_an_unpinned_model_is_never_replaced_by_a_different_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**Fetching something else would be the same mismatch, one step later.**
+
+        Nothing can be fetched for a name that is not pinned, so nothing is asked either —
+        a question whose only answer fails is worse than no question.
+        """
+        one_engine(monkeypatch)
+        no_speech_model(monkeypatch)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {"LUMI_STT_MODEL": "tiny"})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert coordinator.state.stt.state is SttSetupState.NOT_CONFIGURED
+        assert coordinator.state.stt.reason == "unpinned_model"
+        assert server.invocations == [], "取りようが無いものを取るか聞かない"
 
     async def test_declining_leaves_it_not_configured_and_never_asks_again(
         self, monkeypatch: pytest.MonkeyPatch
