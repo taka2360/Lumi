@@ -20,7 +20,7 @@
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 
-import { browserLocale, translate } from "../i18n";
+import { cachedLocale, translate } from "../i18n";
 import { createPlaceholder } from "./placeholder";
 import type { CharacterModel } from "./types";
 import { loadVrm } from "./vrm";
@@ -38,7 +38,7 @@ export interface ModelSource {
 }
 
 export async function loadCharacter(source: ModelSource): Promise<LoadedCharacter> {
-  const locale = browserLocale();
+  const locale = cachedLocale();
   if (!source.path) {
     // **Not an error.** A voice-only Content Pack is a legitimate Content Pack
     return { model: createPlaceholder(), fallbackReason: source.reason };

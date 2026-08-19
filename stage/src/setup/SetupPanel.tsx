@@ -18,7 +18,8 @@ import type { ReactNode } from "react";
 
 import { type SetupComponent, useStageStore } from "../core/store";
 import { answerSetupPrompt } from "../core/useCoreConnection";
-import { browserLocale, type Locale, translate } from "../i18n";
+import { type Locale, translate } from "../i18n";
+import { useLocale } from "../i18n/provider";
 import { failureText, statusLines } from "./status";
 
 /** What is being asked about. **The subject of consent is never left implicit.** */
@@ -62,7 +63,7 @@ function prompts(
 }
 
 export function SetupPanel() {
-  const locale = browserLocale();
+  const locale = useLocale();
   const setup = useStageStore((state) => state.setup);
   const prompt = useStageStore((state) => state.prompt);
 

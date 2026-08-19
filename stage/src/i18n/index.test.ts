@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { resolveLocale, translate } from "./index";
+import { resolveConfiguredLocale, resolveLocale, translate } from "./index";
 
 describe("locale resolution", () => {
   it("selects Japanese from a regional tag", () => {
@@ -15,6 +15,14 @@ describe("locale resolution", () => {
   it("respects the order of supported browser preferences", () => {
     expect(resolveLocale(["en-US", "ja-JP"])).toBe("en");
     expect(resolveLocale(["fr-FR", "ja-JP"])).toBe("ja");
+  });
+});
+
+describe("configured locale", () => {
+  it("honours explicit choices and lets auto use the system locale", () => {
+    expect(resolveConfiguredLocale("en", "ja")).toBe("en");
+    expect(resolveConfiguredLocale("ja", "en")).toBe("ja");
+    expect(resolveConfiguredLocale("auto", "ja")).toBe("ja");
   });
 });
 

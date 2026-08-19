@@ -300,6 +300,16 @@ class TestSettingsUpdate:
         assert server.settings[-1]["values"]["llm_model"]["value"] == "gemma3:12b"
         del runtime
 
+    async def test_locale_is_marked_as_applied_immediately(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        runtime, server = await self.build(monkeypatch, tmp_path)
+        answer = await server.inbound["stage.settings.update"]({"changes": {"locale": "en"}})
+
+        assert answer == {"applied_at_next_start": False}
+        assert server.settings[-1]["values"]["locale"]["value"] == "en"
+        del runtime
+
     async def test_a_key_that_is_not_a_setting_is_refused(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

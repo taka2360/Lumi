@@ -17,15 +17,17 @@ import { useState } from "react";
 import type { SettingsSource } from "../core/store";
 import { useStageStore } from "../core/store";
 import { updateSettings } from "../core/useCoreConnection";
-import { browserLocale, translate } from "../i18n";
+import { translate } from "../i18n";
+import { useLocale } from "../i18n/provider";
 
 /** Values with a fixed set of choices. Anything else is free text (model names vary). */
 const CHOICES: Record<string, string[]> = {
   inference_device: ["auto", "cuda", "cpu"],
+  locale: ["auto", "ja", "en"],
 };
 
 function Row({ name, value, source }: { name: string; value: string; source: SettingsSource }) {
-  const locale = browserLocale();
+  const locale = useLocale();
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -51,7 +53,10 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
   return (
     <tr>
       <th>
-        {name === "inference_device" || name === "llm_model" || name === "stt_model"
+        {name === "inference_device" ||
+        name === "llm_model" ||
+        name === "stt_model" ||
+        name === "locale"
           ? translate(locale, `settings.label.${name}`)
           : name}
       </th>
@@ -66,7 +71,9 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
           >
             {choices.map((choice) => (
               <option key={choice} value={choice}>
-                {choice}
+                {name === "locale" && (choice === "auto" || choice === "ja" || choice === "en")
+                  ? translate(locale, `settings.choice.${choice}`)
+                  : choice}
               </option>
             ))}
           </select>
@@ -82,7 +89,7 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
       <td className={locked ? "settings__src settings__src--env" : "settings__src"}>
         {error ??
           (saved
-            ? translate(locale, "settings.saved")
+            ? translate(locale, name === "locale" ? "settings.applied" : "settings.saved")
             : translate(locale, `settings.source.${source}`))}
       </td>
     </tr>
@@ -90,7 +97,7 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
 }
 
 export function Settings({ onOpenChange }: { onOpenChange?: (open: boolean) => void } = {}) {
-  const locale = browserLocale();
+  const locale = useLocale();
   const settings = useStageStore((state) => state.settings);
   const [open, setOpen] = useState(false);
 

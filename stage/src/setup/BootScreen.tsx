@@ -16,7 +16,8 @@
  */
 
 import type { SetupSnapshot } from "../core/store";
-import { browserLocale, type Locale, translate } from "../i18n";
+import { type Locale, translate } from "../i18n";
+import { useLocale } from "../i18n/provider";
 
 interface Step {
   step: string;
@@ -69,7 +70,7 @@ function step(setup: SetupSnapshot, connected: boolean, locale: Locale): Step {
 }
 
 export function BootScreen({ setup, connected }: { setup: SetupSnapshot; connected: boolean }) {
-  const locale = browserLocale();
+  const locale = useLocale();
   const { step: current, note, progress } = step(setup, connected, locale);
 
   return (

@@ -34,6 +34,9 @@ export interface Disposable {
 }
 
 export interface PlatformShell {
+  /** Updates Shell-owned native labels. Carries presentation only, never AI judgment. */
+  setLocale(locale: "ja" | "en"): Promise<void>;
+
   /**
    * Hands the character's hit region to Shell.
    *

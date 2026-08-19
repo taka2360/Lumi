@@ -42,7 +42,8 @@
     "shell_hit_region_set",
     "shell_core_endpoint",
     "shell_window_drag_start",
-    "shell_window_scale"
+    "shell_window_scale",
+    "shell_locale_set"
   ],
   "window_labels": [
     "stage",

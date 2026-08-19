@@ -47,6 +47,7 @@ interface PlatformShell {
 
   // ── トレイ ─────────────────────────────────
   setTrayMenu(items: TrayItem[]): Promise<void>
+  setLocale(locale: "ja" | "en"): Promise<void>
 
   // ── OS 特権（Core からの os.* を受けて実行）────
   captureScreen(spec: CaptureSpec): Promise<ImageData>

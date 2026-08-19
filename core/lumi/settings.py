@@ -6,7 +6,7 @@ Storage format → docs/architecture/core.md "設定" / roadmap open item #9
 
 The Content Pack is TOML because **a person writes it**. This file is different: **the
 program writes it**, from the settings UI. `tomllib` is read-only, so writing TOML would
-mean a new dependency purely to serialize four keys — and comments (TOML's real advantage)
+mean a new dependency purely to serialize a handful of keys — and comments (TOML's real advantage)
 cannot survive a program rewriting the file anyway.
 
 ## Rules that matter more than the format
@@ -66,6 +66,7 @@ class Settings:
     inference_device: Setting
     llm_model: Setting
     stt_model: Setting
+    locale: Setting
     #: Keys this version does not know about. **Kept so a downgrade does not lose them**
     unknown: Mapping[str, Any]
     #: `True` when the file existed but could not be read. **Never overwrite it**
@@ -79,6 +80,7 @@ class Settings:
                 "inference_device": self.inference_device.to_payload(),
                 "llm_model": self.llm_model.to_payload(),
                 "stt_model": self.stt_model.to_payload(),
+                "locale": self.locale.to_payload(),
             },
         }
 
@@ -88,17 +90,31 @@ KEYS: Final[dict[str, tuple[str, str]]] = {
     "inference_device": ("LUMI_INFERENCE_DEVICE", "auto"),
     "llm_model": ("LUMI_LLM_MODEL", "qwen3.5:9b"),
     "stt_model": ("LUMI_STT_MODEL", "large-v3-turbo"),
+    "locale": ("LUMI_LOCALE", "auto"),
 }
+
+#: Closed choices are validated by Core. Free-form model names intentionally are not.
+VALID_VALUES: Final[dict[str, frozenset[str]]] = {
+    "inference_device": frozenset({"auto", "cuda", "cpu"}),
+    "locale": frozenset({"auto", "ja", "en"}),
+}
+
+
+def _is_valid(key: str, value: object) -> bool:
+    if not isinstance(value, str) or not value:
+        return False
+    allowed = VALID_VALUES.get(key)
+    return allowed is None or value in allowed
 
 
 def _resolve(key: str, stored: Mapping[str, Any], env: Mapping[str, str]) -> Setting:
     """Environment beats file beats default. **The origin travels with the value.**"""
     variable, fallback = KEYS[key]
     from_env = env.get(variable)
-    if from_env:
+    if from_env and _is_valid(key, from_env):
         return Setting(value=from_env, source=Source.ENV)
     value = stored.get(key)
-    if isinstance(value, str) and value:
+    if isinstance(value, str) and _is_valid(key, value):
         return Setting(value=value, source=Source.FILE)
     if value is not None:
         # **One bad value costs only that key.** Never throws away the rest of the file
@@ -131,6 +147,7 @@ def load(path: Path, env: Mapping[str, str] | None = None) -> Settings:
         inference_device=_resolve("inference_device", stored, environ),
         llm_model=_resolve("llm_model", stored, environ),
         stt_model=_resolve("stt_model", stored, environ),
+        locale=_resolve("locale", stored, environ),
         unknown={key: value for key, value in stored.items() if key not in known},
         unreadable=unreadable,
     )
@@ -148,19 +165,22 @@ def save(path: Path, settings: Settings, changes: Mapping[str, str]) -> Settings
     if settings.unreadable:
         raise SettingsUnreadable(f"{path.name} を読めなかったので上書きしない")
 
+    for key, value in changes.items():
+        if key not in KEYS:
+            raise UnknownSetting(f"{key} は設定項目ではない")
+        if not _is_valid(key, value):
+            raise InvalidSettingValue(f"{key} の値が不正: {value!r}")
+
     stored: dict[str, Any] = {"version": SCHEMA_VERSION, **settings.unknown}
     for key, current in (
         ("inference_device", settings.inference_device),
         ("llm_model", settings.llm_model),
         ("stt_model", settings.stt_model),
+        ("locale", settings.locale),
     ):
         value = changes.get(key, current.value)
         if key in changes or current.source is Source.FILE:
             stored[key] = value
-
-    for key in changes:
-        if key not in KEYS:
-            raise UnknownSetting(f"{key} は設定項目ではない")
 
     path.parent.mkdir(parents=True, exist_ok=True)
     # **Written whole, then renamed.** A half-written settings file reads as corrupt on the
@@ -185,3 +205,7 @@ class UnknownSetting(SettingsError):
 
     **fail-closed** — never written just because someone asked for it.
     """
+
+
+class InvalidSettingValue(SettingsError):
+    """A closed-choice setting was given a value outside its allowlist."""

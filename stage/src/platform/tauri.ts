@@ -21,6 +21,7 @@ import type { Disposable, HitRect, HoverState, PlatformShell } from "./PlatformS
 export const CMD_SET_HIT_REGION = "shell_hit_region_set";
 export const CMD_DRAG_START = "shell_window_drag_start";
 export const CMD_SCALE = "shell_window_scale";
+export const CMD_SET_LOCALE = "shell_locale_set";
 
 /**
  * The event name for hover-state notifications.
@@ -33,6 +34,10 @@ export const EVENT_HOVER_STATE = "shell:hover:state";
 
 export function createTauriPlatformShell(): PlatformShell {
   return {
+    async setLocale(locale: "ja" | "en"): Promise<void> {
+      await invoke(CMD_SET_LOCALE, { locale });
+    },
+
     async setHitRegion(rects: HitRect[]): Promise<void> {
       await invoke(CMD_SET_HIT_REGION, { rects });
     },

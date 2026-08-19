@@ -8,7 +8,7 @@
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager as _};
 
 use crate::locale::Locale;
 
@@ -32,6 +32,17 @@ fn menu_items(locale: Locale) -> [(&'static str, &'static str); 2] {
     }
 }
 
+fn build_menu(app: &AppHandle, locale: Locale) -> tauri::Result<Menu<tauri::Wry>> {
+    let labels = menu_items(locale);
+    let mut items: Vec<MenuItem<tauri::Wry>> = Vec::with_capacity(labels.len());
+    for (id, label) in &labels {
+        items.push(MenuItem::with_id(app, *id, *label, true, None::<&str>)?);
+    }
+    let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        items.iter().map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>).collect();
+    Menu::with_items(app, &refs)
+}
+
 /// Maps a menu id to a behavior. **A pure function.**
 ///
 /// Does nothing for an unknown id. Since Shell builds the tray itself, an
@@ -51,14 +62,7 @@ fn resolve_tray_action(id: &str) -> Option<TrayAction> {
 /// taskbar, so without the tray there'd be no way to quit Lumi.** Never
 /// silently continues if this fails.
 pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
-    let menu_items = menu_items(locale);
-    let mut items: Vec<MenuItem<tauri::Wry>> = Vec::with_capacity(menu_items.len());
-    for (id, label) in &menu_items {
-        items.push(MenuItem::with_id(app, *id, *label, true, None::<&str>)?);
-    }
-    let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
-        items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>).collect();
-    let menu = Menu::with_items(app, &refs)?;
+    let menu = build_menu(app, locale)?;
 
     let icon = app
         .default_window_icon()
@@ -78,6 +82,22 @@ pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
         })
         .build(app)?;
 
+    Ok(())
+}
+
+/// Updates native Shell-owned labels after Core accepted a locale setting.
+#[tauri::command]
+pub fn shell_locale_set(app: AppHandle, locale: &str) -> Result<(), String> {
+    let locale = Locale::from_code(locale).ok_or_else(|| "unsupported_locale".to_owned())?;
+    let tray = app.tray_by_id("lumi").ok_or_else(|| "tray_not_found".to_owned())?;
+    let menu = build_menu(&app, locale).map_err(|error| error.to_string())?;
+    tray.set_menu(Some(menu)).map_err(|error| error.to_string())?;
+
+    if let Some(credits) = app.get_webview_window(crate::window::WindowKind::Credits.label()) {
+        credits
+            .set_title(crate::window::credits_title(locale))
+            .map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -116,5 +136,10 @@ mod tests {
     fn english_menu_is_localized() {
         assert_eq!(menu_items(Locale::En)[0].1, "Credits and licenses");
         assert_eq!(menu_items(Locale::En)[1].1, "Quit");
+    }
+
+    #[test]
+    fn unknown_locale_is_refused() {
+        assert_eq!(Locale::from_code("fr"), None);
     }
 }

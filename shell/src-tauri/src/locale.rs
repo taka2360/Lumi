@@ -6,6 +6,16 @@ pub enum Locale {
     En,
 }
 
+impl Locale {
+    pub fn from_code(value: &str) -> Option<Self> {
+        match value {
+            "ja" => Some(Self::Ja),
+            "en" => Some(Self::En),
+            _ => None,
+        }
+    }
+}
+
 /// Matches Stage: Japanese tags select Japanese; everything else safely falls back to English.
 pub fn resolve_locale(language: Option<&str>) -> Locale {
     let primary = language.unwrap_or_default().split(['-', '_', '.']).next().unwrap_or_default();

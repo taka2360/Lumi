@@ -8,7 +8,8 @@
  * readable even if Core is down. So nothing here imports `../core/*`.
  */
 
-import { browserLocale, translate } from "../i18n";
+import { translate } from "../i18n";
+import { useStandaloneLocale } from "../i18n/standalone";
 import {
   BUNDLED,
   CREDIT_EXAMPLES,
@@ -42,7 +43,7 @@ function Section({
 }
 
 export function Credits() {
-  const locale = browserLocale();
+  const locale = useStandaloneLocale();
   const ct = (text: string) => creditText(locale, text);
   return (
     <main className="credits">

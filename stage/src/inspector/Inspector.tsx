@@ -20,7 +20,8 @@ import { useState } from "react";
 
 import type { InspectorActivity, InspectorLatency } from "../core/store";
 import { useStageStore } from "../core/store";
-import { browserLocale, translate } from "../i18n";
+import { translate } from "../i18n";
+import { useLocale } from "../i18n/provider";
 
 /** Spans, in the order the turn actually passes through them (docs/architecture/audio.md §7). */
 const SPAN_ORDER = [
@@ -68,7 +69,7 @@ function ActivityRow({ activity }: { activity: InspectorActivity }) {
 }
 
 function Latency({ latency }: { latency: InspectorLatency }) {
-  const locale = browserLocale();
+  const locale = useLocale();
   return (
     <table className="inspect__lat">
       <tbody>
@@ -99,7 +100,7 @@ function Latency({ latency }: { latency: InspectorLatency }) {
 }
 
 export function Inspector({ onOpenChange }: { onOpenChange?: (open: boolean) => void } = {}) {
-  const locale = browserLocale();
+  const locale = useLocale();
   const inspector = useStageStore((state) => state.inspector);
   const [open, setOpen] = useState(false);
 

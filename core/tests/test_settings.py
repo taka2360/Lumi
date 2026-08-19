@@ -13,6 +13,7 @@ import pytest
 
 from lumi.settings import (
     SCHEMA_VERSION,
+    InvalidSettingValue,
     SettingsUnreadable,
     Source,
     UnknownSetting,
@@ -36,6 +37,7 @@ def test_no_file_yet_is_all_defaults(tmp_path: Path) -> None:
 
     assert settings.inference_device.source is Source.DEFAULT
     assert settings.inference_device.value == "auto"
+    assert settings.locale.value == "auto"
     assert not (tmp_path / "settings.json").exists()
 
 
@@ -133,6 +135,21 @@ def test_a_key_that_is_not_a_setting_is_refused(tmp_path: Path) -> None:
     file = write(tmp_path, {})
     with pytest.raises(UnknownSetting, match="shell_command"):
         save(file, load(file, {}), {"shell_command": "rm -rf /"})
+
+
+def test_locale_accepts_only_supported_choices(tmp_path: Path) -> None:
+    file = write(tmp_path, {})
+    updated = save(file, load(file, {}), {"locale": "en"})
+    assert updated.locale.value == "en"
+
+    with pytest.raises(InvalidSettingValue, match="locale"):
+        save(file, updated, {"locale": "fr"})
+
+
+def test_invalid_stored_locale_falls_back_without_costing_other_keys(tmp_path: Path) -> None:
+    settings = load(write(tmp_path, {"locale": "fr", "llm_model": "gemma3:12b"}), {})
+    assert settings.locale.value == "auto"
+    assert settings.llm_model.value == "gemma3:12b"
 
 
 def test_saving_returns_the_new_effective_settings(tmp_path: Path) -> None:

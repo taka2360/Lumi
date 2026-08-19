@@ -24,6 +24,7 @@ import {
   CMD_DRAG_START,
   CMD_SCALE,
   CMD_SET_HIT_REGION,
+  CMD_SET_LOCALE,
   EVENT_HOVER_STATE,
 } from "../platform/tauri";
 import { CMD_CORE_ENDPOINT, EVENT_CORE_ENDPOINT } from "./connection";
@@ -146,9 +147,9 @@ describe("wire contract", () => {
   it("Tauri command names", () => {
     // **A one-sided check.** The Shell side is a `#[tauri::command]` function name,
     // which can't be retrieved as data (docs/contracts/wire.md §4 "What this does not guarantee").
-    expect(new Set([CMD_SET_HIT_REGION, CMD_CORE_ENDPOINT, CMD_DRAG_START, CMD_SCALE])).toEqual(
-      new Set(wire.tauri_commands),
-    );
+    expect(
+      new Set([CMD_SET_HIT_REGION, CMD_CORE_ENDPOINT, CMD_DRAG_START, CMD_SCALE, CMD_SET_LOCALE]),
+    ).toEqual(new Set(wire.tauri_commands));
   });
 
   it("enum values that go on the wire", () => {

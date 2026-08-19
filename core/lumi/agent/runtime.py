@@ -159,9 +159,9 @@ class ConversationRuntime:
     async def _update_settings(self, payload: dict[str, object]) -> dict[str, object]:
         """The Stage asked to change a setting. **Core validates and decides** (ADR-028).
 
-        **Takes effect on the next start, and says so.** Swapping a loaded model out from
-        under a turn is Phase 5's `ModelResourceManager` problem; pretending it applied
-        now would make the displayed value a lie.
+        Model/device changes take effect on the next start. Locale is presentation-only,
+        so the settings notification applies it immediately without touching a running turn.
+        Swapping a loaded model out is Phase 5's `ModelResourceManager` problem.
         """
         changes = payload.get("changes")
         if not isinstance(changes, dict):
@@ -182,7 +182,7 @@ class ConversationRuntime:
 
         payload_out = self._settings.to_payload()
         await self._server.notify(Role.STAGE, METHOD_SETTINGS, payload_out)
-        return {"applied_at_next_start": True}
+        return {"applied_at_next_start": any(key != "locale" for key in changes)}
 
     async def _announce_model(self) -> None:
         """Tells the Stage **which model to draw, and the credit that goes with it** (ADR-029).

@@ -211,7 +211,8 @@ pub fn run() {
             shell_hit_region_set,
             shell_core_endpoint,
             shell_window_drag_start,
-            shell_window_scale
+            shell_window_scale,
+            tray::shell_locale_set
         ])
         .setup(move |app| {
             if cfg!(debug_assertions) {
