@@ -17,18 +17,7 @@ import { useState } from "react";
 import type { SettingsSource } from "../core/store";
 import { useStageStore } from "../core/store";
 import { updateSettings } from "../core/useCoreConnection";
-
-const SOURCE_TEXT: Record<SettingsSource, string> = {
-  default: "既定",
-  file: "設定ファイル",
-  env: "環境変数で上書き中",
-};
-
-const LABEL: Record<string, string> = {
-  inference_device: "推論デバイス",
-  llm_model: "LLM モデル",
-  stt_model: "音声認識モデル",
-};
+import { browserLocale, translate } from "../i18n";
 
 /** Values with a fixed set of choices. Anything else is free text (model names vary). */
 const CHOICES: Record<string, string[]> = {
@@ -36,6 +25,7 @@ const CHOICES: Record<string, string[]> = {
 };
 
 function Row({ name, value, source }: { name: string; value: string; source: SettingsSource }) {
+  const locale = browserLocale();
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -51,7 +41,7 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
       setSaved(true);
     } catch (failure: unknown) {
       // **The reason Core gave, shown as-is.** Never "failed to save" with nothing else
-      setError(failure instanceof Error ? failure.message : "refused");
+      setError(failure instanceof Error ? failure.message : translate(locale, "settings.refused"));
       setDraft(value);
     }
   };
@@ -60,7 +50,11 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
 
   return (
     <tr>
-      <th>{LABEL[name] ?? name}</th>
+      <th>
+        {name === "inference_device" || name === "llm_model" || name === "stt_model"
+          ? translate(locale, `settings.label.${name}`)
+          : name}
+      </th>
       <td className="settings__value">
         {locked ? (
           value
@@ -86,13 +80,17 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
         )}
       </td>
       <td className={locked ? "settings__src settings__src--env" : "settings__src"}>
-        {error ?? (saved ? "次回起動から" : SOURCE_TEXT[source])}
+        {error ??
+          (saved
+            ? translate(locale, "settings.saved")
+            : translate(locale, `settings.source.${source}`))}
       </td>
     </tr>
   );
 }
 
 export function Settings({ onOpenChange }: { onOpenChange?: (open: boolean) => void } = {}) {
+  const locale = browserLocale();
   const settings = useStageStore((state) => state.settings);
   const [open, setOpen] = useState(false);
 
@@ -109,7 +107,7 @@ export function Settings({ onOpenChange }: { onOpenChange?: (open: boolean) => v
   return (
     <div className="settings">
       <button type="button" className="inspect__toggle" onClick={handleToggle}>
-        {open ? "▾" : "▸"} 設定
+        {open ? "▾" : "▸"} {translate(locale, "settings.title")}
       </button>
       {open && (
         <div className="inspect__body">
@@ -117,8 +115,7 @@ export function Settings({ onOpenChange }: { onOpenChange?: (open: boolean) => v
             // **Core refuses to save over it**, and says so rather than quietly running
             // on defaults and destroying what the user meant.
             <p className="panel__status panel__status--bad">
-              設定ファイルを読めませんでした。既定値で動いています（上書きはしないので、
-              手で直せます）
+              {translate(locale, "settings.unreadable")}
             </p>
           )}
           <table className="inspect__lat">
@@ -128,9 +125,7 @@ export function Settings({ onOpenChange }: { onOpenChange?: (open: boolean) => v
               ))}
             </tbody>
           </table>
-          <p className="inspect__empty">
-            変更は次回起動から効きます（動作中のモデルは差し替えません）
-          </p>
+          <p className="inspect__empty">{translate(locale, "settings.restart")}</p>
         </div>
       )}
     </div>

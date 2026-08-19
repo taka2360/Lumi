@@ -267,10 +267,13 @@ fn require_stage(window: &tauri::WebviewWindow) -> Result<(), String> {
 ///
 /// Credits are a required Phase 0 item (docs/licensing.md §6). They need to
 /// live somewhere "findable with a bit of effort," so it's a normal window opened from the tray menu.
-pub fn compute_credits_window_options() -> WindowSpec {
+pub fn compute_credits_window_options(locale: crate::locale::Locale) -> WindowSpec {
     WindowSpec {
         label: WindowKind::Credits.label(),
-        title: "Lumi — クレジットとライセンス",
+        title: match locale {
+            crate::locale::Locale::Ja => "Lumi — クレジットとライセンス",
+            crate::locale::Locale::En => "Lumi — Credits and licenses",
+        },
         width: 720.0,
         height: 640.0,
         position: None,
@@ -499,7 +502,7 @@ mod tests {
 
     #[test]
     fn credits_window_is_a_normal_focusable_window() {
-        let spec = compute_credits_window_options();
+        let spec = compute_credits_window_options(crate::locale::Locale::Ja);
         assert!(!spec.transparent);
         assert!(spec.decorations);
         assert!(spec.focused);

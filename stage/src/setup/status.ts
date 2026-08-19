@@ -25,6 +25,7 @@ import type {
   SttSetupSnapshot,
   TtsSetupSnapshot,
 } from "../core/store";
+import { type Locale, type MessageKey, translate } from "../i18n";
 
 export interface StatusLine {
   /** `bad` is for something that actually went wrong — **never for "not set up yet."** */
@@ -38,29 +39,32 @@ export interface StatusLine {
  * Turns Core's `SetupError.reason` into display text.
  * **An unrecognized reason is still shown**, never swallowed.
  */
-const FAILURE_TEXT: Record<string, string> = {
-  origin_not_allowed: "取得元が想定と違いました",
-  redirect_not_allowed: "取得中に想定外の配布元へ転送されました",
-  redirect_without_location: "取得元の応答が不正でした",
-  too_many_redirects: "取得元の転送が多すぎます",
-  http_error: "取得元に接続できませんでした",
-  size_mismatch: "取得したファイルの大きさが想定と違いました",
-  hash_mismatch: "取得したファイルの内容が想定と違いました",
-  extract_failed: "展開に失敗しました",
-  executable_not_found: "展開結果に実行ファイルがありませんでした",
-  tar_not_found: "展開に使う tar が見つかりませんでした",
-  network_unreachable: "ネットワークに接続できませんでした",
-  model_incomplete: "取得したモデルのファイルが揃いませんでした",
-  unknown_model: "指定されたモデルは取得対象ではありません",
-  cancelled: "中断されました",
-  unexpected_error: "想定外のエラーが起きました",
-};
+const FAILURE_KEYS: Record<string, MessageKey> = Object.fromEntries(
+  [
+    "origin_not_allowed",
+    "redirect_not_allowed",
+    "redirect_without_location",
+    "too_many_redirects",
+    "http_error",
+    "size_mismatch",
+    "hash_mismatch",
+    "extract_failed",
+    "executable_not_found",
+    "tar_not_found",
+    "network_unreachable",
+    "model_incomplete",
+    "unknown_model",
+    "cancelled",
+    "unexpected_error",
+  ].map((reason) => [reason, `status.failure.${reason}` as MessageKey]),
+);
 
-export function failureText(reason: string | null): string {
+export function failureText(reason: string | null, locale: Locale = "ja"): string {
   if (!reason) {
-    return "取得に失敗しました";
+    return translate(locale, "status.failure.generic");
   }
-  return FAILURE_TEXT[reason] ?? `取得に失敗しました（${reason}）`;
+  const key = FAILURE_KEYS[reason];
+  return key ? translate(locale, key) : translate(locale, "status.failure.unknown", { reason });
 }
 
 function percent(progress: number | null): number {
@@ -68,34 +72,40 @@ function percent(progress: number | null): number {
 }
 
 /** `null` means "nothing worth saying" — this component is fine. */
-export function ttsStatus(tts: TtsSetupSnapshot): StatusLine | null {
-  const engine = tts.engine_name ?? "音声合成エンジン";
+export function ttsStatus(tts: TtsSetupSnapshot, locale: Locale = "ja"): StatusLine | null {
+  const engine = tts.engine_name ?? translate(locale, "setup.engine.generic");
   // **The process state is checked first.** Painting over "installed but won't start" with
   // "installed" would leave the user with nothing to act on
   // (docs/architecture/setup.md "Never mix installation state and process state").
   if (tts.runtime === "starting") {
     return {
       tone: "normal",
-      text: `${engine} を起動しています…（初回はエンジンが音声モデルを取得するため数分かかります）`,
+      text: translate(locale, "status.tts.starting", { engine }),
     };
   }
   if (tts.runtime === "failed") {
     return {
       tone: "bad",
-      text: `${engine} を起動できませんでした（入ってはいますが、動いていません）`,
+      text: translate(locale, "status.tts.failed", { engine }),
     };
   }
 
   switch (tts.state) {
     case "installing":
-      return { tone: "normal", text: `${engine} を取得中… ${percent(tts.progress)}%` };
+      return {
+        tone: "normal",
+        text: translate(locale, "status.tts.installing", {
+          engine,
+          percent: percent(tts.progress),
+        }),
+      };
     case "failed":
       // **Distinguished from "not fetched yet."** Says what actually happened
-      return { tone: "bad", text: failureText(tts.reason) };
+      return { tone: "bad", text: failureText(tts.reason, locale) };
     case "not_configured":
       return {
         tone: "normal",
-        text: "音声合成は未セットアップです（Lumi は動きますが、喋りません）",
+        text: translate(locale, "status.tts.missing"),
       };
     default:
       return null;
@@ -106,26 +116,26 @@ export function ttsStatus(tts: TtsSetupSnapshot): StatusLine | null {
  * **The one component whose message asks the user to act themselves** — Lumi neither
  * fetches nor starts Ollama (ADR-023).
  */
-export function llmStatus(llm: LlmSetupSnapshot): StatusLine | null {
+export function llmStatus(llm: LlmSetupSnapshot, locale: Locale = "ja"): StatusLine | null {
   switch (llm.state) {
     case "not_configured":
       return {
         tone: "normal",
-        text: "Ollama が見つかりません（Lumi は聞こえていますが、返事ができません）",
-        hint: "ollama.com からインストールしてください",
+        text: translate(locale, "status.llm.missing"),
+        hint: translate(locale, "status.llm.installHint"),
       };
     case "model_missing":
       // **Installed, running, just missing the model.** A different instruction entirely
       return {
         tone: "normal",
-        text: `モデル ${llm.model ?? ""} がまだありません`.trim(),
+        text: translate(locale, "status.llm.modelMissing", { model: llm.model ?? "" }).trim(),
         hint: `ollama pull ${llm.model ?? ""}`.trim(),
       };
     case "detected":
       return llm.runtime === "stopped"
         ? {
             tone: "normal",
-            text: "Ollama が起動していません（入ってはいます）。起動すると返事ができるようになります",
+            text: translate(locale, "status.llm.stopped"),
           }
         : null;
     default:
@@ -133,16 +143,19 @@ export function llmStatus(llm: LlmSetupSnapshot): StatusLine | null {
   }
 }
 
-export function sttStatus(stt: SttSetupSnapshot): StatusLine | null {
+export function sttStatus(stt: SttSetupSnapshot, locale: Locale = "ja"): StatusLine | null {
   switch (stt.state) {
     case "installing":
-      return { tone: "normal", text: `音声認識モデルを取得中… ${percent(stt.progress)}%` };
+      return {
+        tone: "normal",
+        text: translate(locale, "status.stt.installing", { percent: percent(stt.progress) }),
+      };
     case "failed":
-      return { tone: "bad", text: failureText(stt.reason) };
+      return { tone: "bad", text: failureText(stt.reason, locale) };
     case "not_configured":
       return {
         tone: "normal",
-        text: "音声認識は未セットアップです（Lumi は喋りますが、聞き取れません）",
+        text: translate(locale, "status.stt.missing"),
       };
     default:
       return null;
@@ -156,8 +169,10 @@ export function sttStatus(stt: SttSetupSnapshot): StatusLine | null {
  * Order is TTS → LLM → STT, matching the order the pipeline fails in from the user's
  * point of view: not speaking is noticed first, then not answering, then not hearing.
  */
-export function statusLines(setup: SetupSnapshot): StatusLine[] {
-  return [ttsStatus(setup.tts), llmStatus(setup.llm), sttStatus(setup.stt)].filter(
-    (line): line is StatusLine => line !== null,
-  );
+export function statusLines(setup: SetupSnapshot, locale: Locale = "ja"): StatusLine[] {
+  return [
+    ttsStatus(setup.tts, locale),
+    llmStatus(setup.llm, locale),
+    sttStatus(setup.stt, locale),
+  ].filter((line): line is StatusLine => line !== null);
 }

@@ -20,6 +20,7 @@ import { useState } from "react";
 
 import type { InspectorActivity, InspectorLatency } from "../core/store";
 import { useStageStore } from "../core/store";
+import { browserLocale, translate } from "../i18n";
 
 /** Spans, in the order the turn actually passes through them (docs/architecture/audio.md §7). */
 const SPAN_ORDER = [
@@ -67,6 +68,7 @@ function ActivityRow({ activity }: { activity: InspectorActivity }) {
 }
 
 function Latency({ latency }: { latency: InspectorLatency }) {
+  const locale = browserLocale();
   return (
     <table className="inspect__lat">
       <tbody>
@@ -88,7 +90,7 @@ function Latency({ latency }: { latency: InspectorLatency }) {
         {!latency.completed && (
           <tr className="inspect__lat-cut">
             {/* Barge-in is the normal case, and **how far the turn got is the measurement.** */}
-            <th colSpan={2}>途中で止まったターン</th>
+            <th colSpan={2}>{translate(locale, "inspector.interrupted")}</th>
           </tr>
         )}
       </tbody>
@@ -97,6 +99,7 @@ function Latency({ latency }: { latency: InspectorLatency }) {
 }
 
 export function Inspector({ onOpenChange }: { onOpenChange?: (open: boolean) => void } = {}) {
+  const locale = browserLocale();
   const inspector = useStageStore((state) => state.inspector);
   const [open, setOpen] = useState(false);
 
@@ -126,7 +129,7 @@ export function Inspector({ onOpenChange }: { onOpenChange?: (open: boolean) => 
           {inspector.latency ? (
             <Latency latency={inspector.latency} />
           ) : (
-            <p className="inspect__empty">まだ1ターンも終わっていない</p>
+            <p className="inspect__empty">{translate(locale, "inspector.empty")}</p>
           )}
         </div>
       )}

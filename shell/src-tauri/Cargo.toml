@@ -27,7 +27,7 @@ tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process"
 tokio-tungstenite = "0.29.0"
 futures-util = "0.3.34"
 rand = "0.9.5"
-windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_System_Threading", "Win32_Globalization"] }
 
 [profile.release]
 # Limited effect (measured: the code portion shrinks by about 1 MB). **MSVC

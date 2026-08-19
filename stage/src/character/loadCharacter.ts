@@ -20,6 +20,7 @@
 
 import { convertFileSrc } from "@tauri-apps/api/core";
 
+import { browserLocale, translate } from "../i18n";
 import { createPlaceholder } from "./placeholder";
 import type { CharacterModel } from "./types";
 import { loadVrm } from "./vrm";
@@ -37,6 +38,7 @@ export interface ModelSource {
 }
 
 export async function loadCharacter(source: ModelSource): Promise<LoadedCharacter> {
+  const locale = browserLocale();
   if (!source.path) {
     // **Not an error.** A voice-only Content Pack is a legitimate Content Pack
     return { model: createPlaceholder(), fallbackReason: source.reason };
@@ -50,12 +52,18 @@ export async function loadCharacter(source: ModelSource): Promise<LoadedCharacte
     if (!probe.ok) {
       return {
         model: createPlaceholder(),
-        fallbackReason: `VRM を読み込めません (${probe.status}): ${source.path}`,
+        fallbackReason: translate(locale, "character.load.status", {
+          status: probe.status,
+          path: source.path,
+        }),
       };
     }
     return { model: await loadVrm(url), fallbackReason: null };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    return { model: createPlaceholder(), fallbackReason: `VRM を読み込めません: ${reason}` };
+    return {
+      model: createPlaceholder(),
+      fallbackReason: translate(locale, "character.load.failed", { reason }),
+    };
   }
 }

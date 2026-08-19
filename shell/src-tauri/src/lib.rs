@@ -7,6 +7,7 @@ mod core_endpoint;
 mod core_process;
 mod hover;
 mod job_object;
+mod locale;
 mod os_command;
 mod tray;
 mod window;
@@ -25,6 +26,7 @@ use tauri::{AppHandle, Manager as _, RunEvent, WebviewUrl, WebviewWindow, Webvie
 use crate::core_endpoint::{shell_core_endpoint, spawn_endpoint_notifier, CoreEndpointState};
 use crate::core_process::{find_sidecar, resolve_launch_spec, CoreSupervisor, CoreTokens};
 use crate::hover::{shell_hit_region_set, spawn_cursor_watcher, HitRegionStore};
+use crate::locale::system_locale;
 use crate::window::{
     compute_credits_window_options, compute_stage_placement, compute_stage_window_options,
     shell_window_drag_start, shell_window_scale, ScreenArea, StageConfig, WindowKind, WindowSpec,
@@ -90,7 +92,7 @@ fn open_credits(app: &AppHandle) {
         return;
     }
 
-    let spec = compute_credits_window_options();
+    let spec = compute_credits_window_options(system_locale());
     match create_window(app, &spec, WebviewUrl::App("credits.html".into())) {
         Ok(_) => log::info!("credits.opened"),
         // **Never let it silently do nothing.** Logs it if it couldn't open.
@@ -225,7 +227,7 @@ pub fn run() {
             create_window(app.handle(), &spec, WebviewUrl::App("index.html".into()))?;
 
             // Without the tray, Lumi can't be quit (`stage` is frameless and hidden from the taskbar).
-            tray::init(app.handle())?;
+            tray::init(app.handle(), system_locale())?;
 
             spawn_cursor_watcher(app.handle().clone());
 

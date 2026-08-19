@@ -12,6 +12,7 @@
 import { type VRM, VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
+import { browserLocale, translate } from "../i18n";
 import { type ExpressionWeights, VRM_PRESETS } from "./expression";
 import { computeIdlePose } from "./idle";
 import type { MouthWeights, Viseme } from "./lipsync";
@@ -50,7 +51,7 @@ export async function loadVrm(url: string): Promise<CharacterModel> {
   const gltf = await loader.loadAsync(url);
   const vrm = gltf.userData.vrm as VRM | undefined;
   if (!vrm) {
-    throw new Error(`VRM として読めない: ${url}`);
+    throw new Error(translate(browserLocale(), "character.load.invalid", { url }));
   }
 
   // Drops unused joints (lowers render cost; three-vrm's recommended procedure).

@@ -145,4 +145,11 @@ describe("failure reasons", () => {
   it("no reason at all still says it failed", () => {
     expect(failureText(null)).toBe("取得に失敗しました");
   });
+
+  it("localizes known reasons and preserves unknown reason ids in English", () => {
+    expect(failureText("hash_mismatch", "en")).toBe(
+      "The downloaded file did not match the expected contents",
+    );
+    expect(failureText("something_new", "en")).toContain("something_new");
+  });
 });

@@ -16,12 +16,7 @@
  */
 
 import type { SetupSnapshot } from "../core/store";
-
-const TITLE = "Lumi を起動しています…";
-
-function percent(progress: number | null): string {
-  return `${Math.round((progress ?? 0) * 100)}%`;
-}
+import { browserLocale, type Locale, translate } from "../i18n";
 
 interface Step {
   step: string;
@@ -37,44 +32,50 @@ interface Step {
  * the component states**, never guessed. Saying "fetching the engine" while the speech
  * model downloads would be a plain lie about what the network is doing.
  */
-function step(setup: SetupSnapshot, connected: boolean): Step {
+function step(setup: SetupSnapshot, connected: boolean, locale: Locale): Step {
   if (!connected) {
-    return { step: "Lumi Core に接続しています…", note: "", progress: null };
+    return { step: translate(locale, "boot.connecting"), note: "", progress: null };
   }
-  const engine = setup.tts.engine_name ?? "音声合成エンジン";
+  const engine = setup.tts.engine_name ?? translate(locale, "setup.engine.generic");
   if (setup.boot === "installing") {
     if (setup.stt.state === "installing") {
       return {
-        step: `音声認識モデルを取得しています… ${percent(setup.stt.progress)}`,
-        note: "公式の配布元から取得しています。約 480MB あります。",
+        step: translate(locale, "boot.speechModel.fetching", {
+          percent: Math.round((setup.stt.progress ?? 0) * 100),
+        }),
+        note: translate(locale, "boot.speechModel.note"),
         progress: setup.stt.progress ?? 0,
       };
     }
     return {
-      step: `${engine} を取得しています… ${percent(setup.tts.progress)}`,
-      note: "公式の配布元から取得しています。約 200MB あります。",
+      step: translate(locale, "boot.engine.fetching", {
+        engine,
+        percent: Math.round((setup.tts.progress ?? 0) * 100),
+      }),
+      note: translate(locale, "boot.engine.note"),
       progress: setup.tts.progress ?? 0,
     };
   }
   if (setup.boot === "starting") {
     return {
-      step: `${engine} を起動しています…`,
+      step: translate(locale, "boot.engine.starting", { engine }),
       // **States up front that the first run takes a while.** Without this it looks frozen
       // (observed at 2 minutes).
-      note: "初回はエンジンが音声モデルを取得するため、数分かかることがあります。",
+      note: translate(locale, "boot.starting.note"),
       progress: null,
     };
   }
-  return { step: "準備しています…", note: "", progress: null };
+  return { step: translate(locale, "boot.preparing"), note: "", progress: null };
 }
 
 export function BootScreen({ setup, connected }: { setup: SetupSnapshot; connected: boolean }) {
-  const { step: current, note, progress } = step(setup, connected);
+  const locale = browserLocale();
+  const { step: current, note, progress } = step(setup, connected, locale);
 
   return (
     <div className="boot">
       <div className="boot__spinner" aria-hidden="true" />
-      <p className="boot__title">{TITLE}</p>
+      <p className="boot__title">{translate(locale, "boot.title")}</p>
       <p className="boot__step">{current}</p>
       {progress !== null && (
         <div className="boot__bar">

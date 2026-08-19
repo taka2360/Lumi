@@ -10,6 +10,8 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::AppHandle;
 
+use crate::locale::Locale;
+
 /// The tray menu's items. **Maps id to behavior via a pure function**, so it's
 /// testable without opening the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,7 +25,12 @@ pub enum TrayAction {
 /// The (id, display name) pairs in menu order.
 ///
 /// **Quit is placed last.** Crashing from a misclick would be the worst outcome.
-const MENU_ITEMS: &[(&str, &str)] = &[("credits", "クレジットとライセンス"), ("quit", "終了")];
+fn menu_items(locale: Locale) -> [(&'static str, &'static str); 2] {
+    match locale {
+        Locale::Ja => [("credits", "クレジットとライセンス"), ("quit", "終了")],
+        Locale::En => [("credits", "Credits and licenses"), ("quit", "Quit")],
+    }
+}
 
 /// Maps a menu id to a behavior. **A pure function.**
 ///
@@ -43,9 +50,10 @@ fn resolve_tray_action(id: &str) -> Option<TrayAction> {
 /// **The `stage` window is frameless, click-through, and hidden from the
 /// taskbar, so without the tray there'd be no way to quit Lumi.** Never
 /// silently continues if this fails.
-pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    let mut items: Vec<MenuItem<tauri::Wry>> = Vec::with_capacity(MENU_ITEMS.len());
-    for (id, label) in MENU_ITEMS {
+pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
+    let menu_items = menu_items(locale);
+    let mut items: Vec<MenuItem<tauri::Wry>> = Vec::with_capacity(menu_items.len());
+    for (id, label) in &menu_items {
         items.push(MenuItem::with_id(app, *id, *label, true, None::<&str>)?);
     }
     let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
@@ -82,7 +90,7 @@ mod tests {
 
     #[test]
     fn every_menu_item_resolves_to_an_action() {
-        for (id, label) in MENU_ITEMS {
+        for (id, label) in menu_items(Locale::Ja) {
             assert!(resolve_tray_action(id).is_some(), "{id} に対応する挙動が無い");
             assert!(!label.is_empty());
         }
@@ -93,7 +101,7 @@ mod tests {
         // Credits are a distribution obligation (docs/licensing.md §6), and quit
         // has no other means besides the tray (docs/architecture/ui.md). Neither can be dropped.
         let actions: Vec<_> =
-            MENU_ITEMS.iter().filter_map(|(id, _)| resolve_tray_action(id)).collect();
+            menu_items(Locale::Ja).iter().filter_map(|(id, _)| resolve_tray_action(id)).collect();
         assert!(actions.contains(&TrayAction::OpenCredits));
         assert!(actions.contains(&TrayAction::Quit));
     }
@@ -102,5 +110,11 @@ mod tests {
     fn unknown_menu_id_does_nothing() {
         assert_eq!(resolve_tray_action("settings"), None);
         assert_eq!(resolve_tray_action(""), None);
+    }
+
+    #[test]
+    fn english_menu_is_localized() {
+        assert_eq!(menu_items(Locale::En)[0].1, "Credits and licenses");
+        assert_eq!(menu_items(Locale::En)[1].1, "Quit");
     }
 }
