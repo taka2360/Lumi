@@ -42,6 +42,7 @@ from lumi.agent.prompt import ContextBlock, assemble
 from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
+from lumi.agent.tasks import report_task_exit
 from lumi.audio.dump import open_dump
 from lumi.audio.io import AudioIO
 from lumi.audio.playback import SpeakerPlayback
@@ -184,7 +185,7 @@ class ReactiveLoop:
                 task = asyncio.create_task(self.on_speech_ended(audio, audio_at), name="turn")
                 turns.add(task)
                 task.add_done_callback(turns.discard)
-                task.add_done_callback(_report_turn)
+                task.add_done_callback(report_task_exit("reactive.turn_crashed"))
 
     async def _show_user_said(self, text: str) -> None:
         """Put the user's utterance in a bubble. **Never costs a turn.**
@@ -476,17 +477,6 @@ class ReactiveLoop:
         if self._audio is None or self._audio.playback is None:
             raise ProviderError("no_playback", "No audio playback target available")
         return self._audio.playback
-
-
-def _report_turn(task: asyncio.Task[None]) -> None:
-    """**A turn that died has to say so.** Nobody awaits these tasks, so without this the
-    exception surfaces only as an unretrieved-task warning whenever GC happens to run.
-    """
-    if task.cancelled():
-        return
-    error = task.exception()
-    if error is not None:
-        log.error("reactive.turn_crashed", error=str(error), exc_info=error)
 
 
 def _as_block(source: str, result: ToolResult) -> ContextBlock:

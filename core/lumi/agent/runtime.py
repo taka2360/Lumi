@@ -30,6 +30,8 @@ from lumi import settings as settings_module
 from lumi.agent.inspector import InspectorPublisher
 from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.session import Session
+from lumi.agent.tasks import report_task_exit
+from lumi.agent.warmup import warm_all
 from lumi.audio.devices import AudioPlan
 from lumi.audio.io import AudioIO
 from lumi.character import ExpressionIntent
@@ -41,14 +43,12 @@ from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
-from lumi.providers.base import ProviderError, ProviderKind, ProviderNotConfigured
 from lumi.providers.llm.base import LLMOptions
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
-from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState, SttSetupState
 from lumi.storage.audit import SqliteAuditLog
 from lumi.storage.events import SqliteEventStore
 from lumi.storage.sqlite import Database
@@ -104,49 +104,21 @@ class ConversationRuntime:
         self._audio = AudioIO(plan)
         self._providers = ProviderRegistry()
 
-        # **The location for events is not decided here.** Deciding where requires
-        # deciding "what's allowed to be written," which is what Phase 2's
-        # contracts/privacy.md will settle. **Don't pin down a location first and
-        # attach meaning to it later.**
-        self._database = Database.open(":memory:")
-        self._database.migrate()
-        log.info("core.event_store.in_memory", reason="privacy contract is Phase 2")
+        self._database = _open_event_store()
 
         bus = EventBus(SqliteEventStore(self._database))
-        tools = ToolRegistry(
-            PermissionKernel(GrantStore(), SqliteAuditLog(self._database)),
-            bus,
-            HookRegistry(),
-            canonicalizers={ScopeLane.CHARACTER: CharacterCanonicalizer()},
-            bind_verifiers={ScopeLane.CHARACTER: CharacterBindVerifier()},
-        )
-        tools.register(SetExpressionTool(_expression_sender(server)))
+        tools = self._build_tools(server, bus)
 
         # **Constructed here, started in `start()`** (creating the idle Activity publishes a
         # DomainEvent, which needs a running loop). Startup sequence step 9
         # → docs/architecture/core.md §7
         self._arbiter = AttentionArbiter(bus)
 
-        pack = _load_pack()
         #: Held because `_register_providers` needs the voice. **Which speaker Lumi uses is
         #: the Content Pack's decision**, and the Provider has to know it at `load()` time to
         #: initialize that voice rather than a different one
-        self._pack = pack
-        self._loop = (
-            None
-            if pack is None
-            else ReactiveLoop(
-                arbiter=self._arbiter,
-                providers=self._providers,
-                tools=tools,
-                pack=pack,
-                notifier=server,
-                options=LLMOptions(model=self._model),
-                session=Session(),
-                audio=self._audio,
-                tts_speed=float(self._settings.tts_speed.value),
-            )
-        )
+        self._pack = _load_pack()
+        self._loop = self._build_loop(server, tools)
 
         # **Subscribed, not called from the Arbiter.** The Arbiter does not know the Stage
         # exists, and the send must stay off the barge-in path (`agent/inspector.py`)
@@ -158,6 +130,45 @@ class ConversationRuntime:
         # **The only inbound route in Phase 1** (ADR-028). Registering is what makes it
         # reachable at all — anything unregistered is answered `unknown_method`
         server.on_request(METHOD_SETTINGS_UPDATE, self._update_settings)
+
+    def _build_tools(self, server: WsServer, bus: EventBus) -> ToolRegistry:
+        """Every tool Lumi has, behind the Permission Kernel.
+
+        **There is no second way in** (Invariant 2). `character.set_expression` is L0 and
+        effectively passes straight through, but it is registered here and invoked through
+        `ToolRegistry.invoke` like anything else — **the path is the same as production's**,
+        which is the only way it can be trusted once L3 tools exist.
+        """
+        tools = ToolRegistry(
+            PermissionKernel(GrantStore(), SqliteAuditLog(self._database)),
+            bus,
+            HookRegistry(),
+            canonicalizers={ScopeLane.CHARACTER: CharacterCanonicalizer()},
+            bind_verifiers={ScopeLane.CHARACTER: CharacterBindVerifier()},
+        )
+        tools.register(SetExpressionTool(_expression_sender(server)))
+        return tools
+
+    def _build_loop(self, server: WsServer, tools: ToolRegistry) -> ReactiveLoop | None:
+        """The conversation loop, or `None` when there is no persona to run it as.
+
+        **Lumi without a Content Pack isn't Lumi**, so nothing is assembled in its place.
+        Startup still completes and the Stage is told why (`_announce_model`) — a Core that
+        refused to start would leave nobody to say what was wrong.
+        """
+        if self._pack is None:
+            return None
+        return ReactiveLoop(
+            arbiter=self._arbiter,
+            providers=self._providers,
+            tools=tools,
+            pack=self._pack,
+            notifier=server,
+            options=LLMOptions(model=self._model),
+            session=Session(),
+            audio=self._audio,
+            tts_speed=float(self._settings.tts_speed.value),
+        )
 
     async def _update_settings(self, payload: dict[str, object]) -> dict[str, object]:
         """The Stage asked to change a setting. **Core validates and decides** (ADR-028).
@@ -243,7 +254,7 @@ class ConversationRuntime:
         # starts. `_warm` opens audio and starts the reactive loop only once all three have
         # reported and the phase has actually reached `ready` (ADR-033 / ADR-034).
         self._warmup = asyncio.create_task(
-            _warm(
+            warm_all(
                 self._providers,
                 self._setup,
                 self._model,
@@ -254,7 +265,7 @@ class ConversationRuntime:
         # **Nobody awaits this task while it runs.** Without a callback an unexpected failure
         # stays invisible until GC, and `stop()` is where it would finally surface — as an
         # exception that aborts the rest of shutdown
-        self._warmup.add_done_callback(_report_warmup_exit)
+        self._warmup.add_done_callback(report_task_exit("warmup.crashed"))
 
     async def _start_listening(self) -> None:
         """Open voice input only after Core has broadcast `boot: ready` (ADR-033).
@@ -272,7 +283,9 @@ class ConversationRuntime:
         # **A dead reactive loop means Lumi is deaf, and nothing else notices.** asyncio only
         # surfaces an unretrieved task exception at GC, which is how the missing
         # `arbiter.start()` stayed invisible. **Never let this exit quietly.**
-        self._task.add_done_callback(_report_reactive_exit)
+        self._task.add_done_callback(
+            report_task_exit("reactive.crashed", on_return="reactive.stopped")
+        )
         log.info("conversation.started", can_listen=self._audio.can_listen)
 
     def _register_providers(self) -> None:
@@ -332,153 +345,18 @@ class ConversationRuntime:
         self._database.close()
 
 
-def _report_warmup_exit(task: asyncio.Task[None]) -> None:
-    """**A warmup that died is a cold engine nobody is going to notice.**
+def _open_event_store() -> Database:
+    """The DB the EventBus persists into. **In memory, deliberately.**
 
-    Cancellation is normal shutdown. Anything else means the first reply pays the load cost
-    at best, and the Stage keeps showing a state nobody will move at worst.
+    **Where events live is not decided here.** Deciding where requires deciding what is
+    allowed to be written, which is what Phase 2's `contracts/privacy.md` will settle
+    (roadmap Phase 2, item 7). **Don't pin down a location first and attach meaning to it
+    later** — a file on disk from Phase 1 would become a retention policy nobody chose.
     """
-    if task.cancelled():
-        return
-    error = task.exception()
-    if error is not None:
-        log.error("warmup.crashed", error=str(error), exc_info=error)
-
-
-def _report_reactive_exit(task: asyncio.Task[None]) -> None:
-    """**Being deaf is a failure, not a quiet state.**
-
-    Normal shutdown cancels the task, which is the one exit that isn't news.
-    """
-    if task.cancelled():
-        return
-    error = task.exception()
-    if error is not None:
-        log.error("reactive.crashed", error=str(error), exc_info=error)
-    else:
-        # `run()` returns on its own only when there is no input device
-        log.info("reactive.stopped")
-
-
-async def _warm(
-    providers: ProviderRegistry,
-    setup: SetupCoordinator,
-    model: str,
-    *,
-    on_ready: Callable[[], Awaitable[None]] | None = None,
-) -> None:
-    """Brings the engines up and **reports what each one turned out to be.**
-
-    Sequential, not concurrent: the TTS engine saturates the GPU while it starts, and
-    probing the LLM in the middle of that measures the contention rather than the LLM.
-
-    **All three, not just the two that report state.** Warming means the weights are in
-    memory — anything left cold is simply a bill handed to the first reply
-    (docs/interfaces/provider.md "`load()` は接続確認ではない"), and STT was the one nobody
-    was warming at all.
-
-    **Listening starts last, and only if the phase actually reached `ready`** (ADR-034).
-    It used to start right after the TTS engine, back when `ready` meant "the engine is
-    up"; now it means all three work, and the microphone follows that same boundary
-    rather than a weaker one (ADR-033). If anything is still missing the phase is
-    `blocked`, and Lumi does not listen behind a screen that says it has not started.
-    """
-    await warm_tts(providers, setup)
-    await warm_llm(providers, setup, model)
-    await warm_stt(providers, setup)
-
-    if on_ready is None:
-        return
-    if setup.boot is not BootPhase.READY:
-        # **The same derivation the Stage was handed**, read back rather than re-decided
-        # here. Two places deciding "is it ready" is how the screen and the microphone
-        # come to disagree.
-        log.info("conversation.not_started", boot=str(setup.boot))
-        return
-    await on_ready()
-
-
-async def warm_llm(providers: ProviderRegistry, setup: SetupCoordinator, model: str) -> None:
-    """Finds out whether the LLM can actually answer, and says so.
-
-    **Detection alone cannot see `model_missing`** — that needs Ollama's API, which only
-    the Provider talks to (docs/architecture/setup.md §2b). So the state is settled here,
-    where the answer is known.
-
-    **This report is what lets the character out** (ADR-034). A Lumi that hears and never
-    answers is not a lesser Lumi, it is a broken-looking one, so the phase stays `blocked`
-    until Ollama is there, running, and holding the configured model. What is missing and
-    what to do about it is on screen the whole time.
-    """
-    try:
-        await providers.get(ProviderKind.LLM)
-    except ProviderNotConfigured as error:
-        # Ollama answered, but the model isn't pulled. **A different instruction entirely**
-        await setup.report_llm(LlmSetupState.MODEL_MISSING, reason=error.detail, model=model)
-        return
-    except ProviderError as error:
-        # Not running (or answering abnormally). **Never reported as "not installed"** —
-        # detection already established whether it is on the machine
-        log.info("llm.warmup_failed", reason=error.reason, detail=error.detail)
-        await setup.report_llm(LlmSetupState.NOT_CONFIGURED, reason=error.detail, model=model)
-        return
-    await setup.report_llm(LlmSetupState.DETECTED, reason=None, model=model)
-
-
-async def warm_stt(providers: ProviderRegistry, setup: SetupCoordinator) -> None:
-    """Builds the speech-recognition model **before** the first utterance needs it.
-
-    **This was the `unaccounted_ms`.** `stt_ms` times `transcribe`, so the 2489 ms model
-    build sat between the spans and showed up only as unattributed time (2321 ms observed
-    2026-08-18) — the reserve's warning light lit by something that was never a mystery.
-
-    Unlike the LLM, whether the model is present is decided by looking at the disk, which
-    detection already did (docs/architecture/setup.md §2b). An uninstalled model is therefore
-    not warmed; a failure to build an installed model is reported as `runtime: failed`
-    while its acquisition state stays `installed`, so it cannot make the boot phase look ready.
-    """
-    if setup.state.stt.state is not SttSetupState.INSTALLED:
-        return
-    await setup.set_stt_runtime(EngineRuntime.STARTING)
-    try:
-        await providers.get(ProviderKind.STT)
-    except ProviderError as error:
-        log.warning("stt.warmup_failed", reason=error.reason, detail=error.detail)
-        await setup.set_stt_runtime(EngineRuntime.FAILED)
-        return
-    await setup.set_stt_runtime(EngineRuntime.READY)
-
-
-async def warm_tts(providers: ProviderRegistry, setup: SetupCoordinator) -> None:
-    """Starts the TTS engine, and **reports the process state as it moves**.
-
-    Two states that move independently (docs/architecture/setup.md "Never mix
-    installation state and process state"): the Provider owns the process, the
-    Coordinator owns the state the Stage sees. **Whoever starts the process is the one
-    who has to report it**, or the two silently drift apart.
-
-    Failing to start resolves to boot phase `blocked`, never `ready` (ADR-034): an
-    engine that is installed and will not run is broken, and **a fetch that failed must
-    never be able to read as a successful start.** The screen says which of the two it
-    was, and offers what to do next.
-    """
-    if not providers.has(ProviderKind.TTS):
-        # Not set up, or the fetch was declined. **Not broken**, so the state stays
-        # `stopped` — it really isn't running, and nothing is starting it. Broadcast it
-        # anyway: `stopped` is what moves the phase off `starting` and onto `blocked`.
-        await setup.set_runtime(EngineRuntime.STOPPED)
-        return
-
-    await setup.set_runtime(EngineRuntime.STARTING)
-    try:
-        await providers.get(ProviderKind.TTS)
-    except ProviderError as error:
-        # Installed but won't start = broken. **Never leave it looking like it's still
-        # starting.**
-        log.warning("tts.warmup_failed", reason=error.reason, detail=error.detail)
-        await setup.set_runtime(EngineRuntime.FAILED)
-        return
-    await setup.set_runtime(EngineRuntime.READY)
+    database = Database.open(":memory:")
+    database.migrate()
+    log.info("core.event_store.in_memory", reason="privacy contract is Phase 2")
+    return database
 
 
 def _load_pack() -> CharacterPack | None:

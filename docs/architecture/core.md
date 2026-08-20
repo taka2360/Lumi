@@ -147,7 +147,9 @@ core/lumi/
 │                    session（Working Memory + sticky session_trust）,
 │                    prompt（PromptAssembly）, markers（<|ACT|>）,
 │                    sentences（文分割）, speech（PlaybackScheduler → audio.md §6）,
-│                    runtime（会話の組み立て。**判断を持たない**）
+│                    runtime（会話の組み立て。**判断を持たない**）,
+│                    warmup（エンジンの暖機と起動ゲート → ADR-033 / ADR-034）,
+│                    tasks（await されない task の終了報告）
 ├── memory/          working, episodic, semantic, reflection, retrieval, decay
 ├── world/           facets, snapshot, projection
 ├── internal/        mood, fatigue, drives state
