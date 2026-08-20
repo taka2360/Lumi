@@ -220,7 +220,7 @@ class TestPrompt:
         assert coordinator.state.tts.state is TtsSetupState.NOT_CONFIGURED
         assert boots_of(server)[-1] == "blocked"
         written = await asyncio.to_thread(lambda: list(tmp_path.glob("*.json")))
-        assert written == [], "答えを永続化している"
+        assert written == [], "the answer was persisted"
 
     async def test_asks_again_on_the_next_start(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """★ **Reversed by ADR-034.** The answer used to be remembered forever.
@@ -240,7 +240,7 @@ class TestPrompt:
         await again.initialize()
         await again.on_stage_connected()
 
-        assert len(server.invocations) == 2, "2回目の起動で聞き直していない"
+        assert len(server.invocations) == 2, "the prompt was not repeated on the second start"
         assert [payload["component"] for _method, payload in server.invocations] == ["tts", "tts"]
         assert again.state.tts.state is TtsSetupState.NOT_CONFIGURED
 
@@ -269,7 +269,7 @@ class TestPrompt:
         await coordinator.on_stage_connected()
 
         assert len(server.invocations) == 1
-        assert boots_of(server)[-1] == "blocked", "答えを待ったまま止まらない"
+        assert boots_of(server)[-1] == "blocked", "the coordinator is still waiting for an answer"
 
     async def test_an_unanswered_tts_prompt_does_not_ask_for_stt(
         self, monkeypatch: pytest.MonkeyPatch
@@ -298,7 +298,7 @@ class TestPrompt:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert len(server.invocations) == 2, "失敗したら選択肢を出し直す"
+        assert len(server.invocations) == 2, "a failure should re-offer the choices"
         assert server.invocations[1][1]["retry"] is True
         assert server.invocations[1][1]["reason"] == "network_unreachable"
         # **A failure never reverts to "not yet attempted."**
@@ -307,6 +307,32 @@ class TestPrompt:
         assert states_of(server)[-1] == "failed"
         # ★ **A failed fetch is never treated as setup being done** (setup.md §8 test 22).
         assert boots_of(server)[-1] == "blocked"
+
+    @pytest.mark.parametrize(
+        ("exception_type", "reason"),
+        [(RuntimeError, "unexpected_error"), (asyncio.CancelledError, "cancelled")],
+        ids=["unexpected-error", "cancelled"],
+    )
+    async def test_tts_install_records_unexpected_failure_and_reraises_cancellation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        exception_type: type[BaseException],
+        reason: str,
+    ) -> None:
+        async def failing_install(*_args: Any, **_kwargs: Any) -> Path:
+            raise exception_type("download failed")
+
+        monkeypatch.setattr(coordinator_module, "install_engine", failing_install)
+        coordinator = SetupCoordinator(FakeServer([]).as_server(), {})
+
+        if exception_type is asyncio.CancelledError:
+            with pytest.raises(asyncio.CancelledError):
+                await coordinator.install_tts_engine()
+        else:
+            await coordinator.install_tts_engine()
+
+        assert coordinator.state.tts.state is TtsSetupState.FAILED
+        assert coordinator.state.tts.reason == reason
 
     async def test_retrying_is_not_capped(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """★ **Every repetition is one the user asked for** (ADR-034).
@@ -330,7 +356,7 @@ class TestPrompt:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert attempts == 4, "再試行が打ち切られている"
+        assert attempts == 4, "retry attempts were capped"
         assert all(payload["retry"] for _method, payload in server.invocations[1:])
 
     async def test_a_successful_retry_leaves_the_failure_behind(
@@ -580,7 +606,7 @@ class TestSpeechModel:
 
         assert coordinator.state.stt.state is SttSetupState.NOT_CONFIGURED
         assert coordinator.state.stt.reason == "unpinned_model"
-        assert server.invocations == [], "取りようが無いものを取るか聞かない"
+        assert server.invocations == [], "the coordinator asked to fetch an unpinned model"
 
     async def test_declining_leaves_it_not_configured_and_blocks_startup(
         self, monkeypatch: pytest.MonkeyPatch
@@ -624,6 +650,32 @@ class TestSpeechModel:
 
         assert coordinator.state.stt.state is SttSetupState.FAILED
         assert coordinator.state.stt.reason == "hash_mismatch"
+
+    @pytest.mark.parametrize(
+        ("exception_type", "reason"),
+        [(RuntimeError, "unexpected_error"), (asyncio.CancelledError, "cancelled")],
+        ids=["unexpected-error", "cancelled"],
+    )
+    async def test_stt_install_records_unexpected_failure_and_reraises_cancellation(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        exception_type: type[BaseException],
+        reason: str,
+    ) -> None:
+        async def failing_install(*_args: Any, **_kwargs: Any) -> Path:
+            raise exception_type("download failed")
+
+        monkeypatch.setattr(coordinator_module, "install_stt_model", failing_install)
+        coordinator = SetupCoordinator(FakeServer([]).as_server(), {})
+
+        if exception_type is asyncio.CancelledError:
+            with pytest.raises(asyncio.CancelledError):
+                await coordinator.install_speech_model()
+        else:
+            await coordinator.install_speech_model()
+
+        assert coordinator.state.stt.state is SttSetupState.FAILED
+        assert coordinator.state.stt.reason == reason
 
     async def test_fetching_the_model_never_disturbs_the_engine_state(
         self, monkeypatch: pytest.MonkeyPatch

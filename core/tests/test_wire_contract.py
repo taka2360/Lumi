@@ -66,7 +66,7 @@ class TestContractItself:
     """
 
     def test_the_contract_file_exists(self) -> None:
-        assert WIRE_PATH.is_file(), f"{WIRE_PATH} が無い（docs/contracts/wire.md）"
+        assert WIRE_PATH.is_file(), f"{WIRE_PATH} is missing (docs/contracts/wire.md)"
 
     def test_methods_match_their_namespace(self, wire: dict[str, Any]) -> None:
         """**`stage.*` must never request OS privileges** (docs/architecture/core.md §3).
@@ -76,11 +76,11 @@ class TestContractItself:
         """
         for role_name, prefix in wire["namespace_by_role"].items():
             for method in wire["methods"][prefix.rstrip(".")]:
-                assert method.startswith(prefix), f"{method} が {role_name} の namespace にない"
+                assert method.startswith(prefix), f"{method} is not in the {role_name} namespace"
 
     def test_no_duplicate_names(self, wire: dict[str, Any]) -> None:
         for group in (*wire["methods"].values(), wire["tauri_commands"], wire["window_labels"]):
-            assert len(group) == len(set(group)), f"重複がある: {group}"
+            assert len(group) == len(set(group)), f"duplicate names found: {group}"
 
 
 class TestCoreMatchesTheContract:
@@ -121,7 +121,7 @@ class TestCoreMatchesTheContract:
     def test_inbound_methods_are_stage_namespace(self, wire: dict[str, Any]) -> None:
         """**`stage.*` must never request OS privileges** (docs/architecture/core.md §3)."""
         for method in wire["inbound_methods"]:
-            assert method.startswith("stage."), f"{method} は stage.* ではない"
+            assert method.startswith("stage."), f"{method} is not in the stage.* namespace"
 
     def test_character_model_reasons(self, wire: dict[str, Any]) -> None:
         """**Core sends a code, and the Stage owns the wording** (ADR-036).

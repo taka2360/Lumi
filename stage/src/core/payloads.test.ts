@@ -176,15 +176,14 @@ describe("which model to draw", () => {
   it("★ carries the reason when the pack ships no model", () => {
     // **A voice-only Content Pack is a legitimate pack.** The placeholder needs a reason,
     // or it reads as a bug rather than as a state (docs/DESIGN.md「黙って劣化しない」).
-    const model = toCharacterModel({ path: null, reason: "Content Pack がモデルを含んでいない" });
+    const model = toCharacterModel({ path: null, reason: "model_not_in_pack" });
 
     expect(model.path).toBeNull();
-    expect(model.reason).toBe("Content Pack がモデルを含んでいない");
+    expect(model.reason).toBe("model_not_in_pack");
   });
 
-  it("never leaves the placeholder unexplained", () => {
-    // Even a payload with nothing usable in it produces something to show.
-    expect(toCharacterModel({}).reason).not.toBe("");
-    expect(toCharacterModel({ path: "" }).reason).not.toBe("");
+  it("uses the stable fallback reason code when no model reason is provided", () => {
+    expect(toCharacterModel({ path: null, reason: "" }).reason).toBe("model_not_in_pack");
+    expect(toCharacterModel({ path: "", reason: "" }).reason).toBe("model_not_in_pack");
   });
 });

@@ -226,7 +226,7 @@ export function toCharacterModel(payload: Record<string, unknown>): CharacterMod
   const path = typeof payload.path === "string" && payload.path ? payload.path : null;
   const reason = typeof payload.reason === "string" ? payload.reason : "";
   if (!path) {
-    return { path: null, format: "", reason: reason || "モデルが指定されていない" };
+    return { path: null, format: "", reason: reason || "model_not_in_pack" };
   }
   return {
     path,
