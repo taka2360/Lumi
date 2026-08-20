@@ -313,6 +313,33 @@ async def test_runtime_tts_speed_applies_to_next_turn_only() -> None:
     assert [voice.speed_scale for voice in rig.tts.voices] == [1.2, 1.4]
 
 
+async def test_tts_speed_is_frozen_when_changed_while_turn_is_blocked() -> None:
+    rig = Rig(FakeLlm([text("開始時の速度だよ。")]), tts_speed=1.2)
+    await rig.start()
+
+    user_said = asyncio.Event()
+    release_user_said = asyncio.Event()
+    original_notify = rig.notifier.notify
+
+    async def block_user_said(
+        role: Role, method: str, payload: dict[str, Any] | None = None
+    ) -> None:
+        if method == METHOD_USER_SAID:
+            user_said.set()
+            await release_user_said.wait()
+        await original_notify(role, method, payload)
+
+    rig.notifier.notify = block_user_said  # type: ignore[method-assign]
+    turn = asyncio.create_task(rig.loop.handle_text("速度を変える"))
+    await user_said.wait()
+
+    rig.loop.set_tts_speed(1.4)
+    release_user_said.set()
+    await turn
+
+    assert [voice.speed_scale for voice in rig.tts.voices] == [1.2]
+
+
 @pytest.mark.parametrize("speed", [0.49, 2.01, math.nan, math.inf, -math.inf])
 def test_tts_speed_rejects_invalid_values(speed: float) -> None:
     with pytest.raises(ValueError, match="tts_speed"):

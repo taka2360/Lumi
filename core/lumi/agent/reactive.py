@@ -264,6 +264,7 @@ class ReactiveLoop:
         them as 0 would drag the percentiles toward a speed the voice path never reaches.
         """
         timer = timer or TurnTimer(new_correlation_id())
+        turn_tts_speed = self._tts_speed
         await self._show_user_said(text)
         # Phase 1 has no memory retrieval. **Recorded explicitly so the spans stay contiguous**
         timer.record("retrieve_ms", 0)
@@ -285,7 +286,7 @@ class ReactiveLoop:
         activity = outcome.activity
         failed = False
         try:
-            await self._converse(activity, text, timer)
+            await self._converse(activity, text, timer, turn_tts_speed)
         except ProviderError as error:
             # **Record in the Activity's state that it failed to speak** (never silently mark it a
             # success)
@@ -301,7 +302,9 @@ class ReactiveLoop:
 
     # ── One turn ───────────────────────────────────────────
 
-    async def _converse(self, activity: Activity, text: str, timer: TurnTimer) -> None:
+    async def _converse(
+        self, activity: Activity, text: str, timer: TurnTimer, tts_speed: float
+    ) -> None:
         # **From here on, interruption is allowed.** Reset to a state that can accept the next
         # barge-in
         if self._audio is not None:
@@ -316,7 +319,7 @@ class ReactiveLoop:
             tts,
             self._require_playback(),
             self._notifier,
-            voice=self._voice(tts),
+            voice=self._voice(tts, tts_speed),
             cancel_token=activity.cancel_token,
             timer=timer,
         )
@@ -448,7 +451,7 @@ class ReactiveLoop:
         """`ProviderRegistry` returns one per kind. **Raises if not set up.**"""
         return cast("T", await self._providers.get(kind))
 
-    def _voice(self, tts: TTSProvider) -> VoiceConfig:
+    def _voice(self, tts: TTSProvider, tts_speed: float) -> VoiceConfig:
         """If the Content Pack doesn't specify a speaker, **defer to the engine's default.**
 
         Core doesn't hardcode a default because **which models are installed varies by
@@ -461,7 +464,7 @@ class ReactiveLoop:
                 speaker=speaker,
                 name=self._pack.voice.credit.name,
                 volume_scale=volume,
-                speed_scale=self._tts_speed,
+                speed_scale=tts_speed,
             )
         default = getattr(tts, "default_voice", None)
         if default is None:
@@ -471,7 +474,7 @@ class ReactiveLoop:
             speaker=voice.speaker,
             name=voice.name,
             volume_scale=volume,
-            speed_scale=self._tts_speed,
+            speed_scale=tts_speed,
         )
 
     def _require_playback(self) -> SpeakerPlayback:
