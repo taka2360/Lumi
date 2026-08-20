@@ -145,11 +145,11 @@ class FasterWhisperProvider:
         """
         artifact = STT_MODELS.get(self._size)
         if artifact is None:
-            raise ProviderNotConfigured("unknown_model", f"ピン留めされていない: {self._size}")
+            raise ProviderNotConfigured("unknown_model", f"Model size not pinned: {self._size}")
         if not is_model_installed(artifact, self._model_dir):
             raise ProviderNotConfigured(
                 "model_missing",
-                f"{self._size} が {self._model_dir} に無い（セットアップで取得してください）",
+                f"{self._size} not found in {self._model_dir} (please download via setup)",
             )
         return model_directory(artifact, self._model_dir)
 
@@ -169,7 +169,7 @@ class FasterWhisperProvider:
         The caller (Reactive Loop) makes barge-in work by discarding the result.
         """
         if self._model is None:
-            raise ProviderNotConfigured("not_loaded", "load() されていない")
+            raise ProviderNotConfigured("not_loaded", "Model not loaded (call load() first)")
         if cancel_token.is_set:
             raise ProviderFailed("cancelled", cancel_token.reason or "")
 

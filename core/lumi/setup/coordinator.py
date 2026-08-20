@@ -174,7 +174,7 @@ class SetupCoordinator:
         found = await detect_ollama(self._env)
         if found is None:
             return LlmSetup(
-                state=LlmSetupState.NOT_CONFIGURED, reason="Ollama が見つからない", model=None
+                state=LlmSetupState.NOT_CONFIGURED, reason="Ollama not found", model=None
             )
         return LlmSetup(
             state=LlmSetupState.DETECTED,

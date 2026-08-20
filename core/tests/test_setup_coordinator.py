@@ -472,7 +472,7 @@ class TestSpeechModel:
         no_speech_model(monkeypatch)
 
         async def fake_install(*_args: Any, **_kwargs: Any) -> Path:
-            raise SetupError("hash_mismatch", "壊れている")
+            raise SetupError("hash_mismatch", "Corrupted")
 
         monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
         server = FakeServer(["install", "skip"])

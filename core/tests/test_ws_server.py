@@ -51,7 +51,7 @@ async def wait_until_connected(server: WsServer, role: Role) -> None:
         if server.is_connected(role):
             return
         await asyncio.sleep(0.01)
-    raise AssertionError(f"{role} が接続されない")
+    raise AssertionError(f"{role} did not connect")
 
 
 class TestAuthentication:
@@ -315,7 +315,7 @@ class TestInboundRequests:
         """**The client is not told what broke.** The full exception is logged instead."""
 
         async def handler(_payload: dict[str, object]) -> dict[str, object]:
-            raise RuntimeError("C:/Users/secret/path が開けない")
+            raise RuntimeError("Cannot open C:/Users/secret/path")
 
         server.on_request("stage.settings.update", handler)
         client = await open_client(server, role="stage")

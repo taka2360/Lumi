@@ -74,7 +74,9 @@ def _tar_executable() -> Path:
     found = shutil.which("tar")
     if found:
         return Path(found)
-    raise SetupError("tar_not_found", "展開に使う tar が見つからない（Windows 10 1803 以降が必要）")
+    raise SetupError(
+        "tar_not_found", "tar not found for archive extraction (Windows 10 1803 or later required)"
+    )
 
 
 async def _download(

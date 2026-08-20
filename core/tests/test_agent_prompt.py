@@ -84,7 +84,7 @@ def test_history_becomes_user_and_assistant_messages() -> None:
 
 
 def test_assemble_needs_a_current_utterance() -> None:
-    with pytest.raises(ValueError, match="現在の発話"):
+    with pytest.raises(ValueError, match="No current utterance"):
         assemble(persona=PERSONA, session=Session())
 
 

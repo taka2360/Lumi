@@ -301,7 +301,7 @@ def callback_ast(filename: str, method: str) -> ast.FunctionDef:
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, ast.FunctionDef) and node.name == method:
             return node
-    raise AssertionError(f"{filename}: {method} が見つからない")
+    raise AssertionError(f"{filename}: {method} not found")
 
 
 @pytest.mark.parametrize(("filename", "method"), list(CALLBACK_SOURCES.items()))
@@ -318,7 +318,9 @@ def test_audio_callbacks_do_no_inference_or_io(filename: str, method: str) -> No
             name = func.attr if isinstance(func, ast.Attribute) else getattr(func, "id", "")
             called.append(name)
         if isinstance(node, ast.With | ast.AsyncWith):
-            raise AssertionError(f"{filename}: コールバックで with を使わない（ロックの可能性）")
+            raise AssertionError(
+                f"{filename}: do not use 'with' in audio callback (potential lock)"
+            )
 
     offenders = [name for name in called if name in FORBIDDEN_IN_CALLBACK]
     assert offenders == [], f"{filename}: {offenders}"
@@ -332,7 +334,7 @@ class ExplodingVad:
 
     def probability(self, window: np.ndarray) -> float:
         del window
-        raise RuntimeError("推論が落ちた")
+        raise RuntimeError("Inference failed")
 
 
 def test_a_crashing_vad_thread_never_leaves_playback_muted() -> None:

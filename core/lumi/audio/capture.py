@@ -102,7 +102,7 @@ class MicrophoneCapture:
             )
             self._stream.start()
         except Exception as error:
-            raise CaptureUnavailable(f"入力を開けない: {error}") from error
+            raise CaptureUnavailable(f"Cannot open audio capture: {error}") from error
 
     def _callback(self, indata: Any, frames: int, time_info: Any, status: Any) -> None:
         """**Runs under real-time constraints.** No inference, no allocation, no locking.
@@ -130,7 +130,7 @@ class MicrophoneCapture:
         """
         if not self._first_frame.wait(timeout):
             raise CaptureUnavailable(
-                f"{self._plan.describe()}: {timeout} 秒待ってもフレームが来ない"
+                f"{self._plan.describe()}: No frame received after {timeout}s"
             )
 
     @property

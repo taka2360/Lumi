@@ -66,7 +66,7 @@ fn stage_methods_never_reach_the_shell_allowlist() {
     for method in strings(&wire()["methods"]["stage"]) {
         assert!(
             !ALLOWED_METHODS.contains(&method.as_str()),
-            "{method} が Shell の allowlist に載っている"
+            "{method} is included in Shell allowlist"
         );
     }
 }

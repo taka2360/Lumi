@@ -87,7 +87,7 @@ class SpeakerPlayback:
             )
             self._stream.start()
         except Exception as error:
-            raise PlaybackUnavailable(f"出力を開けない: {error}") from error
+            raise PlaybackUnavailable(f"Cannot open audio playback: {error}") from error
 
     def _callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
         """**Runs under real-time constraints.** Only touches `mute_flag` and the ring buffer."""

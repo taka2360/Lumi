@@ -46,7 +46,7 @@ class SqliteEventStore:
         except (TypeError, ValueError) as error:
             # A payload that can't be JSON-encoded is never silently dropped. **Treated as the
             # publisher's design error.**
-            raise StorageError(f"payload を JSON にできない: {draft.type}") from error
+            raise StorageError(f"Cannot serialize payload to JSON: {draft.type}") from error
 
         with self._db.transaction() as conn:
             row = conn.execute(
@@ -73,6 +73,8 @@ class SqliteEventStore:
                 )
             except sqlite3.IntegrityError as error:
                 # A UNIQUE violation means serialization is broken. **Never overwrite or renumber.**
-                raise StorageError(f"採番が衝突した: {draft.stream_key}#{sequence_id}") from error
+                raise StorageError(
+                    f"Sequence collision: {draft.stream_key}#{sequence_id}"
+                ) from error
 
         return sequence_id

@@ -206,12 +206,14 @@ class Activity:
         else.
         """
         if new_state not in _ALLOWED[self._state]:
-            raise InvalidTransition(f"{self.kind}: {self._state} → {new_state} は許されていない")
+            raise InvalidTransition(
+                f"{self.kind}: invalid transition from {self._state} to {new_state}"
+            )
         if new_state is ActivityState.SUSPENDED and self.kind is not ActivityKind.IDLE:
             # `suspended` is exclusive to idle. If anything else took it, "not
             # foreground but alive" instances would multiply, and Invariant 4's
             # "exactly one running" would lose its meaning.
-            raise InvalidTransition(f"{self.kind}: suspended を取れるのは idle だけ")
+            raise InvalidTransition(f"{self.kind}: only idle can transition to suspended")
         self._state = new_state
 
 

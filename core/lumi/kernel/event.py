@@ -158,7 +158,7 @@ class SequenceChecker:
         expected = 1 if previous is None else previous + 1
         if event.sequence_id != expected:
             raise SequenceError(
-                f"{event.stream_key}: {expected} を期待したが {event.sequence_id} が来た"
+                f"{event.stream_key}: expected {expected}, got {event.sequence_id}"
             )
         self._last[event.stream_key] = event.sequence_id
 
@@ -241,7 +241,7 @@ class EventBus:
         """
         if self._dispatching.get(stream_key) is asyncio.current_task():
             raise ReentrantPublishError(
-                f"{stream_key}: 配送中の stream へ publish できない（ADR-030）"
+                f"{stream_key}: cannot publish to stream currently being dispatched (ADR-030)"
             )
 
     async def _dispatch(self, event: DomainEvent) -> None:

@@ -74,6 +74,6 @@ class HookRegistry:
             outcome = await handler(payload)
             if isinstance(outcome, Veto):
                 if name not in VETOABLE:
-                    raise HookContractError(f"{name} は veto できない（reason={outcome.reason}）")
+                    raise HookContractError(f"{name} cannot be vetoed (reason={outcome.reason})")
                 return outcome
         return Continue()

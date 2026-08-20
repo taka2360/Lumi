@@ -77,7 +77,9 @@ class ProviderRegistry:
         """Retrieves it **without loading.** Used for status display and `attribution()`."""
         provider_id = self._selected.get(kind)
         if provider_id is None:
-            raise ProviderNotConfigured("no_provider_selected", f"{kind.value} の Provider が無い")
+            raise ProviderNotConfigured(
+                "no_provider_selected", f"No provider configured for {kind.value}"
+            )
         return self._providers[kind][provider_id]
 
     def has(self, kind: ProviderKind) -> bool:

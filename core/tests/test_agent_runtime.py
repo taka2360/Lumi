@@ -96,7 +96,7 @@ class FakeTts:
     async def load(self) -> None:
         self.load_calls += 1
         if self._fails:
-            raise ProviderUnavailable("engine_not_ready", "エンジンの状態: failed")
+            raise ProviderUnavailable("engine_not_ready", "Engine runtime status: failed")
         self._loaded = True
 
     async def unload(self) -> None:
@@ -120,6 +120,19 @@ class FakeTts:
 @pytest.fixture(autouse=True)
 def isolated_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(paths_module, "setup_state_file", lambda: tmp_path / "s.json")
+    content_dir = tmp_path / "content"
+    char_dir = content_dir / "characters" / "lumi"
+    char_dir.mkdir(parents=True)
+    real_char_dir = paths_module.default_character_dir()
+    if real_char_dir.is_dir():
+        (char_dir / "character.toml").write_text(
+            (real_char_dir / "character.toml").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+        (char_dir / "voice.toml").write_text(
+            (real_char_dir / "voice.toml").read_text(encoding="utf-8"), encoding="utf-8"
+        )
+    (char_dir / "model.vrm").write_bytes(b"glTF ")
+    monkeypatch.setattr(paths_module, "default_character_dir", lambda: char_dir)
 
 
 def detects(monkeypatch: pytest.MonkeyPatch, engines: list[DetectedEngine]) -> None:
@@ -421,7 +434,7 @@ class TestShutdown:
         """
 
         async def explodes(*_args: Any, **_kwargs: Any) -> None:
-            raise RuntimeError("想定外")
+            raise RuntimeError("Unexpected failure")
 
         detects(monkeypatch, [])
         monkeypatch.setattr(runtime_module, "_warm", explodes)

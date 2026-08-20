@@ -85,7 +85,7 @@ def test_the_turn_clock_starts_when_the_user_stopped_talking(clock: FakeClock) -
 
 def test_an_unknown_span_is_refused(clock: FakeClock) -> None:
     """**The span set is the SLO table.** A typo would silently create a new bucket."""
-    with pytest.raises(ValueError, match="未知の区間"):
+    with pytest.raises(ValueError, match="Unknown span"):
         timer(clock).begin("llm_ms")
 
 

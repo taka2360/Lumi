@@ -129,7 +129,7 @@ def test_a_model_outside_the_pack_is_rejected(tmp_path: Path) -> None:
     for index, declared in enumerate(("../secret.vrm", outside.as_posix())):
         character = CHARACTER + MODEL.replace('file = "model.vrm"', f'file = "{declared}"')
         root = pack(tmp_path / str(index), character=character, model_file=True)
-        with pytest.raises(ContentPackError, match=r"Content Pack の外"):
+        with pytest.raises(ContentPackError, match=r"Points outside Content Pack"):
             load_character(root)
 
 
@@ -144,7 +144,7 @@ def test_a_pack_with_code_is_rejected(tmp_path: Path) -> None:
     root = pack(tmp_path)
     (root / "hook.py").write_text("print('hi')", encoding="utf-8")
 
-    with pytest.raises(ContentPackError, match="コード"):
+    with pytest.raises(ContentPackError, match="code"):
         load_character(root)
 
 
@@ -153,7 +153,7 @@ def test_code_nested_deeper_is_also_rejected(tmp_path: Path) -> None:
     (root / "motions").mkdir()
     (root / "motions" / "evil.dll").write_bytes(b"\x00")
 
-    with pytest.raises(ContentPackError, match="コード"):
+    with pytest.raises(ContentPackError, match="code"):
         load_character(root)
 
 
@@ -183,12 +183,12 @@ def test_a_missing_file_is_reported(tmp_path: Path) -> None:
 
 
 def test_a_missing_directory_is_reported(tmp_path: Path) -> None:
-    with pytest.raises(ContentPackError, match="無い"):
+    with pytest.raises(ContentPackError, match="not found"):
         load_character(tmp_path / "nope")
 
 
 def test_broken_toml_is_reported(tmp_path: Path) -> None:
-    with pytest.raises(ContentPackError, match="読めない"):
+    with pytest.raises(ContentPackError, match="Cannot read"):
         load_character(pack(tmp_path, character="[character\n"))
 
 

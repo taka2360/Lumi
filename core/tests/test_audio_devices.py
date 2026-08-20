@@ -161,7 +161,7 @@ class TestMissingDevices:
         assert plan.capture is None
         assert not plan.can_listen
         assert plan.can_speak
-        assert any("入力デバイス" in warning for warning in plan.warnings)
+        assert any("audio input device" in warning for warning in plan.warnings)
 
     def test_no_devices_at_all(self) -> None:
         plan = plan_audio([], [])

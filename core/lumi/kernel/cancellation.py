@@ -103,7 +103,9 @@ class Cancellable:
         if self.contract is Cancellation.HARD and self.kill is None:
             # Declaring `hard` without a way to actually stop it is the same as barge-in not
             # working.
-            raise CancellationContractError(f"{self.label}: hard を宣言したが kill が無い")
+            raise CancellationContractError(
+                f"{self.label}: declared hard cancellation without kill handler"
+            )
 
     def mark_finished(self) -> None:
         """Called by the work itself in `finally`. **Called even on normal completion** (the Arbiter

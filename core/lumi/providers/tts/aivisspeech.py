@@ -163,7 +163,7 @@ class AivisSpeechClient:
             raise TtsError("query_malformed", str(error)) from error
 
         if not isinstance(query, dict):
-            raise TtsError("query_malformed", "audio_query が辞書を返さなかった")
+            raise TtsError("query_malformed", "audio_query did not return a dictionary")
 
         try:
             audio_seconds = decode_wav(wav).duration_seconds
@@ -174,7 +174,7 @@ class AivisSpeechClient:
         if not timeline.spans:
             # **Never silently play silence.** This happens when garbled input is passed in
             # (observed).
-            raise TtsError("no_moras", "モーラが1つも得られなかった")
+            raise TtsError("no_moras", "No moras generated from audio query")
 
         log.info(
             "tts.synthesized",

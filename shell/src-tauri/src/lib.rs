@@ -110,7 +110,7 @@ fn stage_placement(app: &AppHandle) -> StageConfig {
     let monitor = match app.primary_monitor() {
         Ok(Some(monitor)) => monitor,
         _ => {
-            log::warn!("stage.monitor_unavailable 既定の大きさで開く");
+            log::warn!("stage.monitor_unavailable opening with default size");
             return StageConfig::default();
         }
     };
@@ -179,15 +179,15 @@ fn dev_core_project_dir() -> Option<PathBuf> {
 /// **Failure is not fatal.** Lumi runs with the placeholder, and the Stage says why.
 fn allow_content_pack(app: &AppHandle, dir: &std::path::Path) {
     if !dir.is_dir() {
-        log::warn!("Content Pack が無い ({}): プレースホルダで起動する", dir.display());
+        log::warn!("Content Pack not found ({}): launching with placeholder", dir.display());
         return;
     }
 
     match app.asset_protocol_scope().allow_directory(dir, true) {
-        Ok(()) => log::info!("Content Pack を許可した: {}", dir.display()),
+        Ok(()) => log::info!("Allowed Content Pack directory: {}", dir.display()),
         // **Never silently degrade.** Without this the character simply never appears, and
         // the reason would exist nowhere
-        Err(error) => log::error!("Content Pack を許可できない ({}): {error}", dir.display()),
+        Err(error) => log::error!("Cannot allow Content Pack directory ({}): {error}", dir.display()),
     }
 }
 
@@ -255,14 +255,14 @@ pub fn run() {
                     );
                 }
                 // **Never silently degrade.** If Core isn't found, say so.
-                None => log::error!("core.not_found 起動できる Core が見つからない"),
+                None => log::error!("core.not_found No runnable Core found"),
             }
 
             log::info!("shell.started");
             Ok(())
         })
         .build(tauri::generate_context!())
-        .expect("Tauri アプリの初期化に失敗した");
+        .expect("Failed to initialize Tauri application");
 
     app.run(move |_app, event| {
         if let RunEvent::Exit = event {

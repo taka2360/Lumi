@@ -134,7 +134,9 @@ class WsServer:
         # connect as shell and hijack os.*** (docs/contracts/security-boundaries.md B2/B3).
         missing = [role.value for role in Role if not tokens.get(role)]
         if missing:
-            raise ValueError(f"token が空: {missing}。認証なしで listen しない（fail-closed）")
+            raise ValueError(
+                f"Empty token for {missing}; will not listen without authentication (fail-closed)"
+            )
         self._tokens = dict(tokens)
         self._host = host
         self._requested_port = port
@@ -153,7 +155,7 @@ class WsServer:
     @property
     def port(self) -> int:
         if self._port is None:
-            raise RuntimeError("まだ listen していない")
+            raise RuntimeError("Server is not listening yet")
         return self._port
 
     def is_connected(self, role: Role) -> bool:
@@ -170,7 +172,7 @@ class WsServer:
         )
         sockets = list(self._server.sockets)
         if not sockets:
-            raise RuntimeError("listen に失敗した")
+            raise RuntimeError("Failed to listen")
         self._port = int(sockets[0].getsockname()[1])
         return self._port
 
@@ -191,7 +193,7 @@ class WsServer:
         exist**, which is the fail-closed shape the boundary needs.
         """
         if method in self._inbound:
-            raise ValueError(f"{method} は既に登録されている")
+            raise ValueError(f"{method} is already registered")
         self._inbound[method] = handler
 
     async def _serve_request(self, connection: _Connection, request: Request) -> None:
@@ -265,11 +267,11 @@ class WsServer:
         So no path ever exists for `os.*` to reach the Stage (B2).
         """
         if not method_matches_role(method, role):
-            raise ValueError(f"{role.value} に {method} は送れない（namespace 違反）")
+            raise ValueError(f"Cannot send {method} to {role.value} (namespace violation)")
 
         connection = self._connections.get(role)
         if connection is None:
-            raise NotConnectedError(f"{role.value} が接続していない")
+            raise NotConnectedError(f"{role.value} is not connected")
 
         command = Command(id=new_id(), method=method, payload=payload or {})
         future = connection.register(command.id)
@@ -289,7 +291,7 @@ class WsServer:
         Unlike `invoke`, stalling here would let a UI update block Core's own progress.
         """
         if not method_matches_role(method, role):
-            raise ValueError(f"{role.value} に {method} は送れない（namespace 違反）")
+            raise ValueError(f"Cannot send {method} to {role.value} (namespace violation)")
 
         connection = self._connections.get(role)
         if connection is None:
@@ -311,7 +313,7 @@ class WsServer:
             # A reconnect. The old one is discarded (never leaves a ghost connection on Core's
             # side).
             log.info("transport.reconnect", role=role.value)
-            previous.abandon_all("再接続で置き換えられた")
+            previous.abandon_all("Replaced by reconnection")
             await previous.ws.close(code=1000, reason="replaced by a new connection")
 
         self._connections[role] = connection
@@ -324,7 +326,7 @@ class WsServer:
         finally:
             if self._connections.get(role) is connection:
                 del self._connections[role]
-                connection.abandon_all("接続が閉じた")
+                connection.abandon_all("Connection closed")
                 log.info("transport.disconnected", role=role.value)
                 if self._on_disconnect is not None:
                     await self._on_disconnect(role)

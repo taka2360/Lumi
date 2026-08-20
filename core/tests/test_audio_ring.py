@@ -162,7 +162,7 @@ def assigned_attributes(method: str) -> list[str]:
         if isinstance(node, ast.FunctionDef) and node.name == method:
             break
     else:
-        raise AssertionError(f"ring.py: {method} が見つからない")
+        raise AssertionError(f"ring.py: {method} not found")
 
     targets: list[ast.expr] = []
     for child in ast.walk(node):
@@ -187,7 +187,7 @@ def test_each_cursor_has_exactly_one_writer(method: str, forbidden: tuple[str, .
 
 
 def test_capacity_must_be_positive() -> None:
-    with pytest.raises(ValueError, match="capacity"):
+    with pytest.raises(ValueError, match="Capacity"):
         RingBuffer(0)
 
 

@@ -190,7 +190,7 @@ class AttentionArbiter:
     def current(self) -> Activity:
         """**Never returns None.** Callers never need to write a null check."""
         if self._foreground is None:
-            raise RuntimeError("Arbiter が start() されていない")
+            raise RuntimeError("Arbiter has not been started")
         return self._activities[self._foreground]
 
     def get(self, activity_id: ActivityId) -> Activity:
@@ -392,7 +392,7 @@ class AttentionArbiter:
         for activity in self._activities.values():
             if activity.kind is ActivityKind.IDLE:
                 return activity
-        raise RuntimeError("idle Activity が存在しない（start() されていない）")
+        raise RuntimeError("idle Activity does not exist (start() has not been called)")
 
     # ── Arbitrating the inference resource ──────────────────────────────────────
 

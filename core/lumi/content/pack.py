@@ -134,7 +134,7 @@ class CharacterPack:
 def load_character(root: Path) -> CharacterPack:
     """Reads `character.toml` and `voice.toml`. **Raises if anything is missing.**"""
     if not root.is_dir():
-        raise ContentPackError(f"Content Pack が無い: {root}")
+        raise ContentPackError(f"Content Pack not found: {root}")
 
     _reject_code(root)
 
@@ -175,13 +175,13 @@ def _model(document: dict[str, Any], root: Path) -> ModelSettings | None:
     if model is None:
         return None
     if not isinstance(model, dict):
-        raise ContentPackError("character.toml の [model] がテーブルではない")
+        raise ContentPackError("character.toml [model] is not a table")
 
     path = _inside(root, _text(model, "file", root / "character.toml"))
     if not path.is_file():
         # **Never fall back silently.** A pack that names a model it doesn't ship is broken,
         # and a blank character is the least informative way to report it
-        raise ContentPackError(f"[model] が指すファイルが無い: {path}")
+        raise ContentPackError(f"File specified by [model] does not exist: {path}")
 
     return ModelSettings(
         path=path,
@@ -203,37 +203,37 @@ def _inside(root: Path, declared: str) -> Path:
     try:
         path.relative_to(root.resolve())
     except ValueError as error:
-        raise ContentPackError(f"Content Pack の外を指している: {declared}") from error
+        raise ContentPackError(f"Points outside Content Pack: {declared}") from error
     return path
 
 
 def _reject_code(root: Path) -> None:
     for path in root.rglob("*"):
         if path.is_file() and path.suffix.lower() in CODE_SUFFIXES:
-            raise ContentPackError(f"Content Pack にコードが含まれている: {path.name}")
+            raise ContentPackError(f"Content Pack contains code: {path.name}")
 
 
 def _read_toml(path: Path) -> dict[str, Any]:
     if not path.is_file():
-        raise ContentPackError(f"必須のファイルが無い: {path}")
+        raise ContentPackError(f"Required file missing: {path}")
     try:
         with path.open("rb") as handle:
             return tomllib.load(handle)
     except tomllib.TOMLDecodeError as error:
-        raise ContentPackError(f"{path.name} が読めない: {error}") from error
+        raise ContentPackError(f"Cannot read {path.name}: {error}") from error
 
 
 def _table(data: dict[str, Any], key: str, root: Path) -> dict[str, Any]:
     section = data.get(key)
     if not isinstance(section, dict):
-        raise ContentPackError(f"{root.name}: [{key}] が無い")
+        raise ContentPackError(f"{root.name}: missing [{key}]")
     return section
 
 
 def _text(section: dict[str, Any], key: str, path: Path) -> str:
     value = section.get(key)
     if not isinstance(value, str) or not value.strip():
-        raise ContentPackError(f"{path.name}: {key} が無い")
+        raise ContentPackError(f"{path.name}: missing {key}")
     return value.strip()
 
 
@@ -261,6 +261,6 @@ def _parse_volume(value: Any, path: Path) -> float:
         if 0.0 <= val <= 2.0:
             return val
         raise ContentPackError(
-            f"{path.name}: volume は 0.0 から 2.0 の範囲で指定してください（指定値: {value}）"
+            f"{path.name}: volume must be between 0.0 and 2.0 (got: {value})"
         )
-    raise ContentPackError(f"{path.name}: volume には数値を指定してください（指定値: {value}）")
+    raise ContentPackError(f"{path.name}: volume must be a number (got: {value})")
