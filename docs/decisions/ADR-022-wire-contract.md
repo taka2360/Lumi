@@ -47,10 +47,11 @@
 wire 定数のずれは**その原則を守れない形で失敗する**。
 
 **反例1 — `PROTOCOL_VERSION` を Core だけ 2 に上げる。**
-Shell の `parse_command` は「プロトコルバージョンが違う」で**すべての command を捨てる**。
-Core は result を待ち、10 秒後に `transport.command.timeout` を出す。
-Shell のログには理由が出るが、**Stage には何も出ない**。ユーザーから見えるのは
-「Lumi が反応しない」だけで、どこが壊れているかを示すものが画面に無い。
+Shell の `parse_command` は「プロトコルバージョンが違う」と拒否し、
+`os.command.malformed` を記録する。Core の受信側も `ProtocolError` として拒否し、
+`transport.message.invalid` を記録して close `4400` にする。**互換しないフレームを
+黙って処理し続けず、接続境界で失敗が観測できる。Stage も `ProtocolVersionMismatch`
+として拒否して close `4400` にする。**
 
 **反例2 — `Viseme` に値を1つ足す。**
 Stage の `parseTimeline` は `VISEMES.find(...) ?? null` なので、

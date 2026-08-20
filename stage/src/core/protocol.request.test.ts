@@ -8,7 +8,12 @@
 
 import { describe, expect, it } from "vitest";
 
-import { PROTOCOL_VERSION, parseCoreMessage, requestMessage } from "./protocol";
+import {
+  PROTOCOL_VERSION,
+  ProtocolVersionMismatch,
+  parseCoreMessage,
+  requestMessage,
+} from "./protocol";
 
 describe("sending a request", () => {
   it("is a request, never a command", () => {
@@ -57,6 +62,6 @@ describe("reading Core's answer", () => {
   });
 
   it("still refuses a version mismatch", () => {
-    expect(parseCoreMessage(result({ v: 999 }))).toBeNull();
+    expect(() => parseCoreMessage(result({ v: 999 }))).toThrow(ProtocolVersionMismatch);
   });
 });

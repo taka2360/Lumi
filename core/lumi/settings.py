@@ -156,7 +156,7 @@ def load(path: Path, env: Mapping[str, str] | None = None) -> Settings:
     if path.is_file():
         try:
             raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
             # **Loud, and left alone.** Saving over it would destroy the only copy
             log.warning("settings.unreadable", path=str(path), error=str(error))
             unreadable = True

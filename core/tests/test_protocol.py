@@ -8,6 +8,8 @@ import pytest
 
 from lumi.transport.protocol import (
     PROTOCOL_VERSION,
+    Command,
+    Notify,
     ProtocolError,
     Request,
     Result,
@@ -70,6 +72,15 @@ class TestNamespaceIsolation:
 
 
 class TestParseClientMessage:
+    def test_core_generated_frames_all_carry_the_protocol_version(self) -> None:
+        frames = (
+            Command(id="c1", method="stage.character.speak", payload={}).to_json(),
+            Notify(method="stage.setup.state", payload={}).to_json(),
+            Result(corr_id="r1", ok=False, payload={}, error="internal_error").encode(),
+        )
+
+        assert [json.loads(frame)["v"] for frame in frames] == [PROTOCOL_VERSION] * 3
+
     def test_accepts_result(self) -> None:
         raw = json.dumps(
             {

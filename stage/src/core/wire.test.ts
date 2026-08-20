@@ -3,11 +3,10 @@
  *
  * Contract and rules → docs/contracts/wire.md / ADR-022
  *
- * **The Stage silently drops unknown values.** `parseCoreMessage` returns `null`,
- * `toTtsSnapshot` rounds to the fail-closed default (`"starting"` / `"unknown"`),
- * and `parseTimeline` closes the mouth. **None of these ever error.**
- * That's correct as an implementation, but it also means drift stays invisible.
- * This is where it's caught.
+ * **The Stage fails closed on unknown values.** `toTtsSnapshot` rounds to the fail-closed
+ * default (`"starting"` / `"unknown"`), and `parseTimeline` closes the mouth. A protocol
+ * version mismatch is different: it is rejected explicitly and closes the connection.
+ * This is where the static drift is caught.
  *
  * The same cross-check is also done by Core (`core/tests/test_wire_contract.py`)
  * and Shell (`shell/src-tauri/src/wire_contract.rs`).

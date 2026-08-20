@@ -16,6 +16,7 @@ import {
   type CoreMessage,
   type CoreResult,
   helloMessage,
+  ProtocolVersionMismatch,
   parseCoreMessage,
   requestMessage,
   resultMessage,
@@ -150,9 +151,19 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
       if (typeof event.data !== "string") {
         return;
       }
-      const message = parseCoreMessage(event.data);
-      if (message) {
-        handleMessage(message);
+      try {
+        const message = parseCoreMessage(event.data);
+        if (message) {
+          handleMessage(message);
+        }
+      } catch (error: unknown) {
+        if (!(error instanceof ProtocolVersionMismatch)) {
+          throw error;
+        }
+        // A frame whose meaning is not agreed on is a protocol error, not an ignorable event.
+        // Closing makes the rejection observable through the existing disconnected/reconnect
+        // path without interpreting the frame under the wrong schema.
+        ws.close(4400, "protocol error");
       }
     });
     ws.addEventListener("close", () => {

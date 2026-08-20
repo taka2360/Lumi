@@ -11,7 +11,6 @@ connected at all*. Both regressions below were invisible to every other test:
 
 from __future__ import annotations
 
-import asyncio
 import json
 import sqlite3
 from pathlib import Path
@@ -445,9 +444,11 @@ class TestShutdown:
             AudioPlan(capture=None, playback=None, warnings=()),
         )
         await runtime.start()
-        # Let the warmup task run and fail before the cancel lands on an already-done task
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
+        # The cancel has to land on an already-done task, so the failure must happen first
+        warmup = runtime._warmup
+        assert warmup is not None
+        with pytest.raises(RuntimeError, match="想定外"):
+            await warmup
 
         await runtime.stop()  # **raises nothing**
 
