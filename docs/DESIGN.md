@@ -669,6 +669,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [033](decisions/ADR-033-gate-voice-input-until-ready.md) | 起動フェーズが **`ready` になるまで音声入力を開始しない** |
 | [034](decisions/ADR-034-gate-startup-on-complete-setup.md) | **STT / LLM / TTS がすべて揃うまでキャラクターを起動しない** |
 | [035](decisions/ADR-035-separate-stt-installation-and-runtime-state.md) | **STT のモデル取得状態と Provider ロード状態を分離する** |
+| [036](decisions/ADR-036-core-sends-reason-codes.md) | **Core は表示文字列を送らない。**理由はコードで送り、翻訳は Stage が持つ |
 
 ---
 

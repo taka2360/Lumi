@@ -32,6 +32,7 @@ from lumi.setup.state import (
     TtsSetupState,
 )
 from lumi.transport.methods import (
+    CHARACTER_MODEL_REASONS,
     CHOICE_INSTALL,
     CHOICE_SKIP,
     COMPONENT_STT,
@@ -121,6 +122,15 @@ class TestCoreMatchesTheContract:
         """**`stage.*` must never request OS privileges** (docs/architecture/core.md §3)."""
         for method in wire["inbound_methods"]:
             assert method.startswith("stage."), f"{method} は stage.* ではない"
+
+    def test_character_model_reasons(self, wire: dict[str, Any]) -> None:
+        """**Core sends a code, and the Stage owns the wording** (ADR-036).
+
+        On the contract because it goes on the wire, and because the Stage looks up
+        `character.model.<reason>` by exactly these names. A code added on one side only
+        renders as the raw code — **visible, but not what anyone intended.**
+        """
+        assert list(CHARACTER_MODEL_REASONS) == wire["character_model_reasons"]
 
     def test_setup_components(self, wire: dict[str, Any]) -> None:
         # **What is being asked about has to be on the contract too.** The panel picks its

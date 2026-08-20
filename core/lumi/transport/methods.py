@@ -96,3 +96,15 @@ CHOICE_SKIP: Final = "skip"
 #: "may I download this?" without a subject is not consent.
 COMPONENT_TTS: Final = "tts"
 COMPONENT_STT: Final = "stt"
+
+#: Why there is no character model to draw (ADR-036). **A code, never a sentence** —
+#: Core does not know the Stage's locale, and a display string sent from here is the one
+#: line on screen that a language change cannot reach.
+REASON_MODEL_NOT_IN_PACK: Final = "model_not_in_pack"
+REASON_PACK_UNREADABLE: Final = "pack_unreadable"
+
+#: Cross-checked against the contract, like the method names above.
+CHARACTER_MODEL_REASONS: Final[tuple[str, ...]] = (
+    REASON_MODEL_NOT_IN_PACK,
+    REASON_PACK_UNREADABLE,
+)

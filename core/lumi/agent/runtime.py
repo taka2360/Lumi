@@ -59,6 +59,8 @@ from lumi.transport.methods import (
     METHOD_MODEL,
     METHOD_SETTINGS,
     METHOD_SETTINGS_UPDATE,
+    REASON_MODEL_NOT_IN_PACK,
+    REASON_PACK_UNREADABLE,
 )
 from lumi.transport.protocol import Role
 from lumi.transport.server import RequestRefused, WsServer
@@ -209,13 +211,15 @@ class ConversationRuntime:
         should put the placeholder on screen with a reason (docs/architecture/ui.md).
 
         An absolute path, not a URL — **Core does not serve files** and does not know how
-        Shell addresses them.
+        Shell addresses them. The reason is a code for the same kind of reason: **Core
+        does not render, either** (ADR-036).
         """
         model = self._pack.model if self._pack else None
         if model is None:
-            reason = (
-                "Content Pack がモデルを含んでいない" if self._pack else "Content Pack が読めない"
-            )
+            # **A code, not a sentence** (ADR-036). Core does not know the Stage's locale,
+            # and a display string sent from here would be the one line on screen that
+            # switching language never reaches.
+            reason = REASON_MODEL_NOT_IN_PACK if self._pack else REASON_PACK_UNREADABLE
             await self._server.notify(Role.STAGE, METHOD_MODEL, {"path": None, "reason": reason})
             log.info("character.model.absent", reason=reason)
             return

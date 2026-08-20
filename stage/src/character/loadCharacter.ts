@@ -18,7 +18,7 @@
  * Pack is refused by Shell, not by anything here.
  */
 
-import { cachedLocale, translate } from "../i18n";
+import { cachedLocale, hasMessage, type Locale, type MessageKey, translate } from "../i18n";
 import { getPlatformShell } from "../platform/useStageShell";
 import { createPlaceholder } from "./placeholder";
 import type { CharacterModel } from "./types";
@@ -36,11 +36,27 @@ export interface ModelSource {
   reason: string;
 }
 
+/**
+ * Turns Core's reason **code** into something readable (ADR-036).
+ *
+ * **An unrecognised code is shown as-is**, never blanked and never rewritten to
+ * "unknown error". Core may start sending a new reason before the Stage learns its
+ * wording, and a raw `some_new_reason` on screen is a legible, searchable thing —
+ * an empty placeholder caption is not. Same rule as `failureText` in `setup/status.ts`.
+ */
+export function modelReasonText(reason: string, locale: Locale = cachedLocale()): string {
+  if (!reason) {
+    return "";
+  }
+  const key = `character.model.${reason}` as MessageKey;
+  return hasMessage(key) ? translate(locale, key) : reason;
+}
+
 export async function loadCharacter(source: ModelSource): Promise<LoadedCharacter> {
   const locale = cachedLocale();
   if (!source.path) {
     // **Not an error.** A voice-only Content Pack is a legitimate Content Pack
-    return { model: createPlaceholder(), fallbackReason: source.reason };
+    return { model: createPlaceholder(), fallbackReason: modelReasonText(source.reason, locale) };
   }
 
   try {

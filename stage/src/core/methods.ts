@@ -37,3 +37,12 @@ export const METHOD_SETTINGS_UPDATE = "stage.settings.update";
  */
 export const CHOICE_INSTALL = "install";
 export const CHOICE_SKIP = "skip";
+
+/**
+ * Why Core says there is no model to draw (ADR-036). **Core sends a code; the wording
+ * is ours**, so a language change reaches this line like it reaches every other.
+ *
+ * Listed for the contract test. **Nothing branches on the list** — `modelReasonText`
+ * renders an unrecognised code verbatim rather than checking membership first.
+ */
+export const CHARACTER_MODEL_REASONS = ["model_not_in_pack", "pack_unreadable"] as const;
