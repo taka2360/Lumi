@@ -19,9 +19,8 @@ from typing import Any
 import numpy as np
 import pytest
 
-from lumi.agent.reactive import METHOD_USER_SAID, LoopLimits, ReactiveLoop
+from lumi.agent.reactive import LoopLimits, ReactiveLoop
 from lumi.agent.session import Session
-from lumi.agent.speech import METHOD_SPEECH_STARTED
 from lumi.audio.devices import AudioPlan, Device, StreamPlan
 from lumi.audio.io import AudioIO
 from lumi.audio.vad import VadEvent
@@ -59,6 +58,7 @@ from lumi.storage.sqlite import Database
 from lumi.tools.base import ToolDescriptor
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
+from lumi.transport.methods import METHOD_SPEECH_STARTED, METHOD_USER_SAID
 from lumi.transport.protocol import Role
 
 RATE = 16_000

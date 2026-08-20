@@ -28,17 +28,8 @@ import {
   EVENT_HOVER_STATE,
 } from "../platform/tauri";
 import { CMD_CORE_ENDPOINT, EVENT_CORE_ENDPOINT } from "./connection";
-import { PROTOCOL_VERSION } from "./protocol";
 import {
-  BOOT_PHASES,
-  ENGINE_RUNTIMES,
-  LLM_SETUP_STATES,
-  SETTINGS_SOURCES,
-  SETUP_COMPONENTS,
-  STT_SETUP_STATES,
-  TTS_SETUP_STATES,
-} from "./store";
-import {
+  CHARACTER_MODEL_REASONS,
   CHOICE_INSTALL,
   CHOICE_SKIP,
   METHOD_EXPRESSION,
@@ -51,7 +42,17 @@ import {
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
   METHOD_USER_SAID,
-} from "./useCoreConnection";
+} from "./methods";
+import {
+  BOOT_PHASES,
+  ENGINE_RUNTIMES,
+  LLM_SETUP_STATES,
+  SETTINGS_SOURCES,
+  SETUP_COMPONENTS,
+  STT_SETUP_STATES,
+  TTS_SETUP_STATES,
+} from "./payloads";
+import { PROTOCOL_VERSION } from "./protocol";
 
 interface Wire {
   protocol_version: number;
@@ -70,6 +71,7 @@ interface Wire {
     viseme: string[];
   };
   setup_components: string[];
+  character_model_reasons: string[];
   inbound_methods: string[];
 }
 
@@ -131,6 +133,13 @@ describe("wire contract", () => {
     // The panel picks its wording from this value. **Drift would ask permission to
     // fetch the wrong thing.**
     expect(SETUP_COMPONENTS).toEqual(wire.setup_components);
+  });
+
+  it("why there is no model to draw", () => {
+    // **Core sends a code and the Stage owns the wording** (ADR-036). The Stage looks up
+    // `character.model.<reason>` by exactly these names, so a code added on one side only
+    // renders as the raw code — visible, but not what anyone intended.
+    expect([...CHARACTER_MODEL_REASONS]).toEqual(wire.character_model_reasons);
   });
 
   it("the fetch-or-not choices", () => {

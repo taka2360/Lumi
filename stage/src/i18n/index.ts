@@ -154,6 +154,8 @@ const ja = {
   "credits.thirdParty.lead": "推移的な依存を含めて {count} 件。依存グラフから生成しています。",
   "credits.packages": "{count} 件",
   "credits.licenses.title": "ライセンス全文",
+  "character.model.model_not_in_pack": "Content Pack にモデルが含まれていません",
+  "character.model.pack_unreadable": "Content Pack を読み込めません",
   "character.load.status": "VRM を読み込めません ({status}): {path}",
   "character.load.failed": "VRM を読み込めません: {reason}",
   "character.load.invalid": "VRM として読めません: {url}",
@@ -274,12 +276,26 @@ const en: Record<keyof typeof ja, string> = {
     "{count} packages including transitive dependencies, generated from the dependency graph.",
   "credits.packages": "{count} packages",
   "credits.licenses.title": "Full license texts",
+  "character.model.model_not_in_pack": "This Content Pack ships no model",
+  "character.model.pack_unreadable": "The Content Pack could not be read",
   "character.load.status": "Could not load VRM ({status}): {path}",
   "character.load.failed": "Could not load VRM: {reason}",
   "character.load.invalid": "The file is not a readable VRM: {url}",
 };
 
 export type MessageKey = keyof typeof ja;
+
+/**
+ * Whether a message exists for `key`. **For keys built from a value Core sent.**
+ *
+ * Core's reason codes (ADR-036) are assembled into keys at runtime, so the type system
+ * cannot vouch for them: a code the Stage has not learned yet would index to
+ * `undefined` and `translate` would throw on `.replace`. Callers ask first and show the
+ * raw code when the answer is no — **visible drift beats a blank caption.**
+ */
+export function hasMessage(key: string): key is MessageKey {
+  return key in ja;
+}
 
 export function translate(
   locale: Locale,

@@ -41,6 +41,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
+from typing import TypeVar
 
 from lumi import logging as lumi_logging
 from lumi import paths, settings
@@ -66,32 +67,24 @@ from lumi.setup.state import (
     TtsSetupState,
     boot_phase,
 )
+from lumi.transport.methods import (
+    CHOICE_INSTALL,
+    COMPONENT_STT,
+    COMPONENT_TTS,
+    METHOD_SETUP_PROMPT,
+    METHOD_SETUP_STATE,
+)
 from lumi.transport.protocol import Role
 from lumi.transport.server import NotConnectedError, WsServer
 
 log = lumi_logging.get_logger(__name__)
 
+#: What a fetch hands back. The engine returns its executable's path; the speech model
+#: returns nothing. **`_install` never looks at it** — it only passes it to `on_installed`.
+T = TypeVar("T")
+
 #: How long to wait for the user's choice. **Human time**, so it's long.
 PROMPT_TIMEOUT_S = 600.0
-
-#: The method for broadcasting state (Core → Stage).
-METHOD_STATE = "stage.setup.state"
-#: The method for asking whether to fetch (Core → Stage, awaits the result).
-METHOD_PROMPT = "stage.setup.prompt"
-
-#: The choices the Stage returns in `result`. **A value that goes on the wire**, so
-#: docs/contracts/wire.json is authoritative (→ ADR-022). `CHOICE_SKIP` isn't used in
-#: any comparison, but it's kept here so **only one side of the contract isn't documented**.
-#: The Stage labels `CHOICE_INSTALL` "retry" after a failure — **same choice, and the
-#: retry count is deliberately unbounded** since the press always comes from the user
-#: (ADR-034), and most fetch failures are the kind that fix themselves.
-CHOICE_INSTALL = "install"
-CHOICE_SKIP = "skip"
-
-#: Which component a question is about. **The panel has to say what it is fetching** —
-#: "may I download this?" without a subject is not consent
-COMPONENT_TTS = "tts"
-COMPONENT_STT = "stt"
 
 #: What `stt_model` resolves to when nothing selects another one. **Pinned**
 #: (docs/architecture/setup.md §3b)
@@ -239,14 +232,18 @@ class SetupCoordinator:
         """
         payload = self._snapshot.to_payload(prompting=self._awaiting_answer)
         log.info("setup.state", **payload)
-        await self._server.notify(Role.STAGE, METHOD_STATE, payload)
+        await self._server.notify(Role.STAGE, METHOD_SETUP_STATE, payload)
 
-    async def set_runtime(self, runtime: EngineRuntime) -> None:
+    async def set_tts_runtime(self, runtime: EngineRuntime) -> None:
         """The TTS engine **process**'s state changed.
 
         A separate axis from installation state, but it's the same single state
         distributed to the Stage, so **broadcasting is consolidated to this one
         exit point** (sending from two places couldn't guarantee ordering).
+
+        Named for its component, like `set_stt_runtime`. It was `set_runtime` while TTS
+        was the only thing with a process; once STT gained a runtime axis (ADR-035) the
+        bare name stopped saying which of the two it moved.
         """
         await self._update(tts=replace(self._snapshot.tts, runtime=runtime))
 
@@ -356,7 +353,7 @@ class SetupCoordinator:
             try:
                 result = await self._server.invoke(
                     Role.STAGE,
-                    METHOD_PROMPT,
+                    METHOD_SETUP_PROMPT,
                     {"component": component, "retry": retry, "reason": detail},
                     timeout=PROMPT_TIMEOUT_S,
                 )
@@ -410,6 +407,48 @@ class SetupCoordinator:
 
         return throttled
 
+    async def _install(
+        self,
+        *,
+        event: str,
+        run: Callable[[], Awaitable[T]],
+        fail: Callable[[str], Awaitable[None]],
+    ) -> T | None:
+        """Runs one fetch. **Returns `None` when it failed**, having already broadcast why.
+
+        The engine and the speech model differ only in which state object they build; how a
+        fetch can end is the same for both, and was written out twice.
+
+        | outcome | what happens |
+        |---|---|
+        | `SetupError` | `fail(reason)` — the reason is what the panel shows |
+        | `CancelledError` | `fail("cancelled")`, **then re-raised** |
+        | anything else | `fail("unexpected_error")`, logged with a traceback |
+        | returned | the value is handed back |
+
+        **The `CancelledError` branch is why this exists.** Dropping the `raise` from one of
+        the two copies would swallow a cancellation during shutdown, and neither the type
+        checker nor the tests would say a word. Now there is one copy to get right.
+
+        **Never reverts to "not yet attempted."** A failure that read as `not_configured`
+        would put the user back in front of the same question with no sign anything happened.
+        """
+        try:
+            return await run()
+        except SetupError as error:
+            log.warning(f"{event}.failed", reason=error.reason, detail=error.detail)
+            await fail(error.reason)
+        except asyncio.CancelledError:
+            # **Broadcast first, then re-raise.** Shutdown still has to unwind; what it must
+            # not do is leave the Stage showing a fetch that is no longer running.
+            await fail("cancelled")
+            raise
+        except Exception:
+            # Even for the unexpected, **what happened is recorded.**
+            log.exception(f"{event}.crashed")
+            await fail("unexpected_error")
+        return None
+
     async def install_tts_engine(self) -> None:
         """Fetches because the user chose to. **No external communication happens before this
         point.**
@@ -424,32 +463,27 @@ class SetupCoordinator:
             )
         )
 
-        async def report(fraction: float) -> None:
+        async def progress(fraction: float) -> None:
             await self._update(tts=replace(self._snapshot.tts, progress=fraction))
 
-        try:
-            executable = await install_engine(
-                artifact, paths.engines_dir(), progress=self._throttled(report)
-            )
-        except SetupError as error:
-            log.warning("setup.install.failed", reason=error.reason, detail=error.detail)
+        async def fail(reason: str) -> None:
             await self._update(
                 tts=TtsSetup(
                     state=TtsSetupState.FAILED,
                     engine_name=artifact.display_name,
                     version=artifact.version,
-                    reason=error.reason,
+                    reason=reason,
                 )
             )
-            return
-        except asyncio.CancelledError:
-            await self._update(tts=TtsSetup(state=TtsSetupState.FAILED, reason="cancelled"))
-            raise
-        except Exception:
-            # Even for the unexpected, **never silently reverts to not-configured.** What happened
-            # is recorded.
-            log.exception("setup.install.crashed")
-            await self._update(tts=TtsSetup(state=TtsSetupState.FAILED, reason="unexpected_error"))
+
+        executable = await self._install(
+            event="setup.install",
+            run=lambda: install_engine(
+                artifact, paths.engines_dir(), progress=self._throttled(progress)
+            ),
+            fail=fail,
+        )
+        if executable is None:
             return
 
         await self._update(
@@ -476,31 +510,23 @@ class SetupCoordinator:
             stt=SttSetup(state=SttSetupState.INSTALLING, model=artifact.name, progress=0.0)
         )
 
-        async def report(fraction: float) -> None:
+        async def progress(fraction: float) -> None:
             await self._update(stt=replace(self._snapshot.stt, progress=fraction))
 
-        try:
+        async def fail(reason: str) -> None:
+            await self._update(
+                stt=SttSetup(state=SttSetupState.FAILED, model=artifact.name, reason=reason)
+            )
+
+        # **Returns the name rather than `None`.** `_install` reports failure as `None`, and
+        # `install_stt_model` returning nothing on success would make the two indistinguishable.
+        async def fetch() -> str:
             await install_stt_model(
-                artifact, paths.stt_models_dir(), progress=self._throttled(report)
+                artifact, paths.stt_models_dir(), progress=self._throttled(progress)
             )
-        except SetupError as error:
-            log.warning("setup.model.failed", reason=error.reason, detail=error.detail)
-            await self._update(
-                stt=SttSetup(state=SttSetupState.FAILED, model=artifact.name, reason=error.reason)
-            )
-            return
-        except asyncio.CancelledError:
-            await self._update(
-                stt=SttSetup(state=SttSetupState.FAILED, model=artifact.name, reason="cancelled")
-            )
-            raise
-        except Exception:
-            log.exception("setup.model.crashed")
-            await self._update(
-                stt=SttSetup(
-                    state=SttSetupState.FAILED, model=artifact.name, reason="unexpected_error"
-                )
-            )
+            return artifact.name
+
+        if await self._install(event="setup.model", run=fetch, fail=fail) is None:
             return
 
         await self._update(stt=SttSetup(state=SttSetupState.INSTALLED, model=artifact.name))

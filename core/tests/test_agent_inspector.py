@@ -12,7 +12,7 @@ import asyncio
 from datetime import UTC, datetime
 from typing import Any
 
-from lumi.agent.inspector import METHOD_INSPECTOR, InspectorPublisher, snapshot
+from lumi.agent.inspector import InspectorPublisher, snapshot
 from lumi.agent.latency import TurnLatency
 from lumi.kernel.activity import (
     Activity,
@@ -28,6 +28,7 @@ from lumi.kernel.event import DomainEvent, EventBus
 from lumi.kernel.ids import new_activity_id, new_correlation_id, new_event_id
 from lumi.storage.events import SqliteEventStore
 from lumi.storage.sqlite import Database
+from lumi.transport.methods import METHOD_INSPECTOR
 from lumi.transport.protocol import Role
 
 

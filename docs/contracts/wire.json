@@ -30,6 +30,11 @@
     "tts",
     "stt"
   ],
+  "$comment_reasons": "stage.character.model の reason（ADR-036）。**Core は表示文字列を送らない。** Stage が i18n の character.model.<reason> で訳す。知らないコードはそのまま表示する",
+  "character_model_reasons": [
+    "model_not_in_pack",
+    "pack_unreadable"
+  ],
   "setup_prompt_choices": {
     "install": "install",
     "skip": "skip"

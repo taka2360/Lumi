@@ -1,10 +1,18 @@
-//! The window contract — **pure functions**.
+//! The window contract — which windows exist, and how each should look.
 //!
-//! Doesn't depend on Tauri, so it can be unit-tested without opening a
-//! window (docs/architecture/ui.md "Extract window settings into pure functions").
+//! The deciding is done by **pure functions** that don't depend on Tauri, so they can
+//! be unit-tested without opening a window (docs/architecture/ui.md "Extract window
+//! settings into pure functions"). The two `#[tauri::command]`s below are the only
+//! parts that touch a real window, and they do nothing but apply what those functions
+//! decided.
 //!
 //! Only "how it should look" lives here. **No AI judgment enters at all**
 //! (`shell.*` never carries AI judgment → docs/architecture/core.md §3).
+//!
+//! **Where the cursor is, and what that means, is `hover.rs`.** The hit region and the
+//! click-through / dwell decisions used to live here, back when this file meant
+//! "anything about the window" — but their only caller is the cursor watcher, and a
+//! rule read in one place belongs next to it.
 
 /// Window list → docs/architecture/ui.md §1
 ///
@@ -294,103 +302,12 @@ pub fn compute_credits_window_options(locale: crate::locale::Locale) -> WindowSp
     }
 }
 
-/// A point on screen (physical pixels).
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub struct Point {
-    pub x: f64,
-    pub y: f64,
-}
-
-/// The character's hit-test region. Computed by the Stage from the VRM's
-/// render output and handed to Shell (docs/architecture/ui.md "Hover
-/// detection implementation approach").
-///
-/// Coordinates are in the **Stage window's client coordinates** (top-left
-/// origin, physical pixels). Combining it with the window position is the caller's job.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct HitRegion {
-    pub rects: Vec<HitRect>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize)]
-pub struct HitRect {
-    pub x: f64,
-    pub y: f64,
-    pub width: f64,
-    pub height: f64,
-}
-
-impl HitRect {
-    fn contains(&self, p: Point) -> bool {
-        p.x >= self.x && p.x < self.x + self.width && p.y >= self.y && p.y < self.y + self.height
-    }
-}
-
-impl HitRegion {
-    pub fn contains(&self, p: Point) -> bool {
-        self.rects.iter().any(|r| r.contains(p))
-    }
-
-    /// An empty region = either nothing has arrived from the Stage yet, or there's nothing to render.
-    pub fn is_empty(&self) -> bool {
-        self.rects.is_empty()
-    }
-}
-
-/// Whether click-through should be released. **A pure function.**
-///
-/// `true` = click-through (ignores mouse events and passes them to the window behind).
-///
-/// **Click-through when the region is unset** (the fail-safe side, not
-/// fail-open). Falling to fail-closed (grabbing clicks) here would make the
-/// entire desktop unclickable the instant the Stage breaks. **The user being
-/// unable to operate their PC is the more dangerous outcome.**
-pub fn decide_click_through(cursor: Point, region: &HitRegion) -> bool {
-    if region.is_empty() {
-        return true;
-    }
-    !region.contains(cursor)
-}
-
-/// The cursor's dwell state. Notified to the Stage as `shell.hover.state`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HoverState {
-    Outside,
-    Inside,
-}
-
-/// The hover-state transition. **A pure function.**
-///
-/// Returns `None` if unchanged from last time. **IPC is only emitted on a
-/// change**, since polling at 60Hz would eat through `shell.*`'s 1ms budget if sent every cycle.
-pub fn decide_hover_transition(
-    cursor: Point,
-    region: &HitRegion,
-    prev: HoverState,
-) -> Option<HoverState> {
-    let next = if !region.is_empty() && region.contains(cursor) {
-        HoverState::Inside
-    } else {
-        HoverState::Outside
-    };
-    if next == prev {
-        None
-    } else {
-        Some(next)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     // Tests are allowed to panic, so unwrap is permitted here.
     #![allow(clippy::unwrap_used)]
 
     use super::*;
-
-    fn region() -> HitRegion {
-        HitRegion { rects: vec![HitRect { x: 100.0, y: 200.0, width: 50.0, height: 60.0 }] }
-    }
 
     fn full_hd() -> ScreenArea {
         // The work area at 1080p, excluding the 48px taskbar.
@@ -511,42 +428,6 @@ mod tests {
         assert!(spec.decorations);
         assert!(spec.focused);
         assert!(!spec.always_on_top);
-    }
-
-    #[test]
-    fn click_through_is_released_only_inside_the_region() {
-        let r = region();
-        assert!(!decide_click_through(Point { x: 120.0, y: 230.0 }, &r));
-        assert!(decide_click_through(Point { x: 99.0, y: 230.0 }, &r));
-        assert!(decide_click_through(Point { x: 120.0, y: 199.0 }, &r));
-        // The right and bottom edges are exclusive (avoids double-counting with an adjacent rect)
-        assert!(decide_click_through(Point { x: 150.0, y: 230.0 }, &r));
-        assert!(decide_click_through(Point { x: 120.0, y: 260.0 }, &r));
-    }
-
-    #[test]
-    fn click_through_stays_on_when_region_is_unknown() {
-        // The desktop must remain operable even if the Stage is down
-        let empty = HitRegion::default();
-        assert!(decide_click_through(Point { x: 120.0, y: 230.0 }, &empty));
-    }
-
-    #[test]
-    fn hover_transition_fires_only_on_change() {
-        let r = region();
-        let inside = Point { x: 120.0, y: 230.0 };
-        let outside = Point { x: 0.0, y: 0.0 };
-
-        assert_eq!(
-            decide_hover_transition(inside, &r, HoverState::Outside),
-            Some(HoverState::Inside)
-        );
-        assert_eq!(decide_hover_transition(inside, &r, HoverState::Inside), None);
-        assert_eq!(
-            decide_hover_transition(outside, &r, HoverState::Inside),
-            Some(HoverState::Outside)
-        );
-        assert_eq!(decide_hover_transition(outside, &r, HoverState::Outside), None);
     }
 
     #[test]

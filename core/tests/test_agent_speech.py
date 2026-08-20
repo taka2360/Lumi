@@ -14,7 +14,7 @@ from typing import Any
 
 import numpy as np
 
-from lumi.agent.speech import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED, PlaybackScheduler
+from lumi.agent.speech import PlaybackScheduler
 from lumi.audio.devices import Device, StreamPlan
 from lumi.audio.playback import (
     PLAYBACK_RING_SECONDS,
@@ -24,6 +24,7 @@ from lumi.audio.playback import (
 from lumi.kernel.cancellation import CancelToken
 from lumi.providers.base import ProviderFailed, ProviderNotConfigured
 from lumi.providers.tts.base import SpeechAudio, VoiceConfig
+from lumi.transport.methods import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED
 from lumi.transport.protocol import Role
 
 RATE = 16_000
