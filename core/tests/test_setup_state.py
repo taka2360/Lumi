@@ -156,11 +156,37 @@ class TestBootPhase:
         stopped = LlmSetup(state=LlmSetupState.DETECTED, runtime=EngineRuntime.STOPPED)
         assert boot_phase(snapshot(llm=stopped), prompting=False) is BootPhase.BLOCKED
 
+    def test_a_wait_is_only_shown_when_it_can_reach_ready(self) -> None:
+        """★ Regression (observed 2026-08-20): **"starting AivisSpeech…" was shown for two
+        minutes after the user declined the speech model**, and setup was declared
+        incomplete only once the engine finished coming up.
+
+        The engine starting is a wait worth showing **only when it is the last thing
+        missing**. With anything else already settled against it, finishing the wait
+        reaches `blocked` either way — so it is said now, while the user is still there.
+        """
+        starting = TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.STARTING)
+        declined = SttSetup(state=SttSetupState.NOT_CONFIGURED)
+
+        blocked = snapshot(tts=starting, stt=declined)
+        assert boot_phase(blocked, prompting=False) is BootPhase.BLOCKED
+        # The same engine state, with nothing else missing, is still a wait worth showing.
+        assert boot_phase(snapshot(tts=starting), prompting=False) is BootPhase.STARTING
+
+    def test_a_missing_llm_does_not_wait_for_the_engine_either(self) -> None:
+        """Lumi neither fetches nor starts Ollama, so **there was never anything to wait for.**"""
+        stopped = TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.STOPPED)
+        no_llm = LlmSetup(state=LlmSetupState.NOT_CONFIGURED)
+
+        assert boot_phase(snapshot(tts=stopped, llm=no_llm), prompting=False) is BootPhase.BLOCKED
+
     @pytest.mark.parametrize("progress", [0.0, 0.2, 1.0])
     def test_a_fetch_in_progress_beats_blocked(self, progress: float) -> None:
         """**Something on its way to working shows its progress**, not "you are missing this."
 
-        Both are true at that moment; only one of them is useful.
+        Unlike the engine starting, a fetch is **the user's own choice in progress**: hiding
+        the progress bar of a download they just asked for, to show them a list instead,
+        would be its own kind of lying about what is happening.
         """
         fetching = SttSetup(state=SttSetupState.INSTALLING, progress=progress)
         assert boot_phase(snapshot(stt=fetching), prompting=False) is BootPhase.INSTALLING

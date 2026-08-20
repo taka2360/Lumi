@@ -251,8 +251,8 @@ def boot_phase(setup: SetupSnapshot, *, prompting: bool) -> BootPhase:
     than as unfinished — the loading screen's own reasoning, applied to a wait that never
     ends.
 
-    The three loading-ish phases are still separated from `BLOCKED`, because **only they
-    are actually waiting on Lumi**:
+    The three loading-ish phases are separated from `BLOCKED`, because **only they are
+    actually waiting on Lumi**:
 
     | phase | waiting on |
     |---|---|
@@ -261,18 +261,31 @@ def boot_phase(setup: SetupSnapshot, *, prompting: bool) -> BootPhase:
     | `STARTING` | the engine process coming up |
     | `BLOCKED` | **the user, outside Lumi** (install Ollama, retry, or give up) |
 
-    Order matters: the fetch and start phases are checked first so that a component
-    currently *becoming* usable shows its progress instead of being reported as missing.
+    **A wait is only worth showing when finishing it would actually reach `READY`.** So
+    anything already settled against us is answered first: with the speech model declined,
+    the engine coming up changes nothing, and "starting AivisSpeech…" is a loading screen
+    for an outcome that cannot happen. Declining a component and then being made to wait
+    two minutes to be told setup is incomplete is the exact opposite of what the phase is
+    for (observed 2026-08-20).
+
+    `INSTALLING` stays ahead of it, because a fetch is **the user's own choice in
+    progress** — hiding the progress bar of a download they just asked for, to show them a
+    list, would be its own kind of lying about what is happening.
     """
     if prompting:
         return BootPhase.SETUP
     if setup.tts.state is TtsSetupState.INSTALLING or setup.stt.state is SttSetupState.INSTALLING:
         return BootPhase.INSTALLING
+    if not (setup.llm.ready and setup.stt.ready):
+        # **Nothing Lumi is about to do will fix these**, so there is nothing to wait for.
+        # Said now, while the user is still here to act on it.
+        return BootPhase.BLOCKED
     if setup.tts.installed and setup.tts.runtime in (EngineRuntime.STOPPED, EngineRuntime.STARTING):
-        # **It just hasn't started yet — it's about to.** Marking this READY would make the
-        # character flash in and then vanish (hit this in practice).
+        # **It just hasn't started yet — it's about to**, and it is the last thing missing.
+        # Marking this READY would make the character flash in and then vanish (hit this in
+        # practice).
         return BootPhase.STARTING
-    if not (setup.tts.ready and setup.llm.ready and setup.stt.ready):
+    if not setup.tts.ready:
         # **A failed fetch lands here, never in READY.** Treating it as done is precisely
         # how "could not download" got overwritten by "started successfully" (ADR-034).
         return BootPhase.BLOCKED

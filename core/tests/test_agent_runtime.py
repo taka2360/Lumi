@@ -154,13 +154,25 @@ def no_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def conversation_is_possible(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Everything except the TTS engine is in place.
+    """Everything except the TTS engine is in place — **including at detection time.**
 
-    The LLM's state is settled by `warm_llm` from whatever Provider is registered, so all
-    that is needed here is the speech model on disk — the one component decided by
-    looking at the filesystem.
+    The speech model is a filesystem check, and Ollama is settled either by detection or by
+    `warm_llm` reporting. Both have to say yes here: **the boot phase now answers what is
+    already settled against it before it shows any wait** (ADR-034 / setup.md §2b), so a
+    missing LLM would keep the phase at `blocked` and no `starting` would ever be broadcast.
     """
     monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: True)
+
+    async def detect(_env: Any) -> DetectedEngine | None:
+        return DetectedEngine(
+            name="ollama",
+            display_name="Ollama",
+            port=11434,
+            executable=Path("C:/ollama.exe"),
+            running=True,
+        )
+
+    monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
 
 
 def detects(monkeypatch: pytest.MonkeyPatch, engines: list[DetectedEngine]) -> None:
@@ -436,21 +448,43 @@ class TestWarmTts:
         showing the loading screen even though the engine is already able to speak.
         """
         detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        # The engine has to be **the last thing missing** for its startup to be worth
+        # showing as a wait at all (setup.md §2b).
+        conversation_is_possible(monkeypatch)
         server = FakeServer()
         coordinator = await make_coordinator(server)
         providers = ProviderRegistry()
         provider = FakeTts()
         providers.register(provider)
 
-        conversation_is_possible(monkeypatch)
         await warm_tts(providers, coordinator)
 
         assert provider.load_calls == 1, "最初の発話まで起動を先送りしていない"
         assert coordinator.state.tts.runtime is EngineRuntime.READY
         assert server.boots[0] == "starting", "起動中であることを先に見せる"
-        # **Still `blocked`**: the engine speaks, but nothing here has said the LLM
-        # answers yet. `warm_llm` is what moves it the rest of the way (ADR-034).
-        assert server.boots[-1] == "blocked"
+        assert server.boots[-1] == "ready"
+
+    async def test_does_not_show_a_wait_that_leads_nowhere(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ Regression (observed 2026-08-20): **declining the speech model still showed
+        "starting AivisSpeech…" for two minutes, and only then said setup was incomplete.**
+
+        Nothing about the engine coming up could have changed that outcome. The answer was
+        already known when the user answered, and that is when they were still there to act
+        on it.
+        """
+        detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: False)
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+        providers = ProviderRegistry()
+        providers.register(FakeTts())
+
+        await warm_tts(providers, coordinator)
+
+        assert "starting" not in server.boots, "揃わないと分かっているのに待たせている"
+        assert set(server.boots) == {"blocked"}
 
     async def test_a_broken_engine_blocks_startup(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path

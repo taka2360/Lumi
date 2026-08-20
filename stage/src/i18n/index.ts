@@ -114,12 +114,12 @@ const ja = {
   "status.failure.executable_not_found": "展開結果に実行ファイルがありませんでした",
   "status.failure.tar_not_found": "展開に使う tar が見つかりませんでした",
   "status.failure.network_unreachable": "ネットワークに接続できませんでした",
+  "status.failure.disk_error":
+    "ファイルの書き込みに失敗しました（空き容量とアクセス権を確認してください）",
   "status.failure.model_incomplete": "取得したモデルのファイルが揃いませんでした",
   "status.failure.unknown_model": "指定されたモデルは取得対象ではありません",
   "status.failure.cancelled": "中断されました",
   "status.failure.unexpected_error": "想定外のエラーが起きました",
-  "status.tts.starting":
-    "{engine} を起動しています…（初回はエンジンが音声モデルを取得するため数分かかります）",
   "status.tts.failed": "{engine} を起動できませんでした（入ってはいますが、動いていません）",
   "status.tts.installing": "{engine} を取得中… {percent}%",
   "status.tts.missing": "音声合成エンジンがセットアップされていません（Lumi は喋れません）",
@@ -231,12 +231,11 @@ const en: Record<keyof typeof ja, string> = {
   "status.failure.executable_not_found": "No executable was found in the extracted files",
   "status.failure.tar_not_found": "The tar utility required for extraction was not found",
   "status.failure.network_unreachable": "Could not connect to the network",
+  "status.failure.disk_error": "Could not write the files (check free space and permissions)",
   "status.failure.model_incomplete": "The downloaded model is missing required files",
   "status.failure.unknown_model": "The requested model is not available for download",
   "status.failure.cancelled": "Download cancelled",
   "status.failure.unexpected_error": "An unexpected error occurred",
-  "status.tts.starting":
-    "Starting {engine}… (first launch may take several minutes while the engine downloads its voice model)",
   "status.tts.failed": "Could not start {engine} (it is installed, but not running)",
   "status.tts.installing": "Downloading {engine}… {percent}%",
   "status.tts.missing": "The speech synthesis engine is not set up (Lumi cannot speak)",

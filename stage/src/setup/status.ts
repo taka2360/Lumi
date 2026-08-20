@@ -59,6 +59,7 @@ const FAILURE_KEYS: Record<string, MessageKey> = Object.fromEntries(
     "executable_not_found",
     "tar_not_found",
     "network_unreachable",
+    "disk_error",
     "model_incomplete",
     "unknown_model",
     "cancelled",
@@ -84,12 +85,13 @@ export function ttsStatus(tts: TtsSetupSnapshot, locale: Locale = "ja"): StatusL
   // **The process state is checked first.** Painting over "installed but won't start" with
   // "installed" would leave the user with nothing to act on
   // (docs/architecture/setup.md "Never mix installation state and process state").
-  if (tts.runtime === "starting") {
-    return {
-      tone: "normal",
-      text: translate(locale, "status.tts.starting", { engine }),
-    };
-  }
+  //
+  // **`starting` deliberately produces no line.** These lines are the list of what the user
+  // still has to resolve, and an engine that is warming up in the background is not on it —
+  // it needs nothing from them, and it goes away on its own. The one screen that can render
+  // this while the engine is coming up is the incomplete-setup screen, and putting "starting
+  // AivisSpeech…" under "Lumi can start once the following are in place" would read as a
+  // fourth thing to wait for. When it comes up broken, `failed` below says so.
   if (tts.runtime === "failed") {
     return {
       tone: "bad",

@@ -211,8 +211,15 @@ def make_archive(path: Path, *, with_executable: bool) -> None:
 
 
 def fake_download(
-    *, archive_source: Path | None, error: SetupError | None = None
+    *, archive_source: Path | None, error: BaseException | None = None
 ) -> Callable[..., Awaitable[None]]:
+    """Stands in for the fetch.
+
+    **`error` is typed as `BaseException`, not `SetupError`.** Every failure test used to
+    hand back a ready-made `SetupError`, which quietly assumed the very translation that
+    did not exist — see `TestFailuresBecomeReasons`.
+    """
+
     async def _fake(
         _client: httpx.AsyncClient,
         _url: str,
@@ -260,6 +267,78 @@ class TestInstall:
             await install_engine(artifact_for(), engines)
 
         assert not (engines / "testengine-1.0.0").exists(), "確定先が作られている"
+        assert not list(engines.glob(".tmp-*")), "一時ディレクトリが残っている"
+
+    async def test_a_dropped_connection_is_reported_as_a_network_failure(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ Regression: **a dropped download reached the user as "an unexpected error."**
+
+        `network_unreachable` was a phrase the panel knew how to say and Core could never
+        produce, because nothing turned an `httpx` exception into a reason. The user was
+        offered a dead end for the one failure that a retry actually fixes.
+
+        **The old test for this raised `SetupError("network_unreachable")` itself**, so it
+        proved only that a `SetupError` survives — the translation it stood for was never
+        executed. This one raises what `httpx` really raises.
+        """
+        monkeypatch.setattr(
+            install_module,
+            "_download",
+            fake_download(archive_source=None, error=httpx.ConnectError("connection refused")),
+        )
+        engines = tmp_path / "engines"
+
+        with pytest.raises(SetupError) as raised:
+            await install_engine(artifact_for(), engines)
+
+        assert raised.value.reason == "network_unreachable"
+        assert "ConnectError" in (raised.value.detail or ""), "何が起きたかが失われている"
+        assert not list(engines.glob(".tmp-*")), "一時ディレクトリが残っている"
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            httpx.ConnectTimeout("timed out"),
+            httpx.ReadTimeout("read timed out"),
+            httpx.RemoteProtocolError("server disconnected"),
+        ],
+    )
+    async def test_every_kind_of_network_failure_gets_the_same_reason(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: httpx.HTTPError
+    ) -> None:
+        """**The whole `httpx.HTTPError` family**, not just the one that was hit.
+
+        A 480 MB fetch dies in more ways than "refused" — mid-stream disconnects and read
+        timeouts are the common ones, and they ask the same thing of the user.
+        """
+        monkeypatch.setattr(
+            install_module, "_download", fake_download(archive_source=None, error=error)
+        )
+
+        with pytest.raises(SetupError) as raised:
+            await install_engine(artifact_for(), tmp_path / "engines")
+
+        assert raised.value.reason == "network_unreachable"
+
+    async def test_a_filesystem_failure_says_so_instead(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The other half of a 480 MB fetch: a full disk, a denied path, a file held open.
+
+        **Distinguished from the network**, because what the user has to go fix is different.
+        """
+        monkeypatch.setattr(
+            install_module,
+            "_download",
+            fake_download(archive_source=None, error=OSError(28, "No space left on device")),
+        )
+        engines = tmp_path / "engines"
+
+        with pytest.raises(SetupError) as raised:
+            await install_engine(artifact_for(), engines)
+
+        assert raised.value.reason == "disk_error"
         assert not list(engines.glob(".tmp-*")), "一時ディレクトリが残っている"
 
     async def test_does_not_commit_when_the_executable_is_missing(

@@ -168,6 +168,9 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
 
 - [ ] **検証手順 15〜18 を別マシンで通す**（取得の経路。**LLM / STT のセットアップが同じ経路に乗った後**にまとめて回す）
 - [ ] **ネットワーク断線の実試験**（単体テストでは `.tmp-*` が残らないことを確認済み。実断線は未実施）
+  - 〔2026-08-20〕**未実施のまま出た**: 実際の断線で `unexpected_error` が表示された。
+    `httpx` の例外を理由に変換していなかったため → [architecture/setup.md](architecture/setup.md) §4「失敗は必ず『言える理由』になる」。
+    単体テストは追加した（実例外を投げる）が、**実断線の試験はまだ持ち越しである**
 - [x] **既定同梱 VRM モデル（光莉 / 作者: あわ）を `content/` に置き、配布物に含める経路を通す**（リポジトリにはコミットしない → [licensing.md](licensing.md) §4.5）〔2026-08-19。**Core が決め、Shell が配信し、Stage が描く** → [ADR-029](decisions/ADR-029-content-pack-asset-delivery.md)。PyInstaller spec が `model.vrm` の同梱を fail-closed で確認する〕
 - [ ] release ビルドでのカーソル監視 CPU 実測（debug では 1コア 2.8%）
 

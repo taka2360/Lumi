@@ -139,6 +139,46 @@ describe("the incomplete-setup screen", () => {
     expect(view.querySelectorAll("button")).toHaveLength(1);
   });
 
+  it("does not list an engine that is merely warming up", () => {
+    // ★ Regression (observed 2026-08-20): declining the speech model used to hand the user
+    // "starting AivisSpeech…" for two minutes before admitting setup was incomplete. Core
+    // now says `blocked` immediately — and **the engine coming up in the background must
+    // not reappear here as a fourth thing to wait for.** It needs nothing from the user.
+    const view = render(
+      working({
+        tts: { ...UNKNOWN_SETUP.tts, state: "installed", runtime: "starting" },
+        stt: { ...UNKNOWN_SETUP.stt, state: "not_configured" },
+      }),
+    );
+    const lines = view.querySelectorAll(".panel__status");
+
+    expect(lines).toHaveLength(1);
+    expect(view.textContent).toContain("音声認識モデル");
+    expect(view.textContent).not.toContain("起動しています");
+  });
+
+  it("still says so when the engine turns out to be broken", () => {
+    // The other half: **not waiting is not the same as not looking.** The engine is still
+    // started in the background, and a failure to start is a second thing to fix — found
+    // now rather than on the next run.
+    const view = render(
+      working({
+        tts: {
+          ...UNKNOWN_SETUP.tts,
+          state: "installed",
+          runtime: "failed",
+          engine_name: "AivisSpeech",
+        },
+        stt: { ...UNKNOWN_SETUP.stt, state: "not_configured" },
+      }),
+    );
+
+    expect(view.querySelectorAll(".panel__status")).toHaveLength(2);
+    expect(view.querySelector(".panel__status--bad")?.textContent).toContain(
+      "起動できませんでした",
+    );
+  });
+
   it("draws nothing at all once everything works", () => {
     const view = render(working({ boot: "ready" }));
 
