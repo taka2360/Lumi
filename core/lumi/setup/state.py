@@ -198,7 +198,12 @@ class LlmSetup:
 
 @dataclass(frozen=True, slots=True)
 class SttSetup:
-    """The speech-recognition model's state. **A file, not a process** — so no runtime axis."""
+    """The speech-recognition model's installation and Provider runtime state.
+
+    A complete set of files is not the same as a model CTranslate2 can load. Keeping the
+    axes separate prevents a CUDA / compute-type / corrupt-weight failure from being
+    reported as a failed download (ADR-035).
+    """
 
     state: SttSetupState = SttSetupState.UNKNOWN
     #: Which model (`small` etc.). Part of what identifies what was fetched
@@ -206,6 +211,8 @@ class SttSetup:
     reason: str | None = None
     #: Fetch progress (0.0-1.0). Only populated for `INSTALLING`
     progress: float | None = None
+    #: Whether the Provider can transcribe. Separate from whether its files are installed.
+    runtime: EngineRuntime = EngineRuntime.STOPPED
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -213,12 +220,13 @@ class SttSetup:
             "model": self.model,
             "reason": self.reason,
             "progress": self.progress,
+            "runtime": str(self.runtime),
         }
 
     @property
     def ready(self) -> bool:
-        """Whether Lumi **can hear right now** (ADR-034). A file check — there is no process."""
-        return self.state is SttSetupState.INSTALLED
+        """Whether Lumi **can hear right now** (ADR-034 / ADR-035)."""
+        return self.state is SttSetupState.INSTALLED and self.runtime is EngineRuntime.READY
 
 
 @dataclass(frozen=True, slots=True)
@@ -258,7 +266,7 @@ def boot_phase(setup: SetupSnapshot, *, prompting: bool) -> BootPhase:
     |---|---|
     | `SETUP` | the user's answer to a question on screen |
     | `INSTALLING` | a fetch with progress |
-    | `STARTING` | the engine process coming up |
+    | `STARTING` | a Provider becoming usable (TTS process start / STT model load) |
     | `BLOCKED` | **the user, outside Lumi** (install Ollama, retry, or give up) |
 
     **A wait is only worth showing when finishing it would actually reach `READY`.** So
@@ -276,17 +284,22 @@ def boot_phase(setup: SetupSnapshot, *, prompting: bool) -> BootPhase:
         return BootPhase.SETUP
     if setup.tts.state is TtsSetupState.INSTALLING or setup.stt.state is SttSetupState.INSTALLING:
         return BootPhase.INSTALLING
-    if not (setup.llm.ready and setup.stt.ready):
-        # **Nothing Lumi is about to do will fix these**, so there is nothing to wait for.
-        # Said now, while the user is still here to act on it.
+    if not setup.llm.ready:
+        # Lumi neither installs nor starts Ollama, so waiting cannot change this state.
         return BootPhase.BLOCKED
-    if setup.tts.installed and setup.tts.runtime in (EngineRuntime.STOPPED, EngineRuntime.STARTING):
-        # **It just hasn't started yet — it's about to**, and it is the last thing missing.
-        # Marking this READY would make the character flash in and then vanish (hit this in
-        # practice).
+    if not setup.tts.installed or setup.stt.state is not SttSetupState.INSTALLED:
+        # Missing / failed acquisition is settled against us. A runtime warmup cannot fix it.
+        return BootPhase.BLOCKED
+    if setup.tts.runtime is EngineRuntime.FAILED or setup.stt.runtime is EngineRuntime.FAILED:
+        # Installed but unusable. **Never rewrite this as an acquisition failure** (ADR-035).
+        return BootPhase.BLOCKED
+    if setup.tts.runtime in (
+        EngineRuntime.STOPPED,
+        EngineRuntime.STARTING,
+    ) or setup.stt.runtime in (EngineRuntime.STOPPED, EngineRuntime.STARTING):
+        # Both are installed and Core is about to make them usable. This wait can reach READY.
         return BootPhase.STARTING
-    if not setup.tts.ready:
-        # **A failed fetch lands here, never in READY.** Treating it as done is precisely
-        # how "could not download" got overwritten by "started successfully" (ADR-034).
+    if not (setup.tts.ready and setup.stt.ready):
+        # Fail closed if a future runtime value reaches here without being explicitly handled.
         return BootPhase.BLOCKED
     return BootPhase.READY

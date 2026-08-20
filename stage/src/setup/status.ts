@@ -156,6 +156,9 @@ export function llmStatus(llm: LlmSetupSnapshot, locale: Locale = "ja"): StatusL
 }
 
 export function sttStatus(stt: SttSetupSnapshot, locale: Locale = "ja"): StatusLine | null {
+  if (stt.runtime === "failed") {
+    return { tone: "bad", text: translate(locale, "status.stt.failed") };
+  }
   switch (stt.state) {
     case "installing":
       return {

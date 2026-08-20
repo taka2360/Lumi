@@ -36,7 +36,7 @@ from lumi.providers.registry import ProviderRegistry
 from lumi.setup import coordinator as coordinator_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
-from lumi.setup.state import EngineRuntime
+from lumi.setup.state import EngineRuntime, SttSetupState
 from lumi.transport.protocol import Role
 from lumi.transport.server import RequestRefused, WsServer
 
@@ -46,6 +46,7 @@ class FakeServer:
 
     def __init__(self) -> None:
         self.boots: list[str] = []
+        self.stt_runtimes: list[str] = []
         #: Inbound routes the runtime registered. **The allowlist is this registry** (ADR-028)
         self.inbound: dict[str, Any] = {}
         #: Every settings payload broadcast. **Changing one has to reach everybody**
@@ -58,6 +59,7 @@ class FakeServer:
         assert role is Role.STAGE
         if method == "stage.setup.state" and payload is not None:
             self.boots.append(str(payload["boot"]))
+            self.stt_runtimes.append(str(payload["stt"]["runtime"]))
         if method == "stage.settings.state" and payload is not None:
             self.settings.append(payload)
 
@@ -325,6 +327,7 @@ class TestEverythingIsWarmed:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        conversation_is_possible(monkeypatch)
         server = FakeServer()
         coordinator = await make_coordinator(server)
         providers = ProviderRegistry()
@@ -339,6 +342,8 @@ class TestEverythingIsWarmed:
 
         cold = [kind.value for kind, provider in registered.items() if not provider.is_loaded()]
         assert not cold, f"起動時に温めていない Provider がある: {cold}"
+        assert coordinator.state.stt.runtime is EngineRuntime.READY
+        assert server.stt_runtimes[-2:] == ["starting", "ready"]
 
     async def test_voice_input_starts_only_after_everything_is_ready(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -434,10 +439,38 @@ class TestEverythingIsWarmed:
         server = FakeServer()
         providers = ProviderRegistry()
         providers.register(FakeTts(fails=True, kind=ProviderKind.STT))
+        coordinator = SetupCoordinator(server.as_server(), {})
 
-        await warm_stt(providers)  # **raises nothing**
+        await warm_stt(providers, coordinator)  # **raises nothing**
 
         assert server.boots == []
+
+    async def test_a_failed_stt_load_blocks_startup_and_skips_ready_callback(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """An installed model that cannot load is broken, not a successful warmup."""
+        detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        conversation_is_possible(monkeypatch)
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+        providers = ProviderRegistry()
+        providers.register(FakeTts())
+        providers.register(FakeTts(kind=ProviderKind.LLM))
+        providers.register(FakeTts(fails=True, kind=ProviderKind.STT))
+        called = False
+
+        async def on_ready() -> None:
+            nonlocal called
+            called = True
+
+        await _warm(providers, coordinator, "qwen3:8b", on_ready=on_ready)
+
+        assert not called
+        assert coordinator.state.stt.state is SttSetupState.INSTALLED
+        assert coordinator.state.stt.runtime is EngineRuntime.FAILED
+        assert coordinator.state.stt.reason is None
+        assert server.stt_runtimes[-2:] == ["starting", "failed"]
+        assert coordinator.boot.value == "blocked"
 
 
 class TestWarmTts:
@@ -453,6 +486,8 @@ class TestWarmTts:
         conversation_is_possible(monkeypatch)
         server = FakeServer()
         coordinator = await make_coordinator(server)
+        # Isolate the TTS transition: STT has its own runtime axis now (ADR-035).
+        await coordinator.set_stt_runtime(EngineRuntime.READY)
         providers = ProviderRegistry()
         provider = FakeTts()
         providers.register(provider)

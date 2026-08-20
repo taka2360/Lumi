@@ -25,13 +25,14 @@
 | 3 | **部分的にインストールされた状態を残さない** | 確定は最後の 1 手（ディレクトリの rename）。失敗したら一時ディレクトリごと消える |
 | 4 | **黙って劣化しない** | 取得しなかった / 失敗したは、どちらも「TTS 未セットアップ」として画面に出る。無音で動き続けない |
 
-> **「取得しない」は壊れている状態ではない。** ただし Lumi は起動しない〔[ADR-034](../decisions/ADR-034-gate-startup-on-complete-setup.md) で変更〕。
+> **「取得しない」は壊れている状態ではない。** ただし Lumi は起動せず、セットアップ未完了の
+> `blocked` 画面に留まる〔[ADR-034](../decisions/ADR-034-gate-startup-on-complete-setup.md) で変更〕。
 > 「セットアップが完了していない」と「取得に失敗した」を、UI でもログでも区別する
 > （[core.md](core.md) §6「セットアップされていない場合と、起動に失敗した場合を区別する」）。
 >
 > **原則2は維持する。** ボタンは同じ大きさ・同じ重さで並べ、拒否側を灰色にしない。
 > 変わったのは選択肢の対等さではなく、「取得しない」の**帰結**である
-> （拒否すると、セットアップ未完了のまま Lumi を終了する）。
+> （拒否すると、セットアップ未完了の `blocked` 画面に留まり、ユーザーはそこから [終了] を選べる）。
 
 ---
 
@@ -102,7 +103,7 @@ installed  ×  failed    → 入っているのに起動できない = **壊れ�
 
 ---
 
-## 2b. LLM / STT のセットアップ状態〔Phase 1。決定 → [ADR-023](../decisions/ADR-023-llm-runtime-and-model-acquisition.md)〕
+## 2b. LLM / STT のセットアップ状態〔Phase 1。決定 → [ADR-023](../decisions/ADR-023-llm-runtime-and-model-acquisition.md) / [ADR-035](../decisions/ADR-035-separate-stt-installation-and-runtime-state.md)〕
 
 **§1 の4原則は3つとも同じ。取得方法だけが違う。**
 
@@ -141,6 +142,16 @@ barge-in は中核機能であり、「取得するまで遮れない」状態�
 TTS と**同型**（`not_configured` → `installing` → `installed` / `failed`）。
 取得は §3〜§5 の経路をそのまま使う（ピン留め + サイズ + SHA-256 + 原子的なインストール + ロールバック）。
 
+`failed` は**モデル取得の失敗**だけを表す。取得済みモデルを CTranslate2 がロードできない場合は
+`installed × runtime: failed` であり、取得失敗には戻さない（[ADR-035](../decisions/ADR-035-separate-stt-installation-and-runtime-state.md)）。
+
+| Provider の状態 | 意味 |
+|---|---|
+| `stopped` | まだモデルをロードしていない |
+| `starting` | CTranslate2 がモデルをロード中 |
+| `ready` | 推論できる |
+| `failed` | モデルは取得済みだがロードできない |
+
 **ライブラリ既定の自動ダウンロードは無効にする。** `faster-whisper` / `huggingface_hub` は
 モデルが無ければ黙って取りに行くため、原則1（ユーザーが選ぶまで外部通信しない）が
 **ライブラリの都合で迂回される**。キャッシュに無ければ明示的に失敗させる。
@@ -167,10 +178,9 @@ Phase 0 の `boot` は TTS だけを見ていた。**LLM / STT / TTS の3つか�
 |---|---|---|---|
 | 1 | 質問を出している | `setup` | 答えを待っている |
 | 2 | **TTS か STT を取得中** | `installing` | 進捗があり、**ユーザー自身が選んだ処理**が進んでいる |
-| 3 | **LLM か STT が使えない** | `blocked` | **待っても揃わないと既に分かっている。** 不足項目と解決方法を出す |
-| 4 | TTS が使えるがプロセス未起動 | `starting` | 起動中。**これが最後の1つ**。ここで `ready` にするとキャラが出て消える |
-| 5 | TTS が使えない | `blocked` | 取得していない / 失敗した / 入っているのに起動しない |
-| 6 | 3つとも使える | `ready` | — |
+| 3 | 導入の不足・取得失敗、LLM が使えない、または Provider の起動・ロード失敗 | `blocked` | **待っても揃わないと既に分かっている。** 不足項目と解決方法を出す |
+| 4 | 導入済みの TTS / STT が `stopped` / `starting` | `starting` | Core が起動・ロード中。終われば `ready` に届く |
+| 5 | 3つとも使える | `ready` | — |
 
 #### 3 が 4 より先にある理由〔2026-08-20 修正〕
 
@@ -197,7 +207,7 @@ Phase 0 の `boot` は TTS だけを見ていた。**LLM / STT / TTS の3つか�
 |---|---|
 | TTS | `detected` / `installed` **かつ** プロセスが `ready` |
 | LLM | `detected` **かつ** プロセスが `ready` |
-| STT | `installed` |
+| STT | `installed` **かつ** Provider が `ready` |
 
 #### 待機画面で待たせてよい条件は1つだけ — **「今まさに使えるようになる」**〔Phase 1 Step G〕
 
@@ -231,7 +241,7 @@ Phase 0 の `boot` は TTS だけを見ていた。**LLM / STT / TTS の3つか�
 |---|---|---|
 | TTS | `tts_setup_state` | `engine_runtime`（4値） |
 | LLM | `llm_setup_state` | `engine_runtime` を**共用**。ただし **`starting` は起こらない**（Lumi が起動しないので「起動中」という状態が存在しない） |
-| STT | `stt_setup_state` | **持たない。** プロセスではなくファイルであり、「起動」に相当する状態が無い |
+| STT | `stt_setup_state` | `engine_runtime` を**共用**。外部プロセスではないが、CTranslate2 のモデルロードに `starting` / `ready` / `failed` がある〔ADR-035〕 |
 
 **enum を1つに統合しない。** `detected`（ユーザーが自分で入れた）は TTS にしか無く、
 `model_missing`（エンジンはあるがモデルが無い）は LLM にしか無い。
@@ -507,3 +517,5 @@ sqlite-vec / FTS5 / PortAudio / TLS 証明書を、**実際に読み込んで**�
 | 26 | **答えを永続化しない**（不足したまま「今は取得しない」を選んでも、次の起動でまた尋ねる）〔ADR-034〕 |
 | 27 | **不足が確定している間は `starting` を出さない**（「今は取得しない」の直後に `blocked` になる。エンジンの起動を待たせない）〔2026-08-20〕 |
 | 28 | **起動中のエンジンは `blocked` の画面に並ばない**。ただし**起動に失敗すれば並ぶ**（裏では起動を試みている）〔2026-08-20〕 |
+| 29 | **STT のロード失敗は `installed × runtime: failed` になり、取得失敗の `state: failed` と区別される**〔ADR-035〕 |
+| 30 | **STT は `installed × runtime: ready` のときだけ使える**。ロード中は `starting`、失敗後は `blocked` になり音声入力を開かない〔ADR-035〕 |

@@ -9,9 +9,16 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.12 |
+| Revision | rev.13 |
 | 実装フェーズ | **Phase 0 の完了条件を達成。Phase 1（MVP: Talking Desktop Character）着手。** セットアップ周りの検証手順 15〜18 が残る → [roadmap.md](roadmap.md) |
 
+> **rev.13 の変更点**（STT のウォーム失敗を状態として表したら、導入状態と実行状態の混同が露出した）
+> 1. **STT にも runtime 軸を追加した** → [ADR-035](decisions/ADR-035-separate-stt-installation-and-runtime-state.md)。
+>    `state: failed` はモデル取得失敗のまま維持し、CTranslate2 のロード失敗は
+>    `state: installed × runtime: failed` として表す。**入っていることと動くことを混ぜない**
+> 2. STT が「使える」の定義を `installed × runtime: ready` に変更した。
+>    ウォームは `starting → ready / failed` を報告し、失敗時は `boot: blocked` のまま音声入力を開かない
+>
 > **rev.12 の変更点**（実際に起動してみて、Phase 0 からの前提が1つ崩れた）
 > 1. **会話に必要な3つ（STT / LLM / TTS）が揃うまでキャラクターを出さない** → [ADR-034](decisions/ADR-034-gate-startup-on-complete-setup.md)。
 >    起動フェーズに `blocked` を足し、不足があればセットアップ画面（**不足項目 + 解決方法 + 終了**）を出す。
@@ -660,6 +667,8 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [031](decisions/ADR-031-request-side-effects.md) | `request` 経路が許す副作用を「**Core が所有する状態の変更**」に限定して定義する（ADR-028 条件4の修正） |
 | [032](decisions/ADR-032-tts-speed.md) | 読み上げ速度を **Core 所有の設定**として TTS と Stage に反映する |
 | [033](decisions/ADR-033-gate-voice-input-until-ready.md) | 起動フェーズが **`ready` になるまで音声入力を開始しない** |
+| [034](decisions/ADR-034-gate-startup-on-complete-setup.md) | **STT / LLM / TTS がすべて揃うまでキャラクターを起動しない** |
+| [035](decisions/ADR-035-separate-stt-installation-and-runtime-state.md) | **STT のモデル取得状態と Provider ロード状態を分離する** |
 
 ---
 

@@ -6,6 +6,7 @@
 | Date | 2026-08-20 |
 | 関連 | [../architecture/setup.md](../architecture/setup.md) §2b, [../architecture/ui.md](../architecture/ui.md)「起動フェーズ」, [ADR-019](ADR-019-tts-engine-distribution.md), [ADR-023](ADR-023-llm-runtime-and-model-acquisition.md), [ADR-033](ADR-033-gate-voice-input-until-ready.md) |
 | 実装 | `core/lumi/setup/state.py`, `core/lumi/setup/coordinator.py`, `core/lumi/agent/runtime.py`, `stage/src/setup/SetupPanel.tsx` |
+| 後続 | **[ADR-035](ADR-035-separate-stt-installation-and-runtime-state.md) が STT の「使える」を `installed × runtime ready` に修正した**（ロード失敗を取得失敗へ混ぜない） |
 
 ---
 

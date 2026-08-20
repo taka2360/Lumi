@@ -271,6 +271,20 @@ class TestPrompt:
         assert len(server.invocations) == 1
         assert boots_of(server)[-1] == "blocked", "答えを待ったまま止まらない"
 
+    async def test_an_unanswered_tts_prompt_does_not_ask_for_stt(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """An unanswered first question interrupts the sequence before the next component."""
+        no_engines(monkeypatch)
+        no_speech_model(monkeypatch)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert [payload["component"] for _method, payload in server.invocations] == ["tts"]
+
     async def test_offers_a_retry_after_a_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         no_engines(monkeypatch)
         server = FakeServer(["install", "skip"])
@@ -481,6 +495,20 @@ class TestSpeechModel:
         await coordinator.on_stage_connected()
 
         assert server.invocations == []
+
+    async def test_an_unanswered_stt_prompt_does_not_repeat(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When TTS is available, an unanswered STT question is still sent only once."""
+        one_engine(monkeypatch)
+        no_speech_model(monkeypatch)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert [payload["component"] for _method, payload in server.invocations] == ["stt"]
 
     async def test_fetches_when_the_user_asks_for_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
         one_engine(monkeypatch)
@@ -701,6 +729,7 @@ class TestLlm:
 
         await coordinator.initialize()
         await coordinator.set_runtime(EngineRuntime.READY)
+        await coordinator.set_stt_runtime(EngineRuntime.READY)
 
         assert coordinator.boot is BootPhase.READY
         assert boots_of(server)[-1] == "ready"

@@ -49,7 +49,7 @@ from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
-from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState
+from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState, SttSetupState
 from lumi.storage.audit import SqliteAuditLog
 from lumi.storage.events import SqliteEventStore
 from lumi.storage.sqlite import Database
@@ -388,7 +388,7 @@ async def _warm(
     """
     await warm_tts(providers, setup)
     await warm_llm(providers, setup, model)
-    await warm_stt(providers)
+    await warm_stt(providers, setup)
 
     if on_ready is None:
         return
@@ -428,21 +428,28 @@ async def warm_llm(providers: ProviderRegistry, setup: SetupCoordinator, model: 
     await setup.report_llm(LlmSetupState.DETECTED, reason=None, model=model)
 
 
-async def warm_stt(providers: ProviderRegistry) -> None:
+async def warm_stt(providers: ProviderRegistry, setup: SetupCoordinator) -> None:
     """Builds the speech-recognition model **before** the first utterance needs it.
 
     **This was the `unaccounted_ms`.** `stt_ms` times `transcribe`, so the 2489 ms model
     build sat between the spans and showed up only as unattributed time (2321 ms observed
     2026-08-18) — the reserve's warning light lit by something that was never a mystery.
 
-    **Reports nothing.** Unlike the LLM, whether the model is present is decided by looking
-    at the disk, which detection already did (docs/architecture/setup.md §2b). A failure
-    here means an installed model that won't build, and that is a log line, not a state.
+    Unlike the LLM, whether the model is present is decided by looking at the disk, which
+    detection already did (docs/architecture/setup.md §2b). An uninstalled model is therefore
+    not warmed; a failure to build an installed model is reported as `runtime: failed`
+    while its acquisition state stays `installed`, so it cannot make the boot phase look ready.
     """
+    if setup.state.stt.state is not SttSetupState.INSTALLED:
+        return
+    await setup.set_stt_runtime(EngineRuntime.STARTING)
     try:
         await providers.get(ProviderKind.STT)
     except ProviderError as error:
         log.warning("stt.warmup_failed", reason=error.reason, detail=error.detail)
+        await setup.set_stt_runtime(EngineRuntime.FAILED)
+        return
+    await setup.set_stt_runtime(EngineRuntime.READY)
 
 
 async def warm_tts(providers: ProviderRegistry, setup: SetupCoordinator) -> None:

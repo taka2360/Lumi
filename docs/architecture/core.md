@@ -356,13 +356,13 @@ UI はそう明記する。ただし `locale` は推論状態を変えない表�
 13. Core が Stage に初期状態を配信（character, world 投影）
 14. Core が TTS エンジンをウォームし、プロセス状態を配信（`starting` → `ready` / `failed`）
 15. Core が LLM をウォームし、導入の状態を配信（`detected` / `model_missing` / `not_configured`）
-16. Core が STT をウォームする
+16. Core が STT をウォームし、Provider 状態を配信（`starting` → `ready` / `failed`）
 17. **`boot: ready` になっていれば**、Audio I/O を開始（VAD 待機）し、Reactive Loop を開始する。
     `blocked`（＝3つのどれかが使えない）なら**どちらも開始しない**
 ```
 
-**7 の「load はまだしない」の例外は TTS だけ。** 起動フェーズ `starting` は
-「エンジンのプロセスを起動中」を表すので（[ui.md](ui.md)「起動フェーズ」）、
+**7 の「load はまだしない」の例外は TTS / STT。** 起動フェーズ `starting` は
+「TTS のプロセス起動中、または STT のモデルロード中」を表すので（[ui.md](ui.md)「起動フェーズ」）、
 **誰も起動しなければ Stage は永久にローディングのままになる**（実際に起きた）。
 最初の発話まで遅らせると、エンジンの起動時間（初回は数分）が最初の返事に乗る。
 

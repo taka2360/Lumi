@@ -38,12 +38,13 @@ describe("boot phase", () => {
       boot: "ready",
       tts: { state: "installed", runtime: "ready" },
       llm: { state: "model_missing", model: "qwen3.5:9b" },
-      stt: { state: "not_configured", model: "small" },
+      stt: { state: "not_configured", model: "small", runtime: "starting" },
     });
     expect(setup.tts.state).toBe("installed");
     expect(setup.llm.state).toBe("model_missing");
     expect(setup.llm.model).toBe("qwen3.5:9b");
     expect(setup.stt.state).toBe("not_configured");
+    expect(setup.stt.runtime).toBe("starting");
   });
 
   it("treats a missing component as unknown, never as a failure", () => {
@@ -51,6 +52,7 @@ describe("boot phase", () => {
     const setup = toSetupSnapshot({ boot: "ready" });
     expect(setup.llm.state).toBe("unknown");
     expect(setup.stt.state).toBe("unknown");
+    expect(setup.stt.runtime).toBe("stopped");
   });
 
   it("refuses a state that belongs to a different component", () => {

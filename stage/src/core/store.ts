@@ -70,12 +70,13 @@ export interface LlmSetupSnapshot {
   runtime: EngineRuntime;
 }
 
-/** Same shape as Core's `SttSetup.to_payload()`. **No runtime** — a file, not a process. */
+/** Same shape as Core's `SttSetup.to_payload()`. Acquisition and Provider load stay separate. */
 export interface SttSetupSnapshot {
   state: SttSetupState;
   model: string | null;
   reason: string | null;
   progress: number | null;
+  runtime: EngineRuntime;
 }
 
 /**
@@ -242,6 +243,7 @@ const UNKNOWN_STT: SttSetupSnapshot = {
   model: null,
   reason: null,
   progress: null,
+  runtime: "stopped",
 };
 
 export const UNKNOWN_SETUP: SetupSnapshot = {
@@ -373,6 +375,7 @@ export function toSttSnapshot(payload: Record<string, unknown>): SttSetupSnapsho
     model: asString(payload.model),
     reason: asString(payload.reason),
     progress: asNumber(payload.progress),
+    runtime: ENGINE_RUNTIMES.find((candidate) => candidate === payload.runtime) ?? "stopped",
   };
 }
 

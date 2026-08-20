@@ -34,7 +34,7 @@ describe("nothing to say", () => {
       boot: "ready",
       tts: tts({ state: "installed", runtime: "ready" }),
       llm: llm({ state: "detected", runtime: "ready" }),
-      stt: stt({ state: "installed" }),
+      stt: stt({ state: "installed", runtime: "ready" }),
     });
     expect(lines).toEqual([]);
   });
@@ -120,7 +120,16 @@ describe("STT", () => {
   });
 
   it("a failed fetch keeps the reason", () => {
-    expect(sttStatus(stt({ state: "failed", reason: "network_unreachable" }))?.tone).toBe("bad");
+    const line = sttStatus(stt({ state: "failed", reason: "network_unreachable" }));
+    expect(line?.tone).toBe("bad");
+    expect(line?.text).toBe("ネットワークに接続できませんでした");
+  });
+
+  it("an installed model that cannot load is a runtime failure", () => {
+    const line = sttStatus(stt({ state: "installed", runtime: "failed" }));
+    expect(line?.tone).toBe("bad");
+    expect(line?.text).toContain("取得済みですが");
+    expect(line?.text).not.toContain("取得に失敗");
   });
 });
 

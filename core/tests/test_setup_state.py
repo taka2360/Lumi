@@ -26,7 +26,7 @@ from lumi.setup.state import (
 #: baseline so a test that changes one component isn't accidentally blocked by another.
 WORKING_TTS = TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.READY)
 WORKING_LLM = LlmSetup(state=LlmSetupState.DETECTED, runtime=EngineRuntime.READY)
-WORKING_STT = SttSetup(state=SttSetupState.INSTALLED, model="small")
+WORKING_STT = SttSetup(state=SttSetupState.INSTALLED, model="small", runtime=EngineRuntime.READY)
 
 
 def snapshot(
@@ -84,6 +84,24 @@ class TestLlmSetup:
         assert LlmSetup(state=LlmSetupState.DETECTED, runtime=EngineRuntime.READY).ready
 
 
+class TestSttSetup:
+    def test_installed_is_not_ready_until_the_provider_loads(self) -> None:
+        for runtime in (EngineRuntime.STOPPED, EngineRuntime.STARTING, EngineRuntime.FAILED):
+            stt = SttSetup(state=SttSetupState.INSTALLED, runtime=runtime)
+            assert not stt.ready, runtime
+        assert SttSetup(state=SttSetupState.INSTALLED, runtime=EngineRuntime.READY).ready
+
+    def test_payload_keeps_acquisition_and_runtime_separate(self) -> None:
+        payload = SttSetup(
+            state=SttSetupState.INSTALLED,
+            model="small",
+            runtime=EngineRuntime.FAILED,
+        ).to_payload()
+
+        assert payload["state"] == "installed"
+        assert payload["runtime"] == "failed"
+
+
 class TestBootPhase:
     """**A pure function that decides whether the character may be shown**
     (docs/architecture/ui.md).
@@ -99,6 +117,10 @@ class TestBootPhase:
     def test_engine_starting(self) -> None:
         starting = TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.STARTING)
         assert boot_phase(snapshot(tts=starting), prompting=False) is BootPhase.STARTING
+
+    def test_speech_provider_starting(self) -> None:
+        starting = SttSetup(state=SttSetupState.INSTALLED, runtime=EngineRuntime.STARTING)
+        assert boot_phase(snapshot(stt=starting), prompting=False) is BootPhase.STARTING
 
     def test_an_engine_that_has_not_been_started_yet_is_not_ready(self) -> None:
         """**Never shows the character only to pull it back.**
@@ -135,6 +157,12 @@ class TestBootPhase:
 
         broken = TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.FAILED)
         assert boot_phase(snapshot(tts=broken), prompting=False) is BootPhase.BLOCKED
+
+    def test_a_failed_speech_provider_is_installed_but_blocked(self) -> None:
+        broken = SttSetup(state=SttSetupState.INSTALLED, runtime=EngineRuntime.FAILED)
+
+        assert broken.state is SttSetupState.INSTALLED
+        assert boot_phase(snapshot(stt=broken), prompting=False) is BootPhase.BLOCKED
 
     def test_no_speech_model_blocks_startup(self) -> None:
         """★ **Reversed by ADR-034.** A Lumi that cannot hear is one nobody can talk to."""

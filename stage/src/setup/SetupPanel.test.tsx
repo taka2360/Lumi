@@ -35,7 +35,12 @@ function working(over: Partial<SetupSnapshot> = {}): SetupSnapshot {
     boot: "blocked",
     tts: { ...UNKNOWN_SETUP.tts, state: "installed", runtime: "ready", engine_name: "AivisSpeech" },
     llm: { ...UNKNOWN_SETUP.llm, state: "detected", runtime: "ready" },
-    stt: { ...UNKNOWN_SETUP.stt, state: "installed", model: "large-v3-turbo" },
+    stt: {
+      ...UNKNOWN_SETUP.stt,
+      state: "installed",
+      model: "large-v3-turbo",
+      runtime: "ready",
+    },
     ...over,
   };
 }

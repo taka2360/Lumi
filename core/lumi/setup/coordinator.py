@@ -264,6 +264,14 @@ class SetupCoordinator:
         )
         await self._update(llm=LlmSetup(state=state, model=model, reason=reason, runtime=runtime))
 
+    async def set_stt_runtime(self, runtime: EngineRuntime) -> None:
+        """The STT Provider's load state changed without changing acquisition state.
+
+        `state: failed` means fetching or verification failed. CTranslate2 failing to load
+        an installed model is instead `state: installed × runtime: failed` (ADR-035).
+        """
+        await self._update(stt=replace(self._snapshot.stt, runtime=runtime))
+
     # ── Asking ──────────────────────────────────────────────
 
     async def on_stage_connected(self) -> None:
@@ -280,7 +288,8 @@ class SetupCoordinator:
             return
         self._prompting = True
         try:
-            await self._ask_for_tts()
+            if await self._ask_for_tts():
+                return
             await self._ask_for_stt()
         finally:
             self._prompting = False
@@ -288,24 +297,24 @@ class SetupCoordinator:
             # Broadcasts that answering is done (or was given up on). **Never left hanging.**
             await self._broadcast()
 
-    async def _ask_for_tts(self) -> None:
+    async def _ask_for_tts(self) -> bool:
         if self._snapshot.tts.state is not TtsSetupState.NOT_CONFIGURED:
-            return
-        await self._ask_and_maybe_install(
+            return False
+        return await self._ask_and_maybe_install(
             component=COMPONENT_TTS,
             install=self.install_tts_engine,
             failed=lambda: self._snapshot.tts.state is TtsSetupState.FAILED,
             reason=lambda: self._snapshot.tts.reason,
         )
 
-    async def _ask_for_stt(self) -> None:
+    async def _ask_for_stt(self) -> bool:
         if self._snapshot.stt.state is not SttSetupState.NOT_CONFIGURED:
-            return
+            return False
         if self._snapshot.stt.model is None:
             # The selected name is not pinned, so there is nothing this could fetch.
             # **A question with no good answer is worse than no question**
-            return
-        await self._ask_and_maybe_install(
+            return False
+        return await self._ask_and_maybe_install(
             component=COMPONENT_STT,
             install=self.install_speech_model,
             failed=lambda: self._snapshot.stt.state is SttSetupState.FAILED,
@@ -319,7 +328,7 @@ class SetupCoordinator:
         install: Callable[[], Awaitable[None]],
         failed: Callable[[], bool],
         reason: Callable[[], str | None],
-    ) -> None:
+    ) -> bool:
         """Asks, and fetches if chosen. **After a failure, offers the choice again.**
 
         The loop only turns when the user chose to fetch *and* the fetch failed, so
@@ -331,6 +340,9 @@ class SetupCoordinator:
         "Not now" ends it here. The state stays `not_configured` / `failed` — **never
         reverted to "not yet attempted"** — and the boot phase becomes `blocked`, which
         is what puts the missing pieces and their fixes on screen.
+
+        Returns `True` when the prompt could not be answered, so the caller can stop the
+        component sequence. A user answer, including "not now", returns `False`.
         """
         retry = False
         detail: str | None = None
@@ -352,7 +364,7 @@ class SetupCoordinator:
                 # Nobody is there to answer. **Stop asking** — the next start asks again.
                 log.info("setup.prompt.unanswered", component=component)
                 self._awaiting_answer = False
-                return
+                return True
 
             # **The question disappears the moment an answer arrives.** Never lets the question
             # paint over the fetching phase.
@@ -365,11 +377,11 @@ class SetupCoordinator:
             )
 
             if not chose_install:
-                return
+                return False
 
             await install()
             if not failed():
-                return
+                return False
 
             # **A failure is never smoothed over into "done".** It goes back to the user
             # with its reason and the same two choices.
