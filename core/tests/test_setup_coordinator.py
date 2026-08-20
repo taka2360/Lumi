@@ -600,7 +600,7 @@ class TestSpeechModel:
         # The engine is detected but nothing has started it yet, so the phase is still
         # `starting`. **What settles it is the engine reporting in** — after which the
         # missing speech model is the one thing left, and it is enough on its own.
-        await coordinator.set_runtime(EngineRuntime.READY)
+        await coordinator.set_tts_runtime(EngineRuntime.READY)
 
         assert coordinator.state.stt.state is SttSetupState.NOT_CONFIGURED
         assert boots_of(server)[-1] == "blocked"
@@ -717,7 +717,7 @@ class TestLlm:
         coordinator = SetupCoordinator(server.as_server(), {})
 
         await coordinator.initialize()
-        await coordinator.set_runtime(EngineRuntime.READY)
+        await coordinator.set_tts_runtime(EngineRuntime.READY)
 
         assert boots_of(server)[-1] == "blocked"
 
@@ -728,7 +728,7 @@ class TestLlm:
         coordinator = SetupCoordinator(server.as_server(), {})
 
         await coordinator.initialize()
-        await coordinator.set_runtime(EngineRuntime.READY)
+        await coordinator.set_tts_runtime(EngineRuntime.READY)
         await coordinator.set_stt_runtime(EngineRuntime.READY)
 
         assert coordinator.boot is BootPhase.READY

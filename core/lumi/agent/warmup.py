@@ -139,16 +139,16 @@ async def warm_tts(providers: ProviderRegistry, setup: SetupCoordinator) -> None
         # Not set up, or the fetch was declined. **Not broken**, so the state stays
         # `stopped` — it really isn't running, and nothing is starting it. Broadcast it
         # anyway: `stopped` is what moves the phase off `starting` and onto `blocked`.
-        await setup.set_runtime(EngineRuntime.STOPPED)
+        await setup.set_tts_runtime(EngineRuntime.STOPPED)
         return
 
-    await setup.set_runtime(EngineRuntime.STARTING)
+    await setup.set_tts_runtime(EngineRuntime.STARTING)
     try:
         await providers.get(ProviderKind.TTS)
     except ProviderError as error:
         # Installed but won't start = broken. **Never leave it looking like it's still
         # starting.**
         log.warning("tts.warmup_failed", reason=error.reason, detail=error.detail)
-        await setup.set_runtime(EngineRuntime.FAILED)
+        await setup.set_tts_runtime(EngineRuntime.FAILED)
         return
-    await setup.set_runtime(EngineRuntime.READY)
+    await setup.set_tts_runtime(EngineRuntime.READY)
