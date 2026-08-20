@@ -38,13 +38,10 @@ from lumi.audio.wav import WavError, decode_wav
 from lumi.kernel.cancellation import CancelToken
 from lumi.providers.base import ProviderFailed, ProviderUnavailable
 from lumi.providers.tts.base import SpeechAudio, TTSProvider, VoiceConfig
+from lumi.transport.methods import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED
 from lumi.transport.protocol import Role
 
 log = lumi_logging.get_logger(__name__)
-
-#: Speech start and end (Core → Stage). Contract → docs/interfaces/renderer.md
-METHOD_SPEECH_STARTED: Final = "stage.speech.started"
-METHOD_SPEECH_ENDED: Final = "stage.speech.ended"
 
 #: Number of TTS generations to run concurrently [Provisional]. docs/architecture/audio.md §6
 MAX_PARALLEL: Final = 1

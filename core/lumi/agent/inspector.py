@@ -30,12 +30,10 @@ from lumi.agent.latency import TurnLatency
 from lumi.kernel.activity import Activity
 from lumi.kernel.event import DomainEvent
 from lumi.kernel.ids import ActivityId
+from lumi.transport.methods import METHOD_INSPECTOR
 from lumi.transport.protocol import Role
 
 log = lumi_logging.get_logger(__name__)
-
-#: Core → Stage. Contract → docs/contracts/wire.json
-METHOD_INSPECTOR: Final = "stage.inspector.state"
 
 #: How long to gather changes before sending [Provisional]. **Long enough to collapse one
 #: preempt into a single snapshot, short enough to still read as live.**

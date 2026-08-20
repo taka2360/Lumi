@@ -21,25 +21,23 @@ from typing import Any
 
 import pytest
 
-from lumi.agent.inspector import METHOD_INSPECTOR
-from lumi.agent.runtime import METHOD_SETTINGS, METHOD_SETTINGS_UPDATE
-from lumi.character import METHOD_EXPRESSION, METHOD_MODEL, Emotion
+from lumi.character import Emotion
 from lumi.providers.tts.viseme import Viseme
 from lumi.settings import Source
-from lumi.setup.coordinator import (
-    CHOICE_INSTALL,
-    CHOICE_SKIP,
-    COMPONENT_STT,
-    COMPONENT_TTS,
-    METHOD_PROMPT,
-    METHOD_STATE,
-)
 from lumi.setup.state import (
     BootPhase,
     EngineRuntime,
     LlmSetupState,
     SttSetupState,
     TtsSetupState,
+)
+from lumi.transport.methods import (
+    CHOICE_INSTALL,
+    CHOICE_SKIP,
+    COMPONENT_STT,
+    COMPONENT_TTS,
+    INBOUND_METHODS,
+    STAGE_METHODS,
 )
 from lumi.transport.protocol import NAMESPACE_BY_ROLE, PROTOCOL_VERSION, Role
 
@@ -98,22 +96,13 @@ class TestCoreMatchesTheContract:
         assert {role.value for role in Role} == set(wire["namespace_by_role"])
 
     def test_stage_methods(self, wire: dict[str, Any]) -> None:
-        # The speech method moved to `agent/speech.py` (PlaybackScheduler) in Phase 1.
-        from lumi.agent.reactive import METHOD_USER_SAID
-        from lumi.agent.speech import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED
+        """**Every `stage.*` method Core can send is on the contract, and vice versa.**
 
-        declared = {
-            METHOD_STATE,
-            METHOD_PROMPT,
-            METHOD_SPEECH_STARTED,
-            METHOD_SPEECH_ENDED,
-            METHOD_USER_SAID,
-            METHOD_MODEL,
-            METHOD_EXPRESSION,
-            METHOD_INSPECTOR,
-            METHOD_SETTINGS,
-        }
-        assert declared == set(wire["methods"]["stage"])
+        Compared as whole sets rather than name by name. Listing them here again would
+        mean a constant could be added to `lumi.transport.methods` and stay unlisted in
+        both places at once — which is exactly the drift this file exists to catch.
+        """
+        assert STAGE_METHODS == set(wire["methods"]["stage"])
 
     def test_setup_prompt_choices(self, wire: dict[str, Any]) -> None:
         assert {"install": CHOICE_INSTALL, "skip": CHOICE_SKIP} == wire["setup_prompt_choices"]
@@ -126,7 +115,7 @@ class TestCoreMatchesTheContract:
         and one Core registers that is not here is an undocumented route — both are drift
         worth failing on.
         """
-        assert [METHOD_SETTINGS_UPDATE] == wire["inbound_methods"]
+        assert list(INBOUND_METHODS) == wire["inbound_methods"]
 
     def test_inbound_methods_are_stage_namespace(self, wire: dict[str, Any]) -> None:
         """**`stage.*` must never request OS privileges** (docs/architecture/core.md §3)."""

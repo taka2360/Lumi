@@ -160,7 +160,8 @@ core/lumi/
 ├── extensions/      host, manifest, protocol
 ├── storage/         sqlite, migrations, vector store
 ├── content/         Content Pack の**読み取り専用ローダ**（extension.md §9）
-└── transport/       ws server, protocol schema
+└── transport/       ws server, protocol schema,
+                    methods（線上の method 名。wire.json のミラー。**依存ゼロ**）
 ```
 
 **`content/` はローダであって Content Pack ではない。** パックの実体はリポジトリ root の

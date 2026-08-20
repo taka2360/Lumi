@@ -23,7 +23,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Final
 
 from lumi import logging as lumi_logging
 from lumi import paths
@@ -33,7 +32,7 @@ from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.session import Session
 from lumi.audio.devices import AudioPlan
 from lumi.audio.io import AudioIO
-from lumi.character import METHOD_EXPRESSION, METHOD_MODEL, ExpressionIntent
+from lumi.character import ExpressionIntent
 from lumi.content.pack import CharacterPack, ContentPackError, load_character
 from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.event import EventBus
@@ -55,18 +54,16 @@ from lumi.storage.events import SqliteEventStore
 from lumi.storage.sqlite import Database
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
+from lumi.transport.methods import (
+    METHOD_EXPRESSION,
+    METHOD_MODEL,
+    METHOD_SETTINGS,
+    METHOD_SETTINGS_UPDATE,
+)
 from lumi.transport.protocol import Role
 from lumi.transport.server import RequestRefused, WsServer
 
 log = lumi_logging.get_logger(__name__)
-
-#: Core → Stage. The effective settings and **where each value came from**
-#: (contract → docs/contracts/wire.json)
-METHOD_SETTINGS: Final = "stage.settings.state"
-
-#: Stage → Core. **The one method registered as inbound in Phase 1** (ADR-028).
-#: The Stage asks; Core validates, decides, writes, and broadcasts the result
-METHOD_SETTINGS_UPDATE: Final = "stage.settings.update"
 
 #: What is configurable, and each key's environment override and default, live in
 #: `lumi.settings.KEYS`. **Declared once** — a second copy here drifted the moment the

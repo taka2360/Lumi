@@ -68,19 +68,13 @@ from lumi.providers.tts.base import TTSProvider, VoiceConfig
 from lumi.settings import TTS_SPEED_MAX, TTS_SPEED_MIN
 from lumi.tools.base import ToolContext, ToolResult
 from lumi.tools.registry import ToolRegistry
+from lumi.transport.methods import METHOD_USER_SAID
 from lumi.transport.protocol import Role
 
 log = lumi_logging.get_logger(__name__)
 
 #: Language passed to STT. Fixed to Japanese in Phase 1 [Provisional]
 LANGUAGE: Final = "ja"
-
-#: What the user said (Core → Stage). Contract → docs/interfaces/renderer.md
-#:
-#: **Sent before the Activity is proposed**, so what Lumi heard is on screen even when the
-#: turn goes nowhere (proposal rejected, LLM down). Seeing the misheard text is most of the
-#: value: "why did it answer that" and "it didn't hear me at all" look identical otherwise.
-METHOD_USER_SAID: Final = "stage.user.said"
 
 
 def _validate_tts_speed(speed: float) -> float:

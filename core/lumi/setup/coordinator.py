@@ -66,6 +66,13 @@ from lumi.setup.state import (
     TtsSetupState,
     boot_phase,
 )
+from lumi.transport.methods import (
+    CHOICE_INSTALL,
+    COMPONENT_STT,
+    COMPONENT_TTS,
+    METHOD_SETUP_PROMPT,
+    METHOD_SETUP_STATE,
+)
 from lumi.transport.protocol import Role
 from lumi.transport.server import NotConnectedError, WsServer
 
@@ -73,25 +80,6 @@ log = lumi_logging.get_logger(__name__)
 
 #: How long to wait for the user's choice. **Human time**, so it's long.
 PROMPT_TIMEOUT_S = 600.0
-
-#: The method for broadcasting state (Core → Stage).
-METHOD_STATE = "stage.setup.state"
-#: The method for asking whether to fetch (Core → Stage, awaits the result).
-METHOD_PROMPT = "stage.setup.prompt"
-
-#: The choices the Stage returns in `result`. **A value that goes on the wire**, so
-#: docs/contracts/wire.json is authoritative (→ ADR-022). `CHOICE_SKIP` isn't used in
-#: any comparison, but it's kept here so **only one side of the contract isn't documented**.
-#: The Stage labels `CHOICE_INSTALL` "retry" after a failure — **same choice, and the
-#: retry count is deliberately unbounded** since the press always comes from the user
-#: (ADR-034), and most fetch failures are the kind that fix themselves.
-CHOICE_INSTALL = "install"
-CHOICE_SKIP = "skip"
-
-#: Which component a question is about. **The panel has to say what it is fetching** —
-#: "may I download this?" without a subject is not consent
-COMPONENT_TTS = "tts"
-COMPONENT_STT = "stt"
 
 #: What `stt_model` resolves to when nothing selects another one. **Pinned**
 #: (docs/architecture/setup.md §3b)
@@ -239,7 +227,7 @@ class SetupCoordinator:
         """
         payload = self._snapshot.to_payload(prompting=self._awaiting_answer)
         log.info("setup.state", **payload)
-        await self._server.notify(Role.STAGE, METHOD_STATE, payload)
+        await self._server.notify(Role.STAGE, METHOD_SETUP_STATE, payload)
 
     async def set_runtime(self, runtime: EngineRuntime) -> None:
         """The TTS engine **process**'s state changed.
@@ -356,7 +344,7 @@ class SetupCoordinator:
             try:
                 result = await self._server.invoke(
                     Role.STAGE,
-                    METHOD_PROMPT,
+                    METHOD_SETUP_PROMPT,
                     {"component": component, "retry": retry, "reason": detail},
                     timeout=PROMPT_TIMEOUT_S,
                 )
