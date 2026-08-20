@@ -151,8 +151,7 @@ def plan_audio(devices: list[Device], host_apis: list[HostApi]) -> AudioPlan:
     for device, role in ((capture_device, "input"), (playback_device, "output")):
         if device is not None and device.host_api in SLOW_HOST_APIS:
             warnings.append(
-                f"Selected {device.host_api} for {role}; "
-                "high latency may prevent barge-in"
+                f"Selected {device.host_api} for {role}; high latency may prevent barge-in"
             )
 
     return AudioPlan(

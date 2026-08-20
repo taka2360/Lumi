@@ -157,9 +157,7 @@ class SequenceChecker:
         previous = self._last.get(event.stream_key)
         expected = 1 if previous is None else previous + 1
         if event.sequence_id != expected:
-            raise SequenceError(
-                f"{event.stream_key}: expected {expected}, got {event.sequence_id}"
-            )
+            raise SequenceError(f"{event.stream_key}: expected {expected}, got {event.sequence_id}")
         self._last[event.stream_key] = event.sequence_id
 
 

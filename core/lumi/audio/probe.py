@@ -111,9 +111,7 @@ class StreamReport:
             f"    ✓ Opened / First frame in {self.first_frame_s:.3f}s"
             + (f" / Latency {self.latency_s * 1000:.0f} ms" if self.latency_s is not None else "")
         )
-        out.append(
-            f"      Frames {self.frames} / Callbacks {self.callbacks} / Xruns {self.xruns}"
-        )
+        out.append(f"      Frames {self.frames} / Callbacks {self.callbacks} / Xruns {self.xruns}")
         if self.drift is not None:
             out.append(
                 f"      Realtime ratio {self.drift.ppm:+.1f} ppm"

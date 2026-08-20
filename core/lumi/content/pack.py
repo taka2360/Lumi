@@ -260,7 +260,5 @@ def _parse_volume(value: Any, path: Path) -> float:
         val = float(value)
         if 0.0 <= val <= 2.0:
             return val
-        raise ContentPackError(
-            f"{path.name}: volume must be between 0.0 and 2.0 (got: {value})"
-        )
+        raise ContentPackError(f"{path.name}: volume must be between 0.0 and 2.0 (got: {value})")
     raise ContentPackError(f"{path.name}: volume must be a number (got: {value})")

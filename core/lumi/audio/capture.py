@@ -129,9 +129,7 @@ class MicrophoneCapture:
         If nothing arrives, **fail explicitly.**
         """
         if not self._first_frame.wait(timeout):
-            raise CaptureUnavailable(
-                f"{self._plan.describe()}: No frame received after {timeout}s"
-            )
+            raise CaptureUnavailable(f"{self._plan.describe()}: No frame received after {timeout}s")
 
     @property
     def overflows(self) -> int:
