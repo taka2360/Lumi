@@ -3,7 +3,8 @@
 Startup sequence → docs/architecture/core.md §7
 
 Separated out from `__main__` so **"what connects to what" can be read on one screen**.
-This replaces Phase 0's `Greeter`; `greeting.py` was absorbed into here and no longer exists.
+Warming the engines and deciding whether Lumi may come out live in `warmup.py`; **this
+file only connects things together.**
 
 ## Not-yet-set-up is not "broken", but it does stop Lumi from coming out
 
