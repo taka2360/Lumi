@@ -162,6 +162,33 @@ async def test_nothing_is_left_behind_on_failure(tmp_path: Path) -> None:
     assert remaining == []
 
 
+async def test_a_connection_that_dies_mid_download_says_so(tmp_path: Path) -> None:
+    """★ Regression (observed 2026-08-20): **this is the failure the user actually hit.**
+
+    The 480 MB fetch dropped partway, and because nothing turned `httpx`'s exception into a
+    reason, the setup panel said "an unexpected error occurred" — for the one failure where
+    pressing retry is the whole fix. It was reported as `unexpected_error`, offered no
+    guidance, and the very next attempt succeeded.
+
+    Serving one file and then dying is the realistic shape: the model is several files, and
+    the connection rarely gives out on the first one.
+    """
+    model = artifact()
+
+    def serve_then_drop(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("config.json"):
+            return httpx.Response(200, content=CONFIG)
+        raise httpx.RemoteProtocolError("Server disconnected without sending a response")
+
+    with pytest.raises(SetupError) as error:
+        await _install(model, tmp_path, serve_then_drop)
+
+    assert error.value.reason == "network_unreachable"
+    assert not is_model_installed(model, tmp_path)
+    remaining = await asyncio.to_thread(lambda: list(tmp_path.iterdir()))
+    assert remaining == [], "一時ディレクトリが残っている"
+
+
 async def test_reinstalling_is_a_no_op(tmp_path: Path) -> None:
     model = artifact()
     await _install(model, tmp_path, serve({"config.json": CONFIG, "model.bin": WEIGHTS}))

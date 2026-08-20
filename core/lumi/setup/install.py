@@ -9,8 +9,9 @@ communication until the user chooses to).
 Filesystem operations are offloaded to `asyncio.to_thread`. **Never blocks the event
 loop** (.claude/rules/python-core.md "Blocking I/O and inference are offloaded to threads").
 
-Failures always become exceptions. **A partially installed state is never left
-behind** (Principle 3).
+Failures always become exceptions, and **every one of them is a `SetupError` carrying a
+reason the panel can put into words** (`_translate`). **A partially installed state is
+never left behind** (Principle 3).
 """
 
 from __future__ import annotations
@@ -53,6 +54,30 @@ class SetupError(RuntimeError):
         super().__init__(detail or reason)
         self.reason = reason
         self.detail = detail
+
+
+def _translate(error: httpx.HTTPError | OSError) -> SetupError:
+    """Turns what the network and the filesystem raise into a reason the panel can say.
+
+    ★ **Without this, a dropped connection reached the user as "an unexpected error
+    occurred"** — a dead end offered for the single most likely and most recoverable
+    failure there is. `network_unreachable` was a phrase the UI knew how to say and Core
+    could never produce (observed 2026-08-20: the speech model's fetch died mid-download,
+    the panel had nothing to suggest, and pressing retry worked immediately).
+
+    It survived because **the tests raised `SetupError("network_unreachable")` themselves**
+    to stand in for a failed download, so the path from a real `httpx` exception to a
+    reason was never once executed — and the real disconnection test is the carry-over
+    item docs/roadmap.md still lists as never run.
+
+    `httpx.HTTPError` is the whole family: connect, read timeout, protocol, TLS.
+    `OSError` is the other half of a 480 MB fetch — a full disk, a denied path, a file
+    something else is holding open. **What is left after these two is genuinely
+    unexpected**, and only that should ever be reported as such.
+    """
+    if isinstance(error, httpx.HTTPError):
+        return SetupError("network_unreachable", f"{type(error).__name__}: {error}")
+    return SetupError("disk_error", f"{type(error).__name__}: {error}")
 
 
 def _find_executable(root: Path, name: str) -> Path | None:
@@ -190,9 +215,13 @@ async def install_engine(
         log.info("setup.install.already_installed", path=str(existing))
         return existing
 
-    await asyncio.to_thread(engines_dir.mkdir, parents=True, exist_ok=True)
-    work_dir = engines_dir / f".tmp-{secrets.token_hex(8)}"
-    await asyncio.to_thread(work_dir.mkdir)
+    try:
+        await asyncio.to_thread(engines_dir.mkdir, parents=True, exist_ok=True)
+        work_dir = engines_dir / f".tmp-{secrets.token_hex(8)}"
+        await asyncio.to_thread(work_dir.mkdir)
+    except OSError as error:
+        # **Nothing to roll back yet**: the temp directory is what failed to appear.
+        raise _translate(error) from error
 
     try:
         archive = work_dir / f"{artifact.name}-{artifact.version}.7z"
@@ -223,6 +252,8 @@ async def install_engine(
         await asyncio.to_thread(_commit, extracted, final_dir)
         log.info("setup.install.committed", path=str(final_dir))
         return final_dir / relative
+    except (httpx.HTTPError, OSError) as error:
+        raise _translate(error) from error
     finally:
         # The temp directory is never left behind, whether this succeeds or fails.
         await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
@@ -256,9 +287,12 @@ async def install_stt_model(
         log.info("setup.model.already_installed", path=str(final_dir))
         return final_dir
 
-    await asyncio.to_thread(models_dir.mkdir, parents=True, exist_ok=True)
-    work_dir = models_dir / f".tmp-{secrets.token_hex(8)}"
-    await asyncio.to_thread(work_dir.mkdir)
+    try:
+        await asyncio.to_thread(models_dir.mkdir, parents=True, exist_ok=True)
+        work_dir = models_dir / f".tmp-{secrets.token_hex(8)}"
+        await asyncio.to_thread(work_dir.mkdir)
+    except OSError as error:
+        raise _translate(error) from error
 
     try:
         log.info("setup.model.download.start", model=artifact.name, size=artifact.size)
@@ -286,6 +320,8 @@ async def install_stt_model(
         await asyncio.to_thread(_commit, work_dir, final_dir)
         log.info("setup.model.committed", path=str(final_dir))
         return final_dir
+    except (httpx.HTTPError, OSError) as error:
+        raise _translate(error) from error
     finally:
         await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
 

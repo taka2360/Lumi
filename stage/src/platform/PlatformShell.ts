@@ -69,4 +69,18 @@ export interface PlatformShell {
    * decided on the Shell side**; the Stage can only say "a bit bigger" (B1 / B2).
    */
   scaleWindow(factor: number): Promise<void>;
+
+  /**
+   * Quits Lumi.
+   *
+   * Exists for the [終了] button on the setup screen (ADR-034). Anyone stopped there
+   * has not met Lumi yet and **does not know it lives in the tray**, which until now
+   * was the only way out (docs/architecture/ui.md "Tray menu").
+   *
+   * **No judgment travels with it.** No arguments, no branches — pressed means quit,
+   * so Shell has nothing left to decide. What a compromised Stage gains is the ability
+   * to close Lumi, which the user undoes by starting it again; it is not an OS
+   * privilege and does not become one (docs/interfaces/shell.md).
+   */
+  quit(): Promise<void>;
 }

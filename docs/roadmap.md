@@ -58,7 +58,8 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
   - [x] 公式配布元からの取得 → **検証**（URL・サイズ・SHA-256）→ セットアップ
     〔2026-08-15 実ネットワークで取得を確認。216.5 MB / 8.4 秒、SHA-256 一致 → [measurements/phase0.md](measurements/phase0.md)〕
   - [x] 失敗時のロールバック（**部分的にインストールされた状態を残さない**）
-  - [x] 取得しない場合も Lumi が起動し、**「TTS 未セットアップ」が明示される**
+  - [x] TTS が未セットアップなら Lumi は起動せず、`blocked` 画面に不足項目と解決方法を表示し、
+    ユーザーが [終了] を選べる〔[ADR-034](decisions/ADR-034-gate-startup-on-complete-setup.md)〕
   - [x] ユーザーが別途インストール済みの AivisSpeech / VOICEVOX を検出する
 - [x] **クレジット表示画面**（トレイ → クレジット）〔ADR-019 / 内容は [licensing.md](licensing.md) §6〕
   - [x] エンジン名・音源のクレジット例・ライセンス全文・禁止事項をユーザーが読める
@@ -85,7 +86,6 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 
 ### 完了条件
 インストーラを作って**別マシン**で起動し、**初回セットアップを通した上で**、キャラクターが立って一言喋る。
-**TTS の取得を拒否しても Lumi は起動する**（喋らないが、壊れていない状態として明示される）。
 
 > **達成**〔2026-08-16〕。別マシンでインストーラから導入し、キャラクターが立って一言喋るところまで確認した
 > → [measurements/phase0.md](measurements/phase0.md)「別マシンでの検証」。
@@ -112,8 +112,9 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
     別マシンでは `uv run python -m lumi.audio.probe` を回して**入出力が開通することだけ**確認する〕
 13. ~~**サイドカーから sqlite-vec がロードできるか確認**~~ 〔2026-08-15 完了。別マシンでは `lumi-core.exe --self-check` を回す〕
 14. ~~**インストーラに AivisSpeech / VOICEVOX のバイナリが含まれていないことを確認**~~ 〔2026-08-15 完了。92 ファイルを列挙して確認〕
-15. **初回セットアップで「取得しない」を選び、Lumi が起動して「TTS 未セットアップ」が表示されることを確認**
-    〔2026-08-15 **開発機で確認**。別マシンでは未確認 → Phase 1〕
+15. **初回セットアップで「今は取得しない」を選び、「セットアップは完了していません」と不足項目が表示され、[終了] で終われることを確認**
+    〔2026-08-15 **開発機で確認**（当時は「起動して TTS 未セットアップが出る」）。
+    [ADR-034](decisions/ADR-034-gate-startup-on-complete-setup.md) で期待する結果が変わったので**取り直す** → Phase 1〕
 16. **ネットワークを遮断した状態で取得を試み、明示的に失敗し、部分的な残骸が残らないことを確認**
     〔単体テストのみ。**実ネットワークでの断線試験はどちらのマシンでも未実施** → Phase 1〕
 17. **ユーザーが選択するまで外部へのネットワークアクセスが発生しないことを確認**（パケットキャプチャ / Network-optional 原則）
@@ -153,7 +154,10 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
   - [x] **Ollama の検出**（取得もインストールもしない）と `model_missing` の判定 〔Step C / **Step F で実機確認**（[measurements/phase1.md](measurements/phase1.md)）〕 / [x] Stage への**提示**〔Step G〕
   - [x] **STT モデルの取得**（ピン留め + SHA-256 + ロールバック）。**ライブラリの自動ダウンロードを無効化する**〔Step F/G。同意フローに接続済み〕
   - [x] **Silero VAD を配布物に同梱** 〔Step D/E。faster-whisper 同梱の ONNX（MIT）を使う。**OSS 通知への Silero Team のクレジット追加は Step G で完了** → [licensing.md](licensing.md) §4.6〕
-  - [x] 起動フェーズ（`boot`）を **LLM / STT / TTS の3つから導出**する。「喋れるが聞けない」を正常な状態として出す〔Step G。**待たせるのは「今まさに使えるようになる」ときだけ** → [architecture/setup.md](architecture/setup.md) §2b〕
+  - [x] 起動フェーズ（`boot`）を **LLM / STT / TTS の3つから導出**する〔Step G。
+    **待機画面で待たせるのは「今まさに使えるようになる」ときだけ** → [architecture/setup.md](architecture/setup.md) §2b〕
+  - [x] **3つが揃うまでキャラクターを出さない**（`blocked`）。不足項目と解決方法を出し、失敗には「再試行 / 今は取得しない」を出す
+    〔[ADR-034](decisions/ADR-034-gate-startup-on-complete-setup.md)。~~「喋れるが聞けない」を正常な状態として出す~~ を取り消した〕
 - [x] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）〔Step F で `turn_latency` / `vad.mute` を実装。**数値の記録はモデル取得後**〕
 - [x] Inspector 最小版（Activity ツリー / レイテンシ内訳）〔Step G。**`stage` ウィンドウ内**。送信は EventBus 購読 → 別タスクで、barge-in の経路に載せない → [architecture/ui.md](architecture/ui.md) §5〕
 - [x] **Content Pack の既定キャラクター**〔Step E で `content/characters/lumi/` を作成。**VRM 本体も配置済み**〔2026-08-19〕。`character.toml` の `[model]` が持つ〕
@@ -162,6 +166,9 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
 
 - [ ] **検証手順 15〜18 を別マシンで通す**（取得の経路。**LLM / STT のセットアップが同じ経路に乗った後**にまとめて回す）
 - [ ] **ネットワーク断線の実試験**（単体テストでは `.tmp-*` が残らないことを確認済み。実断線は未実施）
+  - 〔2026-08-20〕**未実施のまま出た**: 実際の断線で `unexpected_error` が表示された。
+    `httpx` の例外を理由に変換していなかったため → [architecture/setup.md](architecture/setup.md) §4「失敗は必ず『言える理由』になる」。
+    単体テストは追加した（実例外を投げる）が、**実断線の試験はまだ持ち越しである**
 - [x] **既定同梱 VRM モデル（光莉 / 作者: あわ）を `content/` に置き、配布物に含める経路を通す**（リポジトリにはコミットしない → [licensing.md](licensing.md) §4.5）〔2026-08-19。**Core が決め、Shell が配信し、Stage が描く** → [ADR-029](decisions/ADR-029-content-pack-asset-delivery.md)。PyInstaller spec が `model.vrm` の同梱を fail-closed で確認する〕
 - [ ] release ビルドでのカーソル監視 CPU 実測（debug では 1コア 2.8%）
 

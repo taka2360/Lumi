@@ -10,13 +10,20 @@
  *
  * ## What each component's absence means
  *
- * | Missing | Lumi still | What is asked of the user |
- * |---|---|---|
- * | TTS | listens and understands | let Lumi fetch the engine |
- * | LLM | listens, and says nothing | install Ollama, or pull the model **themselves** |
- * | STT | speaks when spoken to in text | let Lumi fetch the model |
+ * | Missing | What is asked of the user |
+ * |---|---|
+ * | TTS | let Lumi fetch the engine |
+ * | LLM | install Ollama, start it, or pull the model **themselves** |
+ * | STT | let Lumi fetch the model |
  *
- * **None of these is an error**, and none of them is worded as one.
+ * **None of these is an error**, and none of them is worded as one — but any one of them
+ * does stop Lumi from starting (ADR-034), so each line says what is missing rather than
+ * what Lumi can still do without it. "Lumi will run, but it will not speak" stopped being
+ * true the moment speaking became a precondition.
+ *
+ * These lines are what the `blocked` screen lists. **Every reason the phase can be
+ * `blocked` has to produce one**, or the screen would say setup is incomplete without
+ * saying what is incomplete.
  */
 
 import type {
@@ -52,6 +59,7 @@ const FAILURE_KEYS: Record<string, MessageKey> = Object.fromEntries(
     "executable_not_found",
     "tar_not_found",
     "network_unreachable",
+    "disk_error",
     "model_incomplete",
     "unknown_model",
     "cancelled",
@@ -77,12 +85,13 @@ export function ttsStatus(tts: TtsSetupSnapshot, locale: Locale = "ja"): StatusL
   // **The process state is checked first.** Painting over "installed but won't start" with
   // "installed" would leave the user with nothing to act on
   // (docs/architecture/setup.md "Never mix installation state and process state").
-  if (tts.runtime === "starting") {
-    return {
-      tone: "normal",
-      text: translate(locale, "status.tts.starting", { engine }),
-    };
-  }
+  //
+  // **`starting` deliberately produces no line.** These lines are the list of what the user
+  // still has to resolve, and an engine that is warming up in the background is not on it —
+  // it needs nothing from them, and it goes away on its own. The one screen that can render
+  // this while the engine is coming up is the incomplete-setup screen, and putting "starting
+  // AivisSpeech…" under "Lumi can start once the following are in place" would read as a
+  // fourth thing to wait for. When it comes up broken, `failed` below says so.
   if (tts.runtime === "failed") {
     return {
       tone: "bad",
@@ -132,18 +141,24 @@ export function llmStatus(llm: LlmSetupSnapshot, locale: Locale = "ja"): StatusL
         hint: `ollama pull ${llm.model ?? ""}`.trim(),
       };
     case "detected":
-      return llm.runtime === "stopped"
-        ? {
-            tone: "normal",
-            text: translate(locale, "status.llm.stopped"),
-          }
-        : null;
+      // Installed and found, but the process still has to answer for Lumi to reply.
+      // **`failed` is not `stopped`**: one is started by the user, the other is looked into
+      if (llm.runtime === "stopped") {
+        return { tone: "normal", text: translate(locale, "status.llm.stopped") };
+      }
+      if (llm.runtime === "failed") {
+        return { tone: "bad", text: translate(locale, "status.llm.failed") };
+      }
+      return null;
     default:
       return null;
   }
 }
 
 export function sttStatus(stt: SttSetupSnapshot, locale: Locale = "ja"): StatusLine | null {
+  if (stt.runtime === "failed") {
+    return { tone: "bad", text: translate(locale, "status.stt.failed") };
+  }
   switch (stt.state) {
     case "installing":
       return {
@@ -168,6 +183,9 @@ export function sttStatus(stt: SttSetupSnapshot, locale: Locale = "ja"): StatusL
  *
  * Order is TTS → LLM → STT, matching the order the pipeline fails in from the user's
  * point of view: not speaking is noticed first, then not answering, then not hearing.
+ *
+ * **All of them, not the first one.** Fixing what one line asks for and then being handed
+ * the next is how a two-minute setup turns into three restarts.
  */
 export function statusLines(setup: SetupSnapshot, locale: Locale = "ja"): StatusLine[] {
   return [

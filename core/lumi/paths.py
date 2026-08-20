@@ -3,7 +3,7 @@
 **Confined to one place.** Scattering them makes "delete everything" impossible to honor
 (docs/roadmap.md Phase 2 🔴 privacy item #5).
 
-Phase 0 only uses `engines_dir` and `setup_state_file`. Where the memory DB / audit log live is
+Phase 0 only uses `engines_dir`. Where the memory DB / audit log live is
 decided in Phase 2 (after `contracts/privacy.md` is written).
 
 **User data (erasable) and bundled assets (read-only) are different things.** The former
@@ -92,17 +92,8 @@ def stt_dump_dir() -> Path:
 def settings_file() -> Path:
     """User settings → `lumi.settings` / docs/architecture/core.md
 
-    **Separate from `setup_state_file`.** That one records what has been *asked*; this one
-    records what the user *chose*. Deleting either has a different meaning, so they are
-    different files.
+    **Nothing next to this records what first-run setup was answered.** `setup.json` is
+    gone (ADR-034): setup runs until it is complete, so an answer of "not now" is
+    something Lumi asks again next start rather than something it files away.
     """
     return data_dir() / "settings.json"
-
-
-def setup_state_file() -> Path:
-    """File that remembers whether first-run setup has been "answered."
-
-    The settings storage format itself is undecided (roadmap open item #9 / Phase 1).
-    **This holds only the single fact "already asked."** Not a general-purpose settings store.
-    """
-    return data_dir() / "setup.json"

@@ -58,6 +58,16 @@ function step(setup: SetupSnapshot, connected: boolean, locale: Locale): Step {
     };
   }
   if (setup.boot === "starting") {
+    if (
+      setup.stt.runtime === "starting" ||
+      (setup.tts.runtime === "ready" && setup.stt.runtime === "stopped")
+    ) {
+      return {
+        step: translate(locale, "boot.speechModel.starting"),
+        note: translate(locale, "boot.speechModel.starting.note"),
+        progress: null,
+      };
+    }
     return {
       step: translate(locale, "boot.engine.starting", { engine }),
       // **States up front that the first run takes a while.** Without this it looks frozen

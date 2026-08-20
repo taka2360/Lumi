@@ -21,6 +21,10 @@ const noopShell: PlatformShell = {
   onHoverState: async () => ({ dispose: () => {} }),
   startWindowDrag: async () => {},
   scaleWindow: async () => {},
+  // Outside Tauri there is no process to end. **Left as a no-op rather than closing the
+  // tab**: a browser-opened Stage is a development view, and taking the window away from
+  // whoever opened it would be a surprise, not a service.
+  quit: async () => {},
 };
 
 export function getPlatformShell(): PlatformShell {
@@ -68,6 +72,19 @@ export function useHitRegionReporter(): (rects: CssRect[]) => void {
     },
     [shell],
   );
+}
+
+/**
+ * Returns a function that quits Lumi. Used by the setup screen's [終了] (ADR-034).
+ *
+ * **Never wired to anything the character can reach.** The only caller is a button the
+ * user presses on a screen that says Lumi has not started.
+ */
+export function useQuit(): () => void {
+  const shell = useMemo(getPlatformShell, []);
+  return useCallback(() => {
+    void shell.quit();
+  }, [shell]);
 }
 
 /** The scale factor per wheel notch. Kept **small** (jumping too far can't be undone). */

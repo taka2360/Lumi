@@ -85,6 +85,20 @@ pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Quits Lumi, from the Stage.
+///
+/// **Exists for the setup screen's 終了 button** (ADR-034): someone stopped before Lumi
+/// has ever started has not met the tray, which was the only way out
+/// (docs/architecture/ui.md "Tray menu").
+///
+/// **Carries no judgment** — no arguments, nothing to decide. Goes through the same
+/// `app.exit(0)` as the tray item, so Core goes down with it via `RunEvent::Exit`.
+#[tauri::command]
+pub fn shell_app_quit(app: AppHandle) {
+    log::info!("shell.app_quit requested by stage");
+    app.exit(0);
+}
+
 /// Updates native Shell-owned labels after Core accepted a locale setting.
 #[tauri::command]
 pub fn shell_locale_set(app: AppHandle, locale: &str) -> Result<(), String> {

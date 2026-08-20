@@ -34,7 +34,7 @@ describe("nothing to say", () => {
       boot: "ready",
       tts: tts({ state: "installed", runtime: "ready" }),
       llm: llm({ state: "detected", runtime: "ready" }),
-      stt: stt({ state: "installed" }),
+      stt: stt({ state: "installed", runtime: "ready" }),
     });
     expect(lines).toEqual([]);
   });
@@ -48,9 +48,11 @@ describe("nothing to say", () => {
 
 describe("TTS", () => {
   it("not set up is stated as a limitation, not an error", () => {
+    // **Still `normal`, not `bad`** (ADR-034 changed the consequence, not the tone):
+    // setup being unfinished is a state, and only an actual failure is worded as one.
     const line = ttsStatus(tts({ state: "not_configured" }));
     expect(line?.tone).toBe("normal");
-    expect(line?.text).toContain("喋りません");
+    expect(line?.text).toContain("喋れません");
   });
 
   it("installed-but-will-not-start is not painted over by installed", () => {
@@ -118,7 +120,16 @@ describe("STT", () => {
   });
 
   it("a failed fetch keeps the reason", () => {
-    expect(sttStatus(stt({ state: "failed", reason: "network_unreachable" }))?.tone).toBe("bad");
+    const line = sttStatus(stt({ state: "failed", reason: "network_unreachable" }));
+    expect(line?.tone).toBe("bad");
+    expect(line?.text).toBe("ネットワークに接続できませんでした");
+  });
+
+  it("an installed model that cannot load is a runtime failure", () => {
+    const line = sttStatus(stt({ state: "installed", runtime: "failed" }));
+    expect(line?.tone).toBe("bad");
+    expect(line?.text).toContain("取得済みですが");
+    expect(line?.text).not.toContain("取得に失敗");
   });
 });
 
