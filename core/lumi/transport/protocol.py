@@ -192,9 +192,9 @@ def _require_object(raw: str) -> dict[str, Any]:
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:
-        raise ProtocolError(f"JSON として読めない: {exc}") from exc
+        raise ProtocolError(f"Cannot parse JSON: {exc}") from exc
     if not isinstance(parsed, dict):
-        raise ProtocolError("トップレベルがオブジェクトではない")
+        raise ProtocolError("Top-level message must be an object")
     return parsed
 
 
@@ -202,21 +202,21 @@ def parse_hello(raw: str) -> Hello:
     """Parses the first message right after connecting. **Raises on failure** (fail-closed)."""
     message = _require_object(raw)
     if message.get("kind") != "hello":
-        raise ProtocolError("最初のメッセージが hello ではない")
+        raise ProtocolError("First message must be hello")
     if message.get("v") != PROTOCOL_VERSION:
-        raise ProtocolError(f"プロトコルバージョンが違う: {message.get('v')!r}")
+        raise ProtocolError(f"Protocol version mismatch: {message.get('v')!r}")
 
     raw_role = message.get("role")
     if not isinstance(raw_role, str):
-        raise ProtocolError("role が無い")
+        raise ProtocolError("Missing role")
     try:
         role = Role(raw_role)
     except ValueError as exc:
-        raise ProtocolError(f"未知の role: {raw_role!r}") from exc
+        raise ProtocolError(f"Unknown role: {raw_role!r}") from exc
 
     token = message.get("token")
     if not isinstance(token, str) or not token:
-        raise ProtocolError("token が無い")
+        raise ProtocolError("Missing token")
 
     return Hello(role=role, token=token)
 
@@ -237,30 +237,30 @@ def parse_client_message(raw: str) -> Result | Request:
         # `hello` already pins the version for the connection, so this is a client that
         # contradicts itself mid-stream. **Answered the same way as a wrong hello** —
         # a frame whose meaning is not agreed on is not one to guess at (ADR-022)
-        raise ProtocolError(f"プロトコルバージョンが違う: {message.get('v')!r}")
+        raise ProtocolError(f"Protocol version mismatch: {message.get('v')!r}")
     kind = message.get("kind")
     if kind == "request":
         return _parse_request(message)
     if kind != "result":
-        raise ProtocolError(f"クライアントから受理しない kind: {kind!r}")
+        raise ProtocolError(f"Unsupported kind from client: {kind!r}")
 
     corr_id = message.get("corr_id")
     if not isinstance(corr_id, str) or not corr_id:
-        raise ProtocolError("corr_id が無い")
+        raise ProtocolError("Missing corr_id")
 
     ok = message.get("ok")
     if not isinstance(ok, bool):
-        raise ProtocolError("ok が bool ではない")
+        raise ProtocolError("ok must be a boolean")
 
     payload = message.get("payload", {})
     if not isinstance(payload, dict):
-        raise ProtocolError("payload がオブジェクトではない")
+        raise ProtocolError("payload must be an object")
 
     error = message.get("error")
     if error is not None and not isinstance(error, str):
-        raise ProtocolError("error が文字列ではない")
+        raise ProtocolError("error must be a string")
     if not ok and not error:
-        raise ProtocolError("失敗した result に error が無い")
+        raise ProtocolError("Failed result missing error")
 
     return Result(corr_id=corr_id, ok=ok, payload=payload, error=error)
 
@@ -272,14 +272,14 @@ def _parse_request(message: dict[str, Any]) -> Request:
     """
     request_id = message.get("id")
     if not isinstance(request_id, str) or not request_id:
-        raise ProtocolError("id が無い")
+        raise ProtocolError("Missing id")
 
     method = message.get("method")
     if not isinstance(method, str) or not method:
-        raise ProtocolError("method が無い")
+        raise ProtocolError("Missing method")
 
     payload = message.get("payload", {})
     if not isinstance(payload, dict):
-        raise ProtocolError("payload がオブジェクトではない")
+        raise ProtocolError("payload must be an object")
 
     return Request(id=request_id, method=method, payload=payload)

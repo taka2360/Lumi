@@ -121,7 +121,7 @@ def _audio_plan() -> AudioPlan:
         devices, host_apis = list_devices()
     except Exception as error:
         log.warning("audio.probe_failed", error=str(error))
-        return AudioPlan(capture=None, playback=None, warnings=("デバイスを列挙できなかった",))
+        return AudioPlan(capture=None, playback=None, warnings=("Could not list audio devices",))
     return plan_audio(devices, host_apis)
 
 

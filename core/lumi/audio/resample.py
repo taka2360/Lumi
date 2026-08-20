@@ -127,7 +127,7 @@ class StreamingResampler:
 
     def __init__(self, src_rate: int, dst_rate: int) -> None:
         if src_rate <= 0 or dst_rate <= 0:
-            raise ValueError("サンプルレートは正の数")
+            raise ValueError("Sample rate must be positive")
         self._up, self._down = _ratio(src_rate, dst_rate)
         self._taps = _design(self._up, self._down)
         self.reset()
@@ -206,7 +206,7 @@ def resample(x: Samples, src_rate: int, dst_rate: int) -> Samples:
     if src_rate == dst_rate or len(x) == 0:
         return x.astype(np.float32, copy=False)
     if src_rate <= 0 or dst_rate <= 0:
-        raise ValueError("サンプルレートは正の数")
+        raise ValueError("Sample rate must be positive")
 
     converter = StreamingResampler(src_rate, dst_rate)
     wanted = round(len(x) * dst_rate / src_rate)

@@ -100,7 +100,7 @@ class CharacterCanonicalizer:
         if target != "self":
             # There's no concept of "another character." **An unrecognized target is never let
             # through.**
-            raise CanonicalizationError(f"未知の対象: {target!r}")
+            raise CanonicalizationError(f"Unknown target: {target!r}")
         return SecurityScope(
             lane=ScopeLane.CHARACTER,
             canonical=CHARACTER_SELF,
@@ -124,5 +124,5 @@ class CharacterBindVerifier:
     def verify(self, scope: SecurityScope, handle: Handle) -> None:
         if handle.scope != scope:
             raise BindVerificationError(
-                f"handle の scope が違う: {handle.scope.canonical!r} != {scope.canonical!r}"
+                f"Scope mismatch for handle: {handle.scope.canonical!r} != {scope.canonical!r}"
             )

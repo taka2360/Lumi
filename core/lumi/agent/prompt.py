@@ -128,7 +128,7 @@ def assemble(
     """
     turns = session.turns
     if not turns:
-        raise ValueError("現在の発話が無い。Session に record してから assemble する")
+        raise ValueError("No current utterance; record in Session before assembling")
 
     current = turns[-1]
     history = turns[:-1]

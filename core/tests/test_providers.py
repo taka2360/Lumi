@@ -613,14 +613,14 @@ async def test_an_installed_model_that_will_not_build_is_not_reported_as_missing
     provider = Installed("small", empty_model_dir)
 
     def explode(*_args: object, **_kwargs: object) -> object:
-        raise RuntimeError("cudnn_ops64_9.dll をロードできない")
+        raise RuntimeError("Cannot load cudnn_ops64_9.dll")
 
     monkeypatch.setitem(sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=explode))
 
     with pytest.raises(ProviderUnavailable) as error:
         await provider.load()
     assert error.value.reason == "model_load_failed"
-    assert "セットアップで取得" not in error.value.detail
+    assert "please download via setup" not in error.value.detail
 
 
 async def test_transcribe_before_load_is_refused(empty_model_dir: Path) -> None:

@@ -112,24 +112,24 @@ class ToolRegistry:
     def register(self, tool: Tool) -> None:
         """A Class A (in-core) Tool. **Raises if it fails to satisfy the conditions.**"""
         if not tool.name or not tool.description:
-            raise ToolRegistrationError("メタデータが欠けている")
+            raise ToolRegistrationError("Missing metadata")
         if tool.name in self._tools:
-            raise ToolRegistrationError(f"{tool.name}: 名前が重複している")
+            raise ToolRegistrationError(f"{tool.name}: duplicate tool name")
 
         if LANE_CLASS[tool.lane] is not ToolClass.A:
             # Class B lanes are provided by out-of-process code. in-core must never
             # claim one (the Handle contract only holds for in-core → ADR-017).
-            raise ToolRegistrationError(f"{tool.name}: {tool.lane} は Class B の lane")
+            raise ToolRegistrationError(f"{tool.name}: {tool.lane} is a Class B lane")
 
         if tool.permission.risk is Risk.DENIED:
             # DENIED only ever appears as an "effective risk" value — it's not something a Tool can
             # declare.
-            raise ToolRegistrationError(f"{tool.name}: risk に DENIED は宣言できない")
+            raise ToolRegistrationError(f"{tool.name}: risk cannot be DENIED")
 
         if tool.lane not in self._canonicalizers:
-            raise ToolRegistrationError(f"{tool.name}: {tool.lane} の Canonicalizer が無い")
+            raise ToolRegistrationError(f"{tool.name}: missing Canonicalizer for {tool.lane}")
         if tool.lane not in self._bind_verifiers:
-            raise ToolRegistrationError(f"{tool.name}: {tool.lane} の BindVerifier が無い")
+            raise ToolRegistrationError(f"{tool.name}: missing BindVerifier for {tool.lane}")
 
         if (
             tool.permission.cancellation is Cancellation.NON_CANCELLABLE
@@ -138,7 +138,7 @@ class ToolRegistry:
         ):
             # Never let an uncancellable side effect happen without user confirmation.
             raise ToolRegistrationError(
-                f"{tool.name}: non_cancellable かつ副作用ありなら risk >= L3 が必要"
+                f"{tool.name}: non_cancellable tool with side effects requires risk >= L3"
             )
 
         self._tools[tool.name] = tool
@@ -175,7 +175,7 @@ class ToolRegistry:
         """**`Tool.execute` is never called from any path other than this one** (Invariant 2)."""
         tool = self._tools.get(tool_name)
         if tool is None:
-            return self._refuse(ctx, tool_name, "unknown_tool", "登録されていない")
+            return self._refuse(ctx, tool_name, "unknown_tool", "Tool is not registered")
 
         raw_digest = digest(_stable_json(raw_input))
 

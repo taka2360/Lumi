@@ -230,11 +230,11 @@ def default_model_path() -> Path:
     try:
         import faster_whisper
     except ImportError as error:  # pragma: no cover
-        raise VadModelUnavailable(f"faster_whisper が無い: {error}") from error
+        raise VadModelUnavailable(f"faster_whisper not found: {error}") from error
 
     path = Path(faster_whisper.__file__).parent / "assets" / "silero_vad_v6.onnx"
     if not path.is_file():
-        raise VadModelUnavailable(f"Silero VAD の ONNX が見つからない: {path}")
+        raise VadModelUnavailable(f"Silero VAD ONNX not found: {path}")
     return path
 
 
@@ -272,7 +272,7 @@ class SileroVad:
     def probability(self, frame: Samples) -> float:
         """Consume 512 samples (32 ms / 16 kHz) and return the speech probability."""
         if len(frame) != WINDOW_SAMPLES:
-            raise ValueError(f"{WINDOW_SAMPLES} サンプルが必要（来たのは {len(frame)}）")
+            raise ValueError(f"Expected {WINDOW_SAMPLES} samples (got {len(frame)})")
 
         # From v5 onward, input is "the previous frame's trailing 64 samples + this frame's 512"
         window = np.concatenate((self._context, frame)).reshape(1, -1).astype(np.float32)

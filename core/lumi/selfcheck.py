@@ -38,7 +38,7 @@ def check_sqlite_vec() -> CheckResult:
     try:
         import sqlite_vec
     except ImportError as error:
-        return CheckResult("sqlite-vec", False, f"import できない: {error}")
+        return CheckResult("sqlite-vec", False, f"Cannot import: {error}")
 
     try:
         with sqlite3.connect(":memory:") as db:
@@ -56,10 +56,10 @@ def check_sqlite_vec() -> CheckResult:
                 [sqlite_vec.serialize_float32([0.1, 0.2, 0.3, 0.4])],
             ).fetchone()
         if hit is None:
-            return CheckResult("sqlite-vec", False, "KNN 検索が何も返さない")
+            return CheckResult("sqlite-vec", False, "KNN search returned nothing")
     except (sqlite3.Error, AttributeError) as error:
         return CheckResult("sqlite-vec", False, f"{type(error).__name__}: {error}")
-    return CheckResult("sqlite-vec", True, f"{version} / KNN 検索が動く")
+    return CheckResult("sqlite-vec", True, f"{version} / KNN search works")
 
 
 def check_fts5() -> CheckResult:
@@ -67,10 +67,10 @@ def check_fts5() -> CheckResult:
     try:
         with sqlite3.connect(":memory:") as db:
             db.execute("create virtual table f using fts5(body)")
-            db.execute("insert into f(body) values ('こんにちは')")
-            found = db.execute("select count(*) from f where f match 'こんにちは'").fetchone()[0]
+            db.execute("insert into f(body) values ('hello')")
+            found = db.execute("select count(*) from f where f match 'hello'").fetchone()[0]
         if found != 1:
-            return CheckResult("FTS5", False, "検索が一致しない")
+            return CheckResult("FTS5", False, "Search did not match")
     except sqlite3.Error as error:
         return CheckResult("FTS5", False, str(error))
     return CheckResult("FTS5", True, f"SQLite {sqlite3.sqlite_version}")
@@ -85,7 +85,7 @@ def check_audio() -> CheckResult:
     try:
         from lumi.audio.probe import list_devices
     except OSError as error:
-        return CheckResult("PortAudio", False, f"ライブラリを読めない: {error}")
+        return CheckResult("PortAudio", False, f"Cannot load library: {error}")
 
     try:
         devices, host_apis = list_devices()
@@ -95,7 +95,7 @@ def check_audio() -> CheckResult:
     inputs = sum(1 for device in devices if device.can_capture)
     outputs = sum(1 for device in devices if device.can_play)
     names = ", ".join(api.name for api in host_apis)
-    return CheckResult("PortAudio", True, f"入力 {inputs} / 出力 {outputs} / ホスト API: {names}")
+    return CheckResult("PortAudio", True, f"Input {inputs} / Output {outputs} / Host API: {names}")
 
 
 def check_ssl() -> CheckResult:
@@ -110,8 +110,8 @@ def check_ssl() -> CheckResult:
     except Exception as error:
         return CheckResult("TLS", False, f"{type(error).__name__}: {error}")
     if stats.get("x509_ca", 0) <= 0:
-        return CheckResult("TLS", False, "CA 証明書が1つも無い（HTTPS 取得が失敗する）")
-    return CheckResult("TLS", True, f"CA 証明書 {stats['x509_ca']} 件")
+        return CheckResult("TLS", False, "No CA certificates found (HTTPS fetches will fail)")
+    return CheckResult("TLS", True, f"CA certificates: {stats['x509_ca']}")
 
 
 def check_vad() -> CheckResult:
@@ -125,7 +125,7 @@ def check_vad() -> CheckResult:
 
         from lumi.audio.vad import WINDOW_SAMPLES, SileroVad, VadModelUnavailable
     except ImportError as error:
-        return CheckResult("Silero VAD", False, f"import できない: {error}")
+        return CheckResult("Silero VAD", False, f"Cannot import: {error}")
 
     try:
         vad = SileroVad()
@@ -133,8 +133,8 @@ def check_vad() -> CheckResult:
     except (VadModelUnavailable, RuntimeError, OSError, ValueError) as error:
         return CheckResult("Silero VAD", False, f"{type(error).__name__}: {error}")
     if not 0.0 <= probability <= 1.0:
-        return CheckResult("Silero VAD", False, f"確率が範囲外: {probability}")
-    return CheckResult("Silero VAD", True, "ONNX Runtime (CPU) で推論できる")
+        return CheckResult("Silero VAD", False, f"Probability out of range: {probability}")
+    return CheckResult("Silero VAD", True, "Inference succeeds with ONNX Runtime (CPU)")
 
 
 def check_stt() -> CheckResult:
@@ -147,7 +147,7 @@ def check_stt() -> CheckResult:
         import ctranslate2
         import faster_whisper
     except ImportError as error:
-        return CheckResult("faster-whisper", False, f"import できない: {error}")
+        return CheckResult("faster-whisper", False, f"Cannot import: {error}")
     versions = f"{faster_whisper.__version__} / CTranslate2 {ctranslate2.__version__}"
     return CheckResult("faster-whisper", True, versions)
 
@@ -158,7 +158,7 @@ def check_content() -> CheckResult:
         from lumi import paths
         from lumi.content.pack import ContentPackError, load_character
     except ImportError as error:
-        return CheckResult("Content Pack", False, f"import できない: {error}")
+        return CheckResult("Content Pack", False, f"Cannot import: {error}")
 
     try:
         pack = load_character(paths.default_character_dir())
@@ -181,13 +181,14 @@ CHECKS: tuple[Callable[[], CheckResult], ...] = (
 def run() -> int:
     """Run everything and report results. **Returns 1 if even one check fails.**"""
     frozen = getattr(sys, "frozen", False)
-    print(f"Lumi Core self-check（{'同梱サイドカー' if frozen else '開発環境'} / {sys.version}）")
+    mode = "bundled sidecar" if frozen else "dev environment"
+    print(f"Lumi Core self-check ({mode} / {sys.version})")
     results = [check() for check in CHECKS]
     for result in results:
         print(f"  {result.line()}")
     failed = [result for result in results if not result.ok]
     if failed:
-        print(f"\n{len(failed)} 件失敗した。**この配布物は使えない。**")
+        print(f"\n{len(failed)} check(s) failed. **This distribution cannot be used.**")
         return 1
-    print("\nすべて成功。")
+    print("\nAll checks passed.")
     return 0

@@ -177,13 +177,13 @@ def assigned_attributes(method: str) -> list[str]:
         ),
         None,
     )
-    assert ring is not None, "ring.py: RingBuffer が見つからない"
+    assert ring is not None, "ring.py: RingBuffer not found"
     defs = [
         n
         for n in ring.body
         if isinstance(n, ast.FunctionDef | ast.AsyncFunctionDef) and n.name == method
     ]
-    assert len(defs) == 1, f"ring.py: RingBuffer.{method} が {len(defs)} 個"
+    assert len(defs) == 1, f"ring.py: RingBuffer.{method} has {len(defs)} definitions"
     node = defs[0]
 
     targets: list[ast.expr] = []
@@ -209,7 +209,7 @@ def test_each_cursor_has_exactly_one_writer(method: str, forbidden: tuple[str, .
 
 
 def test_capacity_must_be_positive() -> None:
-    with pytest.raises(ValueError, match="capacity"):
+    with pytest.raises(ValueError, match="Capacity"):
         RingBuffer(0)
 
 

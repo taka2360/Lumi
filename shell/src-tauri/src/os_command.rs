@@ -97,7 +97,7 @@ fn window_of(payload: &Value) -> Result<WindowKind, Rejection> {
     let label = payload
         .get("window")
         .and_then(Value::as_str)
-        .ok_or_else(|| Rejection::InvalidPayload("window が無い".into()))?;
+        .ok_or_else(|| Rejection::InvalidPayload("missing window".into()))?;
     WindowKind::from_label(label).ok_or(Rejection::UnknownWindow)
 }
 
@@ -105,9 +105,9 @@ fn finite_number(payload: &Value, key: &str) -> Result<f64, Rejection> {
     let value = payload
         .get(key)
         .and_then(Value::as_f64)
-        .ok_or_else(|| Rejection::InvalidPayload(format!("{key} が数値ではない")))?;
+        .ok_or_else(|| Rejection::InvalidPayload(format!("{key} must be a number")))?;
     if !value.is_finite() {
-        return Err(Rejection::InvalidPayload(format!("{key} が有限ではない")));
+        return Err(Rejection::InvalidPayload(format!("{key} must be finite")));
     }
     Ok(value)
 }
@@ -184,7 +184,7 @@ mod tests {
             assert_ne!(
                 rejection,
                 Err(Rejection::UnknownMethod),
-                "{method} が allowlist にあるのに match されていない"
+                "{method} is in allowlist but has no match arm"
             );
         }
     }

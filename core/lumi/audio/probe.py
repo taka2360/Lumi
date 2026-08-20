@@ -95,29 +95,27 @@ class StreamReport:
     def lines(self, role: str) -> list[str]:
         out = [f"■ {role}: {self.plan.describe()}"]
         if not self.opened:
-            out.append(f"    ✗ 開けなかった: {self.error}")
+            out.append(f"    ✗ Failed to open: {self.error}")
             return out
         if not self.flowing:
             out.append(
-                f"    ✗ 開けたがフレームが来ない（{FIRST_FRAME_TIMEOUT_S:.0f} 秒待った）。"
-                "**開通していないものとして扱う**"
+                f"    ✗ Opened but no frame arrived (waited {FIRST_FRAME_TIMEOUT_S:.0f}s). "
+                "**Treated as inactive**"
             )
             # **Don't discard the reason.** "No frame arrived" and "died partway through" are
             # different things.
             if self.error:
-                out.append(f"      理由: {self.error}")
+                out.append(f"      Reason: {self.error}")
             return out
         out.append(
-            f"    ✓ 開通 / 最初のフレームまで {self.first_frame_s:.3f} 秒"
-            + (f" / 遅延 {self.latency_s * 1000:.0f} ms" if self.latency_s is not None else "")
+            f"    ✓ Opened / First frame in {self.first_frame_s:.3f}s"
+            + (f" / Latency {self.latency_s * 1000:.0f} ms" if self.latency_s is not None else "")
         )
-        out.append(
-            f"      フレーム {self.frames} / コールバック {self.callbacks} / xrun {self.xruns}"
-        )
+        out.append(f"      Frames {self.frames} / Callbacks {self.callbacks} / Xruns {self.xruns}")
         if self.drift is not None:
             out.append(
-                f"      実時間比 {self.drift.ppm:+.1f} ppm"
-                f"（残差 {self.drift.residual_ms:.2f} ms, n={self.drift.samples}）"
+                f"      Realtime ratio {self.drift.ppm:+.1f} ppm"
+                f" (residual {self.drift.residual_ms:.2f} ms, n={self.drift.samples})"
             )
         return out
 
@@ -134,21 +132,21 @@ class ProbeReport:
         for warning in self.plan.warnings:
             lines.append(f"⚠ {warning}")
         if self.capture is not None:
-            lines += self.capture.lines("入力")
+            lines += self.capture.lines("input")
         if self.playback is not None:
-            lines += self.playback.lines("出力")
+            lines += self.playback.lines("output")
         if self.capture is not None and self.playback is not None:
             capture_drift = self.capture.drift
             playback_drift = self.playback.drift
             if capture_drift is not None and playback_drift is not None:
                 ppm = relative_ppm(capture_drift, playback_drift)
                 lines.append(
-                    f"■ 入出力の相対ドリフト: {ppm:+.1f} ppm"
-                    f" → {drift_ms(ppm, 60.0):.2f} ms/分, {drift_ms(ppm, 3600.0):.1f} ms/時"
+                    f"■ Relative I/O drift: {ppm:+.1f} ppm"
+                    f" -> {drift_ms(ppm, 60.0):.2f} ms/min, {drift_ms(ppm, 3600.0):.1f} ms/hr"
                 )
                 lines.append(
-                    "    ※ 測ったのは**アプリから見たストリームのペース**であり、"
-                    "スピーカーからマイクまでの実遅延ではない"
+                    "    * Measured stream pacing as seen by app, "
+                    "not physical speaker-to-mic latency"
                 )
         lines += [f"  {note}" for note in self.notes]
         return "\n".join(lines)
@@ -278,7 +276,7 @@ def probe(seconds: float = DEFAULT_SECONDS) -> ProbeReport:
     try:
         devices, host_apis = list_devices()
     except OSError as error:
-        plan = AudioPlan(capture=None, playback=None, warnings=(f"PortAudio が使えない: {error}",))
+        plan = AudioPlan(capture=None, playback=None, warnings=(f"PortAudio unavailable: {error}",))
         return ProbeReport(plan=plan)
 
     plan = plan_audio(devices, host_apis)
@@ -309,7 +307,7 @@ def probe(seconds: float = DEFAULT_SECONDS) -> ProbeReport:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="音声デバイスの開通確認とドリフト実測")
+    parser = argparse.ArgumentParser(description="Probe audio devices and measure drift")
     parser.add_argument("--seconds", type=float, default=DEFAULT_SECONDS)
     args = parser.parse_args()
 

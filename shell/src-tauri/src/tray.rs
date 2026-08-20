@@ -67,7 +67,7 @@ pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
     let icon = app
         .default_window_icon()
         .cloned()
-        .ok_or_else(|| tauri::Error::AssetNotFound("トレイに使うアイコンが見つからない".into()))?;
+        .ok_or_else(|| tauri::Error::AssetNotFound("Icon for tray not found".into()))?;
 
     TrayIconBuilder::with_id("lumi")
         .icon(icon)
@@ -111,7 +111,7 @@ mod tests {
     #[test]
     fn every_menu_item_resolves_to_an_action() {
         for (id, label) in menu_items(Locale::Ja) {
-            assert!(resolve_tray_action(id).is_some(), "{id} に対応する挙動が無い");
+            assert!(resolve_tray_action(id).is_some(), "No action mapped for {id}");
             assert!(!label.is_empty());
         }
     }

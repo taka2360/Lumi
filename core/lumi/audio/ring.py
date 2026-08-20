@@ -55,7 +55,7 @@ class RingBuffer:
 
     def __init__(self, capacity: int) -> None:
         if capacity <= 0:
-            raise ValueError("capacity は正の数")
+            raise ValueError("Capacity must be positive")
         #: Pre-allocated up front. **Never allocated again inside the callback**
         self._data: Samples = np.zeros(capacity, dtype=np.float32)
         self._capacity = capacity

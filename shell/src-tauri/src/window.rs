@@ -258,7 +258,7 @@ fn require_stage(window: &tauri::WebviewWindow) -> Result<(), String> {
         Some(WindowKind::Stage) => Ok(()),
         _ => {
             log::warn!("shell.window.refused label={}", window.label());
-            Err("stage 以外のウィンドウは操作できない".into())
+            Err("Cannot operate on non-stage window".into())
         }
     }
 }
@@ -486,9 +486,9 @@ mod tests {
         assert!(spec.transparent);
         assert!(!spec.decorations);
         assert!(spec.always_on_top);
-        assert!(!spec.focused, "表示時にフォーカスを奪ってはならない");
+        assert!(!spec.focused, "Must not steal focus when shown");
         assert!(spec.skip_taskbar);
-        assert!(spec.click_through, "既定はクリックスルー");
+        assert!(spec.click_through, "Default must be click-through");
     }
 
     #[test]
@@ -552,7 +552,7 @@ mod tests {
     #[test]
     fn every_lumi_window_is_protected() {
         for kind in WindowKind::ALL {
-            assert!(kind.is_protected(), "{} が保護対象から漏れている", kind.label());
+            assert!(kind.is_protected(), "{} is missing from protected windows", kind.label());
         }
         assert_eq!(WindowKind::from_label("permission"), Some(WindowKind::Permission));
         // A window that isn't Lumi's own is never protected (it doesn't even enter the check)

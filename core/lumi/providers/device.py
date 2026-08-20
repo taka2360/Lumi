@@ -68,5 +68,5 @@ def resolve(choice: DeviceChoice | str = DeviceChoice.AUTO) -> DeviceChoice:
         # Asked for explicitly and not there. **Say so** rather than quietly obeying
         log.warning("device.cuda_requested_but_absent")
     else:
-        log.info("device.no_cuda", detail="CPU で動く。SLO は GPU 構成での約束")
+        log.info("device.no_cuda", detail="Running on CPU. SLO assumes GPU configuration")
     return DeviceChoice.CPU

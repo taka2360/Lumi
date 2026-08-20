@@ -94,14 +94,16 @@ class SetExpressionTool:
             # failure
             return ToolOutcome(
                 ok=False,
-                error=ToolError(code="unknown_emotion", message=f"未知の emotion: {raw_emotion!r}"),
+                error=ToolError(
+                    code="unknown_emotion", message=f"Unknown emotion: {raw_emotion!r}"
+                ),
             )
 
         intensity = metadata.get("intensity", _DEFAULT_INTENSITY)
         if not isinstance(intensity, int | float) or not 0.0 <= float(intensity) <= 1.0:
             return ToolOutcome(
                 ok=False,
-                error=ToolError(code="bad_intensity", message=f"範囲外: {intensity!r}"),
+                error=ToolError(code="bad_intensity", message=f"Out of range: {intensity!r}"),
             )
 
         await self._send(ExpressionIntent(emotion=emotion, intensity=float(intensity)))

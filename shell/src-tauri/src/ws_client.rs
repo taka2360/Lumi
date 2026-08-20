@@ -37,15 +37,15 @@ pub struct IncomingCommand {
 /// In Phase 0, `command` is the only kind Shell accepts.
 /// Other kinds from Core (besides `welcome`) are not accepted.
 pub fn parse_command(raw: &str) -> Result<IncomingCommand, String> {
-    let value: Value = serde_json::from_str(raw).map_err(|e| format!("JSON ではない: {e}"))?;
+    let value: Value = serde_json::from_str(raw).map_err(|e| format!("Not valid JSON: {e}"))?;
     if value.get("v").and_then(Value::as_u64) != Some(PROTOCOL_VERSION) {
-        return Err("プロトコルバージョンが違う".into());
+        return Err("Protocol version mismatch".into());
     }
     if value.get("kind").and_then(Value::as_str) != Some("command") {
-        return Err("command ではない".into());
+        return Err("Kind must be command".into());
     }
-    let id = value.get("id").and_then(Value::as_str).ok_or("id が無い")?.to_owned();
-    let method = value.get("method").and_then(Value::as_str).ok_or("method が無い")?.to_owned();
+    let id = value.get("id").and_then(Value::as_str).ok_or("Missing id")?.to_owned();
+    let method = value.get("method").and_then(Value::as_str).ok_or("Missing method")?.to_owned();
     let payload = value.get("payload").cloned().unwrap_or_else(|| json!({}));
     Ok(IncomingCommand { id, method, payload })
 }
@@ -95,25 +95,27 @@ pub fn start(app: AppHandle, token: String, mut port_rx: watch::Receiver<Option<
 
 async fn run_connection(app: &AppHandle, token: &str, port: u16) -> Result<(), String> {
     let url = format!("ws://127.0.0.1:{port}");
-    let (mut ws, _) = connect_async(&url).await.map_err(|e| format!("接続できない: {e}"))?;
+    let (mut ws, _) = connect_async(&url).await.map_err(|e| format!("Cannot connect: {e}"))?;
 
-    ws.send(Message::Text(hello(token).into())).await.map_err(|e| format!("hello 送信: {e}"))?;
+    ws.send(Message::Text(hello(token).into()))
+        .await
+        .map_err(|e| format!("Send hello failed: {e}"))?;
 
     match ws.next().await {
         Some(Ok(Message::Text(text))) => {
             let value: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
             if value.get("kind").and_then(Value::as_str) != Some("welcome") {
-                return Err("welcome が来ない（認証に失敗した可能性）".into());
+                return Err("Did not receive welcome (authentication may have failed)".into());
             }
         }
-        Some(Ok(_)) => return Err("welcome の代わりに別のフレームが来た".into()),
-        Some(Err(err)) => return Err(format!("welcome の受信に失敗: {err}")),
-        None => return Err("welcome を待っている間に閉じられた".into()),
+        Some(Ok(_)) => return Err("Received frame other than welcome".into()),
+        Some(Err(err)) => return Err(format!("Failed to receive welcome: {err}")),
+        None => return Err("Connection closed while waiting for welcome".into()),
     }
     log::info!("core.ws.connected port={port}");
 
     while let Some(frame) = ws.next().await {
-        let message = frame.map_err(|e| format!("受信に失敗: {e}"))?;
+        let message = frame.map_err(|e| format!("Failed to receive message: {e}"))?;
         let Message::Text(raw) = message else {
             continue;
         };
@@ -125,7 +127,9 @@ async fn run_connection(app: &AppHandle, token: &str, port: u16) -> Result<(), S
                 continue;
             }
         };
-        ws.send(Message::Text(response.into())).await.map_err(|e| format!("送信に失敗: {e}"))?;
+        ws.send(Message::Text(response.into()))
+            .await
+            .map_err(|e| format!("Failed to send response: {e}"))?;
     }
     Ok(())
 }

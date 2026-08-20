@@ -144,7 +144,7 @@ class OllamaProvider:
         version = await self._version()
         if version is None:
             raise ProviderUnavailable(
-                "ollama_not_running", f"{self._base} に応答が無い。Ollama を起動してください"
+                "ollama_not_running", f"No response from {self._base}. Please start Ollama"
             )
 
         models = await self._models()
@@ -152,7 +152,7 @@ class OllamaProvider:
             # **Not "not installed" — "the model is missing."** The action to guide the user toward
             # differs
             raise ProviderNotConfigured(
-                "model_missing", f"{self._model} が見つからない。`ollama pull {self._model}`"
+                "model_missing", f"Model {self._model} not found (`ollama pull {self._model}`)"
             )
 
         await self._preload()

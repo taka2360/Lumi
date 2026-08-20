@@ -326,7 +326,7 @@ class ReactiveLoop:
         # **Playback is `hard`.** Muting the buffer silences it instantly
         speech = Cancellable(
             id=f"speech:{activity.id}",
-            label="TTS 再生",
+            label="TTS playback",
             contract=Cancellation.HARD,
             kill=scheduler.abort,
         )
@@ -468,7 +468,7 @@ class ReactiveLoop:
             )
         default = getattr(tts, "default_voice", None)
         if default is None:
-            raise ProviderError("no_voice", "話者を決められない")
+            raise ProviderError("no_voice", "Cannot determine speaker")
         voice = cast("VoiceConfig", default())
         return VoiceConfig(
             speaker=voice.speaker,
@@ -480,7 +480,7 @@ class ReactiveLoop:
     def _require_playback(self) -> SpeakerPlayback:
         """If there's no output, **fail explicitly.** Never silently converse in silence."""
         if self._audio is None or self._audio.playback is None:
-            raise ProviderError("no_playback", "音声の出力先が無い")
+            raise ProviderError("no_playback", "No audio playback target available")
         return self._audio.playback
 
 
@@ -501,7 +501,7 @@ def _as_block(source: str, result: ToolResult) -> ContextBlock:
 
     Reconstructing it here would open a hole in Invariant 7.
     """
-    content = str(result.value) if result.ok else f"失敗: {result.error}"
+    content = str(result.value) if result.ok else f"Failed: {result.error}"
     return ContextBlock(
         source=source,
         content=content,

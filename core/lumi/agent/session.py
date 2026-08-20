@@ -107,7 +107,7 @@ class Session:
         replaces this.]
         """
         if keep_recent < 0:
-            raise ValueError("keep_recent は 0 以上")
+            raise ValueError("keep_recent must be >= 0")
         if len(self._turns) <= keep_recent:
             return 0
 

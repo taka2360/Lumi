@@ -245,7 +245,7 @@ class PlaybackScheduler:
         """
         wav = decode_wav(wav_bytes)
         if wav.sample_width != 2:
-            raise ValueError(f"16bit PCM を期待した（来たのは {wav.sample_width * 8}bit）")
+            raise ValueError(f"Expected 16-bit PCM (got {wav.sample_width * 8}-bit)")
 
         plan = self._playback.plan
         mono = to_mono(pcm16_to_float32(wav.frames), wav.channels)

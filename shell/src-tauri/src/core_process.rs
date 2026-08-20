@@ -165,7 +165,7 @@ impl CoreSupervisor {
         let job = KillOnCloseJob::create();
         if job.is_none() {
             // Never silently weaken. Logs that zombies may be left behind.
-            log::warn!("core.job_object.unavailable 強制終了時に Core が残る可能性がある");
+            log::warn!("core.job_object.unavailable Core process may remain on force-kill");
         }
         let supervisor = Self {
             running: Arc::new(Mutex::new(None)),
@@ -236,7 +236,7 @@ impl CoreSupervisor {
                 None => false,
             };
             if !assigned {
-                log::warn!("core.job_object.assign_failed 強制終了時に Core が残る可能性がある");
+                log::warn!("core.job_object.assign_failed Core process may remain on force-kill");
             }
         }
 
@@ -350,7 +350,7 @@ mod tests {
         let spec = resolve_launch_spec(None, Some(Path::new("C:/repo/core"))).unwrap();
         assert!(
             !spec.content_dir.components().any(|c| c.as_os_str() == ".."),
-            "scope に渡すパスに .. が残っている: {}",
+            "Path passed to scope contains .. segments: {}",
             spec.content_dir.display()
         );
     }

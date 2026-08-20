@@ -144,15 +144,14 @@ def plan_audio(devices: list[Device], host_apis: list[HostApi]) -> AudioPlan:
     if capture_device is None:
         # **This happens for real.** PCs with zero enabled recording devices are not rare.
         # Not broken, so this is returned as a state, not an exception.
-        warnings.append("入力デバイスが1つも無い。音声入力は使えない")
+        warnings.append("No audio input device found; audio capture unavailable")
     if playback_device is None:
-        warnings.append("出力デバイスが1つも無い。音声出力は使えない")
+        warnings.append("No audio output device found; audio playback unavailable")
 
-    for device, role in ((capture_device, "入力"), (playback_device, "出力")):
+    for device, role in ((capture_device, "input"), (playback_device, "output")):
         if device is not None and device.host_api in SLOW_HOST_APIS:
             warnings.append(
-                f"{role}に {device.host_api} を選んだ。"
-                "遅延が大きく barge-in が成立しない可能性がある"
+                f"Selected {device.host_api} for {role}; high latency may prevent barge-in"
             )
 
     return AudioPlan(

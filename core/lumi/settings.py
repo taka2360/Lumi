@@ -204,13 +204,13 @@ def save(path: Path, settings: Settings, changes: Mapping[str, str]) -> Settings
     temporary escape hatch permanent.
     """
     if settings.unreadable:
-        raise SettingsUnreadable(f"{path.name} を読めなかったので上書きしない")
+        raise SettingsUnreadable(f"Cannot read {path.name}; will not overwrite")
 
     for key, value in changes.items():
         if key not in KEYS:
-            raise UnknownSetting(f"{key} は設定項目ではない")
+            raise UnknownSetting(f"Unknown setting: {key}")
         if not _is_valid(key, value):
-            raise InvalidSettingValue(f"{key} の値が不正: {value!r}")
+            raise InvalidSettingValue(f"Invalid value for {key}: {value!r}")
 
     stored: dict[str, Any] = {"version": SCHEMA_VERSION, **settings.unknown}
     for key, current in (

@@ -194,7 +194,7 @@ class TurnTimer:
 def _check(span: str) -> None:
     """**The span set is the SLO table.** A typo would silently create a new bucket."""
     if span not in SPANS:
-        raise ValueError(f"未知の区間: {span}（docs/architecture/audio.md §7）")
+        raise ValueError(f"Unknown span: {span} (docs/architecture/audio.md §7)")
 
 
 def _ms(seconds: float) -> int:

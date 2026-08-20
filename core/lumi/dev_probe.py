@@ -33,7 +33,7 @@ async def probe_os_boundary(server: WsServer) -> None:
         unknown = await server.invoke(Role.SHELL, "os.window.destroy", {}, timeout=3.0)
         log.info("devprobe.unknown", ok=unknown.ok, error=unknown.error)
         if unknown.ok:
-            log.error("devprobe.b3_broken 未知の os.* が拒否されていない")
+            log.error("devprobe.b3_broken unknown os.* was not rejected")
 
         # Invariant 8's lane. Not implemented until Phase 4c, so rejection is the correct outcome.
         deferred = await server.invoke(
@@ -41,7 +41,7 @@ async def probe_os_boundary(server: WsServer) -> None:
         )
         log.info("devprobe.deferred", ok=deferred.ok, error=deferred.error)
         if deferred.ok:
-            log.error("devprobe.b3_broken os.input.* が拒否されていない")
+            log.error("devprobe.b3_broken os.input.* was not rejected")
     # A probe failure never crashes Core (this isn't a product code path).
     except Exception as exc:
         log.warning("devprobe.failed", reason=str(exc))

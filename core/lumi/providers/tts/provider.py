@@ -83,7 +83,7 @@ class AivisSpeechProvider:
 
         runtime = await self._engine.ensure_running()
         if runtime is not EngineRuntime.READY:
-            raise ProviderUnavailable("engine_not_ready", f"エンジンの状態: {runtime}")
+            raise ProviderUnavailable("engine_not_ready", f"Engine runtime status: {runtime}")
 
         try:
             speaker = self._preferred
@@ -94,7 +94,7 @@ class AivisSpeechProvider:
 
         if speaker is None:
             # Installed but can't speak = **broken** (different from not-set-up)
-            raise ProviderUnavailable("no_speaker", "エンジンに音声モデルが登録されていません")
+            raise ProviderUnavailable("no_speaker", "No voice model registered in TTS engine")
 
         # **Deciding the speaker is not loading it.** The engine loads the voice model on its
         # first `audio_query`, which put 3092 ms inside `tts_first_audio_ms` on the first
@@ -128,7 +128,7 @@ class AivisSpeechProvider:
     def default_voice(self) -> VoiceConfig:
         """Default while there's no Content Pack. **Moves to `voice.toml` later in Phase 1.**"""
         if self._default_speaker is None:
-            raise ProviderUnavailable("not_loaded", "load() の前に声を決められない")
+            raise ProviderUnavailable("not_loaded", "Cannot determine voice before calling load()")
         return VoiceConfig(speaker=self._default_speaker, name=self._speaker_name)
 
     async def synthesize(

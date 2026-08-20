@@ -360,7 +360,7 @@ async def test_an_unexpected_provider_error_does_not_hang_the_turn() -> None:
             self, text: str, voice: VoiceConfig, cancel_token: CancelToken
         ) -> SpeechAudio:
             del text, voice, cancel_token
-            raise ProviderNotConfigured("engine_missing", "エンジンが無い")
+            raise ProviderNotConfigured("engine_missing", "Engine not found")
 
     scheduler = make(ExplodingTts(), FakeNotifier())
     scheduler.speak("あ。")
@@ -380,7 +380,7 @@ async def test_a_crash_in_one_sentence_still_lets_the_next_one_speak() -> None:
             self, text: str, voice: VoiceConfig, cancel_token: CancelToken
         ) -> SpeechAudio:
             if text == "こわれる。":
-                raise RuntimeError("想定外")
+                raise RuntimeError("Unexpected failure")
             return await super().synthesize(text, voice, cancel_token)
 
     notifier = FakeNotifier()

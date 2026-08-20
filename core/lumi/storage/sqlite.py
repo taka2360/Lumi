@@ -120,7 +120,7 @@ class Database:
         try:
             connection = sqlite3.connect(str(path), check_same_thread=False, isolation_level=None)
         except sqlite3.Error as error:
-            raise StorageError(f"DB を開けない: {path}") from error
+            raise StorageError(f"Cannot open database: {path}") from error
 
         connection.execute("PRAGMA foreign_keys = ON")
         if path != ":memory:":
@@ -158,7 +158,8 @@ class Database:
             if current > SCHEMA_VERSION:
                 # A newer Lumi's DB was opened by an older Lumi. **Never guess and proceed anyway.**
                 raise StorageError(
-                    f"DB のスキーマ版 {current} がこの Lumi ({SCHEMA_VERSION}) より新しい"
+                    f"Database schema version {current} is newer than "
+                    f"this Lumi version ({SCHEMA_VERSION})"
                 )
 
             for statements in _MIGRATIONS[current:]:
