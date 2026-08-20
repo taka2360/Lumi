@@ -11,10 +11,14 @@ dependencies = [
     "sqlite-vec>=0.1.9",
     "httpx>=0.28.1",
     "sounddevice>=0.5.5",
+    # Phase 1. Audio is handled as a 16kHz mono float32 array (the shared representation for VAD / STT)
+    "numpy>=2.1",
+    # Phase 1. STT. **CTranslate2 / int8. Doesn't depend on torch** (R1)
+    "faster-whisper>=1.1",
 ]
 
-# torch に依存しない（インストーラサイズ R1）。
-# 依存を足すときは docs/DESIGN.md §7 の技術選定に載っているものだけにする。
+# Doesn't depend on torch (installer size R1).
+# When adding a dependency, only add ones listed in docs/DESIGN.md §7's technology selection.
 
 [project.scripts]
 lumi-core = "lumi.__main__:main"
@@ -41,8 +45,10 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B", "ASYNC", "RUF"]
-# コメント・docstring は日本語で書く（.claude/rules/01-design-process.md）。
-# 全角括弧などを「紛らわしい文字」として弾く規則は、その方針と衝突するため無効にする。
+# User-facing strings, log messages, and error messages stay in Japanese
+# (.claude/rules/01-design-process.md — comments/docstrings are English, but
+# these aren't). The rule that flags fullwidth brackets etc. as "ambiguous
+# characters" is disabled since it conflicts with that.
 ignore = ["RUF001", "RUF002", "RUF003"]
 
 [tool.mypy]
@@ -51,9 +57,9 @@ strict = true
 warn_unreachable = true
 files = ["lumi", "tests"]
 
-# 型スタブを持たない外部ライブラリ。**個別に列挙する**（全体を無視しない）。
+# External libraries without type stubs. **Listed individually** (never ignored wholesale).
 [[tool.mypy.overrides]]
-module = ["sqlite_vec.*", "sounddevice.*"]
+module = ["sqlite_vec.*", "sounddevice.*", "faster_whisper.*", "onnxruntime.*", "ctranslate2.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

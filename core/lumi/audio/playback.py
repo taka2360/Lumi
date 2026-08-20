@@ -1,64 +1,141 @@
-"""WAV の再生。
+"""Speaker output. **Instant mute is a hard implementation requirement.**
 
-設計 → docs/architecture/audio.md
+Design → docs/architecture/audio.md §3, §6 / Decision → ADR-020
 
-**Phase 0 の範囲はここまで。** duplex stream（capture + playback + reference channel）と
-即時ミュートは Phase 0 の Step K / Phase 1 で作る。ここに VAD もミュートも無い。
-「今は無い」ことを名前と docstring で明示しておき、**あるように見せない**。
+> **TTS playback stop is `hard`.** Muting the buffer must silence it instantly
+> (docs/contracts/state-machines.md "Cancellation contract").
 
-`sounddevice` は PortAudio のバインディング（どちらも MIT 系）。
-再生は別スレッドで行い、**イベントループを止めない**。
+## How this differs from Phase 0's `play_wav`
+
+Phase 0 only "waited until playback finished" — **there was no way to stop it**.
+Phase 1 writes through a ring buffer into an always-open stream, and
+**the callback checks `mute_flag` and outputs 0.** This is the barge-in exit point.
+
+## reference ring
+
+Keep **the exact samples written to the playback ring** (not captured from hardware).
+Lumi generates the sound it plays itself, so that becomes the reference signal.
+**Keep the mute events too** — Phase 2's AEC needs "the waveform that actually reached the speaker."
 """
 
 from __future__ import annotations
 
-import asyncio
+import threading
+from typing import Any, Final
+
+import numpy as np
 
 from lumi import logging as lumi_logging
-from lumi.audio.wav import WavError, decode_wav
+from lumi.audio.devices import StreamPlan
+from lumi.audio.ring import RingBuffer, Samples
 
 log = lumi_logging.get_logger(__name__)
 
-
-class PlaybackError(RuntimeError):
-    """鳴らせなかった。**理由を持つ**（黙って無音にしない）。"""
-
-    def __init__(self, reason: str, detail: str = "") -> None:
-        super().__init__(f"{reason}: {detail}" if detail else reason)
-        self.reason = reason
-        self.detail = detail
+#: Playback ring length [Provisional]. **Long enough to hold several pre-generated sentences**
+PLAYBACK_RING_SECONDS: Final = 30.0
+#: Reference signal ring. Sized for AEC delay estimation (Phase 2)
+REFERENCE_RING_SECONDS: Final = 4.0
 
 
-def _play_blocking(data: bytes) -> None:
-    """PortAudio に渡して鳴り終わるまで待つ。**専用スレッドで呼ぶこと。**
+class PlaybackUnavailable(RuntimeError):
+    """Cannot open output. **Never fail silently into muted audio.**"""
 
-    バイト列のまま渡す（`RawOutputStream`）。numpy を経由しないので、
-    **Phase 0 の依存を1つ増やさずに済む**。numpy が要るのは VAD が入る Phase 1。
-    """
-    try:
+
+class SpeakerPlayback:
+    """Output stream + ring buffer + `mute_flag`."""
+
+    __slots__ = ("_mute_flag", "_plan", "_reference", "_ring", "_stream", "_underruns")
+
+    def __init__(self, plan: StreamPlan, *, mute_flag: threading.Event | None = None) -> None:
+        self._plan = plan
+        # **Both rings hold interleaved samples**, which is what the callback drains and
+        # records — so a second of audio costs `samplerate * channels`. Sizing them by
+        # samplerate alone made a stereo device hold half the stated seconds, and the
+        # reference ring's length is a Phase 2 AEC requirement, not a round number
+        per_second = plan.samplerate * plan.channels
+        self._ring = RingBuffer(int(per_second * PLAYBACK_RING_SECONDS))
+        self._reference = RingBuffer(int(per_second * REFERENCE_RING_SECONDS))
+        # : **Shared with the VAD thread.** Once set, output goes silent from the next callback
+        # onward
+        self._mute_flag = mute_flag or threading.Event()
+        self._underruns = 0
+        self._stream: Any = None
+
+    @property
+    def mute_flag(self) -> threading.Event:
+        return self._mute_flag
+
+    @property
+    def plan(self) -> StreamPlan:
+        return self._plan
+
+    @property
+    def reference(self) -> RingBuffer:
+        """Read by Phase 2's AEC. **Phase 1 only writes to it.**"""
+        return self._reference
+
+    def start(self) -> None:
         import sounddevice as sd
-    except OSError as error:
-        # PortAudio が無い / 開けない環境。**黙って無音にしない。**
-        raise PlaybackError("audio_backend_unavailable", str(error)) from error
 
-    try:
-        wav = decode_wav(data)
-    except WavError as error:
-        raise PlaybackError("wav_malformed", str(error)) from error
+        try:
+            self._stream = sd.OutputStream(
+                device=self._plan.device.index,
+                samplerate=self._plan.samplerate,
+                channels=self._plan.channels,
+                dtype="float32",
+                callback=self._callback,
+            )
+            self._stream.start()
+        except Exception as error:
+            raise PlaybackUnavailable(f"出力を開けない: {error}") from error
 
-    if wav.sample_width != 2:
-        # エンジンは 16bit PCM を返す。それ以外が来たら、変換を自作せず失敗させる。
-        raise PlaybackError("unsupported_sample_width", f"{wav.sample_width * 8}bit")
+    def _callback(self, outdata: Any, frames: int, time_info: Any, status: Any) -> None:
+        """**Runs under real-time constraints.** Only touches `mute_flag` and the ring buffer."""
+        del time_info
+        if status:
+            self._underruns += 1
 
-    try:
-        with sd.RawOutputStream(
-            samplerate=wav.sample_rate, channels=wav.channels, dtype="int16"
-        ) as stream:
-            stream.write(wav.frames)
-    except Exception as error:  # sounddevice は PortAudioError を投げる
-        raise PlaybackError("playback_failed", str(error)) from error
+        view = np.asarray(outdata, dtype=np.float32).reshape(-1)
+        if self._mute_flag.is_set():
+            # * **Sound stops here.** Does not wait for in-progress generation
+            view[:] = 0.0
+        else:
+            self._ring.read_into(view)
 
+        # Keep **what was actually output** as the reference signal (including muted zeros)
+        self._reference.write(view)
+        del frames
 
-async def play_wav(data: bytes) -> None:
-    """WAV を鳴らし終わるまで待つ。"""
-    await asyncio.to_thread(_play_blocking, data)
+    def write(self, samples: Samples) -> None:
+        """Append to the playback queue. **Must be resampled to the device rate first.**"""
+        self._ring.write(samples)
+
+    @property
+    def queued(self) -> int:
+        """Number of samples still queued for playback. **Used by the Inspector and tests to check
+        whether audio was dropped.**
+        """
+        return self._ring.available
+
+    def is_active(self) -> bool:
+        """Whether playback is active. **Determines EchoGuard L1's threshold boost.**"""
+        return not self._mute_flag.is_set() and self._ring.available > 0
+
+    def mute(self) -> None:
+        """**The barge-in exit point.** Synchronous — silence takes effect next callback."""
+        self._mute_flag.set()
+
+    def unmute(self) -> None:
+        self._mute_flag.clear()
+
+    def clear(self) -> None:
+        """**Discard queued playback.** Prevents stale audio from resuming after an interruption."""
+        self._ring.clear()
+
+    def stop(self) -> None:
+        if self._stream is not None:
+            self._stream.stop()
+            self._stream.close()
+            self._stream = None
+        if self._underruns:
+            log.warning("playback.underruns", count=self._underruns)

@@ -168,11 +168,31 @@ class VisemeTimeline:
 |---|---|---|
 | `stage.speech.started` | Core → Stage | `{text, timeline, total_ms}`。**再生開始と同時に送る** |
 | `stage.speech.ended` | Core → Stage | `{}`。再生が終わった / 中断された |
+| `stage.user.said` | Core → Stage | `{text}`。**STT がユーザーの発話を確定した**。Activity を propose する前に送る |
+
+**1発話の中で `started` が複数回来る**〔Phase 1 実装時に確定〕。TTS は文単位に生成・再生され
+（[../architecture/audio.md](../architecture/audio.md) §6）、タイムラインは文ごとにしか作れない。
+**`started` を受けたら、Stage は前のタイムラインを捨てて新しい方に切り替える。**
+`ended` は発話全体が終わった / 中断されたときに **1回だけ**来る。
 
 **時刻は Stage 側の時計で進める。** 1フレームごとに Core から送ると 60Hz の WS 往復になり、
 Stage が詰まると口が固まる（ホバー検知と同じ理由 → [../architecture/ui.md](../architecture/ui.md)）。
 
 **`ended` が来なかった場合、Stage は `total_ms` を過ぎた時点で口を閉じる。**
+
+#### `stage.user.said` — 聞き取った内容を出す〔Phase 1〕
+
+**Activity を propose する前に送る。** ターンが成立しなかったとき（proposal 却下・LLM 停止）
+でも、Lumi が何を聞き取ったかは画面に残る。
+
+**「見当違いの返事をした」と「そもそも聞こえていなかった」は、外から見ると区別がつかない。**
+聞き取ったテキストだけがそれを分ける。
+
+| 規則 | 内容 |
+|---|---|
+| 消える条件 | **`stage.speech.started`**（Lumi が答え始めた = ターンが移った）。タイマーでは消さない |
+| 置換 | 次の `stage.user.said` |
+| 失敗 | 送信に失敗してもターンは続く。**吹き出しは返事より優先されない** |
 Core が落ちても口が開きっぱなしにならない（fail-closed）。
 
 **アタック/リリースの非対称スムージングと無音判定は必須。** これが無いと口がガクガクする。

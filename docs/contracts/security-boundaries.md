@@ -95,7 +95,22 @@ Stage は WebView であり、以下のリスクがある。
 
 **規則の再掲**: `shell.*` は絶対に AI の判断を運ばない。`stage.*` は絶対に OS 特権を要求しない。
 
-Stage が乗っ取られても、できるのは「変な表情をする」「変な吹き出しを出す」までであるべき。
+Stage が乗っ取られても、できるのは「変な表情をする」「変な吹き出しを出す」
+「**Core が inbound として登録した method を呼ぶ**」
+「**Shell が scope で許可した Content Pack のファイルを読む**」までであるべき。
+
+> **★ 3つ目は [ADR-028](../decisions/ADR-028-stage-initiated-request.md) で追加された**〔Phase 1〕。
+> Stage → Core の要求方向（`request`）を作った。**登録した method しか届かない**（fail-closed）。
+> Phase 1 で登録されているのは設定変更のみ。
+> **この経路に Tool 実行を載せるときは必ず新しい ADR を書く** — Invariant 2 のバイパスは1回作れば戻せない。
+
+> **★ 4つ目は [ADR-029](../decisions/ADR-029-content-pack-asset-delivery.md) で追加された**〔Phase 1〕。
+> Content Pack のモデルを WebView に読ませるため、Shell が asset protocol の scope を開ける。
+> **Stage が渡すパスは信用しない** — scope の外は Tauri が拒否する。B3 の検証層と同じ性質のもので、
+> 違いは拒否の判断を Tauri の scope 機構が持つこと。
+>
+> **scope に入れるのは Content Pack ディレクトリだけ。** 記憶 DB・監査ログ・設定ファイル・
+> ホームディレクトリ・`$RESOURCE` 全体を入れない。**入れたくなったら新しい ADR が要る。**
 
 ---
 

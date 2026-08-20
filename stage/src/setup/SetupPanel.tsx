@@ -1,142 +1,120 @@
 /**
- * 初回セットアップと TTS の状態表示。
+ * First-run setup, and the status of the three inference components.
  *
- * 設計 → docs/architecture/setup.md
+ * Design → docs/architecture/setup.md §2 / §2b
  *
- * **取得する / しない を同等に提示する**（ADR-019 の原則2）。
- * どちらのボタンも同じ大きさ・同じ強さで並べ、片方を灰色にしない。
- * **既定は「取得しない」**（何も押さずに閉じることはできないが、順序は「しない」を先に置く）。
+ * **Presents fetch / don't-fetch as equal choices** (ADR-019 principle 2).
+ * Both buttons are laid out the same size and weight — neither is grayed out.
+ * **The default is "don't fetch"** (there's no way to close without pressing
+ * either, but "don't" is placed first in order).
  *
- * **黙って劣化しない**（原則4）。取得しなかった / 失敗したは、どちらも表示に残る。
+ * **Never silently degrades** (principle 4). Both "didn't fetch" and "failed" stay visible.
+ *
+ * The wording lives in `status.ts` as pure functions — **which sentence each state gets
+ * is the part worth testing**, and it is not testable from in here.
  */
 
-import { type TtsSetupSnapshot, useStageStore } from "../core/store";
+import type { ReactNode } from "react";
+
+import { type SetupComponent, useStageStore } from "../core/store";
 import { answerSetupPrompt } from "../core/useCoreConnection";
+import { type Locale, translate } from "../i18n";
+import { useLocale } from "../i18n/provider";
+import { failureText, statusLines } from "./status";
 
-/** 失敗理由（Core の `SetupError.reason`）を日本語にする。**知らない理由も隠さない。** */
-const FAILURE_TEXT: Record<string, string> = {
-  origin_not_allowed: "取得元が想定と違いました",
-  redirect_not_allowed: "取得中に想定外の配布元へ転送されました",
-  redirect_without_location: "取得元の応答が不正でした",
-  too_many_redirects: "取得元の転送が多すぎます",
-  http_error: "取得元に接続できませんでした",
-  size_mismatch: "取得したファイルの大きさが想定と違いました",
-  hash_mismatch: "取得したファイルの内容が想定と違いました",
-  extract_failed: "展開に失敗しました",
-  executable_not_found: "展開結果に実行ファイルがありませんでした",
-  tar_not_found: "展開に使う tar が見つかりませんでした",
-  network_unreachable: "ネットワークに接続できませんでした",
-  cancelled: "中断されました",
-  unexpected_error: "想定外のエラーが起きました",
-};
-
-function failureText(reason: string | null): string {
-  if (!reason) {
-    return "取得に失敗しました";
-  }
-  return FAILURE_TEXT[reason] ?? `取得に失敗しました（${reason}）`;
-}
-
-function StatusLine({ tts }: { tts: TtsSetupSnapshot }) {
-  // **プロセスの状態を先に見る。** 「入っているのに起動できない」を
-  // 「入っている」で塗り潰すと、ユーザーは何を直せばよいか分からない
-  // （docs/architecture/setup.md「導入の状態と、プロセスの状態を混ぜない」）。
-  if (tts.runtime === "starting") {
-    return (
-      <p className="panel__status">
-        {tts.engine_name}{" "}
-        を起動しています…（初回はエンジンが音声モデルを取得するため数分かかります）
-      </p>
-    );
-  }
-  if (tts.runtime === "failed") {
-    return (
-      <p className="panel__status panel__status--bad">
-        {tts.engine_name} を起動できませんでした（入ってはいますが、動いていません）
-      </p>
-    );
-  }
-
-  switch (tts.state) {
-    case "installing":
-      return (
-        <p className="panel__status">
-          {tts.engine_name} を取得中… {Math.round((tts.progress ?? 0) * 100)}%
-        </p>
-      );
-    case "failed":
-      // **「まだ入れていない」と区別する。** 何が起きたかを出す。
-      return <p className="panel__status panel__status--bad">{failureText(tts.reason)}</p>;
-    case "not_configured":
-      return (
-        <p className="panel__status">
-          音声合成は未セットアップです（Lumi は動きますが、喋りません）
-        </p>
-      );
-    case "detected":
-      return <p className="panel__status">{tts.engine_name} を使います</p>;
-    case "installed":
-      return (
-        <p className="panel__status">
-          {tts.engine_name} {tts.version} を使います
-        </p>
-      );
-    default:
-      return null;
-  }
+/** What is being asked about. **The subject of consent is never left implicit.** */
+function prompts(
+  locale: Locale,
+): Record<SetupComponent, { title: string; body: ReactNode; note: ReactNode }> {
+  return {
+    tts: {
+      title: translate(locale, "setup.prompt.tts.title"),
+      body: (
+        <>
+          {translate(locale, "setup.prompt.tts.body.before")}
+          <b>AivisSpeech Engine</b>
+          {translate(locale, "setup.prompt.tts.body.middle")}
+          <b>{translate(locale, "setup.prompt.tts.body.strong")}</b>
+          {translate(locale, "setup.prompt.tts.body.after")}
+        </>
+      ),
+      note: (
+        <>
+          {translate(locale, "setup.prompt.tts.note.before")}
+          <b>{translate(locale, "setup.prompt.tts.note.strong")}</b>
+          {translate(locale, "setup.prompt.tts.note.after")}
+        </>
+      ),
+    },
+    stt: {
+      title: translate(locale, "setup.prompt.stt.title"),
+      body: (
+        <>
+          {translate(locale, "setup.prompt.stt.body.before")}
+          <b>faster-whisper</b>
+          {translate(locale, "setup.prompt.stt.body.middle")}
+          <b>{translate(locale, "setup.prompt.stt.body.strong")}</b>
+          {translate(locale, "setup.prompt.stt.body.after")}
+        </>
+      ),
+      note: translate(locale, "setup.prompt.stt.note"),
+    },
+  };
 }
 
 export function SetupPanel() {
-  const tts = useStageStore((state) => state.tts);
+  const locale = useLocale();
+  const setup = useStageStore((state) => state.setup);
   const prompt = useStageStore((state) => state.prompt);
 
   if (prompt) {
+    const { title, body, note } = prompts(locale)[prompt.component];
     return (
       <div className="panel">
-        <h1 className="panel__title">音声合成エンジンを取得しますか？</h1>
+        <h1 className="panel__title">{title}</h1>
         {prompt.retry && (
-          <p className="panel__status panel__status--bad">{failureText(prompt.reason)}</p>
+          <p className="panel__status panel__status--bad">{failureText(prompt.reason, locale)}</p>
         )}
-        <p className="panel__body">
-          Lumi が声を出すには <b>AivisSpeech Engine</b>（LGPL-3.0）が必要です。 Lumi
-          には同梱していないため、<b>公式の配布元から取得します</b>。 取得しない場合も Lumi
-          は起動します（喋らないだけです）。
-        </p>
-        <p className="panel__note">
-          これは Lumi が外部へ通信する最初のタイミングです。取得しなければ通信は発生しません。
-          エンジン本体は約 200MB です。
-          <b>また、エンジンは初回起動時に、エンジン自身が音声モデルを AivisHub から取得します</b>
-          （この取得は Lumi の検証の対象外です）。
-        </p>
+        <p className="panel__body">{body}</p>
+        <p className="panel__note">{note}</p>
         <div className="panel__actions">
           <button type="button" className="panel__button" onClick={() => answerSetupPrompt("skip")}>
-            取得しない
+            {translate(locale, "setup.skip")}
           </button>
           <button
             type="button"
             className="panel__button"
             onClick={() => answerSetupPrompt("install")}
           >
-            取得する
+            {translate(locale, "setup.install")}
           </button>
         </div>
       </div>
     );
   }
 
-  const settled = tts.runtime === "stopped" || tts.runtime === "ready";
-  if (
-    settled &&
-    (tts.state === "unknown" || tts.state === "installed" || tts.state === "detected")
-  ) {
-    // 使える状態と、まだ何も分かっていない状態では、パネルを出さない。
-    // ただし**起動中と起動失敗は出す**（喋らない理由が分からないままにしない）。
+  const lines = statusLines(setup, locale);
+  if (lines.length === 0) {
+    // **Nothing to say.** All three are fine, so no panel is drawn at all
     return null;
   }
 
   return (
     <div className="panel panel--compact">
-      <StatusLine tts={tts} />
+      {lines.map((line) => (
+        <p
+          key={line.text}
+          className={line.tone === "bad" ? "panel__status panel__status--bad" : "panel__status"}
+        >
+          {line.text}
+          {line.hint && (
+            <>
+              <br />
+              <code className="panel__hint">{line.hint}</code>
+            </>
+          )}
+        </p>
+      ))}
     </div>
   );
 }

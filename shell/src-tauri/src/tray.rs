@@ -1,33 +1,53 @@
-//! トレイ — Phase 0 は「クレジット」と「終了」だけ。
+//! The tray — Phase 0 only has "credits" and "quit."
 //!
-//! 設計 → docs/architecture/ui.md「トレイメニュー」
+//! Design → docs/architecture/ui.md "Tray menu"
 //!
-//! **トレイに AI の判断を出さない。** ここに並ぶのはウィンドウの開閉とプロセスの終了だけで、
-//! Lumi が何を考えているかは一切載らない（`shell.*` は AI の判断を運ばない）。
+//! **No AI judgment is ever shown in the tray.** All that's listed here is
+//! opening/closing windows and terminating the process — nothing about what Lumi
+//! is thinking appears at all (`shell.*` never carries AI judgment).
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager as _};
 
-/// トレイメニューの項目。**id と挙動を純粋関数で対応づける**ので、
-/// メニューを開かずにテストできる。
+use crate::locale::Locale;
+
+/// The tray menu's items. **Maps id to behavior via a pure function**, so it's
+/// testable without opening the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
-    /// クレジットとライセンスを開く（docs/licensing.md §6 の「少し探せばわかる場所」）。
+    /// Opens credits and licenses (the "somewhere findable with a bit of effort" from docs/licensing.md §6).
     OpenCredits,
-    /// Lumi を終了する。
+    /// Quits Lumi.
     Quit,
 }
 
-/// メニューに並べる順の (id, 表示名)。
+/// The (id, display name) pairs in menu order.
 ///
-/// **終了を最後に置く。** 押し間違いで落ちるのが一番困る。
-const MENU_ITEMS: &[(&str, &str)] = &[("credits", "クレジットとライセンス"), ("quit", "終了")];
+/// **Quit is placed last.** Crashing from a misclick would be the worst outcome.
+fn menu_items(locale: Locale) -> [(&'static str, &'static str); 2] {
+    match locale {
+        Locale::Ja => [("credits", "クレジットとライセンス"), ("quit", "終了")],
+        Locale::En => [("credits", "Credits and licenses"), ("quit", "Quit")],
+    }
+}
 
-/// メニュー id を挙動に対応づける。**純粋関数**。
+fn build_menu(app: &AppHandle, locale: Locale) -> tauri::Result<Menu<tauri::Wry>> {
+    let labels = menu_items(locale);
+    let mut items: Vec<MenuItem<tauri::Wry>> = Vec::with_capacity(labels.len());
+    for (id, label) in &labels {
+        items.push(MenuItem::with_id(app, *id, *label, true, None::<&str>)?);
+    }
+    let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
+        items.iter().map(|item| item as &dyn tauri::menu::IsMenuItem<tauri::Wry>).collect();
+    Menu::with_items(app, &refs)
+}
+
+/// Maps a menu id to a behavior. **A pure function.**
 ///
-/// 知らない id には何もしない。トレイは Shell が自分で作るので未知の id は来ないが、
-/// **来たときに黙って何かをしないこと**を型で保証しておく。
+/// Does nothing for an unknown id. Since Shell builds the tray itself, an
+/// unknown id shouldn't arrive, but **the type guarantees nothing silently
+/// happens if one does.**
 fn resolve_tray_action(id: &str) -> Option<TrayAction> {
     match id {
         "credits" => Some(TrayAction::OpenCredits),
@@ -36,18 +56,13 @@ fn resolve_tray_action(id: &str) -> Option<TrayAction> {
     }
 }
 
-/// トレイアイコンとメニューを作る。
+/// Creates the tray icon and menu.
 ///
-/// **`stage` は枠なし・クリックスルー・タスクバー非表示なので、
-/// トレイが無いと Lumi を終了できない。** 失敗したら黙って続けない。
-pub fn init(app: &AppHandle) -> tauri::Result<()> {
-    let mut items: Vec<MenuItem<tauri::Wry>> = Vec::with_capacity(MENU_ITEMS.len());
-    for (id, label) in MENU_ITEMS {
-        items.push(MenuItem::with_id(app, *id, *label, true, None::<&str>)?);
-    }
-    let refs: Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>> =
-        items.iter().map(|i| i as &dyn tauri::menu::IsMenuItem<tauri::Wry>).collect();
-    let menu = Menu::with_items(app, &refs)?;
+/// **The `stage` window is frameless, click-through, and hidden from the
+/// taskbar, so without the tray there'd be no way to quit Lumi.** Never
+/// silently continues if this fails.
+pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
+    let menu = build_menu(app, locale)?;
 
     let icon = app
         .default_window_icon()
@@ -61,7 +76,7 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match resolve_tray_action(event.id.as_ref()) {
             Some(TrayAction::OpenCredits) => crate::open_credits(app),
-            // 終了は RunEvent::Exit を経由するので、Core も一緒に落ちる。
+            // Quit goes through RunEvent::Exit, so Core goes down with it.
             Some(TrayAction::Quit) => app.exit(0),
             None => log::warn!("tray.unknown_item id={}", event.id.as_ref()),
         })
@@ -70,16 +85,32 @@ pub fn init(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Updates native Shell-owned labels after Core accepted a locale setting.
+#[tauri::command]
+pub fn shell_locale_set(app: AppHandle, locale: &str) -> Result<(), String> {
+    let locale = Locale::from_code(locale).ok_or_else(|| "unsupported_locale".to_owned())?;
+    let tray = app.tray_by_id("lumi").ok_or_else(|| "tray_not_found".to_owned())?;
+    let menu = build_menu(&app, locale).map_err(|error| error.to_string())?;
+    tray.set_menu(Some(menu)).map_err(|error| error.to_string())?;
+
+    if let Some(credits) = app.get_webview_window(crate::window::WindowKind::Credits.label()) {
+        credits
+            .set_title(crate::window::credits_title(locale))
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    // テストは panic してよい場所なので unwrap を許す。
+    // Tests are allowed to panic, so unwrap is permitted here.
     #![allow(clippy::unwrap_used)]
 
     use super::*;
 
     #[test]
     fn every_menu_item_resolves_to_an_action() {
-        for (id, label) in MENU_ITEMS {
+        for (id, label) in menu_items(Locale::Ja) {
             assert!(resolve_tray_action(id).is_some(), "{id} に対応する挙動が無い");
             assert!(!label.is_empty());
         }
@@ -87,10 +118,10 @@ mod tests {
 
     #[test]
     fn credits_and_quit_are_both_present() {
-        // クレジットは配布時の義務（docs/licensing.md §6）、
-        // 終了はトレイ以外に手段が無い（docs/architecture/ui.md）。どちらも落とせない。
+        // Credits are a distribution obligation (docs/licensing.md §6), and quit
+        // has no other means besides the tray (docs/architecture/ui.md). Neither can be dropped.
         let actions: Vec<_> =
-            MENU_ITEMS.iter().filter_map(|(id, _)| resolve_tray_action(id)).collect();
+            menu_items(Locale::Ja).iter().filter_map(|(id, _)| resolve_tray_action(id)).collect();
         assert!(actions.contains(&TrayAction::OpenCredits));
         assert!(actions.contains(&TrayAction::Quit));
     }
@@ -99,5 +130,16 @@ mod tests {
     fn unknown_menu_id_does_nothing() {
         assert_eq!(resolve_tray_action("settings"), None);
         assert_eq!(resolve_tray_action(""), None);
+    }
+
+    #[test]
+    fn english_menu_is_localized() {
+        assert_eq!(menu_items(Locale::En)[0].1, "Credits and licenses");
+        assert_eq!(menu_items(Locale::En)[1].1, "Quit");
+    }
+
+    #[test]
+    fn unknown_locale_is_refused() {
+        assert_eq!(Locale::from_code("fr"), None);
     }
 }

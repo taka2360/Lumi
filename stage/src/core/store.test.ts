@@ -1,30 +1,68 @@
 /**
- * Core から配られた状態の読み取り。**知らない値を都合よく解釈しない。**
+ * Reading state broadcast by Core. **Never conveniently reinterprets an unknown value.**
  *
- * 設計 → docs/architecture/ui.md「起動フェーズ」
+ * Design → docs/architecture/ui.md "Boot phases"
  */
 
 import { describe, expect, it } from "vitest";
 
-import { toTtsSnapshot } from "./store";
+import { visemeAt } from "../character/lipsync";
+import {
+  toCharacterModel,
+  toSetupPrompt,
+  toSetupSnapshot,
+  toSpeech,
+  toTtsSnapshot,
+  toUserSaid,
+  useStageStore,
+} from "./store";
 
-describe("起動フェーズ", () => {
-  it("Core が配ったフェーズをそのまま持つ", () => {
+describe("boot phase", () => {
+  it("holds the phase Core broadcast, unchanged", () => {
     for (const boot of ["setup", "installing", "starting", "ready"]) {
-      expect(toTtsSnapshot({ boot, state: "installed" }).boot).toBe(boot);
+      expect(toSetupSnapshot({ boot }).boot).toBe(boot);
     }
   });
 
-  it("知らないフェーズは ready にしない", () => {
-    // **fail-closed。** ready に丸めると、準備できていないのにキャラクターが出る。
-    expect(toTtsSnapshot({ boot: "???", state: "installed" }).boot).toBe("starting");
-    expect(toTtsSnapshot({ state: "installed" }).boot).toBe("starting");
-    expect(toTtsSnapshot({ boot: 1, state: "installed" }).boot).toBe("starting");
+  it("never rounds an unknown phase to ready", () => {
+    // **fail-closed.** Rounding to ready would show the character before it's ready.
+    expect(toSetupSnapshot({ boot: "???" }).boot).toBe("starting");
+    expect(toSetupSnapshot({}).boot).toBe("starting");
+    expect(toSetupSnapshot({ boot: 1 }).boot).toBe("starting");
+  });
+
+  it("reads all three components from one message", () => {
+    // **The phase is a function of all three.** Reading them from separate messages
+    // could not guarantee ordering.
+    const setup = toSetupSnapshot({
+      boot: "ready",
+      tts: { state: "installed", runtime: "ready" },
+      llm: { state: "model_missing", model: "qwen3.5:9b" },
+      stt: { state: "not_configured", model: "small" },
+    });
+    expect(setup.tts.state).toBe("installed");
+    expect(setup.llm.state).toBe("model_missing");
+    expect(setup.llm.model).toBe("qwen3.5:9b");
+    expect(setup.stt.state).toBe("not_configured");
+  });
+
+  it("treats a missing component as unknown, never as a failure", () => {
+    // An older Core, or one mid-detection. **Unknown is a state, not a fault.**
+    const setup = toSetupSnapshot({ boot: "ready" });
+    expect(setup.llm.state).toBe("unknown");
+    expect(setup.stt.state).toBe("unknown");
+  });
+
+  it("refuses a state that belongs to a different component", () => {
+    // `detected` is TTS-only and `model_missing` is LLM-only. **Cross-assignment
+    // falls back to unknown** rather than rendering a sentence that cannot be true.
+    expect(toSetupSnapshot({ llm: { state: "installing" } }).llm.state).toBe("unknown");
+    expect(toSetupSnapshot({ stt: { state: "detected" } }).stt.state).toBe("unknown");
   });
 });
 
-describe("TTS の状態", () => {
-  it("導入の状態とプロセスの状態を別々に読む", () => {
+describe("TTS state", () => {
+  it("reads installation state and process state separately", () => {
     const snapshot = toTtsSnapshot({
       boot: "starting",
       state: "installed",
@@ -41,16 +79,122 @@ describe("TTS の状態", () => {
     expect(snapshot.progress).toBe(0.5);
   });
 
-  it("知らない状態は unknown / stopped にする", () => {
+  it("falls back an unknown state to unknown / stopped", () => {
     const snapshot = toTtsSnapshot({ state: "???", runtime: "???" });
     expect(snapshot.state).toBe("unknown");
     expect(snapshot.runtime).toBe("stopped");
   });
 
-  it("型の合わない値は null にする（勝手に補完しない）", () => {
+  it("turns a value of the wrong type into null (never guessed at)", () => {
     const snapshot = toTtsSnapshot({ engine_name: 42, port: "10101", progress: "half" });
     expect(snapshot.engine_name).toBeNull();
     expect(snapshot.port).toBeNull();
     expect(snapshot.progress).toBeNull();
+  });
+});
+
+describe("speech", () => {
+  const spans = [{ viseme: "A", start_ms: 0, duration_ms: 100 }];
+
+  it("reads the text and the mouth timeline", () => {
+    const speech = toSpeech({ text: "こんにちは。", spans, total_ms: 100 }, 42);
+    expect(speech.text).toBe("こんにちは。");
+    expect(speech.timeline.totalMs).toBe(100);
+    expect(speech.startedAtMs).toBe(42);
+  });
+
+  it("still shows the text when there is no timeline", () => {
+    // Core omits `spans` whenever the engine returns no timing. **A still mouth and a
+    // blank bubble are different failures** — dropping the event caused both.
+    const speech = toSpeech({ text: "聞こえてる？" }, 0);
+    expect(speech.text).toBe("聞こえてる？");
+    expect(speech.timeline.spans).toEqual([]);
+  });
+
+  it("leaves the mouth closed for the whole of an absent timeline", () => {
+    const { timeline } = toSpeech({ text: "あ" }, 0);
+    for (const at of [0, 100, 10_000]) {
+      expect(visemeAt(timeline, at)).toBeNull();
+    }
+  });
+
+  it("turns a missing text into an empty string (never `undefined` on screen)", () => {
+    expect(toSpeech({ spans, total_ms: 100 }, 0).text).toBe("");
+    expect(toSpeech({ text: 42 }, 0).text).toBe("");
+  });
+});
+
+describe("what the user said", () => {
+  it("reads the text", () => {
+    expect(toUserSaid({ text: "おはよう" }, 7)).toEqual({ text: "おはよう", startedAtMs: 7 });
+  });
+
+  it("a drifted payload becomes a blank bubble rather than none", () => {
+    // Core only sends this once STT produced something, so an empty string means drift.
+    // **A blank bubble says that far more loudly than no bubble at all.**
+    expect(toUserSaid({}, 0).text).toBe("");
+    expect(toUserSaid({ text: 42 }, 0).text).toBe("");
+  });
+
+  it("Lumi starting to speak clears it", () => {
+    // **The turn changing hands is a Core event, not a Stage-side timer.**
+    const store = useStageStore.getState();
+    store.setUserSaid({ text: "おはよう", startedAtMs: 0 });
+    store.setSpeech(toSpeech({ text: "おはよう！" }, 1));
+    expect(useStageStore.getState().userSaid).toBeNull();
+  });
+
+  it("speech ending does not bring it back and does not clear it either", () => {
+    const store = useStageStore.getState();
+    store.setSpeech(null);
+    store.setUserSaid({ text: "きこえてる？", startedAtMs: 0 });
+    useStageStore.getState().setSpeech(null);
+    expect(useStageStore.getState().userSaid).toEqual({ text: "きこえてる？", startedAtMs: 0 });
+  });
+});
+
+describe("the setup question", () => {
+  it("reads which component is being asked about", () => {
+    expect(toSetupPrompt({ component: "stt" }).component).toBe("stt");
+    expect(toSetupPrompt({ component: "tts", retry: true, reason: "http_error" })).toEqual({
+      component: "tts",
+      retry: true,
+      reason: "http_error",
+    });
+  });
+
+  it("names a component even when the payload does not", () => {
+    // **A consent dialog with no subject is worse than one naming the likely subject.**
+    expect(toSetupPrompt({}).component).toBe("tts");
+    expect(toSetupPrompt({ component: "gpu" }).component).toBe("tts");
+  });
+});
+
+describe("which model to draw", () => {
+  it("reads the path and format Core decided", () => {
+    const model = toCharacterModel({
+      path: "C:Lumicontentcharacterslumimodel.vrm",
+      format: "vrm0",
+      credit: { name: "光莉 / ひかり", credit_text: "3Dモデル: 光莉 / ひかり（あわ）" },
+    });
+
+    expect(model.path).toBe("C:Lumicontentcharacterslumimodel.vrm");
+    expect(model.format).toBe("vrm0");
+    expect(model.reason).toBe("");
+  });
+
+  it("★ carries the reason when the pack ships no model", () => {
+    // **A voice-only Content Pack is a legitimate pack.** The placeholder needs a reason,
+    // or it reads as a bug rather than as a state (docs/DESIGN.md「黙って劣化しない」).
+    const model = toCharacterModel({ path: null, reason: "Content Pack がモデルを含んでいない" });
+
+    expect(model.path).toBeNull();
+    expect(model.reason).toBe("Content Pack がモデルを含んでいない");
+  });
+
+  it("never leaves the placeholder unexplained", () => {
+    // Even a payload with nothing usable in it produces something to show.
+    expect(toCharacterModel({}).reason).not.toBe("");
+    expect(toCharacterModel({ path: "" }).reason).not.toBe("");
   });
 });

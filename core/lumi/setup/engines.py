@@ -1,9 +1,10 @@
-"""取得する外部エンジンのピン留めと、URL の検証。**純粋**。
+"""Pinning for external engines to fetch, and URL validation. **Pure.**
 
-唯一の定義場所は docs/architecture/setup.md §3-4。ここはその実体。
+The single source of definition is docs/architecture/setup.md §3-4. This is its
+concrete implementation.
 
-**取得先を設定可能にしない。** ユーザーが URL を差し替えられるなら、それは
-「Lumi が任意の実行体を落としてくる機能」であって、セットアップではない。
+**The fetch source is never configurable.** If the user could swap the URL, that
+would be "a feature where Lumi downloads an arbitrary executable" — not setup.
 """
 
 from __future__ import annotations
@@ -14,29 +15,31 @@ from urllib.parse import urlsplit
 
 @dataclass(frozen=True, slots=True)
 class EngineArtifact:
-    """ピン留めした配布物。**この4つ（version / url / size / sha256）が検証の根拠**。"""
+    """A pinned distributable. **These four (version / url / size / sha256) are the basis of
+    verification.**
+    """
 
     name: str
     display_name: str
     version: str
     url: str
-    #: バイト数。ピン留めした値と一致しなければインストールしない。
+    #: Size in bytes. Never installed if it doesn't match the pinned value.
     size: int
-    #: 取得したバイト列の SHA-256。ピン留めした値と一致しなければインストールしない。
+    #: SHA-256 of the fetched bytes. Never installed if it doesn't match the pinned value.
     sha256: str
     license_name: str
     license_url: str
-    #: エンジンが既定で listen するポート。
+    #: The port the engine listens on by default.
     default_port: int
-    #: 展開後のツリーから探す実行体の名前。
+    #: The name of the executable to find in the extracted tree.
     executable_name: str
 
 
-#: AivisSpeech Engine（**Engine のみ。GUI アプリの AivisSpeech は取得しない**）。
+#: The AivisSpeech Engine (**Engine only. Never fetches the AivisSpeech GUI app**).
 #:
-#: sha256 は GitHub Release Asset API の `digest` から採った〔2026-08-15〕。
-#: **これが保証するのは「ピン留め時点の配布物と同一であること」だけ**である
-#: （docs/architecture/setup.md §4「保証しないこと」）。
+#: The sha256 was taken from the GitHub Release Asset API's `digest` [2026-08-15].
+#: **All this guarantees is "identical to the distributable at the time it was
+#: pinned"** (docs/architecture/setup.md §4 "What this does not guarantee").
 AIVISSPEECH_ENGINE = EngineArtifact(
     name="aivisspeech",
     display_name="AivisSpeech Engine",
@@ -53,11 +56,11 @@ AIVISSPEECH_ENGINE = EngineArtifact(
     executable_name="run.exe",
 )
 
-#: 取得の起点として許す URL の接頭辞。**ここ以外から取らない。**
+#: The URL prefix allowed as a fetch origin. **Never fetched from anywhere else.**
 ALLOWED_ORIGIN_PREFIX = "https://github.com/Aivis-Project/AivisSpeech-Engine/releases/download/"
 
-#: リダイレクト先として許すホスト。GitHub の Release Asset は CDN に飛ぶ。
-#: **ホストを固定することで、リダイレクトで別の配布元に連れて行かれることを防ぐ。**
+#: Hosts allowed as a redirect destination. GitHub's Release Asset redirects to a CDN.
+#: **Pinning the host prevents being redirected to a different distribution source.**
 ALLOWED_REDIRECT_HOSTS = frozenset(
     {
         "github.com",
@@ -68,14 +71,16 @@ ALLOWED_REDIRECT_HOSTS = frozenset(
 
 
 def is_allowed_origin(url: str) -> bool:
-    """取得の起点として妥当か。"""
+    """Whether this is valid as a fetch origin."""
     return url.startswith(ALLOWED_ORIGIN_PREFIX)
 
 
 def is_allowed_redirect(url: str) -> bool:
-    """リダイレクト先として妥当か。**https かつホストが allowlist にあること。**"""
+    """Whether this is valid as a redirect destination. **Must be https and the host must be on the
+    allowlist.**
+    """
     parts = urlsplit(url)
     if parts.scheme != "https":
         return False
-    # ポート指定つき（host:443）でも host だけを見る。
+    # Even with a port specified (host:443), only the host is checked.
     return parts.hostname in ALLOWED_REDIRECT_HOSTS

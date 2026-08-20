@@ -2,7 +2,11 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 
 import { App } from "./App";
+import { cachedLocale, setDocumentLocale } from "./i18n";
+import { LocaleProvider } from "./i18n/provider";
 import "./styles.css";
+
+setDocumentLocale(cachedLocale());
 
 const container = document.getElementById("root");
 if (!container) {
@@ -11,6 +15,8 @@ if (!container) {
 
 createRoot(container).render(
   <StrictMode>
-    <App />
+    <LocaleProvider>
+      <App />
+    </LocaleProvider>
   </StrictMode>,
 );

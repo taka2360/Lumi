@@ -10,13 +10,26 @@
       "stage.setup.state",
       "stage.setup.prompt",
       "stage.speech.started",
-      "stage.speech.ended"
+      "stage.speech.ended",
+      "stage.user.said",
+      "stage.character.model",
+      "stage.character.expression",
+      "stage.inspector.state",
+      "stage.settings.state"
     ],
     "os": [
       "os.window.get_position",
       "os.window.set_position"
     ]
   },
+  "$comment_inbound": "Stage → Core の要求（ADR-028）。**ここに無い method は届かない**（WsServer.on_request の登録が allowlist そのもの）",
+  "inbound_methods": [
+    "stage.settings.update"
+  ],
+  "setup_components": [
+    "tts",
+    "stt"
+  ],
   "setup_prompt_choices": {
     "install": "install",
     "skip": "skip"
@@ -29,7 +42,8 @@
     "shell_hit_region_set",
     "shell_core_endpoint",
     "shell_window_drag_start",
-    "shell_window_scale"
+    "shell_window_scale",
+    "shell_locale_set"
   ],
   "window_labels": [
     "stage",
@@ -58,12 +72,45 @@
       "starting",
       "ready"
     ],
+    "llm_setup_state": [
+      "unknown",
+      "not_configured",
+      "detected",
+      "model_missing"
+    ],
+    "stt_setup_state": [
+      "unknown",
+      "not_configured",
+      "installing",
+      "installed",
+      "failed"
+    ],
+    "settings_source": [
+      "default",
+      "file",
+      "env"
+    ],
+    "emotion": [
+      "neutral",
+      "happy",
+      "sad",
+      "angry",
+      "surprised",
+      "think",
+      "curious",
+      "awkward",
+      "sleepy"
+    ],
     "viseme": [
       "A",
       "I",
       "U",
       "E",
       "O"
+    ],
+    "model_format": [
+      "vrm0",
+      "vrm1"
     ]
   }
 }

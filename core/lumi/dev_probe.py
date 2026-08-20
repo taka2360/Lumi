@@ -1,12 +1,13 @@
-"""開発時の検証用プローブ。**既定では動かない。**
+"""A dev-time verification probe. **Disabled by default.**
 
-`LUMI_DEV_OS_PROBE=1` のときだけ、Shell が接続した直後に `os.*` を2回叩く。
+Only when `LUMI_DEV_OS_PROBE=1` does it hit `os.*` twice, right after Shell connects.
 
-roadmap Phase 0 の検証手順 9（**未知の `os.*` コマンドを Shell に送ると拒否され、ログに残る**）
-を、実際に走っている Shell に対して確認するためのもの。単体テストは
-`shell/src-tauri/src/os_command.rs` にあるが、**経路全体が繋がっていることは経路で確かめる**。
+Verifies roadmap Phase 0 step 9 (**an unknown `os.*` command sent to Shell gets
+rejected and logged**) against an actually-running Shell. Unit tests live in
+`shell/src-tauri/src/os_command.rs`, but **whether the whole path is actually wired
+up needs to be checked over the path itself.**
 
-製品の挙動ではない。Phase 1 以降でここが不要になったら消す。
+Not product behavior. Delete this once it's no longer needed in Phase 1 or beyond.
 """
 
 from __future__ import annotations
@@ -21,26 +22,26 @@ ENV_FLAG = "LUMI_DEV_OS_PROBE"
 
 
 async def probe_os_boundary(server: WsServer) -> None:
-    """許可されたコマンドと未知のコマンドを1回ずつ送り、結果をログに残す。"""
+    """Sends one allowed command and one unknown command, and logs the results."""
     try:
         allowed = await server.invoke(
             Role.SHELL, "os.window.get_position", {"window": "stage"}, timeout=3.0
         )
         log.info("devprobe.allowed", ok=allowed.ok, payload=allowed.payload, error=allowed.error)
 
-        # allowlist に無いコマンド。**拒否されるのが正しい。**
+        # A command not on the allowlist. **Rejection is the correct outcome.**
         unknown = await server.invoke(Role.SHELL, "os.window.destroy", {}, timeout=3.0)
         log.info("devprobe.unknown", ok=unknown.ok, error=unknown.error)
         if unknown.ok:
             log.error("devprobe.b3_broken 未知の os.* が拒否されていない")
 
-        # Invariant 8 の lane。Phase 4c まで実装しないので拒否されるのが正しい。
+        # Invariant 8's lane. Not implemented until Phase 4c, so rejection is the correct outcome.
         deferred = await server.invoke(
             Role.SHELL, "os.input.click", {"window": "permission", "x": 0, "y": 0}, timeout=3.0
         )
         log.info("devprobe.deferred", ok=deferred.ok, error=deferred.error)
         if deferred.ok:
             log.error("devprobe.b3_broken os.input.* が拒否されていない")
-    # プローブの失敗で Core を落とさない（これは製品の経路ではない）。
+    # A probe failure never crashes Core (this isn't a product code path).
     except Exception as exc:
         log.warning("devprobe.failed", reason=str(exc))

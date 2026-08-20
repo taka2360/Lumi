@@ -1,0 +1,122 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# CI only reads the repository. Without this the token inherits the repository/org default,
+# which can be write — and every job below runs commands that come from the branch under test.
+permissions:
+  contents: read
+
+jobs:
+  core:
+    name: Core (Python)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: core
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Don't leave GITHUB_TOKEN in .git/config for the steps that follow
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            core/pyproject.toml
+            core/uv.lock
+
+      - name: Sync dependencies
+        run: uv sync --locked
+
+      - name: Lint (ruff check)
+        run: uv run ruff check
+
+      - name: Format check (ruff format)
+        run: uv run ruff format --check
+
+      - name: Type check (mypy)
+        run: uv run mypy
+
+      - name: Tests (pytest)
+        run: uv run pytest
+
+  shell:
+    name: Shell (Rust)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: shell/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Don't leave GITHUB_TOKEN in .git/config for the steps that follow
+          persist-credentials: false
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: shell/src-tauri
+
+      # Tauri validates configured bundle resources even for clippy and tests.
+      # The actual PyInstaller output is only produced by release builds.
+      - name: Prepare Core resource directory
+        run: New-Item -ItemType Directory -Force ..\..\core\dist\lumi-core | Out-Null
+
+      - name: Format check (cargo fmt)
+        run: cargo fmt --check
+
+      - name: Lint (clippy)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Tests (cargo test)
+        run: cargo test
+
+  stage:
+    name: Stage (TypeScript)
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: stage
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Don't leave GITHUB_TOKEN in .git/config for the steps that follow
+          persist-credentials: false
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: .
+
+      - name: Lint + format check (biome)
+        run: pnpm lint
+
+      - name: Type check (tsc)
+        run: pnpm typecheck
+
+      - name: Tests (vitest)
+        run: pnpm test

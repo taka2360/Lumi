@@ -1,10 +1,10 @@
 /**
- * Stage と Shell を繋ぐ React フック。
+ * The React hooks connecting the Stage to Shell.
  *
- * - キャラクターの当たり判定領域を Shell に渡す（**変化したときだけ**）
- * - Shell から届くホバー状態を React に流す
+ * - Hands the character's hit region to Shell (**only when it changes**)
+ * - Streams the hover state arriving from Shell into React
  *
- * **ここに判断を書かない。** クリックスルーするかどうかを決めるのは Shell 側の純粋関数。
+ * **No decisions are made here.** Whether to click-through is decided by a pure function on the Shell side.
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
@@ -13,8 +13,10 @@ import { type CssRect, normalizeHitRects } from "./geometry";
 import type { HoverState, PlatformShell } from "./PlatformShell";
 import { createTauriPlatformShell, isTauri } from "./tauri";
 
-/** Tauri の外（ブラウザで開いたとき）で使う何もしない実装。**黙って壊れないため**に明示的に置く。 */
+/** A no-op implementation used outside Tauri (when opened in a browser). Placed explicitly **so it never silently breaks**. */
 const noopShell: PlatformShell = {
+  setLocale: async () => {},
+  toAssetUrl: (path) => path,
   setHitRegion: async () => {},
   onHoverState: async () => ({ dispose: () => {} }),
   startWindowDrag: async () => {},
@@ -25,7 +27,7 @@ export function getPlatformShell(): PlatformShell {
   return isTauri() ? createTauriPlatformShell() : noopShell;
 }
 
-/** ホバー状態を購読する。 */
+/** Subscribes to the hover state. */
 export function useHoverState(): HoverState {
   const [hover, setHover] = useState<HoverState>("outside");
 
@@ -47,9 +49,9 @@ export function useHoverState(): HoverState {
 }
 
 /**
- * 当たり判定領域を Shell に報告する関数を返す。
+ * Returns a function that reports the hit region to Shell.
  *
- * アンマウント時は**空の領域**を送る（キャラクターが消えたらクリックスルーに戻す）。
+ * Sends **an empty region** on unmount (reverts to click-through once the character disappears).
  */
 export function useHitRegionReporter(): (rects: CssRect[]) => void {
   const shell = useMemo(getPlatformShell, []);
@@ -68,21 +70,21 @@ export function useHitRegionReporter(): (rects: CssRect[]) => void {
   );
 }
 
-/** ホイールの1目盛りあたりの拡大率。**小さめ**にする（一気に飛ぶと戻せない）。 */
+/** The scale factor per wheel notch. Kept **small** (jumping too far can't be undone). */
 const SCALE_STEP = 1.08;
 
 /**
- * ウィンドウの移動と拡大縮小のハンドラ。**キャラクターの上でだけ使う。**
+ * Handlers for moving and resizing the window. **Used only over the character.**
  *
- * 判断（どこまで小さく / 大きくできるか）は Shell 側にある
- * → docs/architecture/ui.md「ウィンドウの移動と大きさ」
+ * The decision (how small / large it's allowed to get) lives on the Shell side
+ * → docs/architecture/ui.md "Moving and resizing the window"
  */
 export function useWindowGestures() {
   const shell = useMemo(getPlatformShell, []);
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent) => {
-      // 左ボタンだけ。右クリックは将来メニューに使う。
+      // Left button only. Right-click is reserved for a future menu.
       if (event.button !== 0) {
         return;
       }

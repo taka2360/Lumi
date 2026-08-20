@@ -1,12 +1,14 @@
-"""外部 TTS エンジンのプロセス。
+"""The external TTS engine's process.
 
-設計 → docs/architecture/core.md §6「所有と生存」
+Design → docs/architecture/core.md §6 "Ownership and lifetime"
 
-**すでに動いているものには触らない。Lumi が起動したものだけ Lumi が止める。**
-ユーザーが自分で起動したエンジンを、Lumi の終了に巻き込んで落とすのは越権である。
+**Never touches something already running. Lumi only stops what Lumi itself started.**
+Dragging down an engine the user started themselves, just because Lumi is exiting,
+would overstep Lumi's authority.
 
-ゾンビ対策を二重に持たない。ここで起動した子プロセスは、Shell が Core に付けた
-Job Object を継承するので、Shell が強制終了されても一緒に落ちる（Windows）。
+No duplicate zombie-prevention here. The child process started here inherits the Job
+Object Shell attached to Core, so it dies together with Shell if Shell is force-killed
+(Windows).
 """
 
 from __future__ import annotations
@@ -16,59 +18,76 @@ import subprocess
 from pathlib import Path
 
 from lumi import logging as lumi_logging
+from lumi.providers.device import DeviceChoice, resolve
 from lumi.providers.tts.aivisspeech import AivisSpeechClient
 from lumi.setup.state import EngineRuntime
 
 log = lumi_logging.get_logger(__name__)
 
-#: 起動を待つ上限。**初回はエンジン自身が音声モデルを取りに行くので数分かかる**
-#: （docs/architecture/setup.md §4 の実測: 約2分）。
+#: Upper bound on waiting for startup. **The first run can take minutes because the
+#: engine fetches its own voice model** (measured at ~2 minutes, docs/architecture/setup.md §4).
 STARTUP_TIMEOUT_S = 300.0
 
-#: 起動確認のポーリング間隔。
+#: Polling interval for checking startup.
 POLL_INTERVAL_S = 1.0
 
-#: 1回の疎通確認の待ち時間。**起動途中は繋がらないのが正常**なので短くてよい。
+#: Wait time for a single connectivity check. **Failing to connect mid-startup is
+#: normal**, so this can be short.
 PROBE_TIMEOUT_S = 1.0
 
-#: 終了を待つ上限。過ぎたら強制終了する。
+#: Upper bound on waiting for shutdown. Force-killed once exceeded.
 STOP_TIMEOUT_S = 10.0
 
-#: Windows でコンソールウィンドウを出さない。
-#: **ユーザーから見て「勝手に黒い窓が出る」のは壊れて見える。**
+#: Suppresses the console window on Windows.
+#: **A black window popping up unprompted looks broken to the user.**
 _CREATE_NO_WINDOW = 0x08000000
 
 
 class EngineProcess:
-    """1つの外部エンジンの生存管理。
+    """Manages the lifetime of one external engine.
 
-    状態の語彙（`EngineRuntime`）は `lumi.setup.state` が持つ。
-    Stage に配るのは同じ1つの状態なので、**定義を2箇所に置かない**。
+    The state vocabulary (`EngineRuntime`) lives in `lumi.setup.state`.
+    It's the same single state distributed to the Stage, so **it's never defined in two places.**
     """
 
-    def __init__(self, executable: Path | None, port: int) -> None:
+    def __init__(
+        self,
+        executable: Path | None,
+        port: int,
+        *,
+        device: DeviceChoice | str = DeviceChoice.AUTO,
+    ) -> None:
         self._executable = executable
         self._port = port
         self._client = AivisSpeechClient(port)
         self._process: asyncio.subprocess.Process | None = None
+        #: Where the engine runs. Measured 2026-08-16: **GPU 440 ms vs CPU 900 ms** for the
+        #: first sentence, at a cost of 1.0 GB VRAM (ADR-025)
+        self._device = resolve(device)
 
     async def ensure_running(self) -> EngineRuntime:
-        """起動していなければ起動し、応答するまで待つ。
+        """Starts the engine if it isn't running, and waits for it to respond.
 
-        **すでに動いていれば何もしない**（他人のプロセスかもしれない）。
+        **Does nothing if it's already running** (it might belong to someone else).
         """
         if await self._client.version(PROBE_TIMEOUT_S) is not None:
             log.info("tts.engine.already_running", port=self._port)
             return EngineRuntime.READY
 
         if self._executable is None:
-            # 動いてもいないし、起動する手段も無い。**黙って待たない。**
+            # Not running, and no way to start it either. **Never wait silently.**
             log.warning("tts.engine.no_executable", port=self._port)
             return EngineRuntime.FAILED
 
         try:
             self._process = await asyncio.create_subprocess_exec(
                 str(self._executable),
+                "--port",
+                str(self._port),
+                # **Stated explicitly either way.** Left to the engine's own default, the
+                # device would depend on an environment variable Lumi doesn't control
+                # (`VV_USE_GPU`), and nothing would report which one won
+                "--use_gpu" if self._device is DeviceChoice.CUDA else "--no-use_gpu",
                 cwd=str(self._executable.parent),
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.DEVNULL,
@@ -79,14 +98,20 @@ class EngineProcess:
             log.warning("tts.engine.spawn_failed", error=str(error))
             return EngineRuntime.FAILED
 
-        log.info("tts.engine.spawned", pid=self._process.pid, port=self._port)
+        log.info(
+            "tts.engine.spawned",
+            pid=self._process.pid,
+            port=self._port,
+            device=self._device.value,
+        )
         return await self._wait_until_ready()
 
     async def _wait_until_ready(self) -> EngineRuntime:
-        """応答するまで待つ。**無限に待たない。**
+        """Waits until it responds. **Never waits forever.**
 
-        待っている間にプロセスが死んだら、待ち続けずに失敗にする。
-        「起動が遅い」と「起動に失敗した」を区別できないと、ユーザーへの案内が嘘になる。
+        If the process dies while waiting, this fails immediately instead of
+        continuing to wait. Without distinguishing "slow to start" from "failed to
+        start," the guidance shown to the user would be wrong.
         """
         loop = asyncio.get_running_loop()
         deadline = loop.time() + STARTUP_TIMEOUT_S
@@ -107,11 +132,11 @@ class EngineProcess:
         return EngineRuntime.FAILED
 
     async def stop(self) -> None:
-        """**Lumi が起動したものだけ止める。**
+        """**Only stops what Lumi itself started.**
 
-        判定は `self._process` の有無だけで決まる。`ensure_running` が
-        「すでに動いていた」経路を通ったときは `None` のままなので、
-        **ユーザー自身が起動したエンジンはここに到達しない。**
+        The decision comes down to whether `self._process` is set. When
+        `ensure_running` takes the "already running" path, it stays `None`, so **an
+        engine the user started themselves never reaches this point.**
         """
         process = self._process
         if process is None:
@@ -125,7 +150,7 @@ class EngineProcess:
             async with asyncio.timeout(STOP_TIMEOUT_S):
                 await process.wait()
         except TimeoutError:
-            # 止まらないなら強制する。**終了時にプロセスを残さない。**
+            # Force it if it won't stop. **Never leave a process behind on exit.**
             log.warning("tts.engine.kill", pid=process.pid)
             process.kill()
             await process.wait()

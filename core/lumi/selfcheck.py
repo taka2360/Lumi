@@ -1,17 +1,18 @@
-"""**同梱されたサイドカーが、その PC で本当に動くか**を確かめる。
+"""Verify that **the bundled sidecar actually works on this PC**.
 
 ```
 lumi-core.exe --self-check
 ```
 
-roadmap Phase 0 検証手順 13（**サイドカーから sqlite-vec がロードできるか**）を、
-**配布物そのものに対して**実行できるようにしたもの。
+Makes roadmap Phase 0 verification step 13 (**can sqlite-vec load from the sidecar?**)
+runnable **against the actual distributable**.
 
-開発環境（`uv run pytest`）で通ることは、**PyInstaller で固めた後に通ることを意味しない。**
-ネイティブ拡張（sqlite-vec の `vec0.dll`、PortAudio の DLL）は Python コードと違って
-自動では入らず、入っていなくても **import 時には失敗しない**。実際に読み込むまで分からない。
+Passing in the dev environment (`uv run pytest`) **does not mean it will pass after being
+packed by PyInstaller.** Native extensions (sqlite-vec's `vec0.dll`, PortAudio's DLL) aren't
+bundled automatically like Python code is, and missing ones **don't fail at import time**.
+You don't find out until they're actually loaded.
 
-Phase 2 で「記憶機能が丸ごと動かない」と気づくより、**ここで落とす。**
+Better to **fail here** than discover in Phase 2 that "the entire memory feature doesn't work."
 """
 
 from __future__ import annotations
@@ -33,7 +34,7 @@ class CheckResult:
 
 
 def check_sqlite_vec() -> CheckResult:
-    """**ロードして、実際に検索する。** import が通っただけでは何も保証しない。"""
+    """**Load it and actually run a search.** A successful import guarantees nothing."""
     try:
         import sqlite_vec
     except ImportError as error:
@@ -62,7 +63,7 @@ def check_sqlite_vec() -> CheckResult:
 
 
 def check_fts5() -> CheckResult:
-    """FTS5 は SQLite のビルド時オプション。**入っていない SQLite が実在する。**"""
+    """FTS5 is a SQLite build-time option. **Some SQLite builds don't include it.**"""
     try:
         with sqlite3.connect(":memory:") as db:
             db.execute("create virtual table f using fts5(body)")
@@ -76,10 +77,10 @@ def check_fts5() -> CheckResult:
 
 
 def check_audio() -> CheckResult:
-    """PortAudio の DLL が同梱されているか。**デバイスの有無とは別の話。**
+    """Whether the PortAudio DLL is bundled. **Separate from whether any devices exist.**
 
-    デバイスが1台も無くても、ライブラリが読めていればここは成功とする
-    （入力デバイスが無い PC は正常な状態 → docs/architecture/audio.md §8）。
+    Even with zero devices, this counts as success as long as the library loads
+    (a PC with no input device is a normal state → docs/architecture/audio.md §8).
     """
     try:
         from lumi.audio.probe import list_devices
@@ -98,7 +99,9 @@ def check_audio() -> CheckResult:
 
 
 def check_ssl() -> CheckResult:
-    """TTS エンジンの取得に要る。**証明書ストアは PyInstaller で落ちやすい。**"""
+    """Needed to fetch the TTS engine. **The certificate store is prone to breaking under
+    PyInstaller.**
+    """
     try:
         import ssl
 
@@ -111,16 +114,72 @@ def check_ssl() -> CheckResult:
     return CheckResult("TLS", True, f"CA 証明書 {stats['x509_ca']} 件")
 
 
+def check_vad() -> CheckResult:
+    """**The barge-in critical path.** Loads ONNX and runs inference on one actual frame.
+
+    The model is borrowed from faster-whisper's bundled assets (ADR-023 / docs/licensing.md §4.6),
+    so **this fails if a package update changes the path.** That's the only way we'd detect it.
+    """
+    try:
+        import numpy as np
+
+        from lumi.audio.vad import WINDOW_SAMPLES, SileroVad, VadModelUnavailable
+    except ImportError as error:
+        return CheckResult("Silero VAD", False, f"import できない: {error}")
+
+    try:
+        vad = SileroVad()
+        probability = vad.probability(np.zeros(WINDOW_SAMPLES, dtype=np.float32))
+    except (VadModelUnavailable, RuntimeError, OSError, ValueError) as error:
+        return CheckResult("Silero VAD", False, f"{type(error).__name__}: {error}")
+    if not 0.0 <= probability <= 1.0:
+        return CheckResult("Silero VAD", False, f"確率が範囲外: {probability}")
+    return CheckResult("Silero VAD", True, "ONNX Runtime (CPU) で推論できる")
+
+
+def check_stt() -> CheckResult:
+    """**Checks the runtime, not the model.** The model is fetched at runtime (ADR-023).
+
+    `ctranslate2` is a native extension, and **import fails outright if it's missing**.
+    Without this check failing here, it would surface as "speaking gets no response."
+    """
+    try:
+        import ctranslate2
+        import faster_whisper
+    except ImportError as error:
+        return CheckResult("faster-whisper", False, f"import できない: {error}")
+    versions = f"{faster_whisper.__version__} / CTranslate2 {ctranslate2.__version__}"
+    return CheckResult("faster-whisper", True, versions)
+
+
+def check_content() -> CheckResult:
+    """**Lumi without a persona isn't Lumi.** Whether the bundled Content Pack can be read."""
+    try:
+        from lumi import paths
+        from lumi.content.pack import ContentPackError, load_character
+    except ImportError as error:
+        return CheckResult("Content Pack", False, f"import できない: {error}")
+
+    try:
+        pack = load_character(paths.default_character_dir())
+    except ContentPackError as error:
+        return CheckResult("Content Pack", False, str(error))
+    return CheckResult("Content Pack", True, f"{pack.name} / {pack.voice.credit.credit_text}")
+
+
 CHECKS: tuple[Callable[[], CheckResult], ...] = (
     check_sqlite_vec,
     check_fts5,
     check_audio,
+    check_vad,
+    check_stt,
+    check_content,
     check_ssl,
 )
 
 
 def run() -> int:
-    """すべて実行して結果を出す。**1つでも落ちたら 1 を返す。**"""
+    """Run everything and report results. **Returns 1 if even one check fails.**"""
     frozen = getattr(sys, "frozen", False)
     print(f"Lumi Core self-check（{'同梱サイドカー' if frozen else '開発環境'} / {sys.version}）")
     results = [check() for check in CHECKS]

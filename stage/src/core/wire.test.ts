@@ -1,15 +1,15 @@
 /**
- * Stage の wire 定数が `docs/contracts/wire.json` と一致する。
+ * The Stage's wire constants match `docs/contracts/wire.json`.
  *
- * 契約と規則 → docs/contracts/wire.md / ADR-022
+ * Contract and rules → docs/contracts/wire.md / ADR-022
  *
- * **Stage は知らない値を静かに落とす。** `parseCoreMessage` は `null` を返し、
- * `toTtsSnapshot` は fail-closed 側の既定（`"starting"` / `"unknown"`）に丸め、
- * `parseTimeline` は口を閉じる。**どれもエラーにならない。**
- * 実装としては正しいが、そのせいでずれが見えない。ここで落とす。
+ * **The Stage fails closed on unknown values.** `toTtsSnapshot` rounds to the fail-closed
+ * default (`"starting"` / `"unknown"`), and `parseTimeline` closes the mouth. A protocol
+ * version mismatch is different: it is rejected explicitly and closes the connection.
+ * This is where the static drift is caught.
  *
- * 同じ突き合わせを Core（`core/tests/test_wire_contract.py`）と
- * Shell（`shell/src-tauri/src/wire_contract.rs`）も行う。
+ * The same cross-check is also done by Core (`core/tests/test_wire_contract.py`)
+ * and Shell (`shell/src-tauri/src/wire_contract.rs`).
  */
 
 import { readFileSync } from "node:fs";
@@ -17,23 +17,39 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { EMOTIONS } from "../character/expression";
 import { VISEMES } from "../character/lipsync";
 import {
   CMD_DRAG_START,
   CMD_SCALE,
   CMD_SET_HIT_REGION,
+  CMD_SET_LOCALE,
   EVENT_HOVER_STATE,
 } from "../platform/tauri";
 import { CMD_CORE_ENDPOINT, EVENT_CORE_ENDPOINT } from "./connection";
 import { PROTOCOL_VERSION } from "./protocol";
-import { BOOT_PHASES, ENGINE_RUNTIMES, TTS_SETUP_STATES } from "./store";
+import {
+  BOOT_PHASES,
+  ENGINE_RUNTIMES,
+  LLM_SETUP_STATES,
+  SETTINGS_SOURCES,
+  SETUP_COMPONENTS,
+  STT_SETUP_STATES,
+  TTS_SETUP_STATES,
+} from "./store";
 import {
   CHOICE_INSTALL,
   CHOICE_SKIP,
+  METHOD_EXPRESSION,
+  METHOD_INSPECTOR,
+  METHOD_MODEL,
+  METHOD_SETTINGS,
+  METHOD_SETTINGS_UPDATE,
   METHOD_SETUP_PROMPT,
   METHOD_SETUP_STATE,
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
+  METHOD_USER_SAID,
 } from "./useCoreConnection";
 
 interface Wire {
@@ -46,71 +62,104 @@ interface Wire {
     tts_setup_state: string[];
     engine_runtime: string[];
     boot_phase: string[];
+    llm_setup_state: string[];
+    stt_setup_state: string[];
+    settings_source: string[];
+    emotion: string[];
     viseme: string[];
   };
+  setup_components: string[];
+  inbound_methods: string[];
 }
 
-/** リポジトリの `docs/contracts/wire.json`。**実行時には読まない**（配布物に docs は入らない）。 */
+/** The repo's `docs/contracts/wire.json`. **Never read at runtime** (docs aren't bundled in the distributable). */
 const wire: Wire = JSON.parse(
   readFileSync(join(import.meta.dirname, "../../../docs/contracts/wire.json"), "utf-8"),
 ) as Wire;
 
 describe("wire contract", () => {
   it("protocol version", () => {
-    // **3言語すべてが検査すること。** Stage だけずれると、Core からの command が
-    // `parseCoreMessage` で捨てられ、Core は 10 秒待って timeout する。画面には何も出ない。
+    // **All 3 languages must check this.** If only the Stage drifts, a command from
+    // Core gets dropped by `parseCoreMessage`, and Core waits 10 seconds and times
+    // out. Nothing shows on screen.
     expect(PROTOCOL_VERSION).toBe(wire.protocol_version);
   });
 
-  it("stage の method 名", () => {
+  it("stage's method names", () => {
     expect(
       new Set([
         METHOD_SETUP_STATE,
         METHOD_SETUP_PROMPT,
         METHOD_SPEECH_STARTED,
         METHOD_SPEECH_ENDED,
+        METHOD_USER_SAID,
+        METHOD_EXPRESSION,
+        METHOD_INSPECTOR,
+        METHOD_SETTINGS,
+        METHOD_MODEL,
       ]),
     ).toEqual(new Set(wire.methods.stage));
   });
 
-  it("os.* の method 名は Stage に現れない", () => {
-    // **`stage.*` は絶対に OS 特権を要求しない**（docs/architecture/core.md §3）。
-    // 契約の os.* が Stage 側の定数に混ざっていないことを、値の側から確かめる。
+  it("os.* method names never appear in the Stage", () => {
+    // **`stage.*` must never request OS privileges** (docs/architecture/core.md §3).
+    // Confirms from the value side that the contract's os.* never mixes into the Stage-side constants.
     const stageConstants = [
       METHOD_SETUP_STATE,
       METHOD_SETUP_PROMPT,
       METHOD_SPEECH_STARTED,
       METHOD_SPEECH_ENDED,
+      METHOD_USER_SAID,
+      METHOD_EXPRESSION,
+      METHOD_INSPECTOR,
+      METHOD_SETTINGS,
     ];
     for (const method of wire.methods.os) {
       expect(stageConstants).not.toContain(method);
     }
   });
 
-  it("取得するかの選択肢", () => {
+  it("what the Stage may ask Core to do", () => {
+    // ★ **The Stage → Core direction** (ADR-028). The real allowlist is Core's registry;
+    // this pins the Stage's constant against the same contract, so a rename on one side
+    // fails here instead of turning into a silent `unknown_method` at runtime.
+    expect([METHOD_SETTINGS_UPDATE]).toEqual(wire.inbound_methods);
+  });
+
+  it("what a fetch question can be about", () => {
+    // The panel picks its wording from this value. **Drift would ask permission to
+    // fetch the wrong thing.**
+    expect(SETUP_COMPONENTS).toEqual(wire.setup_components);
+  });
+
+  it("the fetch-or-not choices", () => {
     expect({ install: CHOICE_INSTALL, skip: CHOICE_SKIP }).toEqual(wire.setup_prompt_choices);
   });
 
-  it("Tauri のイベント名", () => {
-    // ドットが使えないので `shell.hover.state` ではなく `shell:hover:state`。
-    // Shell 側の実体は hover.rs / core_endpoint.rs。
+  it("Tauri event names", () => {
+    // Dots aren't allowed, so `shell:hover:state` instead of `shell.hover.state`.
+    // The actual entities on the Shell side are hover.rs / core_endpoint.rs.
     expect(EVENT_HOVER_STATE).toBe(wire.tauri_events.hover_state);
     expect(EVENT_CORE_ENDPOINT).toBe(wire.tauri_events.core_endpoint);
   });
 
-  it("Tauri のコマンド名", () => {
-    // **片側検査。** Shell 側は `#[tauri::command]` の関数名なのでデータとして取れない
-    // （docs/contracts/wire.md §4「保証しないこと」）。
-    expect(new Set([CMD_SET_HIT_REGION, CMD_CORE_ENDPOINT, CMD_DRAG_START, CMD_SCALE])).toEqual(
-      new Set(wire.tauri_commands),
-    );
+  it("Tauri command names", () => {
+    // **A one-sided check.** The Shell side is a `#[tauri::command]` function name,
+    // which can't be retrieved as data (docs/contracts/wire.md §4 "What this does not guarantee").
+    expect(
+      new Set([CMD_SET_HIT_REGION, CMD_CORE_ENDPOINT, CMD_DRAG_START, CMD_SCALE, CMD_SET_LOCALE]),
+    ).toEqual(new Set(wire.tauri_commands));
   });
 
-  it("線に乗る enum の値", () => {
-    // 並びも合わせる。Core の enum の宣言順（状態が進む順）に意味がある。
+  it("enum values that go on the wire", () => {
+    // Order matters too. Core's enum declaration order (the order states progress) carries meaning.
     expect(TTS_SETUP_STATES).toEqual(wire.enums.tts_setup_state);
     expect(ENGINE_RUNTIMES).toEqual(wire.enums.engine_runtime);
     expect(BOOT_PHASES).toEqual(wire.enums.boot_phase);
+    expect(LLM_SETUP_STATES).toEqual(wire.enums.llm_setup_state);
+    expect(STT_SETUP_STATES).toEqual(wire.enums.stt_setup_state);
+    expect(SETTINGS_SOURCES).toEqual(wire.enums.settings_source);
+    expect(EMOTIONS).toEqual(wire.enums.emotion);
     expect(VISEMES).toEqual(wire.enums.viseme);
   });
 });

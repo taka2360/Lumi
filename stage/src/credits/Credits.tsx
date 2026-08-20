@@ -1,13 +1,15 @@
 /**
- * クレジットとライセンスの画面（トレイ → クレジット）。
+ * The credits and licenses screen (tray → credits).
  *
- * 設計 → docs/licensing.md §6 / docs/architecture/ui.md
+ * Design → docs/licensing.md §6 / docs/architecture/ui.md
  *
- * **この画面は Core にも外部にも接続しない。** ライセンス文書の提示は Lumi の
- * 動作状態と無関係な義務であり、Core が落ちていても読めなければならない。
- * したがってここから `../core/*` を import しない。
+ * **This screen connects neither to Core nor externally.** Presenting license
+ * documents is an obligation independent of Lumi's runtime state, and must be
+ * readable even if Core is down. So nothing here imports `../core/*`.
  */
 
+import { translate } from "../i18n";
+import { useStandaloneLocale } from "../i18n/standalone";
 import {
   BUNDLED,
   CREDIT_EXAMPLES,
@@ -18,6 +20,7 @@ import {
   type SectionId,
   THIRD_PARTY,
 } from "./content";
+import { creditText } from "./localize";
 
 function Section({
   id,
@@ -40,23 +43,27 @@ function Section({
 }
 
 export function Credits() {
+  const locale = useStandaloneLocale();
+  const ct = (text: string) => creditText(locale, text);
   return (
     <main className="credits">
-      <h1 className="credits__title">クレジットとライセンス</h1>
+      <h1 className="credits__title">{translate(locale, "credits.title")}</h1>
 
-      <Section id="lumi" title={LUMI.name} lead={LUMI.description}>
-        <p className="credits__lead">ライセンス: {LUMI.license}</p>
+      <Section id="lumi" title={LUMI.name} lead={ct(LUMI.description)}>
+        <p className="credits__lead">
+          {translate(locale, "credits.license")}: {LUMI.license}
+        </p>
       </Section>
 
       <Section
         id="bundled"
-        title="Lumi に同梱しているソフトウェア"
-        lead="Lumi のインストーラに含まれるものです。"
+        title={translate(locale, "credits.bundled.title")}
+        lead={translate(locale, "credits.bundled.lead")}
       >
         {BUNDLED.map((component) => (
           <div key={component.component} className="credits__group">
             <h3 className="credits__subheading">
-              {component.component} <span className="credits__note">{component.note}</span>
+              {ct(component.component)} <span className="credits__note">{component.note}</span>
             </h3>
             <table className="credits__table">
               <tbody>
@@ -75,28 +82,34 @@ export function Credits() {
 
       <Section
         id="external"
-        title="Lumi に同梱していないソフトウェア"
-        lead="Lumi はこれらを配布していません。取得もインストールも、あなたの PC の上で行われます。使っていないものも含めて載せています。"
+        title={translate(locale, "credits.external.title")}
+        lead={translate(locale, "credits.external.lead")}
       >
         {EXTERNAL.map((external) => (
           <div key={external.name} className="credits__group">
-            <h3 className="credits__subheading">{external.name}</h3>
-            <p className="credits__lead">ライセンス: {external.license}</p>
-            <p className="credits__note">適用されるとき: {external.appliesWhen}</p>
+            <h3 className="credits__subheading">{ct(external.name)}</h3>
+            <p className="credits__lead">
+              {translate(locale, "credits.license")}: {ct(external.license)}
+            </p>
+            <p className="credits__note">
+              {translate(locale, "credits.appliesWhen")}: {ct(external.appliesWhen)}
+            </p>
             <ul className="credits__list">
               {external.obligations.map((obligation) => (
-                <li key={obligation}>{obligation}</li>
+                <li key={obligation}>{ct(obligation)}</li>
               ))}
             </ul>
-            <p className="credits__note">入手元: {external.source}</p>
+            <p className="credits__note">
+              {translate(locale, "credits.source")}: {external.source}
+            </p>
           </div>
         ))}
       </Section>
 
       <Section
         id="voice"
-        title="音声のクレジット表記"
-        lead="VOICEVOX の音源を使って音声を公開するときは、次の形でクレジットを表記してください。"
+        title={translate(locale, "credits.voice.title")}
+        lead={translate(locale, "credits.voice.lead")}
       >
         <ul className="credits__list">
           {CREDIT_EXAMPLES.map((example) => (
@@ -105,21 +118,23 @@ export function Credits() {
             </li>
           ))}
         </ul>
-        <p className="credits__note">ACML の音声合成モデルではクレジット表記は任意です。</p>
+        <p className="credits__note">{translate(locale, "credits.voice.acml")}</p>
       </Section>
 
       <Section
         id="prohibitions"
-        title="禁止されていること"
-        lead="Lumi で作った音声にも、元になった音源・モデルの規約がそのまま適用されます。"
+        title={translate(locale, "credits.prohibitions.title")}
+        lead={translate(locale, "credits.prohibitions.lead")}
       >
         {PROHIBITIONS.map((set) => (
           <div key={set.source} className="credits__group">
-            <h3 className="credits__subheading">{set.source}</h3>
-            <p className="credits__note">適用されるとき: {set.appliesWhen}</p>
+            <h3 className="credits__subheading">{ct(set.source)}</h3>
+            <p className="credits__note">
+              {translate(locale, "credits.appliesWhen")}: {ct(set.appliesWhen)}
+            </p>
             <ul className="credits__list">
               {set.items.map((item) => (
-                <li key={item}>{item}</li>
+                <li key={item}>{ct(item)}</li>
               ))}
             </ul>
           </div>
@@ -128,13 +143,16 @@ export function Credits() {
 
       <Section
         id="third-party"
-        title="サードパーティの完全な一覧"
-        lead={`推移的な依存を含めて ${THIRD_PARTY.total} 件。依存グラフから生成しています。`}
+        title={translate(locale, "credits.thirdParty.title")}
+        lead={translate(locale, "credits.thirdParty.lead", { count: THIRD_PARTY.total })}
       >
         {THIRD_PARTY.ecosystems.map((ecosystem) => (
           <details key={ecosystem.name} className="credits__license">
             <summary className="credits__summary">
-              {ecosystem.name} <span className="credits__note">{ecosystem.packages.length} 件</span>
+              {ecosystem.name}{" "}
+              <span className="credits__note">
+                {translate(locale, "credits.packages", { count: ecosystem.packages.length })}
+              </span>
             </summary>
             <table className="credits__table">
               <tbody>
@@ -151,11 +169,11 @@ export function Credits() {
         ))}
       </Section>
 
-      <Section id="licenses" title="ライセンス全文">
+      <Section id="licenses" title={translate(locale, "credits.licenses.title")}>
         {LICENSES.map((license) => (
           <details key={license.id} className="credits__license">
             <summary className="credits__summary">{license.title}</summary>
-            <p className="credits__note">{license.note}</p>
+            <p className="credits__note">{ct(license.note)}</p>
             <pre className="credits__text">{license.text}</pre>
           </details>
         ))}

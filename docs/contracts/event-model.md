@@ -145,6 +145,17 @@ Capability Ext
 - **同一 `stream_key` 内では順序を保証する**（配送も処理も）
 - **異なる `stream_key` 間では順序を保証しない**
 - 消費側は `sequence_id` の欠番・逆転を検出したら**エラーにする**（黙って処理しない）
+- **配送中の同一 `stream_key` へ、同じ Task が直接 publish してはならない**（→ [ADR-030](../decisions/ADR-030-per-stream-dispatch.md)）。
+  これは Task スコープの再入検出であり、**別コルーチンからの同一stream publish は拒否しない**。
+
+「配送も処理も」を満たすには、**配送が終わるまで次の採番を始めてはならない。**
+配送をロックの外に出すと、`await` する購読者が次のイベントに追い越される。
+
+**同じ Task が配送中の同一 stream へ直接 publish できないのはこの帰結である。** そこで発行される
+イベントは定義上「処理中のイベントの後ろ」に順序づけられるが、その処理はまだ終わっていない。
+その Task が lock 待ちをすると自分自身の配送完了を待つため、実装は待たせずに例外を投げる。
+一方、**別コルーチンからの同一 stream publish は lock を待ち、現在の配送が終わった後に順序どおり処理される。**
+別の `stream_key` への publish も自由である。
 
 ### stream_key の設計
 
@@ -189,12 +200,15 @@ extension:<ext_id>          ExtensionLoaded / ExtensionFailed / ExtensionUnloade
 class EventBus:
     async def publish(self, draft: DomainEventDraft) -> DomainEvent:
         """draft は sequence_id を持たない。"""
+        # 同じ Task が配送中の同一 stream へ直接再入する場合だけ拒否する。
+        # 別コルーチンからの同一 stream publish は下の lock を待つ。
+        self._refuse_reentry(draft.stream_key)
         async with self._lock_for(draft.stream_key):
             async with self._store.transaction() as tx:
                 seq = await tx.next_sequence(draft.stream_key)
                 event = DomainEvent(sequence_id=seq, **draft.fields())
                 await tx.append(event)
-        await self._dispatch(event)   # 永続化後に配送
+            await self._dispatch(event)   # 永続化後に配送。**ロック内**（→ ADR-030）
         return event
 ```
 
@@ -268,10 +282,12 @@ Hook は DomainEvent とは別の仕組み。**同期的・順序保証あり・
 | 1 | `Signal` 型が `stream_key` / `sequence_id` を持たない（型検査） |
 | 2 | Signal が DomainEvent に昇格せずに永続化されない |
 | 3 | 同一 `stream_key` 内で `sequence_id` が単調増加しギャップが無い |
-| 4 | 複数コルーチンから同一 stream に並行 publish しても欠番・重複が発生しない |
+| 4 | 複数コルーチンから同一 stream に並行 publish しても、lock 待ちで許可され、欠番・重複が発生しない |
 | 5 | 消費側が欠番・逆転を検出してエラーにする |
 | 6 | `sequence_id` の代入が `EventBus` 以外に存在しない（静的検査） |
 | 7 | Extension プロトコルに `DomainEvent` を送る経路が無い（静的検査） |
 | 8 | 採番後・配送前にクラッシュしても永続化済みであること |
 | 9 | `ActivityStarted` / `ActivityEnded` の順序が保証される |
+| 9b | **遅い購読者が居ても、同一 stream の配送順が入れ替わらない**（購読者が `await` している間に次の publish が追い越さない → [ADR-030](../decisions/ADR-030-per-stream-dispatch.md)） |
+| 9c | **同じ Task の購読者が配送中の同一 stream へ直接 publish すると、待たされずに例外になる**（別コルーチンの同一stream publishはlock待ちで許可） |
 | 10 | `before_tool` Hook の veto がツール実行を止める |

@@ -1,23 +1,32 @@
 /**
- * Core への WS 接続（Stage 側）。
+ * The WS connection to Core (Stage side).
  *
- * 接続先は Shell が `shell.core.endpoint` で教える（**Stage 用の token だけ**が渡ってくる）。
- * Core が再起動するとポートが変わるので、Shell からの通知で繋ぎ直す。
+ * Shell tells this where to connect via `shell.core.endpoint` (**only the
+ * Stage-specific token** is handed over). Core's port changes on restart, so a
+ * notification from Shell triggers a reconnect.
  *
- * **Stage はここで判断しない。** 受け取った `stage.*` をハンドラに渡すだけ。
+ * **The Stage never makes decisions here.** It just hands received `stage.*` off to handlers.
  */
 
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import { isTauri } from "../platform/tauri";
-import { type CoreMessage, helloMessage, parseCoreMessage, resultMessage } from "./protocol";
+import {
+  type CoreMessage,
+  type CoreResult,
+  helloMessage,
+  ProtocolVersionMismatch,
+  parseCoreMessage,
+  requestMessage,
+  resultMessage,
+} from "./protocol";
 
-/** 対応する Shell 側の定数は `shell/src-tauri/src/core_endpoint.rs`。**正は `wire.json`**（ADR-022）。 */
+/** The corresponding constant on the Shell side is `shell/src-tauri/src/core_endpoint.rs`. **`wire.json` is authoritative** (ADR-022). */
 export const CMD_CORE_ENDPOINT = "shell_core_endpoint";
 export const EVENT_CORE_ENDPOINT = "shell:core:endpoint";
 
-/** 再接続の待ち時間。Core の再起動を待てる程度に短く。 */
+/** Wait time before reconnecting. Short enough to wait out a Core restart. */
 const RECONNECT_DELAY_MS = 500;
 
 interface CoreEndpoint {
@@ -36,22 +45,45 @@ export interface CoreConnectionHandlers {
 
 export interface CoreConnection {
   close(): void;
+  /**
+   * Asks Core to do something (ADR-028). **Rejects rather than resolving on refusal** —
+   * a caller that forgets to check `ok` would otherwise report success for a change Core
+   * declined to make.
+   */
+  request(method: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
+/** How long to wait for Core's answer. **Never waits forever** — the UI has to move on. */
+const REQUEST_TIMEOUT_MS = 10_000;
+
 /**
- * 接続を開始し、切れたら繋ぎ直し続ける。
+ * Starts the connection and keeps reconnecting if it drops.
  *
- * Tauri の外（ブラウザで開いたとき）では何もしない。**黙って壊れないため**に明示的に分岐する。
+ * Does nothing outside Tauri (when opened in a browser). Branches explicitly here
+ * **so it never silently breaks**.
  */
 export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection {
   if (!isTauri()) {
-    return { close: () => {} };
+    return {
+      close: () => {},
+      request: () => Promise.reject(new Error("not_connected")),
+    };
   }
 
   let closed = false;
   let socket: WebSocket | null = null;
   let retryTimer: number | null = null;
   let unlistenEndpoint: (() => void) | null = null;
+  let nextRequestId = 0;
+  const waiting = new Map<string, (result: CoreResult) => void>();
+
+  /** Fails everything in flight. **A dropped connection must not leave a promise hanging.** */
+  const abandonPending = (reason: string) => {
+    for (const [id, resolve] of waiting) {
+      resolve({ kind: "result", corrId: id, ok: false, payload: {}, error: reason });
+    }
+    waiting.clear();
+  };
 
   const setConnected = (value: boolean) => handlers.onConnectedChange?.(value);
 
@@ -64,10 +96,22 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
       handlers.notifications[message.method]?.(message.payload);
       return;
     }
+    if (message.kind === "result") {
+      // The answer to something the Stage asked for (ADR-028).
+      const pending = waiting.get(message.corrId);
+      if (!pending) {
+        // Nobody is waiting. **Normal after a reconnect** (the caller was already
+        // rejected with `disconnected`), so this is not worth reporting
+        return;
+      }
+      waiting.delete(message.corrId);
+      pending(message);
+      return;
+    }
 
     const handler = handlers.commands[message.method];
     if (!handler) {
-      // **知らない command は握りつぶさず、失敗として返す。**
+      // **An unknown command is never swallowed — it's returned as a failure.**
       socket?.send(resultMessage(message.id, false, {}, "unhandled_method"));
       return;
     }
@@ -95,7 +139,7 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
     }
     const endpoint = await invoke<CoreEndpoint | null>(CMD_CORE_ENDPOINT);
     if (closed || !endpoint) {
-      // Core がまだ listen していない。ポートが決まればイベントで起こされる。
+      // Core isn't listening yet. Woken by an event once the port is decided.
       return;
     }
 
@@ -107,15 +151,26 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
       if (typeof event.data !== "string") {
         return;
       }
-      const message = parseCoreMessage(event.data);
-      if (message) {
-        handleMessage(message);
+      try {
+        const message = parseCoreMessage(event.data);
+        if (message) {
+          handleMessage(message);
+        }
+      } catch (error: unknown) {
+        if (!(error instanceof ProtocolVersionMismatch)) {
+          throw error;
+        }
+        // A frame whose meaning is not agreed on is a protocol error, not an ignorable event.
+        // Closing makes the rejection observable through the existing disconnected/reconnect
+        // path without interpreting the frame under the wrong schema.
+        ws.close(4400, "protocol error");
       }
     });
     ws.addEventListener("close", () => {
       if (socket === ws) {
         socket = null;
       }
+      abandonPending("disconnected");
       setConnected(false);
       scheduleRetry();
     });
@@ -124,7 +179,7 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
 
   void getCurrentWebviewWindow()
     .listen(EVENT_CORE_ENDPOINT, () => {
-      // ポートが変わった（Core が再起動した）。今の接続は捨てて繋ぎ直す。
+      // The port changed (Core restarted). Discard the current connection and reconnect.
       socket?.close();
       socket = null;
       void openSocket();
@@ -146,8 +201,35 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
         window.clearTimeout(retryTimer);
       }
       unlistenEndpoint?.();
+      abandonPending("closed");
       socket?.close();
       socket = null;
+    },
+
+    request(method, payload = {}) {
+      const live = socket;
+      if (!live || live.readyState !== WebSocket.OPEN) {
+        return Promise.reject(new Error("not_connected"));
+      }
+      const id = `s${nextRequestId++}`;
+      return new Promise((resolve, reject) => {
+        const timer = window.setTimeout(() => {
+          waiting.delete(id);
+          reject(new Error("timeout"));
+        }, REQUEST_TIMEOUT_MS);
+
+        waiting.set(id, (result) => {
+          window.clearTimeout(timer);
+          // **Refusal rejects.** Resolving would let a caller that forgets to check `ok`
+          // report success for a change Core declined to make
+          if (result.ok) {
+            resolve(result.payload);
+          } else {
+            reject(new Error(result.error ?? "refused"));
+          }
+        });
+        live.send(requestMessage(id, method, payload));
+      });
     },
   };
 }

@@ -1,6 +1,7 @@
-"""初回セットアップの進行。**WS も HTTP も使わない**（サーバは差し替える）。
+"""First-run setup's flow. **Uses neither WS nor HTTP** (the server is substituted).
 
-docs/architecture/setup.md §8 のテスト 2 / 11 と、実測で見つかった競合の再発防止。
+Tests 2 / 11 from docs/architecture/setup.md §8, plus a regression test for a race
+condition found in practice.
 """
 
 from __future__ import annotations
@@ -16,13 +17,13 @@ from lumi.setup import coordinator as coordinator_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
 from lumi.setup.install import SetupError
-from lumi.setup.state import TtsSetupState
+from lumi.setup.state import EngineRuntime, LlmSetupState, SttSetupState, TtsSetupState
 from lumi.transport.protocol import Result, Role
 from lumi.transport.server import WsServer
 
 
 class FakeServer:
-    """`WsServer` のうち Coordinator が使う2つだけを持つ。"""
+    """Holds only the two methods of `WsServer` that the Coordinator uses."""
 
     def __init__(self, answers: list[str | None]) -> None:
         self.notifications: list[dict[str, Any]] = []
@@ -39,7 +40,7 @@ class FakeServer:
         method: str,
         payload: dict[str, Any] | None = None,
         *,
-        timeout: float = 0.0,  # noqa: ASYNC109 — WsServer と同じ形にするため
+        timeout: float = 0.0,  # noqa: ASYNC109 — to match WsServer's shape
     ) -> Result:
         del role, timeout
         self.invocations.append((method, payload or {}))
@@ -56,6 +57,26 @@ class FakeServer:
 def isolated_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(paths_module, "setup_state_file", lambda: tmp_path / "s.json")
     monkeypatch.setattr(paths_module, "engines_dir", lambda: tmp_path / "engines")
+    # **Never reads the developer's real model directory.** Doing so makes the outcome
+    # depend on whose machine the suite runs on
+    monkeypatch.setattr(paths_module, "models_dir", lambda: tmp_path / "models")
+    # Which STT model setup fetches now comes from the settings file, so it has to be
+    # isolated for the same reason
+    monkeypatch.setattr(paths_module, "settings_file", lambda: tmp_path / "settings.json")
+
+
+@pytest.fixture(autouse=True)
+def speech_model_present(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The default for this file is **"the speech model is already there."**
+
+    Otherwise every TTS test would also trip the STT question and have to account for
+    it. The STT flow has its own tests below, which opt out of this.
+    """
+    monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: True)
+
+
+def no_speech_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: False)
 
 
 def no_engines(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -80,12 +101,25 @@ def one_engine(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(coordinator_module, "detect_engines", detect)
 
 
-def states_of(server: FakeServer) -> list[str]:
-    return [item["state"] for item in server.notifications if item["method"] == "stage.setup.state"]
+def no_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def detect(_env: Any) -> DetectedEngine | None:
+        return None
+
+    monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+
+
+def states_of(server: FakeServer, component: str = "tts") -> list[str]:
+    return [
+        item[component]["state"]
+        for item in server.notifications
+        if item["method"] == "stage.setup.state"
+    ]
 
 
 def boots_of(server: FakeServer) -> list[str]:
-    """配信された起動フェーズの列。**Stage が実際に見る順序**（docs/architecture/ui.md）。"""
+    """The sequence of broadcast boot phases. **The order the Stage actually sees**
+    (docs/architecture/ui.md).
+    """
     return [item["boot"] for item in server.notifications if item["method"] == "stage.setup.state"]
 
 
@@ -99,7 +133,7 @@ class TestDetection:
 
         await coordinator.initialize()
 
-        assert coordinator.state.state is TtsSetupState.NOT_CONFIGURED
+        assert coordinator.state.tts.state is TtsSetupState.NOT_CONFIGURED
         assert states_of(server) == ["not_configured"]
 
     async def test_uses_an_engine_the_user_already_installed(
@@ -111,15 +145,17 @@ class TestDetection:
 
         await coordinator.initialize()
 
-        assert coordinator.state.state is TtsSetupState.DETECTED
-        assert coordinator.state.engine_name == "VOICEVOX"
+        assert coordinator.state.tts.state is TtsSetupState.DETECTED
+        assert coordinator.state.tts.engine_name == "VOICEVOX"
 
 
 class TestPrompt:
     async def test_asks_even_when_the_stage_connects_before_detection_finishes(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """**実測で起きた競合。** Stage の接続が検出より先に来ても尋ねること。"""
+        """**A race condition observed in practice.** Must ask even if the Stage connects before
+        detection finishes.
+        """
         started = asyncio.Event()
 
         async def slow_detect(_env: Any) -> list[DetectedEngine]:
@@ -133,7 +169,7 @@ class TestPrompt:
 
         initializing = asyncio.create_task(coordinator.initialize())
         await started.wait()
-        # 検出が終わる前に Stage が繋がる
+        # The Stage connects before detection finishes
         connected = asyncio.create_task(coordinator.on_stage_connected())
         await asyncio.gather(initializing, connected)
 
@@ -142,7 +178,9 @@ class TestPrompt:
     async def test_skipping_keeps_lumi_running_and_visible(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """取得しない選択でも起動する。**状態は「未設定」として明示される。**"""
+        """Starts even when the choice is not to fetch. **State is explicitly reported as "not
+        configured."**
+        """
         no_engines(monkeypatch)
         server = FakeServer(["skip"])
         coordinator = SetupCoordinator(server.as_server(), {})
@@ -150,7 +188,7 @@ class TestPrompt:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert coordinator.state.state is TtsSetupState.NOT_CONFIGURED
+        assert coordinator.state.tts.state is TtsSetupState.NOT_CONFIGURED
         assert (tmp_path / "s.json").is_file(), "答えたことが記録されていない"
 
     async def test_does_not_ask_twice(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -168,7 +206,7 @@ class TestPrompt:
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         no_engines(monkeypatch)
-        server = FakeServer([])  # 答えが返らない → TimeoutError
+        server = FakeServer([])  # No answer comes back → TimeoutError
         coordinator = SetupCoordinator(server.as_server(), {})
 
         await coordinator.initialize()
@@ -192,9 +230,9 @@ class TestPrompt:
         assert len(server.invocations) == 2, "失敗したら一度は聞き直す"
         assert server.invocations[1][1]["retry"] is True
         assert server.invocations[1][1]["reason"] == "network_unreachable"
-        # **失敗は「まだ試していない」に戻さない。**
-        assert coordinator.state.state is TtsSetupState.FAILED
-        assert coordinator.state.reason == "network_unreachable"
+        # **A failure never reverts to "not yet attempted."**
+        assert coordinator.state.tts.state is TtsSetupState.FAILED
+        assert coordinator.state.tts.reason == "network_unreachable"
         assert states_of(server)[-1] == "failed"
 
     async def test_installs_when_the_user_asks_for_it(
@@ -212,8 +250,9 @@ class TestPrompt:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert coordinator.state.state is TtsSetupState.INSTALLED
-        # 尋ね始めと答え終わりでも配るので、同じ状態が続けて並ぶ。
+        assert coordinator.state.tts.state is TtsSetupState.INSTALLED
+        # Also broadcast when asking starts and when answering ends, so the same state repeats in a
+        # row.
         assert states_of(server) == [
             "not_configured",
             "not_configured",
@@ -222,9 +261,10 @@ class TestPrompt:
             "installed",
             "installed",
         ]
-        # **Stage から見える遷移。** 質問 → 取得中 → エンジン起動、と一方向に進む。
-        # **`installing` の後に `setup` へ戻らない**（戻ると質問画面が一瞬ちらつく）。
-        # 取得直後は `starting`。**`ready` にするとキャラクターが出てすぐ引っ込む。**
+        # **The transition as seen by the Stage.** Progresses one-way: question → fetching → engine
+        # starting. **Never returns to `setup` after `installing`** (returning would flash the
+        # question screen). Right after fetching it's `starting`. **Marking it `ready` would show
+        # the character only to pull it back.**
         assert boots_of(server) == [
             "ready",
             "ready",
@@ -237,12 +277,13 @@ class TestPrompt:
     async def test_progress_keeps_the_installing_phase(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """取得中の進捗は **`boot=installing` のまま**配られる。
+        """Progress during fetching is broadcast **while staying at `boot=installing`**.
 
-        進捗の配信が `_broadcast` を迂回していたため、`_prompting`（この処理に
-        入っているか）を `_awaiting_answer`（いま質問が出ているか）と取り違え、
-        取得中ずっと `boot=setup` が流れていた。Stage 側は `installing` 以外を
-        「準備しています…」に落とすので、**200MB の取得中に進捗が出ない。**
+        Progress broadcasts had been bypassing `_broadcast`, which confused
+        `_prompting` (is this sequence in progress) with `_awaiting_answer` (is a
+        question currently shown), streaming `boot=setup` for the entire fetch. The
+        Stage falls back to "preparing…" for anything other than `installing`, so
+        **no progress showed during the 200MB fetch.**
         """
         no_engines(monkeypatch)
         server = FakeServer(["install"])
@@ -262,10 +303,10 @@ class TestPrompt:
         installing = [
             item
             for item in server.notifications
-            if item["method"] == "stage.setup.state" and item["state"] == "installing"
+            if item["method"] == "stage.setup.state" and item["tts"]["state"] == "installing"
         ]
-        assert [item["progress"] for item in installing] == [0.0, 0.25, 0.5, 1.0]
-        # **1つでも `setup` に戻ったら質問画面がちらつく。**
+        assert [item["tts"]["progress"] for item in installing] == [0.0, 0.25, 0.5, 1.0]
+        # **If even one broadcast returned to `setup`, the question screen would flash.**
         assert {item["boot"] for item in installing} == {"installing"}
 
 
@@ -273,7 +314,9 @@ class TestManagedEngine:
     async def test_an_engine_lumi_installed_reports_installed_not_detected(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """**「Lumi が入れた」と「ユーザーが入れていた」は違う状態**（setup.md §2）。"""
+        """**"Lumi installed it" and "the user had already installed it" are different states**
+        (setup.md §2).
+        """
 
         async def detect(_env: Any) -> list[DetectedEngine]:
             return [
@@ -294,5 +337,241 @@ class TestManagedEngine:
 
         await coordinator.initialize()
 
-        assert coordinator.state.state is TtsSetupState.INSTALLED
-        assert coordinator.state.version == "1.2.0"
+        assert coordinator.state.tts.state is TtsSetupState.INSTALLED
+        assert coordinator.state.tts.version == "1.2.0"
+
+
+class TestSpeechModel:
+    """Fetching the speech-recognition model. **The same consent path as the engine**
+    (docs/architecture/setup.md §2b).
+    """
+
+    async def test_asks_separately_from_the_engine(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """**Answering about the engine says nothing about the model.**
+
+        Treating one answer as covering both would mean the second question is never
+        asked — and Lumi would silently stay unable to listen.
+        """
+        no_engines(monkeypatch)
+        no_speech_model(monkeypatch)
+        server = FakeServer(["skip", "skip"])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert [payload["component"] for _method, payload in server.invocations] == ["tts", "stt"]
+
+    async def test_does_not_ask_when_the_model_is_already_there(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        one_engine(monkeypatch)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert server.invocations == []
+
+    async def test_fetches_when_the_user_asks_for_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        one_engine(monkeypatch)
+        no_speech_model(monkeypatch)
+        fetched: list[str] = []
+
+        async def fake_install(artifact: Any, models_dir: Path, *, progress: Any = None) -> Path:
+            del models_dir
+            fetched.append(artifact.name)
+            await progress(1.0)
+            return Path("C:/models/small")
+
+        monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
+        server = FakeServer(["install"])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        # **Not hardcoded.** Which model ships is a decision that moves (ADR-027); that this
+        # path fetches *the one the rest of Core will look for* is what must not move
+        assert fetched == [coordinator_module.DEFAULT_STT_ARTIFACT.name]
+        assert coordinator.state.stt.state is SttSetupState.INSTALLED
+        assert states_of(server, "stt")[-1] == "installed"
+
+    async def test_an_override_changes_which_model_is_fetched(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ Regression: **`LUMI_STT_MODEL=small` fetched `large-v3-turbo` and reported it
+        installed**, while the Provider went looking for `small`.
+
+        Lumi was then deaf with `installed` on screen — and the lighter model is exactly
+        what someone reaches for when the big one does not fit their machine (ADR-027).
+        """
+        one_engine(monkeypatch)
+        no_speech_model(monkeypatch)
+        fetched: list[str] = []
+
+        async def fake_install(artifact: Any, models_dir: Path, *, progress: Any = None) -> Path:
+            del models_dir
+            fetched.append(artifact.name)
+            await progress(1.0)
+            return Path("C:/models/small")
+
+        monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
+        server = FakeServer(["install"])
+        coordinator = SetupCoordinator(server.as_server(), {"LUMI_STT_MODEL": "small"})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert fetched == ["small"]
+
+    async def test_an_unpinned_model_is_never_replaced_by_a_different_one(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**Fetching something else would be the same mismatch, one step later.**
+
+        Nothing can be fetched for a name that is not pinned, so nothing is asked either —
+        a question whose only answer fails is worse than no question.
+        """
+        one_engine(monkeypatch)
+        no_speech_model(monkeypatch)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {"LUMI_STT_MODEL": "tiny"})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert coordinator.state.stt.state is SttSetupState.NOT_CONFIGURED
+        assert coordinator.state.stt.reason == "unpinned_model"
+        assert server.invocations == [], "取りようが無いものを取るか聞かない"
+
+    async def test_declining_leaves_it_not_configured_and_never_asks_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**"Speaks but cannot listen" is a normal state**, and the question is not repeated."""
+        one_engine(monkeypatch)
+        no_speech_model(monkeypatch)
+        server = FakeServer(["skip"])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+        assert coordinator.state.stt.state is SttSetupState.NOT_CONFIGURED
+
+        again = SetupCoordinator(server.as_server(), {})
+        await again.initialize()
+        await again.on_stage_connected()
+        assert len(server.invocations) == 1, "起動のたびに聞き直さない"
+
+    async def test_a_failed_fetch_never_reverts_to_not_configured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**Tried and failed is not the same as never tried.** The reason is kept."""
+        one_engine(monkeypatch)
+        no_speech_model(monkeypatch)
+
+        async def fake_install(*_args: Any, **_kwargs: Any) -> Path:
+            raise SetupError("hash_mismatch", "壊れている")
+
+        monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
+        server = FakeServer(["install", "skip"])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert coordinator.state.stt.state is SttSetupState.FAILED
+        assert coordinator.state.stt.reason == "hash_mismatch"
+
+    async def test_fetching_the_model_never_disturbs_the_engine_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**The three components are independent.** One update must not blank the others."""
+        one_engine(monkeypatch)
+        no_speech_model(monkeypatch)
+
+        async def fake_install(artifact: Any, models_dir: Path, *, progress: Any = None) -> Path:
+            del artifact, models_dir, progress
+            return Path("C:/models/small")
+
+        monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
+        server = FakeServer(["install"])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        before = coordinator.state.tts
+        await coordinator.on_stage_connected()
+
+        assert coordinator.state.tts == before
+
+
+class TestLlm:
+    async def test_a_missing_ollama_is_not_configured(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        one_engine(monkeypatch)
+        no_ollama(monkeypatch)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+
+        assert coordinator.state.llm.state is LlmSetupState.NOT_CONFIGURED
+
+    async def test_installed_but_not_running_is_detected_and_stopped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ **Never tells someone to install what they already have.**
+
+        Over HTTP the two are indistinguishable, which is why detection settles it
+        (docs/architecture/setup.md §2b).
+        """
+        one_engine(monkeypatch)
+
+        async def detect(_env: Any) -> DetectedEngine | None:
+            return DetectedEngine(
+                name="ollama",
+                display_name="Ollama",
+                port=11434,
+                executable=Path("C:/ollama.exe"),
+                running=False,
+            )
+
+        monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+
+        assert coordinator.state.llm.state is LlmSetupState.DETECTED
+        assert coordinator.state.llm.runtime is EngineRuntime.STOPPED
+
+    async def test_a_missing_model_is_reported_by_whoever_found_out(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**Detection cannot see this.** Only the Provider talks to Ollama's API."""
+        one_engine(monkeypatch)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {})
+        await coordinator.initialize()
+
+        await coordinator.report_llm(
+            LlmSetupState.MODEL_MISSING, reason="ollama pull qwen3.5:9b", model="qwen3.5:9b"
+        )
+
+        assert coordinator.state.llm.state is LlmSetupState.MODEL_MISSING
+        assert coordinator.state.llm.model == "qwen3.5:9b"
+        assert states_of(server, "llm")[-1] == "model_missing"
+
+    async def test_never_holds_up_the_character(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """**Lumi neither fetches nor starts Ollama**, so waiting accomplishes nothing."""
+        one_engine(monkeypatch)
+        no_ollama(monkeypatch)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.set_runtime(EngineRuntime.READY)
+
+        assert boots_of(server)[-1] == "ready"

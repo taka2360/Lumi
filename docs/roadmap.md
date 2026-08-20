@@ -47,13 +47,16 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 ### やること
 - [x] Tauri 2 で透過ウィンドウ・常時最前面・クリックスルー 〔2026-08-15。透過の目視確認は残〕
 - [x] **ホバー検知**（Rust 側で Win32 カーソル監視の自前実装。Tauri には Electron の `forward:true` 相当が無い）〔判定は Shell 側の純粋関数。[measurements/phase0.md](measurements/phase0.md)〕
-- [ ] VRM を Stage に表示し、アイドルモーションでループ 〔**プレースホルダで貫通済み**。VRM ローダーの統合点は実装済みで、`.vrm` を置けば読む。既定同梱モデルは未定（[licensing.md](licensing.md) §7 未確認 #5）〕
+- [x] VRM を Stage に表示し、アイドルモーションでループ 〔ローダーの統合点は実装済みで、`.vrm` を置けば読む。
+  **既定同梱モデルを決定**〔2026-08-16。再配布 OK / 改変 OK / クレジット不要 / VRM 0.0 → [licensing.md](licensing.md) §4.5〕。
+  **モデルファイルを `content/` に置く作業は残る**（リポジトリにはコミットしない）〕
 - [x] Python Core を **Tauri サイドカーとして起動・監視・終了** 〔Job Object でゾンビを残さない〕
 - [x] WS 接続（token 認証）、ハートビート、片方が落ちた時の復帰
 - [x] **`os.*` の schema 検証 + allowlist を Shell 側に最小実装**（[B3](contracts/security-boundaries.md) の骨格）
-- [ ] **初回セットアップ**〔ADR-019 / 設計は [architecture/setup.md](architecture/setup.md)〕
+- [x] **初回セットアップ**〔ADR-019 / 設計は [architecture/setup.md](architecture/setup.md)〕
   - [x] TTS エンジンを取得する / しない の選択を**同等に**提示する（既定で取得しない）
-  - [x] 公式配布元からの取得 → **検証**（URL・サイズ・SHA-256）→ セットアップ 〔実ネットワークでの取得は未実施〕
+  - [x] 公式配布元からの取得 → **検証**（URL・サイズ・SHA-256）→ セットアップ
+    〔2026-08-15 実ネットワークで取得を確認。216.5 MB / 8.4 秒、SHA-256 一致 → [measurements/phase0.md](measurements/phase0.md)〕
   - [x] 失敗時のロールバック（**部分的にインストールされた状態を残さない**）
   - [x] 取得しない場合も Lumi が起動し、**「TTS 未セットアップ」が明示される**
   - [x] ユーザーが別途インストール済みの AivisSpeech / VOICEVOX を検出する
@@ -84,6 +87,11 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 インストーラを作って**別マシン**で起動し、**初回セットアップを通した上で**、キャラクターが立って一言喋る。
 **TTS の取得を拒否しても Lumi は起動する**（喋らないが、壊れていない状態として明示される）。
 
+> **達成**〔2026-08-16〕。別マシンでインストーラから導入し、キャラクターが立って一言喋るところまで確認した
+> → [measurements/phase0.md](measurements/phase0.md)「別マシンでの検証」。
+> **ただし検証手順 15〜18（取得の経路）は別マシンでは未確認**であり、Phase 1 に持ち越す。
+> Phase 1 では同じ経路に LLM / STT のセットアップが乗る（[ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)）ため、まとめて回す。
+
 > 初回セットアップの実装が Phase 0 を圧迫する場合は、**完了条件を「TTS は完全手動インストール前提」に緩め、取得フローを Phase 1 に送る**（[ADR-019](decisions/ADR-019-tts-engine-distribution.md) Alternative B への退避）。
 > **ただしクレジット表示は落とさない。** 配布物ができた時点で義務が発生し、後から遡って直せないため。
 
@@ -105,9 +113,13 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
 13. ~~**サイドカーから sqlite-vec がロードできるか確認**~~ 〔2026-08-15 完了。別マシンでは `lumi-core.exe --self-check` を回す〕
 14. ~~**インストーラに AivisSpeech / VOICEVOX のバイナリが含まれていないことを確認**~~ 〔2026-08-15 完了。92 ファイルを列挙して確認〕
 15. **初回セットアップで「取得しない」を選び、Lumi が起動して「TTS 未セットアップ」が表示されることを確認**
+    〔2026-08-15 **開発機で確認**。別マシンでは未確認 → Phase 1〕
 16. **ネットワークを遮断した状態で取得を試み、明示的に失敗し、部分的な残骸が残らないことを確認**
+    〔単体テストのみ。**実ネットワークでの断線試験はどちらのマシンでも未実施** → Phase 1〕
 17. **ユーザーが選択するまで外部へのネットワークアクセスが発生しないことを確認**（パケットキャプチャ / Network-optional 原則）
+    〔2026-08-15 **静的検査 + 経路で確認**（CI に入れた）。パケットキャプチャは未実施 → Phase 1〕
 18. **クレジット画面にエンジン名・音源名・ライセンス全文が表示されることを確認**
+    〔2026-08-15 **開発機で確認**。別マシンでは未確認 → Phase 1〕
 
 ### ここで失敗したら
 Shell 選定（Tauri → Electron）とパッケージング方針を見直す。`PlatformShell` 抽象があるので Stage 側の実装は流用できる。
@@ -119,38 +131,64 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
 **目的: 「話しかけると答え、遮れば止まる」を成立させる。**
 
 ### 必須
-- [ ] Mic → Silero VAD → faster-whisper → Ollama(Qwen3系) → AivisSpeech → 再生 + **リップシンク**
-- [ ] **音声の3層分離**（audio callback / VAD 専用スレッド / asyncio）。**コールバック内で推論しない**
-- [ ] **barge-in**（ミュート判定と発話区間確定を別閾値で。誤爆から復帰できること）
-- [ ] EchoGuard **L1**（適応的閾値。ヘッドホン前提を明示）
-- [ ] Working Memory のみ（セッション内会話履歴。ベクトルなし）
-- [ ] **Kernel 基盤**
-  - [ ] Attention Arbiter（`_foreground` 単一参照 / idle 必置 / `suspended`）
-  - [ ] `DeferredQueue`（TTL 付き）
-  - [ ] **`Job` と `inference_lease`**（Phase 2 の Reflection で必要になるが、後から入れると経路が変わる）
-  - [ ] Activity / Tool の独立した状態機械
-  - [ ] Cancellation 契約（cooperative / hard / non_cancellable）
-  - [ ] Command / EventBus（Signal ↔ DomainEvent 分離、stream_key 採番）
-  - [ ] Hook（固定セット）
-  - [ ] Crash Recovery の**イベント語彙**と `idempotency_key` の型（実装は Phase 4a）
-- [ ] **Permission Kernel の骨格**（L0 ツールのみ登録。`decide()` は本番と同じ関数。Kernel実行契約と Scope 正規化も本番と同じ経路）
-- [ ] **Provenance の型と伝播**（L0 しか無くても型を後入れしない）
-  - [ ] `block_trust` / `history_trust` / `session_trust`（sticky）の3スコープ
-- [ ] Provider interface（`load` / `unload` / `resource_hint` を含む）
-- [ ] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）
-- [ ] Inspector 最小版（Activity ツリー / レイテンシ内訳）
+- [x] Mic → Silero VAD → faster-whisper → Ollama(Qwen3系) → AivisSpeech → 再生 + **リップシンク** 〔Step E で結線。実機での通しは Step F〕
+- [x] **音声の3層分離**（audio callback / VAD 専用スレッド / asyncio）。**コールバック内で推論しない** 〔Step D。AST で静的検査〕
+- [x] **barge-in**（ミュート判定と発話区間確定を別閾値で。誤爆から復帰できること）〔Step D/E。実測は Step F〕
+- [x] EchoGuard **L1**（適応的閾値。ヘッドホン前提を明示）〔Step D〕
+- [x] Working Memory のみ（セッション内会話履歴。ベクトルなし）〔Step E〕
+- [x] **Kernel 基盤** 〔Step A〕
+  - [x] Attention Arbiter（`_foreground` 単一参照 / idle 必置 / `suspended`）
+  - [x] `DeferredQueue`（TTL 付き）
+  - [x] **`Job` と `inference_lease`**（Phase 2 の Reflection で必要になるが、後から入れると経路が変わる）
+  - [x] Activity / Tool の独立した状態機械
+  - [x] Cancellation 契約（cooperative / hard / non_cancellable）
+  - [x] Command / EventBus（Signal ↔ DomainEvent 分離、stream_key 採番）
+  - [x] Hook（固定セット）
+  - [x] Crash Recovery の**イベント語彙**と `idempotency_key` の型（実装は Phase 4a）
+- [x] **Permission Kernel の骨格**（L0 ツールのみ登録。`decide()` は本番と同じ関数。Kernel実行契約と Scope 正規化も本番と同じ経路）〔Step B〕
+- [x] **Provenance の型と伝播**（L0 しか無くても型を後入れしない）〔Step B/E〕
+  - [x] `block_trust` / `history_trust` / `session_trust`（sticky）の3スコープ
+- [x] Provider interface（`load` / `unload` / `resource_hint` / **`attribution`** を含む）〔Step C〕
+- [x] **推論スタックのセットアップ**〔[ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) / [architecture/setup.md](architecture/setup.md) §2b〕
+  - [x] **Ollama の検出**（取得もインストールもしない）と `model_missing` の判定 〔Step C / **Step F で実機確認**（[measurements/phase1.md](measurements/phase1.md)）〕 / [x] Stage への**提示**〔Step G〕
+  - [x] **STT モデルの取得**（ピン留め + SHA-256 + ロールバック）。**ライブラリの自動ダウンロードを無効化する**〔Step F/G。同意フローに接続済み〕
+  - [x] **Silero VAD を配布物に同梱** 〔Step D/E。faster-whisper 同梱の ONNX（MIT）を使う。**OSS 通知への Silero Team のクレジット追加は Step G で完了** → [licensing.md](licensing.md) §4.6〕
+  - [x] 起動フェーズ（`boot`）を **LLM / STT / TTS の3つから導出**する。「喋れるが聞けない」を正常な状態として出す〔Step G。**待たせるのは「今まさに使えるようになる」ときだけ** → [architecture/setup.md](architecture/setup.md) §2b〕
+- [x] 構造化ログ（structlog）+ SLO 計測（p50/p95/p99、**`unaccounted_ms` を含む**）〔Step F で `turn_latency` / `vad.mute` を実装。**数値の記録はモデル取得後**〕
+- [x] Inspector 最小版（Activity ツリー / レイテンシ内訳）〔Step G。**`stage` ウィンドウ内**。送信は EventBus 購読 → 別タスクで、barge-in の経路に載せない → [architecture/ui.md](architecture/ui.md) §5〕
+- [x] **Content Pack の既定キャラクター**〔Step E で `content/characters/lumi/` を作成。**VRM 本体も配置済み**〔2026-08-19〕。`character.toml` の `[model]` が持つ〕
+
+### Phase 0 からの持ち越し
+
+- [ ] **検証手順 15〜18 を別マシンで通す**（取得の経路。**LLM / STT のセットアップが同じ経路に乗った後**にまとめて回す）
+- [ ] **ネットワーク断線の実試験**（単体テストでは `.tmp-*` が残らないことを確認済み。実断線は未実施）
+- [x] **既定同梱 VRM モデル（光莉 / 作者: あわ）を `content/` に置き、配布物に含める経路を通す**（リポジトリにはコミットしない → [licensing.md](licensing.md) §4.5）〔2026-08-19。**Core が決め、Shell が配信し、Stage が描く** → [ADR-029](decisions/ADR-029-content-pack-asset-delivery.md)。PyInstaller spec が `model.vrm` の同梱を fail-closed で確認する〕
+- [ ] release ビルドでのカーソル監視 CPU 実測（debug では 1コア 2.8%）
 
 ### Stretch（詰まったら落とす）
-- [ ] 表情変化（`<|ACT|>` マーカー → ExpressionIntent → VRM ブレンドシェイプ）
+- [x] 表情変化（`<|ACT|>` マーカー → ExpressionIntent → VRM ブレンドシェイプ）〔Step G。VRM に無い4つは Renderer 側で控えめに借りる → [interfaces/renderer.md](interfaces/renderer.md)〕
 
 ### 完了条件
 話しかけると **p95 2.0 秒以内**に喋り始め、**途中で遮ると止まる**。
+
+**〔2026-08-16 実測〕音声経路で p50 1.50 秒 / ウォーム p95 1.63 秒。レイテンシ条件を満たしている。**
+ただし **GPU 構成での話**である（[ADR-025](decisions/ADR-025-tts-on-gpu.md)）。
+CPU では TTS だけで 0.9 秒かかり届かない。→ [measurements/phase1.md](measurements/phase1.md)
+
+**これはレイテンシ条件の達成であり、Phase 1 全体の完了を意味しない。Phase 1 は未完了である。**
+残っているのは実機での手動確認（マイクから話しかける / 喋っている途中で遮る）である。
+計測はオフライン注入（録音済み音声）で行った。
+また、Phase 0 からの未完了 carry-over（別マシンでのセットアップ検証 / ネットワーク断線の実試験）も残っている。
 
 ### レイテンシ SLO
 
 **表と区間別予算は [architecture/audio.md](architecture/audio.md) §7 が唯一の定義場所。**
 
-要点: p50 < 1.2s / p95 < 2.0s / p99 < 3.0s。**区間合計は p50 目標の 85% 以下**に収め、残りを計測外処理の予備枠として空けておく（Phase 1 は区間合計 0.95s）。
+要点: p50 < 1.5s / p95 < 2.0s / p99 < 3.0s。**区間合計は p50 目標の 85% 以下**に収め、残りを計測外処理の予備枠として空けておく。
+
+🔴 **Phase 2 着手前に決めること: 記憶検索を足すと 85% 規則を破る。**〔Step F で判明〕
+Phase 1 の区間合計は 1.27s（= p50 目標 1.50s の 85%）。記憶検索 0.05s を足すと 1.32s / 88% になり、85% 規則を破る。
+**他の区間を縮めるか、記憶検索を含む区間別予算を見直すかを、Phase 2 の実装前に決める。**
 
 ### なぜ Kernel 基盤を MVP に入れるのか
 **あとから Kernel を入れるのが一番危ない。** Attention Arbiter・Cancellation 契約・Provenance・Event 採番は、後から挿入すると全コードのシグネチャを書き換えることになる。L0 ツールしか無くても、**型と経路は本番と同じもの**を通す。
@@ -180,6 +218,7 @@ Lumi は常時マイクを開き、会話の生ログを永続化し、前面ア
 | 4 | **第三者の音声**。部屋の中の他人の発話も STT され、永続化されうる（[contracts/provenance.md](contracts/provenance.md) が限界として記録済み）。録音・保存の是非は別問題として決める |
 | 5 | ユーザーが「全部消したい」と言ったときに応えられる構造か |
 | 6 | 監査ログの保持期間（append-only だが無限に貯まる） |
+| 7 | **Phase 1 から貯まり始めた `DomainEvent` の扱い。** Phase 1 では **Kernel の事実だけ**を永続化し、発話本文は入れていない（`core/lumi/storage/sqlite.py`）。保持期間と、#5「全部消したい」の対象に含めるかを決める |
 
 **方針として既に決まっているもの**（新文書に集約する）:
 - `user.focus_app` は取るが**ウィンドウタイトルは取らない**（[architecture/world-state.md](architecture/world-state.md)）
@@ -367,14 +406,17 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 1 | ~~🔴 AivisSpeech / VOICEVOX の音声ライブラリ利用規約~~ | **✓ 解消**〔2026-08-15〕→ [licensing.md](licensing.md), [ADR-019](decisions/ADR-019-tts-engine-distribution.md) |
 | 1b | **AivisSpeech の LICENSE 本文・依存ライブラリ・同梱モデルのライセンス**（同梱を再検討する場合に必要） | Phase 0（取得実装時）→ [licensing.md](licensing.md) §7 |
 | 2 | ~~Python サイドカーのパッケージング（PyInstaller vs uv 同梱）~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-021](decisions/ADR-021-sidecar-packaging.md)。**PyInstaller の onedir** |
-| 3 | Ollama を同梱するかユーザーに別途インストールさせるか（**[ADR-019](decisions/ADR-019-tts-engine-distribution.md) と同じ論法を適用予定**） | Phase 0-1 |
+| ~~3~~ | ~~Ollama を同梱するかユーザーに別途インストールさせるか~~ | **✓ 解消**〔2026-08-16〕→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)。**Ollama は検出のみ**（取得もしない）/ Silero VAD は同梱 / STT モデルは同意に基づく実行時取得 |
 | 4 | ~~入出力が別デバイスのときの duplex stream の扱い~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-020](decisions/ADR-020-split-audio-streams.md)。**duplex を使わない**（別ストリーム + Core が持つ reference） |
-| 5 | LLM モデル選定（Qwen3系 / Gemma3系）— 日本語会話品質と Tool Calling 品質 | Phase 1（実測） |
+| 5 | LLM モデル選定（Qwen3系 / Gemma3系）— 日本語会話品質と Tool Calling 品質。**利用条件の記録も同時に**（[licensing.md](licensing.md) §7 未確認 #11） | Phase 1（実測） |
 | 6 | 🔴 **プライバシーとデータ保存の方針**（`contracts/privacy.md` を書く） | **Phase 2 着手前** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
 | 8 | **DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる） | Phase 3 着手前 |
-| 9 | 設定の保存形式とスキーマ | Phase 1（必要になった時点） |
-| 10 | **`Activity.priority` の数値体系と `interruptible_by` を集合にする必要性** | Phase 1（Arbiter 実装時） |
+| ~~8b~~ | ~~区間合計が p50 目標を超えている~~ | **✓ 解消**〔2026-08-18〕。`llm_first_token` を 537→**421 ms** に縮めたうえで、**p50 目標を 1.2s → 1.5s に置き直した**（1.27/1.50 = 85%）。`vad_ms` 0.43s はターンテイキングの方針で動かせず、旧目標と両立しなかったため。**p95 2.0s（完了条件）と区間別予算は据え置き** → [architecture/audio.md](architecture/audio.md) §7 |
+| ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
+| ~~8d~~ | ~~🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**~~ | **✓ 解消**〔2026-08-17〕→ [architecture/audio.md](architecture/audio.md) §7。**予算の側が誤り**。パラメータは 400 ms のまま（下げると文中の間で区間が切れる。実測済み）。**表には数値を書かず §5 を参照する**（同じ値を2箇所に書いたのが原因） |
+| ~~9~~ | ~~設定の保存形式とスキーマ~~ | **✓ 解消**〔2026-08-17 / Step G〕→ [architecture/core.md](architecture/core.md) §6b。**JSON / `<data_dir>/settings.json`**。壊れたファイルは上書きしない・知らないキーは保持・環境変数の上書きは表示する。変更経路（Stage → Core の `request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md) |
+| ~~10~~ | ~~**`Activity.priority` の数値体系と `interruptible_by` を集合にする必要性**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-024](decisions/ADR-024-activity-priority.md)。**`interruptible_at: int` の単一閾値**（`>=` で判定）。値は [architecture/agent.md](architecture/agent.md) §1 |
 | 11 | キャラクター人格の記述形式（独自 vs 既存カード互換） | Phase 1 後半 |
 | 12 | Canonicalizer / BindVerifier の具体的アルゴリズム | Phase 4a |
 | 13 | 🔴 **Invariant 8 の実装方式**（全画面キャプチャ / 座標指定の入力注入） | **Phase 4c 着手前** |
@@ -389,7 +431,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 
 | # | リスク | 影響 | 対策 | 判定 Phase |
 |---|---|---|---|---|
-| R1 | **Python Core の同梱**。torch 依存だとインストーラ 1-2GB | 配布不能 | torch を避ける（CTranslate2 / ONNX） | Phase 0 |
+| R1 | **Python Core の同梱**。torch 依存だとインストーラ 1-2GB | 配布不能 | torch を避ける（CTranslate2 / ONNX） | ~~Phase 0~~ → **Phase 1 で再判定済み。インストーラ 65.7 MB**（[measurements/phase1.md](measurements/phase1.md)） |
 | R2 | **Tauri 2 の透過+クリックスルー+ホバー検知** | Shell 選定の破綻 | Phase 0 スパイク。`PlatformShell` で退避 | Phase 0 |
 | R3 | **AEC 不在による barge-in の自己ループ** | 中核機能の破綻 | 3段階 EchoGuard | Phase 1-2 |
 | R4 | **VRAM 競合** | 機能の相互排他 | TTS を CPU 別プロセスに。Phase 5 で Manager | Phase 0-1 実測 |

@@ -26,8 +26,13 @@ class Tool(Protocol):
 
     # ── 実装するのはこの2つだけ（Class A のみ）───
     def bind(self, ctx: ToolContext, scope: SecurityScope) -> Handle: ...
-    async def execute(self, ctx: ToolContext, handle: Handle) -> ToolResult: ...
+    async def execute(self, ctx: ToolContext, handle: Handle) -> ToolOutcome: ...
 ```
+
+> **`execute` が返すのは `ToolResult` ではなく `ToolOutcome`（provenance を持たない）。**〔Phase 1 実装時に確定〕
+> `ToolResult` を Tool に作らせると、`provenance_class = TRUSTED` と書ける経路が残る。
+> それは [Invariant 7](../contracts/invariants.md)（No Laundering）の穴そのものである。
+> **`ToolResult` を組み立てるのは Tool Registry だけ**（→ [§ ToolResult](#toolresult)）。
 
 > **上の `bind` / `execute` を持つのは Class A（in-core）の Tool のみ。**
 > Class B（out-of-process Extension が提供する Tool）は Core 側では `RemoteToolDescriptor` として登録され、`bind` / `execute` を持たない。→ [§ Class A と Class B](#class-a-と-class-b)
@@ -116,6 +121,11 @@ class SecurityScope:
 
 Policy が検査した後に scope が書き換わりうると、TOCTOU が成立する。
 
+**`frozen` はフィールドの再束縛を止めるだけで、指している先までは凍らせない。**
+`metadata` は `execute` が生入力を再解決する代わりに読む値であり、中身は LLM の tool call
+から来る。可変な `dict` のままだと `decide` と `execute` の間で引数が書き換えられ、
+**この型が塞ぐはずの窓がそのまま開く。** 構築時に複製して再帰的に読み取り専用にする。
+
 ### 生成者
 
 **`Canonicalizer`（Kernel 所有）のみ。** Tool も LLM も生成できない。
@@ -150,20 +160,45 @@ class Handle(Protocol):
 
 ```python
 @dataclass(frozen=True)         # immutable
-class ToolResult:
+class ToolOutcome:
+    """**Tool が返せるのはここまで。** provenance を持たない"""
     ok: bool
     value: Any | None
     error: ToolError | None
 
-    provenance_class: ProvenanceClass   # 通常 UNTRUSTED
-    trust_level: TrustLevel             # 通常 TAINTED
+
+@dataclass(frozen=True)         # immutable
+class ToolResult:
+    """**Tool Registry だけが組み立てる**"""
+    ok: bool
+    value: Any | None
+    error: ToolError | None
+
+    provenance_class: ProvenanceClass
+    trust_level: TrustLevel
 ```
 
 ### provenance は Core が付与する
 
-Tool は `provenance` を自分で設定しない。**Tool Registry が付与する**（Tool の自己申告を信じない）。
+Tool は `provenance` を自分で設定**できない**（型で塞いである）。**Tool Registry が付与する。**
 
-外部から取得したデータなら `UNTRUSTED`。Core 内部の計算結果なら入力から join。
+**「外部由来か」は lane が決める。** Tool に自己申告させない。
+
+```python
+LANE_RESULT_IS_EXTERNAL: dict[ScopeLane, bool]   # Kernel 所有
+```
+
+| lane | 外部由来 | 理由 |
+|---|---|---|
+| `fs` / `process` / `desktop` / `system` / `browser` / `game` / `widget` | **True** | 取得した内容が外界そのもの |
+| `input` | False | 注入の成否を返すだけで、外界の内容を持ち帰らない |
+| `character` | False | Lumi 自身の表現の変更であって、外界の観測ではない |
+| `memory` | False | Phase 2。`user_confirmed` の扱いは `MemoryStore` 側で決める |
+
+外部由来なら `UNTRUSTED`。そうでなければ**呼び出し元 context の `effective_trust` から `propagate()`**。
+
+> **`character` を True にしてはいけない。** 表情を変えるたびにセッションが tainted になり、
+> provenance 昇格（実効 L3 以上を `ask` にする規則）が判別力を失う。
 
 ---
 
@@ -186,7 +221,8 @@ class ScopeLane(Enum):
     WIDGET    = "widget"        # Phase 7
 
 
-LANE_CLASS: dict[ScopeLane, ToolClass] = {...}   # Kernel が所有。Tool は宣言しない
+LANE_CLASS: dict[ScopeLane, ToolClass] = {...}            # Kernel が所有。Tool は宣言しない
+LANE_RESULT_IS_EXTERNAL: dict[ScopeLane, bool] = {...}    # 同上（→ §ToolResult）
 ```
 
 **新しい lane を足すには `Canonicalizer` と、クラスに応じた検証器（`BindVerifier` または `ResultVerifier`）の実装が必須。** 片方だけでは登録できない（fail-closed）。

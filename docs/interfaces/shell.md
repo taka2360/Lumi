@@ -41,12 +41,16 @@ interface PlatformShell {
   startDragging(w: WindowHandle): Promise<void>          // 掴んで動かす。OS に委ねる
   scaleWindow(w: WindowHandle, factor: number): Promise<void>  // 倍率。**クランプは Shell 側**
 
+  // ── Stage asset delivery ───────────────────
+  toAssetUrl(path: string): string                    // Content Pack の scope 内だけ
+
   // ── 入力 ───────────────────────────────────
   onCursorMove(cb: (p: Point) => void): Disposable
   registerHotkey(accel: string, cb: () => void): Promise<Disposable>
 
   // ── トレイ ─────────────────────────────────
   setTrayMenu(items: TrayItem[]): Promise<void>
+  setLocale(locale: "ja" | "en"): Promise<void>
 
   // ── OS 特権（Core からの os.* を受けて実行）────
   captureScreen(spec: CaptureSpec): Promise<ImageData>
@@ -109,6 +113,7 @@ Rust 側で ~60Hz でカーソル位置を取得（GetCursorPos 相当）
 | 分類 | 呼ぶ主体 | 経路 |
 |---|---|---|
 | `setHitRegion` / `onHoverState` / ウィンドウ操作 | Stage | `shell.*`（Tauri IPC） |
+| `toAssetUrl` | Stage | PlatformShell adapter（Tauri asset protocol） |
 | `captureScreen` / `injectInput` / `launchProcess` / `spawnSidecar` | **Core** | `os.*`（WS） |
 
 **Stage 側の TypeScript の `PlatformShell` には OS 特権を載せない。**

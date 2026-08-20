@@ -1,19 +1,24 @@
 /**
- * VRM の読み込み。**本番モデルの受け口はここ1箇所**。
+ * Loading VRM. **The single point where a production model is received.**
  *
- * `@pixiv/three-vrm` は MIT。**モデルファイル自体は配布物に含めない**
- * （リポジトリでも `.gitignore` 済み → docs/licensing.md §2）。
- * 既定同梱モデルが決まったら `DEFAULT_VRM_URL` の指す先を Content Pack に変える。
+ * `@pixiv/three-vrm` is MIT. **The model file is never committed to the repository**
+ * (`.gitignore`d), but it *is* in the distributable — the bundled default is redistributable
+ * (docs/licensing.md §4.5) and ships inside the Content Pack.
+ *
+ * **This module doesn't know where the model is.** Core decides which one, Shell serves it,
+ * and `loadCharacter` is handed a URL (ADR-029).
  */
 
 import { type VRM, VRMLoaderPlugin, VRMUtils } from "@pixiv/three-vrm";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 
+import { cachedLocale, translate } from "../i18n";
+import { type ExpressionWeights, VRM_PRESETS } from "./expression";
 import { computeIdlePose } from "./idle";
 import type { MouthWeights, Viseme } from "./lipsync";
 import type { CharacterModel } from "./types";
 
-/** ビセーム → VRM の標準表情名（docs/interfaces/renderer.md）。 */
+/** Viseme → VRM's standard expression name (docs/interfaces/renderer.md). */
 const VRM_EXPRESSION: Readonly<Record<Viseme, string>> = {
   A: "aa",
   I: "ih",
@@ -22,13 +27,29 @@ const VRM_EXPRESSION: Readonly<Record<Viseme, string>> = {
   O: "oh",
 };
 
-/**
- * Phase 0 の暫定的な置き場所。ここに `.vrm` を置くと本番モデルとして読まれる。
- *
- * Phase 1 以降、モデルの選択は Content Pack の設定として **Core が決めて `stage.*` で配る**。
- * Stage が自分でパスを決めているのは Phase 0 の暫定処置である。
- */
-export const DEFAULT_VRM_URL = "/character.vrm";
+/** 腕を下ろしたデフォルトポーズを適用 */
+function applyDefaultPose(vrm: VRM): void {
+  const humanoid = vrm.humanoid;
+  if (!humanoid) {
+    return;
+  }
+  const leftUpperArm = humanoid.getNormalizedBoneNode("leftUpperArm");
+  const rightUpperArm = humanoid.getNormalizedBoneNode("rightUpperArm");
+  if (leftUpperArm) {
+    leftUpperArm.rotation.z = 1.25;
+  }
+  if (rightUpperArm) {
+    rightUpperArm.rotation.z = -1.25;
+  }
+  humanoid.update();
+
+  // VRMLoaderPlugin captures SpringBone's initial matrices while loading. This pose is
+  // applied afterwards, so keeping that old state makes the first physics update solve
+  // from a pose that no longer exists (hair and skirts can be flung upward, then fall).
+  // Rebuild the world matrices and make the visible pose the physics baseline.
+  vrm.scene.updateMatrixWorld(true);
+  vrm.springBoneManager?.setInitState();
+}
 
 export async function loadVrm(url: string): Promise<CharacterModel> {
   const loader = new GLTFLoader();
@@ -37,15 +58,18 @@ export async function loadVrm(url: string): Promise<CharacterModel> {
   const gltf = await loader.loadAsync(url);
   const vrm = gltf.userData.vrm as VRM | undefined;
   if (!vrm) {
-    throw new Error(`VRM として読めない: ${url}`);
+    throw new Error(translate(cachedLocale(), "character.load.invalid", { url }));
   }
 
-  // 使われないジョイントを落とす（描画コストを下げる、three-vrm の推奨手順）。
+  // Drops unused joints (lowers render cost; three-vrm's recommended procedure).
   VRMUtils.removeUnnecessaryVertices(gltf.scene);
   VRMUtils.combineSkeletons(gltf.scene);
 
-  // 正面をこちらに向ける。VRM 1.0 は -Z 前方。
+  // Faces it toward us. VRM 1.0 faces -Z.
   vrm.scene.rotation.y = Math.PI;
+
+  // 初期姿勢として腕を下ろす
+  applyDefaultPose(vrm);
 
   const baseY = vrm.scene.position.y;
 
@@ -56,17 +80,28 @@ export async function loadVrm(url: string): Promise<CharacterModel> {
       const pose = computeIdlePose(elapsed);
       vrm.scene.position.y = baseY + pose.offsetY;
       vrm.scene.rotation.z = pose.tiltZ;
-      // 表情・視線・揺れものの更新。**`applyMouth` の値はここで反映される。**
+      // Updates expressions, gaze, and physics. **`applyMouth`'s values get applied here.**
       vrm.update(delta);
     },
     applyMouth(weights: MouthWeights) {
       const expressions = vrm.expressionManager;
       if (!expressions) {
-        // このモデルは表情を持たない。**黙って口を動かしたことにしない。**
+        // This model has no expressions. **Never silently pretends the mouth moved.**
         return;
       }
       for (const [viseme, name] of Object.entries(VRM_EXPRESSION)) {
         expressions.setValue(name, weights[viseme as Viseme]);
+      }
+    },
+    applyExpression(weights: ExpressionWeights) {
+      const expressions = vrm.expressionManager;
+      if (!expressions) {
+        return;
+      }
+      for (const preset of VRM_PRESETS) {
+        // **A model missing this preset is not an error.** three-vrm ignores an unknown
+        // name, which is exactly the "fall back on your own" the contract asks for
+        expressions.setValue(preset, weights[preset]);
       }
     },
     dispose() {

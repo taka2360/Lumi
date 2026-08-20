@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { hasMovedEnough, screenRectFromNdcPoints } from "./projection";
 
 describe("screenRectFromNdcPoints", () => {
-  it("NDC の中心が画面の中心になる", () => {
+  it("the NDC center becomes the screen center", () => {
     const rect = screenRectFromNdcPoints(
       [
         { x: -0.5, y: 0.5 },
@@ -15,7 +15,7 @@ describe("screenRectFromNdcPoints", () => {
     expect(rect).toEqual({ x: 100, y: 200, width: 200, height: 400 });
   });
 
-  it("画面外にはみ出した分を切り落とす", () => {
+  it("clips whatever spills off screen", () => {
     const rect = screenRectFromNdcPoints(
       [
         { x: -2, y: 2 },
@@ -27,11 +27,11 @@ describe("screenRectFromNdcPoints", () => {
     expect(rect).toEqual({ x: 0, y: 0, width: 50, height: 50 });
   });
 
-  it("点が無ければ領域なし", () => {
+  it("no points means no region", () => {
     expect(screenRectFromNdcPoints([], 100, 100)).toBeNull();
   });
 
-  it("完全に画面外なら領域なし（原点のゼロ矩形にしない）", () => {
+  it("entirely off-screen means no region (never a zero rect at the origin)", () => {
     const rect = screenRectFromNdcPoints(
       [
         { x: -3, y: 3 },
@@ -47,15 +47,15 @@ describe("screenRectFromNdcPoints", () => {
 describe("hasMovedEnough", () => {
   const rect = { x: 10, y: 10, width: 50, height: 50 };
 
-  it("わずかな揺れでは送らない", () => {
+  it("never sends for a slight jitter", () => {
     expect(hasMovedEnough(rect, { ...rect, x: 10.4 })).toBe(false);
   });
 
-  it("1px 以上動いたら送る", () => {
+  it("sends once moved by 1px or more", () => {
     expect(hasMovedEnough(rect, { ...rect, x: 11.5 })).toBe(true);
   });
 
-  it("領域の有無が変わったら必ず送る", () => {
+  it("always sends when the region's presence changes", () => {
     expect(hasMovedEnough(rect, null)).toBe(true);
     expect(hasMovedEnough(null, rect)).toBe(true);
     expect(hasMovedEnough(null, null)).toBe(false);

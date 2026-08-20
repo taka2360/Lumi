@@ -48,6 +48,12 @@ const MANUAL = [
 		note: "sounddevice が同梱するバイナリ。**ASIO 版は同梱しない**（Steinberg の SDK は非 OSS）",
 	},
 	{
+		name: "Silero VAD",
+		version: "v6 (ONNX)",
+		license: "MIT",
+		note: "Copyright (c) 2020-present Silero Team。**faster-whisper が同梱する ONNX モデル**であり、依存宣言には現れないため手で足している（docs/licensing.md §4.6）",
+	},
+	{
 		name: "PyInstaller bootloader",
 		version: "6.22.0",
 		license: "GPL-2.0-or-later WITH Bootloader-exception",

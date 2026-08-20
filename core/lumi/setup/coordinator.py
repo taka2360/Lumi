@@ -1,198 +1,395 @@
-"""初回セットアップの進行役。**判断はここに集める**（Stage は表示するだけ）。
+"""The coordinator for first-run setup. **All decisions are concentrated here**
+(the Stage only displays).
 
-設計 → docs/architecture/setup.md
+Design → docs/architecture/setup.md §2 / §2b
 
-流れ:
+Flow:
 
 ```
-起動 → 検出（ローカルのみ）→ 状態が決まる
-Stage が接続 → 状態を配信
-  状態が not_configured で、まだ聞いていなければ → 取得するかを尋ねる
-    「取得する」→ installing（進捗を配信）→ installed / failed
-    「取得しない」→ not_configured のまま。**聞いたことだけ覚える**
+Startup → detection (local only) → state is determined
+Stage connects → state is broadcast
+  If state is not_configured and it hasn't been asked yet → ask whether to fetch
+    "Fetch" → installing (progress broadcast) → installed / failed
+    "Don't fetch" → stays not_configured. **Only remembers that it was asked**
 ```
+
+## Three components, asked about one at a time
+
+TTS (engine) and STT (model) are both fetched **with consent**; the LLM is
+**detected only** (ADR-023). Questions are asked in sequence, never at once:
+two consent dialogs on a first run is how a program teaches people to click
+through without reading.
+
+**The order is TTS first.** Being unable to speak is the more visible failure,
+and it is the one whose fetch the boot screen already waits on.
 """
 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from pathlib import Path
 
 from lumi import logging as lumi_logging
-from lumi import paths
-from lumi.setup.detect import detect_engines
+from lumi import paths, settings
+from lumi.setup.detect import detect_engines, detect_ollama
 from lumi.setup.engines import AIVISSPEECH_ENGINE
-from lumi.setup.install import SetupError, install_engine
-from lumi.setup.state import EngineRuntime, SetupAnswers, TtsSetup, TtsSetupState
+from lumi.setup.install import (
+    ProgressCallback,
+    SetupError,
+    install_engine,
+    install_stt_model,
+    is_model_installed,
+)
+from lumi.setup.models import FASTER_WHISPER_LARGE_V3_TURBO, STT_MODELS, ModelArtifact
+from lumi.setup.state import (
+    EngineRuntime,
+    LlmSetup,
+    LlmSetupState,
+    SetupAnswers,
+    SetupSnapshot,
+    SttSetup,
+    SttSetupState,
+    TtsSetup,
+    TtsSetupState,
+)
 from lumi.transport.protocol import Role
 from lumi.transport.server import NotConnectedError, WsServer
 
 log = lumi_logging.get_logger(__name__)
 
-#: ユーザーが選ぶのを待つ時間。**人間の時間**なので長い。
+#: How long to wait for the user's choice. **Human time**, so it's long.
 PROMPT_TIMEOUT_S = 600.0
 
-#: 尋ねる回数の上限（失敗後の聞き直しを含む）。**しつこくしない。**
+#: The cap on how many times to ask (including retries after a failure). **Never nags.**
 MAX_PROMPTS = 2
 
-#: 状態を配信する method（Core → Stage）。
+#: The method for broadcasting state (Core → Stage).
 METHOD_STATE = "stage.setup.state"
-#: 取得するかを尋ねる method（Core → Stage、結果を待つ）。
+#: The method for asking whether to fetch (Core → Stage, awaits the result).
 METHOD_PROMPT = "stage.setup.prompt"
 
-#: Stage が result で返してくる選択肢。**線上に出る値**なので docs/contracts/wire.json が正
-#: （→ ADR-022）。`CHOICE_SKIP` は比較に使わないが、**契約の片側だけを書かない**ために置く。
+#: The choices the Stage returns in `result`. **A value that goes on the wire**, so
+#: docs/contracts/wire.json is authoritative (→ ADR-022). `CHOICE_SKIP` isn't used in
+#: any comparison, but it's kept here so **only one side of the contract isn't documented**.
 CHOICE_INSTALL = "install"
 CHOICE_SKIP = "skip"
+
+#: Which component a question is about. **The panel has to say what it is fetching** —
+#: "may I download this?" without a subject is not consent
+COMPONENT_TTS = "tts"
+COMPONENT_STT = "stt"
+
+#: What `stt_model` resolves to when nothing selects another one. **Pinned**
+#: (docs/architecture/setup.md §3b)
+DEFAULT_STT_ARTIFACT: ModelArtifact = FASTER_WHISPER_LARGE_V3_TURBO
+
+
+def selected_stt_artifact(env: Mapping[str, str]) -> ModelArtifact | None:
+    """Which STT model to check for and fetch — **the one the Provider will look for.**
+
+    `FasterWhisperProvider` is built from `settings.stt_model`, so a fixed artifact here
+    lets setup install one model, report `installed`, and leave the Provider looking for
+    another: **Lumi is deaf while the screen says it is ready.** That also made
+    `LUMI_STT_MODEL=small`, which [ADR-027] keeps as the way back to a lighter model,
+    silently not work — for exactly the users who need it.
+
+    `None` when the selected name is not pinned. **Never substitutes a different model**:
+    fetching something else is the mismatch this exists to prevent.
+    """
+    name = settings.load(paths.settings_file(), env).stt_model.value
+    artifact = STT_MODELS.get(name)
+    if artifact is None:
+        log.warning("setup.stt.unpinned_model", model=name, pinned=sorted(STT_MODELS))
+    return artifact
 
 
 class SetupCoordinator:
     def __init__(self, server: WsServer, env: Mapping[str, str]) -> None:
         self._server = server
         self._env = env
-        self._state = TtsSetup(state=TtsSetupState.UNKNOWN)
+        self._snapshot = SetupSnapshot()
         self._answers_path: Path = paths.setup_state_file()
         self._answers = SetupAnswers()
-        # **2つを分ける。** `_prompting` は「この一連の処理に入っているか」（多重起動の防止）、
-        # `_awaiting_answer` は「いま画面に質問が出ているか」（起動フェーズ）。
-        # 混ぜると、取得が終わった直後に質問画面が一瞬戻る（テストで踏んだ）。
+        # **Kept as two separate flags.** `_prompting` is "is this sequence
+        # currently in progress" (prevents duplicate runs); `_awaiting_answer` is
+        # "is a question currently shown on screen" (boot phase). Conflating them
+        # made the question screen flash back right after fetching finished (hit
+        # this in testing).
         self._prompting = False
         self._awaiting_answer = False
-        # **Stage は検出より先に繋がりうる。** 実測で先に繋がった（2026-08-15）。
-        # 状態が unknown のまま prompt の判定をすると、聞くべきときに聞かなくなる。
+        # **The Stage can connect before detection finishes.** Observed connecting
+        # first in practice (2026-08-15). Deciding whether to prompt while state is
+        # still unknown would skip asking when it should.
         self._initialized = asyncio.Event()
 
     @property
-    def state(self) -> TtsSetup:
-        return self._state
+    def state(self) -> SetupSnapshot:
+        return self._snapshot
 
     async def initialize(self) -> None:
-        """起動時に一度だけ。**外部通信しない。**"""
+        """Called exactly once at startup. **No external communication.**"""
         try:
             self._answers = await asyncio.to_thread(SetupAnswers.load, self._answers_path)
             await self._redetect()
         finally:
-            # 失敗しても待っている側を放置しない。
+            # Even on failure, whatever is waiting is never left hanging.
             self._initialized.set()
 
+    # ── Detection ──────────────────────────────────────────────
+
     async def _redetect(self) -> None:
+        """Looks at all three. **Local filesystem and 127.0.0.1 only** (setup.md §6)."""
+        self._snapshot = SetupSnapshot(
+            tts=await self._detect_tts(),
+            llm=await self._detect_llm(),
+            stt=await asyncio.to_thread(self._detect_stt),
+        )
+        await self._broadcast()
+
+    async def _detect_tts(self) -> TtsSetup:
         engines = await detect_engines(self._env)
         usable = next((engine for engine in engines if engine.executable or engine.running), None)
         if usable is None:
-            await self._set_state(TtsSetup(state=TtsSetupState.NOT_CONFIGURED))
-            return
-        # Lumi が入れたものと、ユーザー自身が入れたものを区別する（setup.md §2）。
-        await self._set_state(
-            TtsSetup(
-                state=(
-                    TtsSetupState.INSTALLED if usable.managed_by_lumi else TtsSetupState.DETECTED
-                ),
-                engine_name=usable.display_name,
-                version=usable.version,
-                port=usable.port,
-                executable=str(usable.executable) if usable.executable else None,
-            )
+            return TtsSetup(state=TtsSetupState.NOT_CONFIGURED)
+        # Distinguishes what Lumi installed from what the user installed themselves (setup.md §2).
+        return TtsSetup(
+            state=(TtsSetupState.INSTALLED if usable.managed_by_lumi else TtsSetupState.DETECTED),
+            engine_name=usable.display_name,
+            version=usable.version,
+            port=usable.port,
+            executable=str(usable.executable) if usable.executable else None,
         )
 
-    async def _set_state(self, state: TtsSetup) -> None:
-        self._state = state
+    async def _detect_llm(self) -> LlmSetup:
+        """**Only "is Ollama there".** Whether the *model* is there needs an API call, which
+        is the Provider's job — `report_llm` narrows this to `model_missing` later.
+
+        Getting these from different places is deliberate: "not installed" and "installed
+        but not running" are indistinguishable over HTTP, and telling someone to install
+        what they already have is how they start doubting their own machine
+        (docs/architecture/setup.md §2b).
+        """
+        found = await detect_ollama(self._env)
+        if found is None:
+            return LlmSetup(
+                state=LlmSetupState.NOT_CONFIGURED, reason="Ollama が見つからない", model=None
+            )
+        return LlmSetup(
+            state=LlmSetupState.DETECTED,
+            runtime=EngineRuntime.READY if found.running else EngineRuntime.STOPPED,
+        )
+
+    def _detect_stt(self) -> SttSetup:
+        """A file check, not a process check. **Never touches the network** — a half-fetched
+        directory reads as not-installed (`is_model_installed` checks every pinned size).
+        """
+        artifact = selected_stt_artifact(self._env)
+        if artifact is None:
+            # There is nothing to fetch, and the Provider will refuse the same name.
+            # **Said out loud** rather than installing something else and calling it done
+            return SttSetup(state=SttSetupState.NOT_CONFIGURED, model=None, reason="unpinned_model")
+        installed = is_model_installed(artifact, paths.stt_models_dir())
+        return SttSetup(
+            state=SttSetupState.INSTALLED if installed else SttSetupState.NOT_CONFIGURED,
+            model=artifact.name,
+        )
+
+    # ── Broadcasting ──────────────────────────────────────────────
+
+    async def _update(
+        self,
+        *,
+        tts: TtsSetup | None = None,
+        llm: LlmSetup | None = None,
+        stt: SttSetup | None = None,
+    ) -> None:
+        """Replaces one component and broadcasts. **The single exit point for state changes.**"""
+        self._snapshot = SetupSnapshot(
+            tts=tts if tts is not None else self._snapshot.tts,
+            llm=llm if llm is not None else self._snapshot.llm,
+            stt=stt if stt is not None else self._snapshot.stt,
+        )
         await self._broadcast()
 
     async def _broadcast(self) -> None:
-        """今の状態を配る。**起動フェーズを含む**（docs/architecture/ui.md）。
+        """Broadcasts the current state. **Includes the boot phase** (docs/architecture/ui.md).
 
-        フェーズは「尋ねている最中か」にも依るので、状態が変わらなくても
-        **尋ね始めた / 尋ね終わったときには配り直す**。
+        The phase also depends on "is a question currently being asked," so
+        **it's rebroadcast whenever asking starts / finishes**, even if the state
+        itself hasn't changed.
         """
-        payload = self._state.to_payload(prompting=self._awaiting_answer)
+        payload = self._snapshot.to_payload(prompting=self._awaiting_answer)
         log.info("setup.state", **payload)
         await self._server.notify(Role.STAGE, METHOD_STATE, payload)
 
     async def set_runtime(self, runtime: EngineRuntime) -> None:
-        """エンジン**プロセス**の状態が変わった。
+        """The TTS engine **process**'s state changed.
 
-        導入の状態とは別の軸だが、Stage に配るのは同じ1つの状態なので、
-        **配信の出口をここに一本化する**（2箇所から送ると順序が保証できない）。
+        A separate axis from installation state, but it's the same single state
+        distributed to the Stage, so **broadcasting is consolidated to this one
+        exit point** (sending from two places couldn't guarantee ordering).
         """
-        await self._set_state(replace(self._state, runtime=runtime))
+        await self._update(tts=replace(self._snapshot.tts, runtime=runtime))
+
+    async def report_llm(self, state: LlmSetupState, *, reason: str | None, model: str) -> None:
+        """What actually happened when the Provider tried to load.
+
+        **Detection can't see this.** `model_missing` needs Ollama's API, which only the
+        Provider talks to — so **whoever found out is the one who reports it**, the same
+        rule `warm_tts` follows for the engine process.
+        """
+        runtime = (
+            EngineRuntime.READY
+            if state in (LlmSetupState.DETECTED, LlmSetupState.MODEL_MISSING)
+            else EngineRuntime.STOPPED
+        )
+        await self._update(llm=LlmSetup(state=state, model=model, reason=reason, runtime=runtime))
+
+    # ── Asking ──────────────────────────────────────────────
 
     async def on_stage_connected(self) -> None:
-        """Stage が繋がった。現在の状態を配り、必要なら尋ねる。
+        """The Stage connected. Broadcasts the current state and asks if needed.
 
-        **検出が終わるのを待つ。** Stage の接続の方が先に来ることがあり、
-        待たないと状態が `unknown` のまま「尋ねなくてよい」と判断してしまう。
+        **Waits for detection to finish.** The Stage's connection can arrive first,
+        and without waiting, state would still be `unknown` and get judged as "no
+        need to ask."
         """
         await self._initialized.wait()
         await self._broadcast()
 
-        if self._state.state is not TtsSetupState.NOT_CONFIGURED:
+        if self._prompting:
             return
-        if self._answers.tts_prompt_answered or self._prompting:
-            # **一度答えたら二度と聞かない。** 起動のたびに聞くのは鬱陶しさの典型。
-            return
-
         self._prompting = True
         try:
-            await self._ask_and_maybe_install()
+            await self._ask_for_tts()
+            await self._ask_for_stt()
         finally:
             self._prompting = False
             self._awaiting_answer = False
-            # 答え終わった（あるいは諦めた）ことを配る。**待たせっぱなしにしない。**
+            # Broadcasts that answering is done (or was given up on). **Never left hanging.**
             await self._broadcast()
 
-    async def _ask_and_maybe_install(self) -> None:
-        """尋ねて、選ばれたら取得する。**失敗したら一度だけ聞き直す。**
+    async def _ask_for_tts(self) -> None:
+        if self._snapshot.tts.state is not TtsSetupState.NOT_CONFIGURED:
+            return
+        if self._answers.tts_prompt_answered:
+            # **Once answered, never asked again.** Asking every startup is the textbook definition
+            # of annoying.
+            return
+        await self._ask_and_maybe_install(
+            component=COMPONENT_TTS,
+            install=self.install_tts_engine,
+            failed=lambda: self._snapshot.tts.state is TtsSetupState.FAILED,
+            reason=lambda: self._snapshot.tts.reason,
+            remember=lambda answers: replace(answers, tts_prompt_answered=True),
+        )
 
-        聞き直すのは1回まで。それ以上は鬱陶しさの方が害になる。
-        「まだ試していない」に戻さないので、状態は `failed` のまま残る。
+    async def _ask_for_stt(self) -> None:
+        if self._snapshot.stt.state is not SttSetupState.NOT_CONFIGURED:
+            return
+        if self._snapshot.stt.model is None:
+            # The selected name is not pinned, so there is nothing this could fetch.
+            # **A question with no good answer is worse than no question**
+            return
+        if self._answers.stt_prompt_answered:
+            return
+        await self._ask_and_maybe_install(
+            component=COMPONENT_STT,
+            install=self.install_speech_model,
+            failed=lambda: self._snapshot.stt.state is SttSetupState.FAILED,
+            reason=lambda: self._snapshot.stt.reason,
+            remember=lambda answers: replace(answers, stt_prompt_answered=True),
+        )
+
+    async def _ask_and_maybe_install(
+        self,
+        *,
+        component: str,
+        install: Callable[[], Awaitable[None]],
+        failed: Callable[[], bool],
+        reason: Callable[[], str | None],
+        remember: Callable[[SetupAnswers], SetupAnswers],
+    ) -> None:
+        """Asks, and fetches if chosen. **Asks again exactly once if it fails.**
+
+        Only one retry. Beyond that, the annoyance outweighs the benefit.
+        State stays `failed` since it's never reverted to "not yet attempted."
         """
         retry = False
-        reason: str | None = None
+        detail: str | None = None
 
         for _ in range(MAX_PROMPTS):
-            # **質問を出す前にフェーズを配る。** これを忘れると Stage は
-            # ローディングを出したまま、その裏で質問を出すことになる。
+            # **Broadcasts the phase before showing the question.** Forgetting this
+            # would leave the Stage showing a loading indicator while the question
+            # sits hidden behind it.
             self._awaiting_answer = True
             await self._broadcast()
             try:
                 result = await self._server.invoke(
                     Role.STAGE,
                     METHOD_PROMPT,
-                    {"retry": retry, "reason": reason},
+                    {"component": component, "retry": retry, "reason": detail},
                     timeout=PROMPT_TIMEOUT_S,
                 )
             except (NotConnectedError, TimeoutError):
-                # 答えをもらえなかった。**「聞いた」ことにしない**（次の起動でまた尋ねる）。
-                log.info("setup.prompt.unanswered")
+                # No answer was received. **Never counted as "asked"** (asked again next startup).
+                log.info("setup.prompt.unanswered", component=component)
                 return
 
-            # **答えが来た時点で質問は消える。** 取得中のフェーズを質問で塗り潰さない。
+            # **The question disappears the moment an answer arrives.** Never lets the question
+            # paint over the fetching phase.
             self._awaiting_answer = False
             choice = result.payload.get("choice") if result.ok else None
-            # **未知の答えは「取得しない」と同じ扱いにする**（fail-closed）。
-            install = choice == CHOICE_INSTALL
-            log.info("setup.prompt.answered", choice=choice, install=install)
+            # **An unrecognized answer is treated the same as "don't fetch"** (fail-closed).
+            chose_install = choice == CHOICE_INSTALL
+            log.info(
+                "setup.prompt.answered", component=component, choice=choice, install=chose_install
+            )
 
-            self._answers = SetupAnswers(tts_prompt_answered=True)
+            self._answers = remember(self._answers)
             await asyncio.to_thread(self._answers.save, self._answers_path)
 
-            if not install:
+            if not chose_install:
                 return
 
-            await self.install_tts_engine()
-            if self._state.state is not TtsSetupState.FAILED:
+            await install()
+            if not failed():
                 return
 
             retry = True
-            reason = self._state.reason
+            detail = reason()
+
+    # ── Fetching ──────────────────────────────────────────────
+
+    def _throttled(self, report: ProgressCallback) -> ProgressCallback:
+        """Broadcasts progress at most every 1%. **Sending on every chunk would flood the WS.**
+
+        **Broadcasting always goes through `_update`.** Calling `notify` directly would mean
+        choosing the flag passed to `to_payload(prompting=...)` by hand, and risk conflating
+        `_prompting` (is this sequence in progress) with `_awaiting_answer` (is a question
+        currently shown). Conflating them would stream `boot=setup` for the entire 200 MB
+        fetch with no progress shown.
+        """
+        last_sent = -1.0
+
+        async def throttled(fraction: float) -> None:
+            nonlocal last_sent
+            if fraction - last_sent < 0.01 and fraction < 1.0:
+                return
+            last_sent = fraction
+            await report(fraction)
+
+        return throttled
 
     async def install_tts_engine(self) -> None:
-        """ユーザーが選んだので取得する。**ここより前に外部通信は起きない。**"""
+        """Fetches because the user chose to. **No external communication happens before this
+        point.**
+        """
         artifact = AIVISSPEECH_ENGINE
-        await self._set_state(
-            TtsSetup(
+        await self._update(
+            tts=TtsSetup(
                 state=TtsSetupState.INSTALLING,
                 engine_name=artifact.display_name,
                 version=artifact.version,
@@ -200,30 +397,17 @@ class SetupCoordinator:
             )
         )
 
-        last_sent = -1.0
-
         async def report(fraction: float) -> None:
-            nonlocal last_sent
-            # 1% ごとに配る。毎チャンク送ると WS が進捗で埋まる。
-            if fraction - last_sent < 0.01 and fraction < 1.0:
-                return
-            last_sent = fraction
-            # 進捗だけを更新する。**`_state` は INSTALLING のまま**なので
-            # フェーズも installing のままになる。
-            #
-            # **配信は必ず `_set_state` を通す。** ここで `notify` を直に呼ぶと、
-            # `to_payload(prompting=...)` に渡す旗を自分で選ぶことになり、
-            # `_prompting`（この処理に入っているか）と `_awaiting_answer`
-            # （いま画面に質問が出ているか）を取り違える。取り違えると、
-            # 取得中の 200MB の間ずっと `boot=setup` が流れ、進捗が出ない。
-            await self._set_state(replace(self._state, progress=fraction))
+            await self._update(tts=replace(self._snapshot.tts, progress=fraction))
 
         try:
-            executable = await install_engine(artifact, paths.engines_dir(), progress=report)
+            executable = await install_engine(
+                artifact, paths.engines_dir(), progress=self._throttled(report)
+            )
         except SetupError as error:
             log.warning("setup.install.failed", reason=error.reason, detail=error.detail)
-            await self._set_state(
-                TtsSetup(
+            await self._update(
+                tts=TtsSetup(
                     state=TtsSetupState.FAILED,
                     engine_name=artifact.display_name,
                     version=artifact.version,
@@ -232,17 +416,17 @@ class SetupCoordinator:
             )
             return
         except asyncio.CancelledError:
-            await self._set_state(TtsSetup(state=TtsSetupState.FAILED, reason="cancelled"))
+            await self._update(tts=TtsSetup(state=TtsSetupState.FAILED, reason="cancelled"))
             raise
-        except Exception as error:
-            # 想定外でも**黙って未設定に戻さない**。何が起きたかを残す。
+        except Exception:
+            # Even for the unexpected, **never silently reverts to not-configured.** What happened
+            # is recorded.
             log.exception("setup.install.crashed")
-            await self._set_state(TtsSetup(state=TtsSetupState.FAILED, reason="unexpected_error"))
-            del error
+            await self._update(tts=TtsSetup(state=TtsSetupState.FAILED, reason="unexpected_error"))
             return
 
-        await self._set_state(
-            TtsSetup(
+        await self._update(
+            tts=TtsSetup(
                 state=TtsSetupState.INSTALLED,
                 engine_name=artifact.display_name,
                 version=artifact.version,
@@ -250,3 +434,46 @@ class SetupCoordinator:
                 executable=str(executable),
             )
         )
+
+    async def install_speech_model(self) -> None:
+        """Fetches the speech-recognition model. **The same rules as the engine**
+        (pinned URL + size + SHA-256 + atomic install + rollback → setup.md §3b).
+        """
+        artifact = selected_stt_artifact(self._env)
+        if artifact is None:
+            await self._update(
+                stt=SttSetup(state=SttSetupState.FAILED, model=None, reason="unpinned_model")
+            )
+            return
+        await self._update(
+            stt=SttSetup(state=SttSetupState.INSTALLING, model=artifact.name, progress=0.0)
+        )
+
+        async def report(fraction: float) -> None:
+            await self._update(stt=replace(self._snapshot.stt, progress=fraction))
+
+        try:
+            await install_stt_model(
+                artifact, paths.stt_models_dir(), progress=self._throttled(report)
+            )
+        except SetupError as error:
+            log.warning("setup.model.failed", reason=error.reason, detail=error.detail)
+            await self._update(
+                stt=SttSetup(state=SttSetupState.FAILED, model=artifact.name, reason=error.reason)
+            )
+            return
+        except asyncio.CancelledError:
+            await self._update(
+                stt=SttSetup(state=SttSetupState.FAILED, model=artifact.name, reason="cancelled")
+            )
+            raise
+        except Exception:
+            log.exception("setup.model.crashed")
+            await self._update(
+                stt=SttSetup(
+                    state=SttSetupState.FAILED, model=artifact.name, reason="unexpected_error"
+                )
+            )
+            return
+
+        await self._update(stt=SttSetup(state=SttSetupState.INSTALLED, model=artifact.name))

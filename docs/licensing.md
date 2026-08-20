@@ -39,8 +39,10 @@
 | **AivisSpeech Engine** | **✗** | 初回セットアップで**ユーザーの明示的な選択**に基づき公式配布元から取得 |
 | **VOICEVOX Engine** | **✗** | ユーザーが別途インストール（**同梱は規約で禁止**） |
 | 音声合成モデル（ACML 等） | 条件付きで可 | §4.4。既定 Content Pack には**含めずに始める** |
-| VRM モデル | モデルの規約による | Content Pack。既定モデルは再配布可のものを選ぶ |
-| Ollama / LLM モデル | ✗ | ユーザーが別途インストール（未確定事項 #3。同じ論法を適用予定） |
+| VRM モデル | モデルの規約による | Content Pack。既定モデルは再配布可のものを選ぶ（**既定モデルは §4.5。再配布 OK**） |
+| **Ollama / LLM モデル** | **✗** | ユーザーが別途インストール。**Lumi は検出のみ**（取得もしない）→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) |
+| **Silero VAD（ONNX）** | **✓**〔Phase 1。**LICENSE 本文の確認が前提** → §7 未確認 #9〕 | 同梱。数 MB。**barge-in の critical path なので実行時取得にしない** |
+| **faster-whisper のモデル** | **✗** | 初回セットアップで**ユーザーの明示的な選択**に基づき取得（数百 MB〜。R1 に直撃する） |
 | **ASIO 版の PortAudio** | **✗** | Steinberg の ASIO SDK は非 OSS。`sounddevice` は ASIO 有り・無しの両方を同梱しており、**PyInstaller のフックが指定しなくても ASIO 版を入れてしまう**（2026-08-15 実測）。`core/lumi-core.spec` が除外し、**残っていたらビルドを失敗させる** |
 
 **「含めない」は「ユーザーに丸投げする」という意味ではない。** 初回セットアップから、ユーザーが選べば自動で取得・セットアップできる経路を用意する。取得する/しないの選択を同等に提示し、取得しない選択でも Lumi は起動する（TTS 未セットアップ状態として明示する）。
@@ -104,7 +106,7 @@ Lumi にとって関係する条項:
 | | |
 |---|---|
 | ライセンス | **LGPL-3.0 単独**〔2026-08-15 確認〕 |
-| 配置 | 別プロセス・CPU・HTTP（[interfaces/provider.md](interfaces/provider.md)） |
+| 配置 | 別プロセス・HTTP。CUDA があれば GPU、無ければ CPU（[ADR-025](decisions/ADR-025-tts-on-gpu.md)） |
 | 配布物に含める | **✗**（実行時取得 → [architecture/setup.md](architecture/setup.md)） |
 
 〔2026-08-15 確認〕リポジトリの `LICENSE` は **GNU LESSER GENERAL PUBLIC LICENSE Version 3, 29 June 2007 の全文**であり、
@@ -191,6 +193,80 @@ ACML の禁止事項:
 | 7 | 反社会的・犯罪目的での利用 |
 
 「なるべく守ってほしいこと」（義務ではない）: 話者へのリスペクト、刺激の強い表現のゾーニング、良識ある利用。
+
+### 4.5 既定同梱 VRM モデル〔2026-08-16 決定〕
+
+| | |
+|---|---|
+| モデル名 | **光莉 / ひかり** |
+| 作者 | **あわ** |
+| 取得元 | [VRoid Hub](https://hub.vroid.com/characters/7574619046991064867/models/3031358336334644609) |
+| フォーマット | **VRM 0.0** |
+| **再配布** | **OK** |
+| 改変 | OK |
+| **クレジット表記** | **不要** |
+| アバター利用 / 暴力表現 / 性的表現 / 法人利用 / 個人の商用利用 | すべて OK |
+
+**再配布が明示的に許諾されているため、配布物に含められる。** これで §7 未確認 #5 が解消した。
+
+| 規則 | 理由 |
+|---|---|
+| **リポジトリにコミットしない。** `content/` に置き、ビルド時に配布物へ入れる | `.claude/rules/02-git.md`。モデルファイルを git 履歴に入れない |
+| クレジット表記は義務ではないが、**クレジット画面には出す** | 義務の有無と、出すかどうかは別の判断。差し替えたときに表示が追随する経路（`Provider.attribution()` / Content Pack メタデータ）を最初から通しておく |
+| モデル名・作者名は **Content Pack のメタデータが持つ** | Core にハードコードすると、モデルを差し替えた瞬間にクレジットが嘘になる（§8 テスト 9 の fail-closed の対象） |
+
+**保証しないこと**: VRoid Hub の利用条件は**モデル登録者が設定するものであり、後から変更されうる**。
+ここに記録したのは 2026-08-16 時点で確認した条件である。**同梱を更新するときは条件を読み直す。**
+
+### 4.6 推論スタック（Phase 1 で追加）〔2026-08-16 確認〕
+
+**すべて配布物に入る。** モデルは入らない（→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)）。
+
+| コンポーネント | ライセンス | 用途 |
+|---|---|---|
+| faster-whisper | **MIT**（Copyright (c) 2023 SYSTRAN） | STT |
+| CTranslate2 | MIT | 推論エンジン（**torch の代わり**。R1） |
+| ONNX Runtime | MIT | VAD / STT |
+| numpy | BSD-3-Clause AND 0BSD AND MIT AND Zlib AND CC0-1.0 | 音声の共通表現 |
+| PyAV | BSD-3-Clause | faster-whisper の依存 |
+| tokenizers | Apache-2.0 | 同上 |
+| huggingface_hub | Apache-2.0 | 同上（**取得は無効化している**） |
+| **Silero VAD（ONNX モデル）** | **MIT**（Copyright (c) 2020-present Silero Team） | barge-in |
+
+**GPL / AGPL は1つも含まれない**（§6 のビルド時検査に抵触しない）。
+
+#### Microsoft VC++ ランタイム〔2026-08-16 追記〕
+
+配布物には `msvcp140.dll` / `vcruntime140*.dll` が入る。**PyInstaller が Phase 0 から入れていた**
+（Python 本体と全ネイティブ拡張が要求する）。Step E で**出所を System32 に固定した**
+（`lumi-core.spec` の `_pin_vcruntime()`。理由 → [measurements/phase1.md](measurements/phase1.md)）。
+
+これらは Microsoft の**再頒布可能パッケージ**であり、アプリケーションへの同梱が明示的に許諾されている。
+**Core = MIT の境界を汚さない**（Windows 向けにビルドされた実行体が必ず伴うもので、
+CPython の公式配布物にも同じ DLL が入っている）。**Lumi のコードのライセンスとは無関係。**
+
+#### ★ Silero VAD は faster-whisper が同梱している〔2026-08-16 実測〕
+
+```
+faster_whisper/assets/silero_vad_v6.onnx   1.2 MB
+```
+
+**Lumi は別途取得しない。** PyPI の `silero-vad` パッケージは **torch に依存する**ため使わない
+（R1 に直撃する）。ONNX ファイルの所在だけを借り、**推論は onnxruntime で自前に行う**
+（faster-whisper の内部 API には依存しない → STT を差し替えても VAD が壊れないように）。
+
+**保証しないこと**: これは faster-whisper のパッケージ内部構造への依存である。
+**更新でパスが変わったら壊れる。** 起動時に明示的に失敗させる（fail-closed）。
+壊れたときの移行先は「ビルド時取得」（Live2D Cubism Core と同じパターン）。
+
+#### ★ クレジットは自動生成に載らない — 手で足す必要がある
+
+MIT は著作権表示の保持を求めるが、**Silero Team の表示は依存グラフに現れない**
+（faster-whisper の同梱物であって、依存宣言ではない）。
+§6 の `scripts/generate-oss-notice.mjs` は依存グラフから作るので、**ここだけ手で足す。**
+
+**✓ 対応済み**〔2026-08-17 / Step G〕。生成スクリプトの `MANUAL` に追加した
+（CPython / SQLite / PortAudio / PyInstaller bootloader と同じ扱い）。
 
 ---
 
@@ -311,10 +387,14 @@ Core = MIT の境界を、レビューではなくビルドで守るため。
 | ~~2~~ | ~~既定音声モデルの個別ライセンス~~ | — | **✓ 解消**〔2026-08-15〕→ §4.4。Engine は同梱ではなく**初回起動時に AivisHub から取得**し、取得された既定モデル（「まお」「山灘」）は**どちらも ACML 1.0**。全文はモデルの manifest に入っている |
 | 3 | ~~VOICEVOX Engine の OSS ライセンス~~ | VOICEVOX を代替として実装する場合 | **✓ 一部解消**〔2026-08-15〕LGPL-3.0 と非公開ライセンスの**デュアル**（README 記載）。同梱しないので配布物には影響しない |
 | ~~4~~ | ~~公式配布元の URL と、取得物の検証方法~~ | — | **✓ 解消**〔2026-08-15〕→ [architecture/setup.md](architecture/setup.md) §3-4。GitHub Releases をピン留めし、URL・サイズ・SHA-256 の3点で検証する |
-| 5 | 既定 VRM モデルの再配布可否 | Content Pack 同梱の判断 | Phase 0-1 |
-| 6 | LLM / Embedding モデルのライセンス | モデル選定時 | Phase 1 / Phase 2 |
+| ~~5~~ | ~~既定 VRM モデルの再配布可否~~ | — | **✓ 解消**〔2026-08-16〕→ §4.5。**再配布 OK / 改変 OK / クレジット不要**（VRM 0.0） |
+| 6 | LLM / STT / Embedding モデルのライセンス | モデル選定時 | **Phase 1**（LLM / STT）→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) / Phase 2（Embedding） |
 | 7 | Kokoro（英語 TTS）のライセンス | 英語対応時 | 未定 |
 | 8 | Live2D Cubism Core の配布形態ごとの条件 | Live2D 導入時 | Phase 9 |
+| ~~9~~ | ~~Silero VAD（ONNX モデルファイル本体）の LICENSE 本文~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**MIT**（Silero Team）。faster-whisper が同梱 |
+| ~~10~~ | ~~faster-whisper / CTranslate2 / onnxruntime のライセンス~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**すべて MIT / BSD / Apache-2.0** |
+| ~~10b~~ | ~~**取得する STT モデル**のライセンス~~ | — | **✓ 解消**〔2026-08-17〕。ピン留めした2つとも **MIT**。`Systran/faster-whisper-small` / `dropbox-dash/faster-whisper-large-v3-turbo`（[ADR-027](decisions/ADR-027-stt-model-large-v3-turbo.md)）。**配布物には含めず、同意に基づいて取得する**ので再配布義務は生じない |
+| 11 | 案内する LLM モデルの利用条件（Qwen3 系 / Gemma3 系） | **配布はしないが、既定として案内する責任がある** | Phase 1（モデル選定時。未確定事項 #5 と同時） |
 
 ---
 

@@ -1,7 +1,8 @@
-"""初回セットアップ — 外部エンジンの取得・検証・検出。
+"""First-run setup — fetching, verifying, and detecting external engines.
 
-設計 → docs/architecture/setup.md / 決定 → docs/decisions/ADR-019-tts-engine-distribution.md
+Design → docs/architecture/setup.md / Decision → docs/decisions/ADR-019-tts-engine-distribution.md
 
-**ユーザーが選ぶまで外部通信しない。** このパッケージの中で HTTP を触るのは
-`install.py` の `install_engine` だけであり、それはユーザーの選択を受けてから呼ばれる。
+**No external communication until the user chooses to.** The only place in this
+package that touches HTTP is `install.py`'s `install_engine`, and it's only called
+after receiving the user's choice.
 """

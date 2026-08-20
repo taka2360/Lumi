@@ -1,23 +1,24 @@
 /**
- * `PlatformShell` — Stage から見た Shell。**Electron 退避路の確保**（docs/interfaces/shell.md）。
+ * `PlatformShell` — Shell as seen from the Stage. **Keeps an Electron escape route open** (docs/interfaces/shell.md).
  *
- * Stage は Shell の実装（Tauri / Electron）を直接知らない。この interface 越しにのみ話す。
+ * The Stage never directly knows Shell's implementation (Tauri / Electron). It only speaks through this interface.
  *
- * ## ここに OS 特権が無い理由
+ * ## Why there are no OS privileges here
  *
- * docs/interfaces/shell.md の `PlatformShell` には `captureScreen` / `injectInput` /
- * `spawnSidecar` も載っている。それらは **Core が `os.*`（WS）で Shell に依頼するもの**であり、
- * Stage からは呼べない。**`stage.*` は絶対に OS 特権を要求しない**（docs/architecture/core.md §3）。
- * この interface は Shell の全体像のうち **Stage に露出してよい部分だけ**を写したものである。
- * Stage が乗っ取られても、できるのは「変な表情をする」までであるべき（B1 / B2）。
+ * docs/interfaces/shell.md's `PlatformShell` also lists `captureScreen` /
+ * `injectInput` / `spawnSidecar`. Those are things **Core requests from Shell via
+ * `os.*` (WS)**, and the Stage can't call them. **`stage.*` must never request OS
+ * privileges** (docs/architecture/core.md §3). This interface mirrors **only the
+ * part of Shell's full surface that's allowed to be exposed to the Stage.** Even
+ * if the Stage is compromised, the most it should be able to do is "make a weird expression" (B1 / B2).
  *
- * ## ここに AI の判断が無い理由
+ * ## Why there's no AI judgment here
  *
- * この経路は `shell.*`。**1ms 以下であるべきもの**しか通さない。
- * キャラクターの発話・表情・記憶は Core から `stage.*`（WS）で来る。
+ * This path is `shell.*`. It only carries **things that should take under 1ms.**
+ * The character's speech, expressions, and memory come from Core via `stage.*` (WS).
  */
 
-/** ウィンドウのクライアント領域を原点とする矩形。**物理ピクセル**（CSS ピクセルではない）。 */
+/** A rectangle with its origin at the window's client area. **Physical pixels** (not CSS pixels). */
 export interface HitRect {
   x: number;
   y: number;
@@ -25,7 +26,7 @@ export interface HitRect {
   height: number;
 }
 
-/** カーソルがキャラクターの当たり判定領域の中にいるか。 */
+/** Whether the cursor is inside the character's hit region. */
 export type HoverState = "inside" | "outside";
 
 export interface Disposable {
@@ -33,32 +34,39 @@ export interface Disposable {
 }
 
 export interface PlatformShell {
+  /** Updates Shell-owned native labels. Carries presentation only, never AI judgment. */
+  setLocale(locale: "ja" | "en"): Promise<void>;
+
+  /** Converts a Core-provided Content Pack path into a WebView-fetchable asset URL. */
+  toAssetUrl(path: string): string;
+
   /**
-   * キャラクターの当たり判定領域を Shell に渡す。
+   * Hands the character's hit region to Shell.
    *
-   * Shell はこれを使ってクリックスルーを切り替える。**判定は Shell 側で行う**
-   * （60Hz のカーソル位置を往復させると `shell.*` の 1ms 予算を守れない）。
+   * Shell uses this to toggle click-through. **The hit-test itself runs on the
+   * Shell side** (round-tripping the cursor position at 60Hz couldn't stay within
+   * `shell.*`'s 1ms budget).
    *
-   * 空配列を渡すと「領域なし」= 常にクリックスルーになる。
+   * Passing an empty array means "no region" = always click-through.
    */
   setHitRegion(rects: HitRect[]): Promise<void>;
 
-  /** ホバー状態の変化を購読する。**変化したときだけ**呼ばれる。 */
+  /** Subscribes to hover-state changes. Called **only when it changes**. */
   onHoverState(callback: (state: HoverState) => void): Promise<Disposable>;
 
   /**
-   * ウィンドウを掴んで動かす。**座標は OS が決める。**
+   * Grabs the window and moves it. **The OS decides the coordinates.**
    *
-   * `setPosition` を露出しないのは、Stage が画面外へウィンドウを追い出せるため
-   * （docs/interfaces/shell.md）。押した瞬間に呼ぶ。
+   * `setPosition` isn't exposed because it would let the Stage push the window off
+   * screen (docs/interfaces/shell.md). Called the instant it's pressed.
    */
   startWindowDrag(): Promise<void>;
 
   /**
-   * ウィンドウの大きさを**倍率で**変える。
+   * Changes the window's size **by a multiplier.**
    *
-   * 絶対値ではなく倍率を渡す。**上限・下限を決めるのは Shell 側**であり、
-   * Stage は「もう少し大きく」としか言えない（B1 / B2）。
+   * A multiplier is passed, not an absolute value. **The upper/lower bounds are
+   * decided on the Shell side**; the Stage can only say "a bit bigger" (B1 / B2).
    */
   scaleWindow(factor: number): Promise<void>;
 }

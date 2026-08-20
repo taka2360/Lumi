@@ -1,36 +1,36 @@
-"""AivisSpeech / VOICEVOX 互換エンジンの HTTP クライアント。
+"""HTTP client for the AivisSpeech / VOICEVOX-compatible engine.
 
-設計 → docs/interfaces/provider.md「TTSProvider」
+Design → docs/interfaces/provider.md "TTSProvider"
 
-Phase 0 では `TTSProvider` protocol をまだ作らない（Phase 1）。
-ここに在るのは**エンジンと話す部分だけ**で、抽象化はしていない。
+Phase 0 doesn't build the `TTSProvider` protocol yet (that's Phase 1).
+What's here is **only the part that talks to the engine**, not yet abstracted.
 
-**127.0.0.1 にしか繋がない。** ホストを差し替えられるようにすると、
-「Lumi が任意のサーバに読み上げテキストを送る機能」になる。
+**Only ever connects to 127.0.0.1.** Making the host swappable would turn this into
+"a feature where Lumi sends text to be read aloud to an arbitrary server."
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any
 
 import httpx
 
 from lumi import logging as lumi_logging
 from lumi.audio.wav import WavError, decode_wav
-from lumi.providers.tts.viseme import VisemeTimeline, build_timeline
+from lumi.providers.tts.base import SpeechAudio
+from lumi.providers.tts.viseme import build_timeline
 
 log = lumi_logging.get_logger(__name__)
 
-#: エンジンは Core と同じ PC の中だけ。**設定にしない。**
+#: The engine only ever lives on the same PC as Core. **Not a setting.**
 HOST = "127.0.0.1"
 
-#: 合成の待ち時間。**無限に待たない**（エンジンが固まったら明示的に失敗させる）。
+#: Wait time for synthesis. **Never wait forever** (fail explicitly if the engine hangs).
 SYNTHESIS_TIMEOUT_S = 30.0
 
 
 class TtsError(RuntimeError):
-    """喋れなかった。**理由を持つ**（黙って無音にしない）。"""
+    """Couldn't speak. **Carries a reason** (never silently goes quiet)."""
 
     def __init__(self, reason: str, detail: str = "") -> None:
         super().__init__(f"{reason}: {detail}" if detail else reason)
@@ -38,22 +38,36 @@ class TtsError(RuntimeError):
         self.detail = detail
 
 
-@dataclass(frozen=True, slots=True)
-class SpeechAudio:
-    """合成結果。WAV のバイト列と、口のタイムライン。"""
-
-    wav: bytes
-    timeline: VisemeTimeline
-
-
 class AivisSpeechClient:
+    """**One connection pool, reused.**
+
+    A client per request pays connection setup on every sentence, and that cost lands on
+    `tts_first_audio_ms` — the span the p50 budget is tightest on
+    (docs/architecture/audio.md §7).
+    """
+
     def __init__(self, port: int) -> None:
         self._base = f"http://{HOST}:{port}"
+        self._client: httpx.AsyncClient | None = None
+
+    def _session(self) -> httpx.AsyncClient:
+        """Created lazily. **Constructing it must not happen at import time** — that would
+        make merely importing the module look like preparing to talk to the network
+        (docs/architecture/setup.md §1 Principle 1).
+        """
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.AsyncClient(timeout=SYNTHESIS_TIMEOUT_S)
+        return self._client
+
+    async def aclose(self) -> None:
+        if self._client is not None and not self._client.is_closed:
+            await self._client.aclose()
+        self._client = None
 
     async def version(self, probe_seconds: float) -> str | None:
-        """起動しているか。**起動していなければ `None`**（例外にしない）。
+        """Whether it's running. **`None` if not running** (not raised as an exception).
 
-        起動待ちのポーリングに使うので、繋がらないのは異常ではない。
+        Used for polling while waiting for startup, so failing to connect isn't abnormal.
         """
         try:
             async with httpx.AsyncClient(timeout=probe_seconds) as client:
@@ -64,11 +78,11 @@ class AivisSpeechClient:
             return None
 
     async def default_speaker(self) -> int | None:
-        """最初に見つかったスタイル id。
+        """The first style id found.
 
-        **話者の選定は Content Pack の仕事**（docs/architecture/extension.md §9）であり、
-        Phase 0 にはまだ Content Pack が無い。ここで選ぶのは暫定であって、
-        Phase 1 で `voice.toml` に移す。
+        **Selecting the speaker is the Content Pack's job**
+        (docs/architecture/extension.md §9), and Phase 0 doesn't have a Content Pack
+        yet. What's chosen here is provisional and moves to `voice.toml` in Phase 1.
         """
         try:
             async with httpx.AsyncClient(timeout=SYNTHESIS_TIMEOUT_S) as client:
@@ -89,28 +103,53 @@ class AivisSpeechClient:
                     return int(style["id"])
         return None
 
-    async def synthesize(self, text: str, speaker: int) -> SpeechAudio:
-        """テキストを WAV にする。**口のタイムラインも一緒に返す。**
+    async def initialize_speaker(self, speaker: int) -> None:
+        """Loads the speaker's voice model **now**, so the first sentence doesn't.
 
-        `audio_query` の応答をそのまま `synthesis` に渡すのがエンジンの契約。
+        The engine loads a speaker lazily on its first `audio_query`, and that lands squarely
+        inside `tts_first_audio_ms`: **measured 3092 ms** against a 200 ms budget
+        (2026-08-18). Doing it at startup is the same work, paid where nobody is waiting.
 
-        **タイムラインには合成後の音声の長さが要る。** AivisSpeech は
-        `audio_query` で音素長を返さないため（`adjust_phoneme_length: false`）、
-        モーラ列を実際の音声の長さで割り振る → `viseme.build_timeline`
+        `skip_reinit` makes this a no-op (2 ms) for a speaker that's already loaded, so it is
+        safe to call whenever the voice might have changed.
         """
         try:
-            async with httpx.AsyncClient(timeout=SYNTHESIS_TIMEOUT_S) as client:
-                query_response = await client.post(
-                    f"{self._base}/audio_query", params={"text": text, "speaker": speaker}
-                )
-                query_response.raise_for_status()
-                query: Any = query_response.json()
+            response = await self._session().post(
+                f"{self._base}/initialize_speaker",
+                params={"speaker": speaker, "skip_reinit": "true"},
+            )
+            response.raise_for_status()
+        except httpx.HTTPError as error:
+            # **Not fatal.** The engine answered `/speakers`, so it works; the first sentence
+            # simply pays what it used to. **Never silently look like a warm start**
+            raise TtsError("speaker_init_failed", str(error)) from error
 
-                audio_response = await client.post(
-                    f"{self._base}/synthesis", params={"speaker": speaker}, json=query
-                )
-                audio_response.raise_for_status()
-                wav = audio_response.content
+    async def synthesize(self, text: str, speaker: int, volume_scale: float = 0.4) -> SpeechAudio:
+        """Turns text into WAV. **Returns the mouth timeline together with it.**
+
+        The engine's contract is to pass `audio_query`'s response straight into `synthesis`.
+
+        **The timeline needs the post-synthesis audio length.** Since AivisSpeech
+        doesn't return phoneme lengths from `audio_query` (`adjust_phoneme_length:
+        false`), the mora sequence is allocated using the actual audio length →
+        `viseme.build_timeline`
+        """
+        client = self._session()
+        try:
+            query_response = await client.post(
+                f"{self._base}/audio_query", params={"text": text, "speaker": speaker}
+            )
+            query_response.raise_for_status()
+            query: Any = query_response.json()
+
+            if isinstance(query, dict):
+                query["volumeScale"] = volume_scale
+
+            audio_response = await client.post(
+                f"{self._base}/synthesis", params={"speaker": speaker}, json=query
+            )
+            audio_response.raise_for_status()
+            wav = audio_response.content
         except httpx.HTTPError as error:
             raise TtsError("synthesis_failed", str(error)) from error
         except ValueError as error:
@@ -126,7 +165,8 @@ class AivisSpeechClient:
 
         timeline = build_timeline(query, audio_seconds)
         if not timeline.spans:
-            # **黙って無音を再生しない。** 文字化けした入力を渡すとこうなる（実測）。
+            # **Never silently play silence.** This happens when garbled input is passed in
+            # (observed).
             raise TtsError("no_moras", "モーラが1つも得られなかった")
 
         log.info(

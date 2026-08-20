@@ -1,4 +1,4 @@
-"""TTS セットアップ状態と「もう聞いたか」の記録。"""
+"""TTS setup state and the record of "was it already asked."""
 
 from __future__ import annotations
 
@@ -7,7 +7,12 @@ from pathlib import Path
 from lumi.setup.state import (
     BootPhase,
     EngineRuntime,
+    LlmSetup,
+    LlmSetupState,
     SetupAnswers,
+    SetupSnapshot,
+    SttSetup,
+    SttSetupState,
     TtsSetup,
     TtsSetupState,
     boot_phase,
@@ -27,7 +32,7 @@ class TestTtsSetup:
             assert not TtsSetup(state=state).usable
 
     def test_failure_carries_a_reason(self) -> None:
-        """**「取得しなかった」と「失敗した」を区別する。**"""
+        """**Distinguishes "never fetched" from "failed."**"""
         failed = TtsSetup(state=TtsSetupState.FAILED, reason="hash_mismatch")
         payload = failed.to_payload()
         assert payload["state"] == "failed"
@@ -39,53 +44,88 @@ class TestTtsSetup:
 
 
 class TestBootPhase:
-    """**キャラクターを出してよいかを決める純粋関数**（docs/architecture/ui.md）。"""
+    """**A pure function that decides whether the character may be shown**
+    (docs/architecture/ui.md).
+    """
 
     def test_waiting_for_the_user(self) -> None:
         setup = TtsSetup(state=TtsSetupState.NOT_CONFIGURED)
-        assert boot_phase(setup, prompting=True) is BootPhase.SETUP
+        assert boot_phase(SetupSnapshot(tts=setup), prompting=True) is BootPhase.SETUP
 
     def test_installing(self) -> None:
         setup = TtsSetup(state=TtsSetupState.INSTALLING, progress=0.3)
-        assert boot_phase(setup, prompting=False) is BootPhase.INSTALLING
+        assert boot_phase(SetupSnapshot(tts=setup), prompting=False) is BootPhase.INSTALLING
 
     def test_engine_starting(self) -> None:
         setup = TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.STARTING)
-        assert boot_phase(setup, prompting=False) is BootPhase.STARTING
+        assert boot_phase(SetupSnapshot(tts=setup), prompting=False) is BootPhase.STARTING
 
     def test_an_engine_that_has_not_been_started_yet_is_not_ready(self) -> None:
-        """**キャラクターを出してから引っ込めない。**
+        """**Never shows the character only to pull it back.**
 
-        使えるエンジンがあるなら、これから起動する。まだ止まっているだけで
-        `READY` にすると、Stage がキャラクターを出した直後に起動が始まって消える。
+        If a usable engine exists, it's about to start. It's just not running yet;
+        marking it `READY` would make the Stage show the character only for startup
+        to begin and make it vanish right after.
         """
         for state in (TtsSetupState.INSTALLED, TtsSetupState.DETECTED):
             setup = TtsSetup(state=state, runtime=EngineRuntime.STOPPED)
-            assert boot_phase(setup, prompting=False) is BootPhase.STARTING
+            assert boot_phase(SetupSnapshot(tts=setup), prompting=False) is BootPhase.STARTING
 
     def test_ready_when_the_engine_is_up(self) -> None:
         setup = TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.READY)
-        assert boot_phase(setup, prompting=False) is BootPhase.READY
+        assert boot_phase(SetupSnapshot(tts=setup), prompting=False) is BootPhase.READY
 
     def test_declining_the_download_still_shows_the_character(self) -> None:
-        """**喋れないことと、Lumi が起動していないことは別。**
+        """**Being unable to speak and Lumi not having started are different things.**
 
-        取得しない選択をしたユーザーを、ローディング画面に閉じ込めない。
+        A user who chose not to fetch is never trapped on a loading screen.
         """
         setup = TtsSetup(state=TtsSetupState.NOT_CONFIGURED)
-        assert boot_phase(setup, prompting=False) is BootPhase.READY
+        assert boot_phase(SetupSnapshot(tts=setup), prompting=False) is BootPhase.READY
 
     def test_a_failure_still_shows_the_character(self) -> None:
-        """**キャラクターを人質にしない。** 壊れていることは別の場所が言う。"""
+        """**The character is never held hostage.** Something being broken is reported elsewhere."""
         setup = TtsSetup(state=TtsSetupState.FAILED, reason="hash_mismatch")
-        assert boot_phase(setup, prompting=False) is BootPhase.READY
+        assert boot_phase(SetupSnapshot(tts=setup), prompting=False) is BootPhase.READY
 
         broken = TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.FAILED)
-        assert boot_phase(broken, prompting=False) is BootPhase.READY
+        assert boot_phase(SetupSnapshot(tts=broken), prompting=False) is BootPhase.READY
 
     def test_the_phase_is_in_the_payload(self) -> None:
-        payload = TtsSetup(state=TtsSetupState.NOT_CONFIGURED).to_payload(prompting=True)
-        assert payload["boot"] == "setup"
+        snapshot = SetupSnapshot(tts=TtsSetup(state=TtsSetupState.NOT_CONFIGURED))
+        assert snapshot.to_payload(prompting=True)["boot"] == "setup"
+
+    def test_fetching_the_speech_model_also_waits(self) -> None:
+        """**STT is fetched with consent too**, and a fetch with progress is exactly the
+        case where waiting is honest (docs/architecture/setup.md §2b).
+        """
+        snapshot = SetupSnapshot(
+            tts=TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.READY),
+            stt=SttSetup(state=SttSetupState.INSTALLING, progress=0.2),
+        )
+        assert boot_phase(snapshot, prompting=False) is BootPhase.INSTALLING
+
+    def test_no_speech_model_still_shows_the_character(self) -> None:
+        """**"Speaks but can't listen" is a normal state**, not a reason to keep waiting."""
+        snapshot = SetupSnapshot(
+            tts=TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.READY),
+            stt=SttSetup(state=SttSetupState.NOT_CONFIGURED),
+        )
+        assert boot_phase(snapshot, prompting=False) is BootPhase.READY
+
+    def test_the_llm_never_holds_up_the_character(self) -> None:
+        """**Lumi neither fetches nor starts Ollama**, so waiting accomplishes nothing
+        (docs/architecture/setup.md §2b). No LLM is a Lumi that listens and doesn't answer.
+        """
+        ready = TtsSetup(state=TtsSetupState.INSTALLED, runtime=EngineRuntime.READY)
+        for state in LlmSetupState:
+            snapshot = SetupSnapshot(tts=ready, llm=LlmSetup(state=state))
+            assert boot_phase(snapshot, prompting=False) is BootPhase.READY, state
+
+    def test_every_component_appears_in_the_payload(self) -> None:
+        """The Stage cannot show what it was never sent."""
+        payload = SetupSnapshot().to_payload()
+        assert set(payload) == {"boot", "tts", "llm", "stt"}
 
 
 class TestSetupAnswers:

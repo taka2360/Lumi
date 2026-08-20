@@ -44,7 +44,38 @@ Phase 1 には Vision が無いので `ModelResourceManager` は不要（Phase 5
 
 しかし**後から Provider にライフサイクルを追加すると全 Provider の書き換えになる**。窓口だけ先に確保しておけば、Phase 5 は Manager を上に被せるだけで済む。
 
-Phase 1 の `load()` は「起動時に一度呼ぶ」だけでよい。
+Phase 1 の `load()` に、Phase 5 の Manager のような調停は要らない。
+
+ただし**「起動時に一度呼ぶだけ」ではない。** 実際には最初に必要になったターンが呼ぶ。
+外部エンジンの起動は十数秒かかるので、**その間に来たターンが全部「まだロードされていない」を見る。**
+`load()` が冪等であることは、**同時に呼ばれてよいことを意味しない**
+（4 プロセス起動して VRAM を 4 GB 食った。2026-08-17 実測）。
+**同時呼び出しの直列化は `ProviderRegistry.get()` の責任**（kind ごとに1本。TTS の起動待ちが STT を止めない）。
+
+#### ★ `load()` は「接続確認」ではなく「使える状態にする」ことである〔2026-08-18 実測〕
+
+**接続確認だけで返す `load()` は、コストを最初のターンに先送りしているだけである。**
+Phase 1 の3つの Provider は、全部これをやっていた。
+
+| Provider | `load()` が実際にやっていたこと | 最初のターンが払っていた額 |
+|---|---|---|
+| LLM（Ollama） | `/api/tags` でモデルの**存在**を確認しただけ | **3767 ms**（重みが VRAM に無い） |
+| TTS（AivisSpeech） | エンジンを起動し、既定話者の **ID を決めた**だけ | **3092 ms**（話者モデルが未初期化） |
+| STT（faster-whisper） | **呼ばれてすらいなかった**（最初の発話が呼ぶ） | **2489 ms**（`stt_ms` の外側 = `unaccounted_ms` に化けていた） |
+
+**規則: `load()` を終えた Provider は、次の呼び出しを本番レイテンシで返せなければならない。**
+返せないなら、それは load できていない。
+
+これは `is_loaded()` の意味でもある。「ロード済み」が「まだ数秒かかる」を意味するなら、
+`ProviderRegistry` の直列化（表 2b）も、`resource_hint().load_time_estimate_ms` も、
+Phase 5 の `ModelResourceManager` も、**すべて嘘の上に立つ。**
+
+**「重みは外部エンジンが持っているから Lumi の責任ではない」は成立しない。** ユーザーが待つのは
+どちらでも同じ 3.7 秒であり、**どのプロセスがメモリを確保したかはユーザーには見えない。**
+
+> **これは「起動時に一度呼ぶだけではない」（上記）を否定しない。** 最初に必要になったターンが
+> 呼ぶ経路は残る。変わったのは、**その経路に頼らず起動時に払っておく**ことと、
+> **払い終えたと言うからには本当に払い終えていること**である。
 
 ### `attribution()` を Phase 1 で入れる理由
 
@@ -106,6 +137,20 @@ AIRI は `isToolRelatedError()` で10パターンの正規表現によるラン�
 
 思考タグ（`<think>` 等）の内容は音声化しない。AIRI の `response-categoriser` と同じ問題意識。
 
+**`TextDelta` と `ReasoningDelta` を別の型にする。** 同じ型で「これは思考です」フラグを付けると、
+後段（文分割 → TTS）が必ずどこかで取り違える。
+
+### 宛先は 127.0.0.1 に固定する〔Phase 1 実装時に確定〕
+
+**`OllamaProvider` はホストを設定可能にしない。** 可能にすると
+「Lumi が任意のサーバに会話内容を送る機能」になる（`aivisspeech.py` と同じ理由）。
+
+[ADR-023](../decisions/ADR-023-llm-runtime-and-model-acquisition.md) の
+「検出できないケースは設定で指定させる」で足りるのは**ポートまで**。
+リモートの推論サーバを使いたい場合は、ホストを可変にするのではなく
+**別の `LLMProvider` を足す**（クラウド LLM と同じ枠組み）。
+そうすれば「外部へ送っている」ことが Provider の選択として画面に出る。
+
 ---
 
 ## STTProvider
@@ -143,30 +188,45 @@ class Transcription:
 ## TTSProvider
 
 ```python
+@dataclass(frozen=True)
+class SpeechAudio:
+    wav: bytes
+    timeline: VisemeTimeline | None   # None = 口を動かさない
+
+
 class TTSProvider(Provider, Protocol):
     async def synthesize(
         self,
         text: str,
         voice: VoiceConfig,
         cancel_token: CancelToken,
-    ) -> AudioBuffer: ...
+    ) -> SpeechAudio: ...
 
-    def supported_languages(self) -> set[str]: ...
+    def supported_languages(self) -> frozenset[str]: ...
 ```
+
+> **音声だけを返す契約にできない。**〔Phase 1 実装時に確定〕
+> **リップシンクのタイムラインは合成の「あと」にしか作れない**（AivisSpeech は `audio_query` で
+> 音素長を返さない → [renderer.md](renderer.md)）。音声と口のタイムラインは同時に決まるので、
+> 1つの結果として返す。`timeline` が `None` なら**ビセームを送らない**（口は閉じたまま）。
 
 ### 実装候補
 
 | Provider | 言語 | 配置 | VRAM |
 |---|---|---|---|
-| `AivisSpeechProvider` | 日本語 | **別プロセス・CPU（HTTP）** | **0** |
-| `VoicevoxProvider` | 日本語 | **別プロセス・CPU（HTTP）** | **0** |
+| `AivisSpeechProvider` | 日本語 | **別プロセス（HTTP）。CUDA があれば GPU、無ければ CPU** | **GPU 約 1.0 GB / CPU 0** |
+| `VoicevoxProvider` | 日本語 | **別プロセス（HTTP）。CUDA があれば GPU、無ければ CPU** | **GPU 約 1.0 GB / CPU 0** |
 | `KokoroProvider` | 英語ほか | Core内 or 別プロセス | 小 |
 
-### なぜ別プロセス CPU が重要か
+### なぜ別プロセスが重要か
 
-**LLM に VRAM を全振りできる。** RTX 4070 の実効 10.8GB のうち 6.5GB を LLM が使うため、TTS が GPU を取ると Vision が載らなくなる。
+別プロセス境界は、Core から TTS エンジンのライフサイクルとライセンスを分離するために維持する。
+デバイス配置はその境界とは独立であり、Phase 1 では **CUDA があれば GPU、無ければ CPU** とする。
+CPU は設定で強制でき、実際の配置を状態として公開する。レイテンシ SLO は GPU 構成での約束である。
+詳細と実測値は [ADR-025](../decisions/ADR-025-tts-on-gpu.md) および
+[measurements/phase1.md](../measurements/phase1.md) を正とする。
 
-Style-Bert-VITS2（日本語品質は最上位クラス）を選ばなかった主因はここ。GPU 4GB を占有する。
+Style-Bert-VITS2（日本語品質は最上位クラス）は GPU 4GB を占有するため、Phase 1 の配置候補にはしない。
 
 ### ライセンス上の意味
 
@@ -237,10 +297,17 @@ class VisionProvider(Provider, Protocol):
 
 ```python
 class ProviderRegistry:
-    def register(self, provider: Provider) -> None: ...
-    def get(self, kind: ProviderKind) -> Provider:
-        """設定で選択されている Provider を返す。未 load なら load する。"""
+    def register(self, provider: Provider, *, select: bool = True) -> None: ...
+
+    async def get(self, kind: ProviderKind) -> Provider:
+        """設定で選択されている Provider を返す。**未 load なら load する**（だから async）"""
+
+    def peek(self, kind: ProviderKind) -> Provider:
+        """**load せずに**取り出す。状態表示と `attribution()` に使う"""
+
     def available(self, kind: ProviderKind) -> list[ProviderInfo]: ...
+    def attributions(self) -> list[Attribution]:
+        """クレジット画面へ。**選択されているものだけ**"""
 ```
 
 ### 障害時
@@ -252,6 +319,22 @@ class ProviderRegistry:
 | 推論中のエラー | Activity を `failed` にし、Lumi が「うまくいかなかった」と言う |
 
 **黙って劣化しない。** 音声が出ない、返事が来ない、が原因不明になるのが最悪。
+
+### 例外の使い分けと `reason`
+
+| 例外 | 意味 | ユーザーに求めること |
+|---|---|---|
+| `ProviderNotConfigured` | **まだ入っていない** | セットアップを実行する |
+| `ProviderUnavailable` | **入っているが使えない**（起動していない / 壊れている / このデバイスでは動かない） | 起動する・直す |
+| `ProviderFailed` | 推論中に失敗した | — |
+
+**「入っていない」と「壊れている」を混ぜない。** 持っているモデルを「取得してください」と
+案内するのは間違った指示であり、混ぜた時点でどちらの案内も信用できなくなる。
+インストール済みかどうかを確かめた**後**の失敗は、必ず「壊れている」側である。
+
+`ProviderError(reason, detail)` の **`reason` は機械可読な短い符号**（`model_missing` /
+`model_load_failed` など）。ウォームアップのログはこれで分類するので、
+**文章を入れると分類も突き合わせもできなくなる。** 事情は `detail` に書く。
 
 ---
 
@@ -294,7 +377,12 @@ GameAgent セッション中の Vision ロードは予算チェック必須。
 |---|---|
 | 1 | 各 Provider が `Provider` protocol を満たす |
 | 2 | `load` / `unload` が冪等 |
+| 2b | **`load()` に時間がかかる間に `get()` が同時に来ても、`load()` は1回しか走らない**（kind ごとに直列化。別 kind は待たされない） |
+| 2c | **`load()` が返った時点で、次の呼び出しにモデルのロード時間が含まれない**（LLM は重みが常駐、TTS は話者が初期化済み、STT はモデルが構築済み） |
+| 2d | **3つの Provider すべてが起動時にウォームされる**（1つでも漏れると、その分が最初のターンに乗る） |
 | 3 | 外部エンジン未起動時に明示的なエラーになる |
+| 3b | **インストール済みのモデルが構築に失敗したとき、`model_missing` にならない**（「入っていない」と「壊れている」を混ぜない） |
+| 3c | **`reason` が短い符号である**（文章を入れない。ログの分類キー） |
 | 4 | LLM の `cancel_token` でストリームが中断する |
 | 5 | Tool Calling 非対応の検知とフォールバックが動く |
 | 6 | `reasoning` が TTS に流れない |

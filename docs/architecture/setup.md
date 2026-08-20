@@ -83,10 +83,98 @@ installed  ×  failed    → 入っているのに起動できない = **壊れ�
 **汎用の設定ストアにしない。** 設定の保存形式は未確定（[../roadmap.md](../roadmap.md) 未確定事項 #9 / Phase 1）であり、
 ここで先に決めると Phase 1 で作り直しになる。持つのは真偽値1つ。
 
-### UI の置き場所
+### UI の置き場所（TTS）
 
 **Phase 0 では `stage` ウィンドウの中のパネルとして出す**（独立ウィンドウにしない）。
 理由と当たり判定の扱い → [ui.md](ui.md)「初回セットアップ UI は `stage` ウィンドウの中に置く」
+
+---
+
+## 2b. LLM / STT のセットアップ状態〔Phase 1。決定 → [ADR-023](../decisions/ADR-023-llm-runtime-and-model-acquisition.md)〕
+
+**§1 の4原則は3つとも同じ。取得方法だけが違う。**
+
+| | LLM（Ollama） | STT（faster-whisper モデル） | TTS（AivisSpeech） |
+|---|---|---|---|
+| Lumi が取得するか | **しない**（検出のみ） | **する**（同意に基づく） | **する**（同意に基づく） |
+| 理由 | インストーラが可逆でない。他社ソフトの導入判断を代行しない | サイズが R1 に直撃する（数百 MB〜） | [ADR-019](../decisions/ADR-019-tts-engine-distribution.md) |
+| 未導入のとき | 「LLM 未セットアップ」＋ 公式サイトの案内 | 「STT 未セットアップ」＋ 取得の提案 | 「TTS 未セットアップ」 |
+
+**Silero VAD（ONNX）は配布物に同梱するので、セットアップ状態を持たない。**
+barge-in は中核機能であり、「取得するまで遮れない」状態を作らない。
+
+### 導入の状態（LLM）
+
+**プロセスの状態と混ぜない**（§2 の規則をそのまま適用する）。
+
+| 導入の状態 | 意味 | ユーザーに求める行動 |
+|---|---|---|
+| `unknown` | まだ調べていない | — |
+| `not_configured` | **Ollama が見つからない** | 公式サイトからインストールしてもらう |
+| `detected` | Ollama が見つかった | — |
+| `model_missing` | **Ollama はあるが、設定されたモデルが無い** | `ollama pull <model>` を案内する |
+
+| プロセスの状態 | 意味 |
+|---|---|
+| `stopped` | 127.0.0.1 の API が応答しない |
+| `ready` | 応答する。**推論できる** |
+| `failed` | 応答するが異常（バージョン不整合など） |
+
+> **「入っているのに動かない」を1つの enum で潰さない。** `detected × stopped`（入っているが起動していない）と
+> `not_configured`（そもそも入っていない）では、ユーザーに求める行動がまったく違う。
+> ここで嘘の案内をすると、ユーザーは Lumi ではなく自分の環境を疑い始める。
+
+### 導入の状態（STT）
+
+TTS と**同型**（`not_configured` → `installing` → `installed` / `failed`）。
+取得は §3〜§5 の経路をそのまま使う（ピン留め + サイズ + SHA-256 + 原子的なインストール + ロールバック）。
+
+**ライブラリ既定の自動ダウンロードは無効にする。** `faster-whisper` / `huggingface_hub` は
+モデルが無ければ黙って取りに行くため、原則1（ユーザーが選ぶまで外部通信しない）が
+**ライブラリの都合で迂回される**。キャッシュに無ければ明示的に失敗させる。
+
+置き場所は `paths.models_dir()` = `<data_dir>/models/`〔Phase 1 Step E〕。
+**エンジン（`engines/`）と分けている**のは、消す単位が違うため — モデルだけ捨てて
+取り直したい状況が普通にある（壊れた / 別のサイズに替える）。
+
+**Silero VAD はこの経路に乗らない。** 配布物に同梱してあり
+（[../licensing.md](../licensing.md) §4.6）、取得は一切発生しない。
+barge-in の critical path に「初回は動かない」を作らないためである。
+
+### 起動フェーズへの反映
+
+Phase 0 の `boot` は TTS だけを見ていた。**Phase 1 では LLM / STT / TTS の3つから導出する。**
+導出は引き続き決定論的な純粋関数（[ui.md](ui.md)「起動フェーズ」）。
+
+**「喋れるが聞けない」「聞けるが喋れない」は、いずれも正常な状態として表現できること。**
+
+#### 待たせてよい条件は1つだけ — **「今まさに使えるようになる」**〔Phase 1 Step G〕
+
+| 条件 | `boot` | なぜ |
+|---|---|---|
+| 質問を出している | `setup` | 答えを待っている |
+| **TTS か STT を取得中** | `installing` | 進捗があり、終われば使えるようになる |
+| TTS が使えるがプロセス未起動 | `starting` | 起動中。ここで `ready` にするとキャラが出て消える |
+| それ以外 | `ready` | — |
+
+**LLM は `boot` に一切影響しない。** Lumi は Ollama を取得も起動もしないので、
+待ったところで何も起きない。**待つ理由が無いなら待たせない。**
+LLM が無い状態は「聞けるが喋らない Lumi」であり、**壊れているのではなく、その状態である。**
+
+同じ理由で、**STT が未取得でも `ready`**（取得中だけが `installing`）。
+「喋れるが聞けない」も正常な状態だからである。
+
+#### 3つとも「導入の状態 × プロセスの状態」を独立に持つ
+
+| | 導入の状態 | プロセスの状態 |
+|---|---|---|
+| TTS | `tts_setup_state` | `engine_runtime`（4値） |
+| LLM | `llm_setup_state` | `engine_runtime` を**共用**。ただし **`starting` は起こらない**（Lumi が起動しないので「起動中」という状態が存在しない） |
+| STT | `stt_setup_state` | **持たない。** プロセスではなくファイルであり、「起動」に相当する状態が無い |
+
+**enum を1つに統合しない。** `detected`（ユーザーが自分で入れた）は TTS にしか無く、
+`model_missing`（エンジンはあるがモデルが無い）は LLM にしか無い。
+統合すると**起こり得ない状態が型の上で表現可能になり**、その分岐を書く羽目になる。
 
 ---
 
@@ -107,6 +195,62 @@ installed  ×  failed    → 入っているのに起動できない = **壊れ�
 > **VOICEVOX は取得しない。** ソフトウェア利用規約が無断再配布を禁じており、
 > 「Lumi が自動で取ってくる」形が許諾の範囲内かを判断できないため（fail-closed）。
 > **ユーザーが自分でインストールしたものを検出して使う**（§6）。
+
+### 3b. STT モデル〔Phase 1。決定 → [ADR-023](../decisions/ADR-023-llm-runtime-and-model-acquisition.md)〕
+
+| 項目 | 値 |
+|---|---|
+| 対象 | faster-whisper の CTranslate2 変換済みモデル |
+| 配布元 | HuggingFace。**リポジトリはモデルごとに違う**（`Systran/...` / `dropbox-dash/...`）。実体は下記 |
+| ライセンス | **MIT**（OpenAI Whisper の重みを CTranslate2 に変換したもの。変換物も MIT で配布されている） |
+| 実体 | `core/lumi/setup/models.py` の `STT_MODELS`。既定は `large-v3-turbo`（[ADR-027](../decisions/ADR-027-stt-model-large-v3-turbo.md)） |
+| どれを取るか | **`settings.stt_model` が選んだもの。** 固定しない（下記） |
+
+#### 取りに行くものと、Provider が探すものを一致させる
+
+**取得対象は `settings.stt_model`（`LUMI_STT_MODEL`）から解決する。**
+`FasterWhisperProvider` はこの設定から作られるので、セットアップ側が別のモデルを
+決め打ちにすると、**入れたものと探すものがずれる**。ずれた結果は
+「STT は `installed`、boot は `ready`、しかし喋っても何も起きない」であり、
+[ADR-027](../decisions/ADR-027-stt-model-large-v3-turbo.md) が戻り道として残した
+`LUMI_STT_MODEL=small` は**まさにそれを必要とする人のところで黙って効かなかった**。
+
+**ピン留めされていない名前が選ばれたら、代わりに別のモデルを取らない。**
+`not_configured`（`reason: unpinned_model`）として提示し、取得も尋ねない。
+別のものを取れば、それは同じずれを一段先に送るだけである。
+
+**ファイル構成はモデルごとに違う。** `small` は `vocabulary.txt`、`large-v3-turbo` は
+`vocabulary.json` と `preprocessor_config.json` を持つ。`ModelArtifact` が**ファイル単位で**
+ピン留めしているのはこのためで、「どのモデルも同じ5ファイル」を仮定しない。
+
+**配布元の組織名は改名されうる。** `large-v3-turbo` は faster-whisper 内部の表
+（`mobiuslabsgmbh/...`）と現在の id（`dropbox-dash/...`）が食い違っている〔2026-08-17〕。
+**ピン留めするのは現在実在する方**であり、旧名が消えても commit sha と SHA-256 で
+**失敗するだけで、違うものが入ることはない**。
+
+**エンジンと形が違う。** 単一のアーカイブではなく**複数ファイルのディレクトリ**である。
+したがってピン留めは**ファイルごとに サイズ + SHA-256**、加えて**リビジョン**を固定する。
+
+| ピン留めするもの | なぜ |
+|---|---|
+| **リビジョン**（git commit sha） | `main` のままだと、**同じ URL の中身が後から変わる**。タグではなくコミットで固定する |
+| ファイルごとの サイズ + SHA-256 | 1ファイルでも欠けたり壊れたりすれば STT は動かない。**部分的に揃った状態を「入っている」と扱わない** |
+
+**HuggingFace は LFS のファイルにしか SHA-256 を公開していない。**
+小さいファイル（`config.json` 等）は git の blob id（SHA-1）しか無いので、
+**こちら側で1度取得して計算した値をピン留めする**。保証の意味はエンジンと同じで、
+「**ピン留めした時点の配布物と、いま落としたものが同一である**」ことだけである。
+
+#### 展開しない
+
+モデルはアーカイブではないので `bsdtar` を通さない。**取得したファイルをそのまま置く。**
+原子性の確保は §5 と同じ（一時ディレクトリに全ファイルを揃えてから rename 1手）。
+
+#### ライブラリの自動ダウンロードは無効にする
+
+`faster-whisper` / `huggingface_hub` は**モデルが無ければ黙って取りに行く**。
+原則1（ユーザーが選ぶまで外部通信しない）が**ライブラリの都合で迂回される**ので、
+`local_files_only` を立ててキャッシュに無ければ明示的に失敗させる。
 
 ---
 
@@ -178,6 +322,13 @@ Python の 7z ライブラリ（py7zr 等）は **LGPL であり、Core = MIT �
 **確定は rename の 1 手だけ。** 途中のどこで失敗しても、`.tmp-*` を消せば元に戻る。
 ロールバックとは「確定前の状態を消すこと」であって、確定後の巻き戻しではない。
 
+**確定先が「在るが不完全」なら、消してから rename する。** 中断されたインストールや
+手で触られたディレクトリがこれにあたる。`rename` は既存の宛先を拒否するので、
+**そのままでは再試行が永久に直せない**（毎回ダウンロードし直して最後の一手で失敗し、
+ユーザーは誰にも知らされていないディレクトリを自分で消すしかない）。
+消してから rename する間は「何も入っていない」状態になるが、
+**消しているものは元から使えないもの**であり、置き換える側は検証済みで隣にある。
+
 起動する実行体は展開後のツリーから `run.exe` を**探して**記録する（配布物の内部構造の変更に追随するため）。
 
 ---
@@ -191,8 +342,14 @@ Python の 7z ライブラリ（py7zr 等）は **LGPL であり、Core = MIT �
 | AivisSpeech | `%LOCALAPPDATA%\Programs\AivisSpeech\AivisSpeech-Engine\run.exe`, `C:\Program Files\AivisSpeech\AivisSpeech-Engine\run.exe` | 10101 |
 | VOICEVOX | `%LOCALAPPDATA%\Programs\VOICEVOX\vv-engine\run.exe`, `C:\Program Files\VOICEVOX\vv-engine\run.exe` | 50021 |
 | Lumi が入れたもの | `%LOCALAPPDATA%\Lumi\engines\aivisspeech-<version>\...\run.exe` | 10101 |
+| **Ollama**〔Phase 1〕 | `%LOCALAPPDATA%\Programs\Ollama\ollama.exe`, `C:\Program Files\Ollama\ollama.exe`, および `PATH` | 11434 |
 
 すでに起動しているエンジンがあれば、それを使う（二重に起動しない）。
+
+> **Ollama のプロセスは Lumi が起動も停止もしない**（[ADR-023](../decisions/ADR-023-llm-runtime-and-model-acquisition.md)）。
+> [core.md](core.md) §6 の「すでに動いているエンジンには触らない」を、**常にそちら側**に倒す。
+> 検出できないケース（カスタムポート・リモートホスト・独自ビルド）は**設定で明示的に指定させる**。
+> 検出を賢くして当てにいかない — 外すと「なぜか動かない」になる。
 
 ---
 
@@ -246,3 +403,10 @@ sqlite-vec / FTS5 / PortAudio / TLS 証明書を、**実際に読み込んで**�
 | 11 | 状態が `failed` のとき、`not_configured` と区別して表示される |
 | 12 | **固めた実行体で `--self-check` が全項目成功する**（sqlite-vec / FTS5 / PortAudio / TLS） |
 | 13 | **配布物に ASIO 版の PortAudio が入っていない**（`lumi-core.spec` がビルド時に落とす） |
+| 14 | **Ollama 未導入で Lumi が起動し、`not_configured` が表示される**〔Phase 1〕 |
+| 15 | **Ollama はあるがモデルが無いとき、`model_missing` になる**（`not_configured` と区別される）〔Phase 1〕 |
+| 16 | **Ollama を Lumi が起動も停止もしない**（プロセス生成の経路が存在しない。静的検査）〔Phase 1〕 |
+| 17 | **STT モデルが無いとき、ライブラリが勝手にダウンロードせず明示的に失敗する**〔Phase 1〕 |
+| 18 | **Silero VAD が配布物に含まれ、オフラインで barge-in が成立する**〔Phase 1〕 |
+| 19 | **確定先が不完全なとき、再インストールが直せる**（中断・手編集の跡に rename できず、再試行が永久に失敗しない）〔Phase 1〕 |
+| 20 | **`LUMI_STT_MODEL` の上書きが、取得するモデルにも反映される**（Provider が探すものと一致する。ピン留めされていない名前では代わりに別のものを取らない）〔Phase 1〕 |

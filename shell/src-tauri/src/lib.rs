@@ -1,17 +1,19 @@
-//! Lumi Shell — OS 特権プリミティブのみ。**判断を持たない**（Invariant 8 の拒否を除く）。
+//! Lumi Shell — OS privilege primitives only. **Holds no judgment** (except Invariant 8's rejection).
 //!
-//! 設計 → docs/architecture/ui.md, docs/interfaces/shell.md,
-//! docs/contracts/security-boundaries.md の B3
+//! Design → docs/architecture/ui.md, docs/interfaces/shell.md,
+//! docs/contracts/security-boundaries.md's B3
 
 mod core_endpoint;
 mod core_process;
 mod hover;
 mod job_object;
+mod locale;
 mod os_command;
 mod tray;
 mod window;
-/// 線上に出る名前と定数を `docs/contracts/wire.json` と突き合わせる（ADR-022）。
-/// **テストしか持たない**ので、配布物には入らない。
+/// Cross-checks the names and constants on the wire against
+/// `docs/contracts/wire.json` (ADR-022). **Holds only tests**, so it's not
+/// bundled into the distributable.
 #[cfg(test)]
 mod wire_contract;
 mod ws_client;
@@ -24,16 +26,18 @@ use tauri::{AppHandle, Manager as _, RunEvent, WebviewUrl, WebviewWindow, Webvie
 use crate::core_endpoint::{shell_core_endpoint, spawn_endpoint_notifier, CoreEndpointState};
 use crate::core_process::{find_sidecar, resolve_launch_spec, CoreSupervisor, CoreTokens};
 use crate::hover::{shell_hit_region_set, spawn_cursor_watcher, HitRegionStore};
+use crate::locale::system_locale;
 use crate::window::{
     compute_credits_window_options, compute_stage_placement, compute_stage_window_options,
     shell_window_drag_start, shell_window_scale, ScreenArea, StageConfig, WindowKind, WindowSpec,
 };
 
-/// 仕様どおりにウィンドウを開く。
+/// Opens a window per the spec.
 ///
-/// **ここに条件分岐を書かない。** 「どう見えるべきか」は `window.rs` の純粋関数が決め、
-/// この関数はそれを Tauri の API に流すだけにする。そうしないと、ウィンドウの挙動が
-/// テストできない場所に散らばる。
+/// **Never write conditional branching here.** "How it should look" is
+/// decided by the pure functions in `window.rs`; this function only pipes
+/// that into Tauri's API. Otherwise, window behavior ends up scattered
+/// across places that can't be tested.
 fn create_window(
     app: &AppHandle,
     spec: &WindowSpec,
@@ -57,12 +61,13 @@ fn create_window(
 
     let win = builder.build()?;
 
-    // ビルダーに無い設定は生成後に適用する。
+    // Settings not available on the builder are applied after creation.
     win.set_content_protected(spec.content_protected)?;
     win.set_ignore_cursor_events(spec.click_through)?;
 
-    // **ビルダーの `position` だけでは効かない**（Windows で数十 px ずれた。2026-08-15 実測）。
-    // 生成後にもう一度置き直す。ビルダー側にも渡してあるので、ここでの移動は見えない。
+    // **The builder's `position` alone doesn't take effect** (observed a few
+    // dozen px of drift on Windows, 2026-08-15). Repositioned once more
+    // after creation. Since it was also passed to the builder, this move isn't visible.
     if let Some((x, y)) = spec.position {
         win.set_position(tauri::LogicalPosition::new(x, y))?;
     }
@@ -70,13 +75,14 @@ fn create_window(
     Ok(win)
 }
 
-/// クレジットとライセンスを開く（トレイ → クレジット）。
+/// Opens credits and licenses (tray → credits).
 ///
-/// **Core に繋がない静的なページ**（docs/architecture/ui.md）。
-/// ライセンス文書の提示は Lumi の動作状態と無関係な義務であり、
-/// Core が落ちていても読めなければならない。
+/// **A static page that never connects to Core** (docs/architecture/ui.md).
+/// Presenting the license documents is an obligation independent of Lumi's
+/// operating state, and must be readable even if Core is down.
 ///
-/// すでに開いていれば作り直さず前に出す。**同じ文書の窓が2枚出ても意味が無い。**
+/// If already open, brings it forward instead of recreating it. **Two
+/// windows for the same document would be pointless.**
 fn open_credits(app: &AppHandle) {
     let label = WindowKind::Credits.label();
     if let Some(existing) = app.get_webview_window(label) {
@@ -86,19 +92,20 @@ fn open_credits(app: &AppHandle) {
         return;
     }
 
-    let spec = compute_credits_window_options();
+    let spec = compute_credits_window_options(system_locale());
     match create_window(app, &spec, WebviewUrl::App("credits.html".into())) {
         Ok(_) => log::info!("credits.opened"),
-        // **黙って何も起きない、にしない。** 開けなかったならログに残す。
+        // **Never let it silently do nothing.** Logs it if it couldn't open.
         Err(error) => log::error!("credits.open_failed {error}"),
     }
 }
 
-/// 画面から Stage ウィンドウの大きさと位置を決める。
+/// Decides the Stage window's size and position from the screen.
 ///
-/// **どう置くかは `window.rs` の純粋関数が決める。** ここがやるのは、
-/// Tauri から作業領域を取り出して**論理ピクセルに直す**ことだけ。
-/// モニタが取れなければ既定値に落ちる（**黙って落ちない**ようにログを残す）。
+/// **How it's placed is decided by the pure functions in `window.rs`.** All
+/// this does is take the work area from Tauri and **convert it to logical
+/// pixels.** Falls back to a default if the monitor can't be obtained
+/// (logged so it **never falls back silently**).
 fn stage_placement(app: &AppHandle) -> StageConfig {
     let monitor = match app.primary_monitor() {
         Ok(Some(monitor)) => monitor,
@@ -107,7 +114,7 @@ fn stage_placement(app: &AppHandle) -> StageConfig {
             return StageConfig::default();
         }
     };
-    // 作業領域 = タスクバーなどを除いた範囲。ここに収めれば下端が隠れない。
+    // Work area = the region excluding the taskbar etc. Staying within it keeps the bottom edge from being hidden.
     let area = monitor.work_area();
     let scale = monitor.scale_factor();
     let placement = compute_stage_placement(ScreenArea {
@@ -116,8 +123,8 @@ fn stage_placement(app: &AppHandle) -> StageConfig {
         width: f64::from(area.size.width) / scale,
         height: f64::from(area.size.height) / scale,
     });
-    // **どこに置いたかを残す。** ずれていたときに、画面の値と計算のどちらが
-    // おかしいのかを、後から切り分けられるようにする。
+    // **Logs where it was placed.** So that if it's off, it can later be
+    // narrowed down to whether the screen values or the calculation is at fault.
     log::info!(
         "stage.placement work_area={}x{}+{}+{} scale={scale} size={}x{} position={:?}",
         area.size.width,
@@ -131,30 +138,63 @@ fn stage_placement(app: &AppHandle) -> StageConfig {
     placement
 }
 
-/// WS token を生成する。**Shell が作り、環境変数で Core に渡す**
-/// （docs/interfaces/shell.md）。プロセスの外に出す経路をここ以外に作らない。
+/// Generates the WS token. **Shell creates it and passes it to Core via an
+/// environment variable** (docs/interfaces/shell.md). No other path out of the process is created.
 fn generate_token() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// 開発時に Core を起動するためのプロジェクトディレクトリ。
+/// The project directory used to launch Core during development.
 ///
-/// リリースビルドでは同梱サイドカーを使うので `None`。
-/// **配布物にリポジトリのパスを焼き込まない**ため、debug のときだけ返す。
+/// `None` in release builds, since the bundled sidecar is used instead.
+/// Returned only in debug, **so the repository path is never baked into the distributable.**
 fn dev_core_project_dir() -> Option<PathBuf> {
-    if cfg!(debug_assertions) {
-        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../core"))
-    } else {
-        None
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    // **Walked up rather than joined with `../..`.** The Content Pack directory is derived
+    // from this (ADR-029) and ends up in the asset protocol's scope, where leftover parent
+    // segments make the allowed path unreadable in logs and needlessly fragile to match.
+    // `<repo>/shell/src-tauri` → `<repo>` → `<repo>/core`
+    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(std::path::Path::parent)
+        .map(|repo| repo.join("core"))
+}
+
+/// Lets the WebView read the Content Pack **of the Core that is actually running**, and
+/// nothing else (ADR-029).
+///
+/// Core decides which model to draw and sends its path; the bytes are served by Shell,
+/// because reading a file is an OS privilege and **Core holds authority, not capabilities**.
+/// Anything outside this directory is refused by Tauri before it is opened — the Stage is
+/// never trusted with a path (docs/contracts/security-boundaries.md B2).
+///
+/// **The directory comes from the launch decision**, not from a search of its own. Searching
+/// separately pointed the WebView at a stale build's Content Pack while Core read the
+/// repository's, and the character simply never appeared (2026-08-19).
+///
+/// **Failure is not fatal.** Lumi runs with the placeholder, and the Stage says why.
+fn allow_content_pack(app: &AppHandle, dir: &std::path::Path) {
+    if !dir.is_dir() {
+        log::warn!("Content Pack が無い ({}): プレースホルダで起動する", dir.display());
+        return;
+    }
+
+    match app.asset_protocol_scope().allow_directory(dir, true) {
+        Ok(()) => log::info!("Content Pack を許可した: {}", dir.display()),
+        // **Never silently degrade.** Without this the character simply never appears, and
+        // the reason would exist nowhere
+        Err(error) => log::error!("Content Pack を許可できない ({}): {error}", dir.display()),
     }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // **role ごとに別の token を作る。** Stage には Stage 用しか渡さない
-    // （docs/contracts/security-boundaries.md B2 / B3）。
+    // **Creates a separate token per role.** The Stage is only ever given the Stage one
+    // (docs/contracts/security-boundaries.md B2 / B3).
     let shell_token = generate_token();
     let stage_token = generate_token();
     let (supervisor, port_rx) = CoreSupervisor::new();
@@ -165,13 +205,14 @@ pub fn run() {
     let app = tauri::Builder::default()
         .manage(HitRegionStore::default())
         .manage(CoreEndpointState::new(port_rx.clone(), stage_token.clone()))
-        // `shell.*` の allowlist（B1）。ここに載っていないものは Stage から呼べない。
-        // **AI の判断を運ぶコマンドをここに足さない。**
+        // `shell.*`'s allowlist (B1). Anything not listed here can't be called from the Stage.
+        // **Never add a command here that carries AI judgment.**
         .invoke_handler(tauri::generate_handler![
             shell_hit_region_set,
             shell_core_endpoint,
             shell_window_drag_start,
-            shell_window_scale
+            shell_window_scale,
+            tray::shell_locale_set
         ])
         .setup(move |app| {
             if cfg!(debug_assertions) {
@@ -180,13 +221,14 @@ pub fn run() {
                 )?;
             }
 
-            // ウィンドウ位置の永続化は Core が持つ（設定の保存は Core → docs/architecture/ui.md §2）。
-            // Phase 0 では保存しないので、**毎回画面から計算して右下に置く**。
+            // Persisting window position belongs to Core (settings storage is
+            // Core's job → docs/architecture/ui.md §2). Phase 0 doesn't persist
+            // it, so it's **always calculated from the screen and placed bottom-right**.
             let spec = compute_stage_window_options(&stage_placement(app.handle()));
             create_window(app.handle(), &spec, WebviewUrl::App("index.html".into()))?;
 
-            // トレイが無いと Lumi を終了できない（`stage` は枠なし・タスクバー非表示）。
-            tray::init(app.handle())?;
+            // Without the tray, Lumi can't be quit (`stage` is frameless and hidden from the taskbar).
+            tray::init(app.handle(), system_locale())?;
 
             spawn_cursor_watcher(app.handle().clone());
 
@@ -199,6 +241,9 @@ pub fn run() {
 
             match resolve_launch_spec(sidecar.as_deref(), dev_core_project_dir().as_deref()) {
                 Some(launch) => {
+                    // **Whichever Core is about to run, that is whose Content Pack the
+                    // WebView may read.** One decision, one source
+                    allow_content_pack(app.handle(), &launch.content_dir);
                     setup_supervisor.start(
                         launch,
                         CoreTokens { shell: setup_shell_token.clone(), stage: stage_token.clone() },
@@ -209,7 +254,7 @@ pub fn run() {
                         port_rx.clone(),
                     );
                 }
-                // **黙って劣化しない。** Core が無いなら、無いと言う。
+                // **Never silently degrade.** If Core isn't found, say so.
                 None => log::error!("core.not_found 起動できる Core が見つからない"),
             }
 
@@ -221,7 +266,7 @@ pub fn run() {
 
     app.run(move |_app, event| {
         if let RunEvent::Exit = event {
-            // **ゾンビを残さない。** 終了時に確実に Core を落とす。
+            // **Never leave a zombie behind.** Reliably brings Core down on exit.
             tauri::async_runtime::block_on(supervisor.shutdown());
         }
     });

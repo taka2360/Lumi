@@ -1,6 +1,6 @@
-"""リップシンクのタイムライン。**純粋関数なので、エンジンを起動せずに検証できる。**
+"""The lip-sync timeline. **Pure functions, so verifiable without starting the engine.**
 
-docs/interfaces/renderer.md「生成方式」/ テスト表 7（無音時に口を閉じる）
+docs/interfaces/renderer.md "Generation method" / test table 7 (mouth closes on silence)
 """
 
 from __future__ import annotations
@@ -9,7 +9,7 @@ from typing import Any
 
 from lumi.providers.tts.viseme import Viseme, build_timeline
 
-# 実際の audio_query（「こんにちは」/ AivisSpeech 1.2.0）と同じ形。
+# Same shape as an actual audio_query ("konnichiwa" / AivisSpeech 1.2.0).
 KONNICHIWA: dict[str, Any] = {
     "accent_phrases": [
         {
@@ -59,7 +59,7 @@ KONNICHIWA: dict[str, Any] = {
 }
 
 
-#: AivisSpeech が実際に返すもの〔2026-08-15 実測〕。**モーラ長がすべて 0.0**。
+#: What AivisSpeech actually returns [observed 2026-08-15]. **All mora lengths are 0.0**.
 AIVISSPEECH: dict[str, Any] = {
     "accent_phrases": [
         {
@@ -114,7 +114,7 @@ class TestTimeline:
         timeline = build_timeline(KONNICHIWA)
         assert [span.viseme for span in timeline.spans] == [
             Viseme.O,
-            None,  # 「ン」は口を閉じる
+            None,  # "N" closes the mouth
             Viseme.I,
             Viseme.I,
             Viseme.A,
@@ -134,7 +134,7 @@ class TestTimeline:
     def test_speed_scale_shortens_everything(self) -> None:
         fast = build_timeline({**KONNICHIWA, "speedScale": 2.0})
         normal = build_timeline(KONNICHIWA)
-        # **話速を反映しないと口だけずれる。**
+        # **Not accounting for speech speed would leave the mouth out of sync.**
         assert fast.total_ms == round(normal.total_ms / 2)
 
     def test_a_pause_between_phrases_closes_the_mouth(self) -> None:
@@ -153,23 +153,23 @@ class TestTimeline:
 
 
 class TestEngineWithoutPhonemeLengths:
-    """**AivisSpeech は音素長を返さない**〔2026-08-15 実測〕。
+    """**AivisSpeech doesn't return phoneme lengths** [observed 2026-08-15].
 
-    それでも口は動かなければならない。モーラ列を音声の長さで割り振る
-    → docs/interfaces/renderer.md「生成方式」
+    The mouth still has to move regardless. The mora sequence is allocated using the
+    audio's length → docs/interfaces/renderer.md "Generation method"
     """
 
     def test_spreads_the_moras_over_the_measured_audio(self) -> None:
         timeline = build_timeline(AIVISSPEECH, audio_seconds=1.22)
         assert len(timeline.spans) == 5
         assert timeline.total_ms == 1220
-        # 先頭の無音のあとから始まり、隙間なく続く。
+        # Starts right after the leading silence, and continues with no gaps.
         assert timeline.spans[0].start_ms == 100
         for previous, current in zip(timeline.spans, timeline.spans[1:], strict=False):
             assert previous.start_ms + previous.duration_ms == current.start_ms
 
     def test_the_mouth_shapes_still_come_from_the_moras(self) -> None:
-        # **振幅からの推定と違い、母音を取り違えない。**
+        # **Unlike an amplitude-based estimate, this never mistakes one vowel for another.**
         timeline = build_timeline(AIVISSPEECH, audio_seconds=1.22)
         assert [span.viseme for span in timeline.spans] == [
             Viseme.O,
@@ -184,12 +184,14 @@ class TestEngineWithoutPhonemeLengths:
         assert spans[1].duration_ms < spans[0].duration_ms
 
     def test_reported_lengths_win_when_the_engine_provides_them(self) -> None:
-        # VOICEVOX は返す。**返ってきたらそちらを使う**（実際の発話と一致する）。
+        # VOICEVOX does return them. **When they arrive, those are used** (matches the actual
+        # utterance).
         timeline = build_timeline(KONNICHIWA, audio_seconds=99.0)
         assert timeline.total_ms != 99000
 
     def test_refuses_to_guess_without_any_duration(self) -> None:
-        # 長さの根拠が無いのに口を動かすと、**音とずれたまま動き続ける**。
+        # Moving the mouth with no basis for timing would **keep it running out of sync with the
+        # sound**.
         assert build_timeline(AIVISSPEECH).spans == ()
 
     def test_refuses_when_the_audio_is_shorter_than_the_padding(self) -> None:
@@ -197,7 +199,7 @@ class TestEngineWithoutPhonemeLengths:
 
 
 class TestBrokenInput:
-    """**エンジンの出力を信用しない**（Invariant 3）。壊れていても落ちない。"""
+    """**Never trusts the engine's output** (Invariant 3). Never crashes even when malformed."""
 
     def test_an_unknown_vowel_closes_the_mouth(self) -> None:
         query = {
@@ -205,7 +207,7 @@ class TestBrokenInput:
                 {"moras": [{"vowel": "xx", "vowel_length": 0.1, "consonant_length": None}]}
             ]
         }
-        # 開けっ放しにしない（fail-closed）。
+        # Never leaves it hanging open (fail-closed).
         assert build_timeline(query).spans[0].viseme is None
 
     def test_missing_fields_do_not_raise(self) -> None:

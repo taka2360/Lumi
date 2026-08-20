@@ -1,18 +1,20 @@
-"""音声デバイスの開通確認とクロックドリフトの実測。
+"""Connectivity check and clock-drift measurement for audio devices.
 
-roadmap Phase 0 検証手順 12（**マイクとスピーカーが別デバイスの構成で
-ストリームが開けるか確認**）を、**別のマシンでも再現できる形**にしたもの。
+Makes roadmap Phase 0 verification step 12 (**confirming streams can open when mic and
+speaker are different devices**) **reproducible on another machine**.
 
 ```
-uv run python -m lumi.audio.probe            # 30 秒
+uv run python -m lumi.audio.probe            # 30 seconds
 uv run python -m lumi.audio.probe --seconds 120
 ```
 
-無音しか書かないので音は出ない。マイクの音は**記録も送信もしない**（フレーム数だけ数える）。
+Only writes silence, so nothing is audible. Microphone audio is **neither recorded nor
+transmitted** (only the frame count is tallied).
 
-**これは製品の音声経路ではない。** Phase 1 の AudioIO（リング・VAD・ミュート）は別に作る。
-ここのコールバックは計測のために時刻を記録するので、**Phase 1 のコールバックの手本にしてはいけない**
-（リアルタイム制約下でやってよいことの基準 → docs/architecture/audio.md §3）。
+**This is not the product's audio path.** Phase 1's AudioIO (ring / VAD / mute) is built
+separately. The callback here records timestamps for measurement purposes, so **don't
+use it as a model for Phase 1's callback** (the standard for what's allowed under
+real-time constraints → docs/architecture/audio.md §3).
 """
 
 from __future__ import annotations
@@ -28,21 +30,22 @@ from typing import Any
 from lumi.audio.devices import AudioPlan, Device, HostApi, StreamPlan, plan_audio
 from lumi.audio.drift import DriftEstimate, drift_ms, estimate_drift, relative_ppm
 
-#: 1コールバックあたりのフレーム数。小さいほど遅延が下がり、コールバックの締切が厳しくなる。
+#: Frames per callback. Smaller lowers latency but tightens the callback's deadline.
 BLOCK_SIZE = 512
 
-#: **最初のフレームがこの時間内に来なければ「開通していない」と扱う。**
-#: `open()` は成功するのにフレームが1つも来ないデバイスが実在する（無効化されたエンドポイント）。
+# : **Treated as "not connected" if the first frame doesn't arrive within this time.** : Some
+# devices exist where `open()` succeeds but not a single frame ever arrives (disabled endpoints).
 FIRST_FRAME_TIMEOUT_S = 3.0
 
 DEFAULT_SECONDS = 30.0
 
 
 class _Recorder:
-    """コールバックから時刻とフレーム数を記録する。
+    """Records timestamps and frame counts from the callback.
 
-    **配列を先に確保しておく。** コールバック内で伸びる list に append すると、
-    再確保が締切を踏み越えることがある（計測が計測対象を壊す）。
+    **Arrays are pre-allocated up front.** Appending to a growable list inside the
+    callback can cause a reallocation that blows the deadline (the measurement would
+    corrupt what it's measuring).
     """
 
     def __init__(self, samplerate: int, seconds: float) -> None:
@@ -76,7 +79,7 @@ class _Recorder:
 
 @dataclass(frozen=True, slots=True)
 class StreamReport:
-    """1本のストリームの結果。**開けたことと流れたことを分けて持つ。**"""
+    """Result for one stream. **Keeps "opened" and "flowing" as separate facts.**"""
 
     plan: StreamPlan
     opened: bool
@@ -99,7 +102,8 @@ class StreamReport:
                 f"    ✗ 開けたがフレームが来ない（{FIRST_FRAME_TIMEOUT_S:.0f} 秒待った）。"
                 "**開通していないものとして扱う**"
             )
-            # **理由を捨てない。** 「フレームが来ない」と「途中で落ちた」は別の話。
+            # **Don't discard the reason.** "No frame arrived" and "died partway through" are
+            # different things.
             if self.error:
                 out.append(f"      理由: {self.error}")
             return out
@@ -151,13 +155,13 @@ class ProbeReport:
 
 
 def _optional_index(value: Any) -> int | None:
-    """PortAudio は「既定が無い」を -1 で表す。**-1 をデバイス番号として扱わない。**"""
+    """PortAudio represents "no default" as -1. **Never treat -1 as a device index.**"""
     index = int(value)
     return index if index >= 0 else None
 
 
 def list_devices() -> tuple[list[Device], list[HostApi]]:
-    """PortAudio のデバイス一覧を取る。**ここだけが `sounddevice` に触る。**"""
+    """Fetches PortAudio's device list. **The only place that touches `sounddevice`.**"""
     import sounddevice as sd
 
     raw_apis = list(sd.query_hostapis())
@@ -185,13 +189,13 @@ def list_devices() -> tuple[list[Device], list[HostApi]]:
 
 @dataclass
 class _Session:
-    """開いている1本のストリーム。
+    """One open stream.
 
-    **ストリームの生成・開始・停止はすべて同じスレッドで行う。**
-    Windows の WASAPI は COM を使い、COM はスレッドごとに初期化が要る。
-    別スレッドで開くと `Unanticipated host error` で落ちる（実測）。
-    測定自体はコールバック（PortAudio 側のスレッド）で進むので、
-    メインスレッドから2本開けば入出力は同時に走る。
+    **Stream creation, start, and stop all happen on the same thread.**
+    Windows's WASAPI uses COM, and COM needs per-thread initialization.
+    Opening from a different thread crashes with `Unanticipated host error` (observed).
+    The measurement itself proceeds on the callback (PortAudio's own thread), so opening
+    both from the main thread lets input and output run simultaneously.
     """
 
     plan: StreamPlan
@@ -248,7 +252,7 @@ def _open(plan: StreamPlan, seconds: float, *, capture: bool) -> _Session:
         )
         session.started = time.perf_counter()
         stream.start()
-    except Exception as error:  # sounddevice は PortAudioError を投げる
+    except Exception as error:  # sounddevice raises PortAudioError
         session.error = str(error)
         return session
 
@@ -265,12 +269,12 @@ def _close(session: _Session) -> None:
         session.stream.stop()
         session.stream.close()
     except Exception as error:
-        # コールバックが投げていた場合、ここで初めて分かる。**握り潰さない。**
+        # If the callback raised, this is the first place it surfaces. **Never swallow it.**
         session.error = session.error or str(error)
 
 
 def probe(seconds: float = DEFAULT_SECONDS) -> ProbeReport:
-    """計画を立て、開き、測る。**入力と出力を同時に走らせる**（互いのクロックを比べるため）。"""
+    """Plan, open, and measure. **Runs input and output together** (to compare their clocks)."""
     try:
         devices, host_apis = list_devices()
     except OSError as error:
@@ -284,13 +288,14 @@ def probe(seconds: float = DEFAULT_SECONDS) -> ProbeReport:
         if stream_plan is not None
     }
 
-    # **開いただけでは開通ではない。** 最初のフレームが来るまで待つ。
+    # **Opening alone isn't connectivity.** Wait until the first frame arrives.
     for session in sessions.values():
         if session.opened:
             session.flowing = session.recorder.first_frame.wait(FIRST_FRAME_TIMEOUT_S)
 
     if any(session.flowing for session in sessions.values()):
-        # **入出力を同時に走らせたまま測る**（互いのクロックを比べるため）。
+        # **Measure while keeping input and output running simultaneously** (to compare their
+        # clocks).
         time.sleep(seconds)
 
     for session in sessions.values():

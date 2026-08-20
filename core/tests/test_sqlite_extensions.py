@@ -1,10 +1,11 @@
-"""sqlite-vec と FTS5 がロードできることの確認。
+"""Confirms sqlite-vec and FTS5 can be loaded.
 
-roadmap Phase 0 検証手順 13。**Phase 2 で気づくと記憶機能ごと止まる**ので、
-Phase 0 の時点から CI で回し続ける。
+roadmap Phase 0 verification step 13. **Noticing this in Phase 2 would take down the
+entire memory feature with it**, so it's run continuously in CI starting from Phase 0.
 
-ここで確かめているのは「この Python 環境で使えるか」だけである。
-**同梱サイドカー（PyInstaller）でも使えるかは別問題**で、それは Step M で確かめる。
+All that's confirmed here is "does this work in this Python environment."
+**Whether it also works in the bundled sidecar (PyInstaller) is a separate question**,
+checked in Step M.
 """
 
 from __future__ import annotations

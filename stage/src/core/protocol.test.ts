@@ -1,16 +1,23 @@
 import { describe, expect, it } from "vitest";
 
-import { helloMessage, PROTOCOL_VERSION, parseCoreMessage, resultMessage } from "./protocol";
+import {
+  helloMessage,
+  PROTOCOL_VERSION,
+  ProtocolVersionMismatch,
+  parseCoreMessage,
+  requestMessage,
+  resultMessage,
+} from "./protocol";
 
 const envelope = (extra: Record<string, unknown>) =>
   JSON.stringify({ v: PROTOCOL_VERSION, ...extra });
 
 describe("parseCoreMessage", () => {
-  it("welcome を受け取る", () => {
+  it("receives welcome", () => {
     expect(parseCoreMessage(envelope({ kind: "welcome" }))).toEqual({ kind: "welcome" });
   });
 
-  it("stage.* の command を受け取る", () => {
+  it("receives a stage.* command", () => {
     const raw = envelope({ kind: "command", id: "a", method: "stage.setup.prompt", payload: {} });
     expect(parseCoreMessage(raw)).toEqual({
       kind: "command",
@@ -20,7 +27,7 @@ describe("parseCoreMessage", () => {
     });
   });
 
-  it("stage.* の notify を受け取る", () => {
+  it("receives a stage.* notify", () => {
     const raw = envelope({ kind: "notify", method: "stage.setup.state", payload: { state: "x" } });
     expect(parseCoreMessage(raw)).toEqual({
       kind: "notify",
@@ -29,21 +36,26 @@ describe("parseCoreMessage", () => {
     });
   });
 
-  it("os.* は受け取らない（stage は OS 特権を扱わない）", () => {
+  it("never receives os.* (the stage never handles OS privileges)", () => {
     const raw = envelope({ kind: "command", id: "a", method: "os.input.click", payload: {} });
     expect(parseCoreMessage(raw)).toBeNull();
   });
 
-  it("壊れたものは捨てる", () => {
+  it("discards malformed input", () => {
     expect(parseCoreMessage("not json")).toBeNull();
     expect(parseCoreMessage(envelope({ kind: "command", method: "stage.x" }))).toBeNull();
-    expect(parseCoreMessage(JSON.stringify({ v: 2, kind: "welcome" }))).toBeNull();
     expect(parseCoreMessage(envelope({ kind: "unknown" }))).toBeNull();
+  });
+
+  it("explicitly rejects a version mismatch", () => {
+    expect(() =>
+      parseCoreMessage(JSON.stringify({ v: PROTOCOL_VERSION + 1, kind: "welcome" })),
+    ).toThrow(ProtocolVersionMismatch);
   });
 });
 
-describe("送信メッセージ", () => {
-  it("hello は role=stage を名乗る", () => {
+describe("outgoing messages", () => {
+  it("hello identifies as role=stage", () => {
     expect(JSON.parse(helloMessage("t"))).toEqual({
       v: PROTOCOL_VERSION,
       kind: "hello",
@@ -52,7 +64,7 @@ describe("送信メッセージ", () => {
     });
   });
 
-  it("失敗した result には必ず理由が付く", () => {
+  it("a failed result always carries a reason", () => {
     expect(JSON.parse(resultMessage("c", false))).toMatchObject({
       corr_id: "c",
       ok: false,
@@ -60,12 +72,25 @@ describe("送信メッセージ", () => {
     });
   });
 
-  it("成功した result に error を付けない", () => {
+  it("a successful result never carries error", () => {
     expect(JSON.parse(resultMessage("c", true, { choice: "skip" }))).toEqual({
+      v: PROTOCOL_VERSION,
       kind: "result",
       corr_id: "c",
       ok: true,
       payload: { choice: "skip" },
     });
+  });
+
+  it("every frame carries the protocol version", () => {
+    // Core refuses a frame whose version it cannot agree on (ADR-022). `result` used to be
+    // the one frame that omitted it, which only worked because Core did not look.
+    for (const frame of [
+      helloMessage("t"),
+      resultMessage("c", true),
+      requestMessage("i", "m", {}),
+    ]) {
+      expect(JSON.parse(frame).v).toBe(PROTOCOL_VERSION);
+    }
   });
 });

@@ -1,6 +1,6 @@
-"""取得と検証。**ネットワークに出ない**（httpx の MockTransport を使う）。
+"""Fetching and verification. **Never touches the network** (uses httpx's MockTransport).
 
-docs/architecture/setup.md §8 のテスト表を実装する。
+Implements the test table from docs/architecture/setup.md §8.
 """
 
 from __future__ import annotations
@@ -17,6 +17,7 @@ from typing import ClassVar
 import httpx
 import pytest
 
+from lumi.providers.llm import ollama
 from lumi.providers.tts import aivisspeech
 from lumi.setup import install as install_module
 from lumi.setup.engines import (
@@ -71,7 +72,13 @@ class TestDownload:
         destination = tmp_path / "dl.bin"
 
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
-            await _download(client, artifact, destination, None)
+            await _download(
+                client,
+                artifact.url,
+                size=artifact.size,
+                sha256=artifact.sha256,
+                destination=destination,
+            )
 
         assert destination.read_bytes() == PAYLOAD
 
@@ -79,26 +86,44 @@ class TestDownload:
         artifact = artifact_for(sha256="0" * 64)
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "hash_mismatch"
 
     async def test_rejects_a_size_mismatch(self, tmp_path: Path) -> None:
         artifact = artifact_for(size=len(PAYLOAD) + 1)
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "size_mismatch"
 
     async def test_stops_when_the_body_is_larger_than_pinned(self, tmp_path: Path) -> None:
         artifact = artifact_for(size=10)
 
-        # content-length を付けずに大きい本文を返す（途中で打ち切れること）
+        # Returns an oversized body without content-length (must be cut off mid-stream)
         def handler(_: httpx.Request) -> httpx.Response:
             return httpx.Response(200, content=PAYLOAD, headers={"transfer-encoding": "chunked"})
 
         async with client_for(handler) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "size_mismatch"
 
     async def test_follows_an_allowed_redirect(self, tmp_path: Path) -> None:
@@ -111,7 +136,13 @@ class TestDownload:
             return httpx.Response(200, content=PAYLOAD)
 
         async with client_for(handler) as client:
-            await _download(client, artifact, tmp_path / "dl.bin", None)
+            await _download(
+                client,
+                artifact.url,
+                size=artifact.size,
+                sha256=artifact.sha256,
+                destination=tmp_path / "dl.bin",
+            )
 
     async def test_refuses_a_redirect_to_another_host(self, tmp_path: Path) -> None:
         artifact = artifact_for()
@@ -123,14 +154,26 @@ class TestDownload:
 
         async with client_for(handler) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "redirect_not_allowed"
 
     async def test_refuses_an_origin_outside_the_pin(self, tmp_path: Path) -> None:
         artifact = artifact_for(url="https://evil.example.com/engine.7z")
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
             with pytest.raises(SetupError) as error:
-                await _download(client, artifact, tmp_path / "dl.bin", None)
+                await _download(
+                    client,
+                    artifact.url,
+                    size=artifact.size,
+                    sha256=artifact.sha256,
+                    destination=tmp_path / "dl.bin",
+                )
         assert error.value.reason == "origin_not_allowed"
 
     async def test_reports_progress(self, tmp_path: Path) -> None:
@@ -141,17 +184,25 @@ class TestDownload:
             seen.append(fraction)
 
         async with client_for(lambda _: httpx.Response(200, content=PAYLOAD)) as client:
-            await _download(client, artifact, tmp_path / "dl.bin", progress)
+            await _download(
+                client,
+                artifact.url,
+                size=artifact.size,
+                sha256=artifact.sha256,
+                destination=tmp_path / "dl.bin",
+                progress=progress,
+            )
 
         assert seen
         assert seen[-1] == pytest.approx(1.0)
 
 
 def make_archive(path: Path, *, with_executable: bool) -> None:
-    """展開できる書庫を作る。
+    """Creates an archive that can be extracted.
 
-    bsdtar は zip も 7z も読めるので、**テストでは作れる形式（zip）を使う**。
-    確かめたいのは「展開して実行体を見つけて確定する」経路であって、圧縮形式ではない。
+    bsdtar can read both zip and 7z, so **the test uses a format it can actually
+    create (zip)**. What's being verified is the "extract, find the executable, and
+    commit" path — not the compression format.
     """
     with zipfile.ZipFile(path, "w") as archive:
         archive.writestr("TestEngine/README.txt", "hello")
@@ -164,14 +215,15 @@ def fake_download(
 ) -> Callable[..., Awaitable[None]]:
     async def _fake(
         _client: httpx.AsyncClient,
-        _artifact: EngineArtifact,
+        _url: str,
+        *,
         destination: Path,
-        _progress: object,
+        **_kwargs: object,
     ) -> None:
         if error is not None:
             raise error
         assert archive_source is not None
-        # テストの中の小さなコピー。ここは to_thread に逃がす価値がない。
+        # A small copy inside a test. Not worth offloading to to_thread here.
         await asyncio.to_thread(shutil.copyfile, archive_source, destination)
 
     return _fake
@@ -235,7 +287,7 @@ class TestInstall:
 
         first = await install_engine(artifact_for(), engines)
 
-        # 2回目は取得しない（_download を呼ぶと例外になる細工をしておく）
+        # The second time never fetches (rigged so calling _download raises)
         monkeypatch.setattr(
             install_module,
             "_download",
@@ -247,7 +299,7 @@ class TestInstall:
     async def test_fails_explicitly_without_tar(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """**別の手段を探さない。** 展開できないなら失敗する。"""
+        """**No alternative is sought.** Fails if extraction isn't possible."""
         source = tmp_path / "engine.zip"
         make_archive(source, with_executable=True)
         monkeypatch.setattr(install_module, "_download", fake_download(archive_source=source))
@@ -260,17 +312,19 @@ class TestInstall:
 
 
 class TestNetworkOptional:
-    """**ユーザーが選ぶまで外部通信しない**（docs/architecture/setup.md 原則1）。
+    """**No external communication until the user chooses to**
+    (docs/architecture/setup.md Principle 1).
 
-    静的検査。「呼ばれなければ通信しない」ことをコードの形で保証する
-    （.claude/rules/tests.md「静的検査もテストである」）。
+    A static check. Guarantees "no communication unless called" in code form
+    (.claude/rules/tests.md "static checks are tests too").
     """
 
-    #: HTTP クライアントを持ってよいモジュールと、その理由。
-    #: **増やすときは「いつ・どこへ通信するか」を必ず書く。**
+    #: Modules allowed to hold an HTTP client, and why.
+    #: **When adding one, always write down "when and where it communicates."**
     ALLOWED_HTTP: ClassVar[dict[str, str]] = {
         "setup/install.py": "エンジンの取得。ユーザーが選んだときだけ呼ばれる",
         "providers/tts/aivisspeech.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
+        "providers/llm/ollama.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
     }
 
     def test_http_is_confined_to_known_modules(self) -> None:
@@ -286,15 +340,29 @@ class TestNetworkOptional:
         )
 
     def test_the_engine_client_only_talks_to_localhost(self) -> None:
-        """エンジンの宛先を**設定可能にしない**。
+        """The engine's destination is **never made configurable**.
 
-        可能にすると「Lumi が任意のサーバに読み上げテキストを送る機能」になる。
+        Making it configurable would turn this into "a feature where Lumi sends
+        text to be read aloud to an arbitrary server."
         """
         module = Path(aivisspeech.__file__)
         urls = re.findall(r"https?://[^\"']*", module.read_text(encoding="utf-8"))
         assert urls, "URL の組み立て方が変わった。このテストを見直すこと"
         assert all(url.startswith("http://{HOST}:") for url in urls), urls
         assert aivisspeech.HOST == "127.0.0.1"
+
+    def test_the_llm_client_only_talks_to_localhost(self) -> None:
+        """**Conversation content never leaves the machine.** Remote inference is added as a
+        separate Provider (ADR-023).
+        """
+        module = Path(ollama.__file__)
+        urls = re.findall(r"https?://[^\"']*", module.read_text(encoding="utf-8"))
+        assert urls, "URL の組み立て方が変わった。このテストを見直すこと"
+        assert all(
+            url.startswith(("http://{HOST}:", "https://github.com", "https://ollama.com"))
+            for url in urls
+        ), urls
+        assert ollama.HOST == "127.0.0.1"
 
     def test_the_installer_is_only_reachable_through_the_coordinator(self) -> None:
         root = Path(__file__).resolve().parent.parent / "lumi"

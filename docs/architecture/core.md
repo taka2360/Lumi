@@ -140,10 +140,15 @@ Core 内部:
 
 ```
 core/lumi/
+├── provenance.py    ProvenanceClass / TrustLevel / join / propagate（**依存ゼロ**）
 ├── kernel/          arbiter, activity, job, command, event, hooks,
 │                    cancellation, inference_lease, recovery, scheduler
-├── agent/           reactive, deliberative, drives, prompt assembly
-├── memory/          working, episodic, semantic, reflection, retrieval, decay, provenance
+├── agent/           reactive, deliberative, drives,
+│                    session（Working Memory + sticky session_trust）,
+│                    prompt（PromptAssembly）, markers（<|ACT|>）,
+│                    sentences（文分割）, speech（PlaybackScheduler → audio.md §6）,
+│                    runtime（会話の組み立て。**判断を持たない**）
+├── memory/          working, episodic, semantic, reflection, retrieval, decay
 ├── world/           facets, snapshot, projection
 ├── internal/        mood, fatigue, drives state
 ├── permission/      policy, canonicalization, bind_verifier, result_verifier,
@@ -151,13 +156,36 @@ core/lumi/
 ├── tools/           registry, descriptors,
 │                    builtin/        fs, computer, memory, character（Class A）
 ├── providers/       llm/ stt/ tts/ embedding/ vision/
-├── audio/           capture, vad, playback, echo_guard
+├── audio/           ring, resample, capture, vad, playback, io（EchoGuard L1 は vad 内）
 ├── extensions/      host, manifest, protocol
 ├── storage/         sqlite, migrations, vector store
+├── content/         Content Pack の**読み取り専用ローダ**（extension.md §9）
 └── transport/       ws server, protocol schema
 ```
 
+**`content/` はローダであって Content Pack ではない。** パックの実体はリポジトリ root の
+`content/characters/<name>/` に置かれ、**データのみでコードを含まない**（[extension.md](extension.md) §9）。
+Core 側にローダが要るのは、`[credit]` の欠落を **fail-closed で落とす**責任が Core にあるため。
+
 **`kernel/` が他のどのモジュールにも依存しないこと**を静的検査で保証する。kernel は型と調停だけを持ち、具体的な能力を知らない。
+
+### なぜ `provenance.py` がトップレベルにあるのか〔Phase 1〕
+
+**`kernel/` より下に置く必要があるため。** `Signal` が `trust_level` を持つ
+（[../contracts/event-model.md](../contracts/event-model.md)）ので、kernel は provenance に依存する。
+memory/ の下に置くと **kernel → memory の依存**が生まれ、上の規則が破れる。
+
+trust の型は kernel・permission・tools・agent・memory の**すべてが使う横断的な制約**
+（[Invariant 3](../contracts/invariants.md) / 7 の型による実装）であり、どれか1つの下に置くと
+「そのモジュールの持ち物」に見えてしまう。**依存ゼロの単独モジュールにして、位置そのもので
+「これは全体の制約である」と示す。**
+
+規則の定義は [../contracts/provenance.md](../contracts/provenance.md)。
+
+**`kernel/` が import してよい lumi 配下のモジュールは、`lumi.kernel.*` / `lumi.provenance` /
+`lumi.logging` の3つだけ**（構造化ログは能力ではなく全モジュールの土台）。
+永続化のような「外の世界」は Protocol（`EventStore`）で受け取り、実装は kernel の外に置く。
+**これを AST の静的検査で縛る**（`core/tests/test_kernel_boundaries.py`）。
 
 ---
 
@@ -217,6 +245,92 @@ Lumi が**所有しない**プロセス。
 
 ---
 
+## 6b. 設定の保存〔Phase 1 Step G。未確定事項 #9 の決着〕
+
+> **このファイルが唯一の定義場所である**（保存形式・スキーマ・優先順位）。実装 → `core/lumi/settings.py`
+
+**設定は Core が持つ。Stage は表示して依頼するだけ**（[ui.md](ui.md) §2）。
+
+| | |
+|---|---|
+| 置き場所 | `<data_dir>/settings.json` |
+| 形式 | **JSON** |
+| スキーマ版 | `version`（**意味が変わったときだけ上げる**。項目の追加は既定値で吸収されるので上げない） |
+| 何が設定項目か | **`lumi.settings.KEYS` が唯一の定義**（キー / 環境変数 / 既定値） |
+
+### なぜ JSON か — Content Pack は TOML なのに
+
+**書く主体が違う。** Content Pack は**人が書く**のでコメントの書ける TOML。
+設定は**プログラムが書く**（設定 UI から）。`tomllib` は読み取り専用なので、
+TOML で書くにはキー数個のために依存を1つ増やすことになり、
+そもそも**プログラムが書き直すファイルでコメントは残らない。**
+
+### 形式より重要な5つの規則
+
+| 規則 | 理由 |
+|---|---|
+| 壊れたファイルは**既定値に落ちるが、絶対に上書きしない** | 上書きは「ユーザーが意図したこと」の唯一の写しを壊す。手で直せる状態を残す |
+| **`version` が自分より新しいファイルも同じ扱い**（既定値に落ち、書かない） | 版が上がるのは**キーの意味が変わったとき**なので、その値をこの版として読むこと自体が誤り。さらに保存すると新しい値に古い版番号が刻まれ、**次に新しい Lumi が開いたときに移行済みの値へ移行をかける** |
+| 知らないキーは**保存時に保持する** | 新しい Lumi の設定を古い Lumi で開いても消えない |
+| 不正な値は**そのキーだけが既定に落ちる** | 誤字1つでファイル全体を捨てると、他の設定まで失われる |
+| 環境変数はファイルを**上書きするが、それを表示する** | 黙って上書きすると「変えたのに効かない」が説明不能になる |
+
+**環境変数による上書きはファイルに書き戻さない。** 一時的な逃げ道が黙って恒久化する。
+
+### 書き込みは原子的に
+
+丸ごと書いて rename する。**途中まで書けたファイルは次回起動で「壊れている」と判定され、
+上の1つ目の規則により以後ずっと保存できなくなる。**
+
+### 変更経路 — Stage → Core の `request`〔[ADR-028](../decisions/ADR-028-stage-initiated-request.md)〕
+
+設定を変えるには **Stage → Core の要求方向**が要る。Phase 0 の WS はクライアントから
+`hello` と `result` しか受理しておらず、**設定 UI が原理的に作れなかった。**
+
+```
+Stage → Core:  kind = "request"   （Stage は問う）
+Core → Stage:  kind = "result"    （Core が決めて答える）
+```
+
+**`command` は依然としてクライアントから受理しない。** Core が決め、クライアントは問う
+—— この非対称が、経路が存在するようになった後も Invariant 1 を保つものである。
+
+| 受理の条件 | 実装 |
+|---|---|
+| `stage.*` namespace であること | `method_matches_role` |
+| **Core が明示的に登録した method** | `WsServer.on_request` のレジストリ。**未登録は `unknown_method`** |
+| payload が正しいこと | **各ハンドラの責任**（transport は検証しない） |
+| **Tool を要する副作用を含まないこと** | 変更してよいのは **Core が所有する状態だけ**（→ [ADR-031](../decisions/ADR-031-request-side-effects.md)） |
+
+**「副作用ゼロ」ではない。** この経路は Core 自身が持つ設定を書き換える
+（`stage.settings.update` → §6b）。**線引きは「外界に触れるかどうか」**であり、
+ファイル・プロセス・入力・画面・ネットワークに触れるものは例外なく
+`ToolRegistry.invoke` → Permission Kernel を通る（Invariant 2）。
+書けるキーは `lumi.settings.KEYS` に固定されていて、**Stage はパスを指定しない。**
+「設定を書ける」であって「ファイルを書ける」ではない。
+
+**登録レジストリが allowlist そのものである。** 書かれていない経路は存在しない。
+
+**受理したものには必ず答える。** ハンドラには上限時間があり、超えたら `timeout` を返す。
+返事が来ないことと Core が死んでいることは Stage から区別できず、**区別できない状態を
+作らない**ためである（応答の送信自体に失敗した場合も、黙って捨てずにログに残す）。
+
+Phase 1 で登録されているのは **`stage.settings.update` の1つだけ**。
+一覧は [../contracts/wire.json](../contracts/wire.json) の `inbound_methods` が持ち、
+**3言語のテストで固定している。**
+
+**この経路に Tool 実行を載せるときは、必ず新しい ADR を書く**（Invariant 2）。
+
+### モデル設定は次回起動から、表示言語は即時に効く
+
+**動作中のモデルを差し替えない。** ターンの途中でモデルが入れ替わるのは
+Phase 5 の `ModelResourceManager` の仕事であり、**今それを装うと表示値が嘘になる。**
+UI はそう明記する。ただし `locale` は推論状態を変えない表示設定なので、保存成功後に
+`stage.settings.state` を受けた Stage が即時反映する。値は `auto` / `ja` / `en` のみを受理し、
+`auto` は OS / WebView の優先言語を使う。不正な値は Core が拒否する。
+
+---
+
 ## 7. 起動シーケンス
 
 ```
@@ -234,7 +348,26 @@ Lumi が**所有しない**プロセス。
 12. Stage が WS 接続 → token 認証
 13. Core が Stage に初期状態を配信（character, world 投影）
 14. Core が Audio I/O を開始（VAD 待機）
+15. Core が TTS エンジンのプロセスを起動し、プロセス状態を配信（`starting` → `ready` / `failed`）
+16. Core が LLM / TTS / STT の3つを**ウォームする**（重み・話者・モデルを実際に載せる）
 ```
+
+**7 の「load はまだしない」の例外は TTS だけ。** 起動フェーズ `starting` は
+「エンジンのプロセスを起動中」を表すので（[ui.md](ui.md)「起動フェーズ」）、
+**誰も起動しなければ Stage は永久にローディングのままになる**（実際に起きた）。
+最初の発話まで遅らせると、エンジンの起動時間（初回は数分）が最初の返事に乗る。
+
+**15 は 14 を待たせない。** 聞くことはエンジンに依存しないので、
+起動を待つ間もマイクは開いている。プロセス状態を配るのは、起動した本人（Core）の責任。
+
+**16 は「7 の load をここでやる」ではなく、「load したと言えるところまでやる」である。**
+接続確認だけで返る `load()` はコストを最初のターンに先送りしているだけで、実際に
+**最初の返事が 7.5 秒かかった**（2026-08-18 実測）。内訳と規則 →
+[../interfaces/provider.md](../interfaces/provider.md)「`load()` は接続確認ではない」
+
+**16 も 14 を待たせない。** 3つを順に温めるので十数秒かかるが、その間もマイクは開いている。
+**温まる前に話しかけられたら、そのターンが待つ**（`ProviderRegistry` が kind ごとに直列化するので、
+二重にロードはしない）。**「まだ温まっていないので聞きません」にはしない。**
 
 ### 障害時
 

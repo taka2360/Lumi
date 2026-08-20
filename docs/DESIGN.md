@@ -9,8 +9,58 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.7 |
-| 実装フェーズ | **Phase 0 実装中。** 残るは PyInstaller パッケージング・インストーラ・別マシン検証 → [roadmap.md](roadmap.md) |
+| Revision | rev.11 |
+| 実装フェーズ | **Phase 0 の完了条件を達成。Phase 1（MVP: Talking Desktop Character）着手。** セットアップ周りの検証手順 15〜18 が残る → [roadmap.md](roadmap.md) |
+
+> **rev.11 の変更点**（Step G。Stage 側を作ったら、設計の穴が2つ出た）
+> 1. **Stage → Core の要求方向を作った**（`request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md)。
+>    設定 UI が**原理的に作れなかった**（クライアントからは `hello` と `result` しか受理していなかった）。
+>    「経路が無いことで決定の起点が Core であることを保証する」という Phase 0 の記述を撤回する。
+>    **守りたいのは Invariant 1 であって、経路の不在はその手段でしかない。**
+>    **登録した method しか届かない**（fail-closed）
+> 2. **設定の保存形式を決めた** → [architecture/core.md](architecture/core.md) §6b（未確定事項 #9 の決着）。
+>    **JSON / `<data_dir>/settings.json`**。壊れたファイルは**絶対に上書きしない**（ユーザーの意図の唯一の写しを壊す）
+> 3. **`vad_ms` の予算を実測に合わせた** → [architecture/audio.md](architecture/audio.md) §7。
+>    予算 0.18 s と `min_silence_duration_ms` 400 ms は**同じ待ち時間を2箇所に別の数値で書いていた**。
+>    **`vad_ms` は実装のコストではなくターンテイキングの方針**であり、最適化で消えない。
+>    帰結として区間合計が p50 目標を超えた（106%）→ 未確定事項 8b
+> 4. **Inspector と吹き出しは `stage` ウィンドウの中に置く** → [architecture/ui.md](architecture/ui.md) §5。
+>    `WsServer` は **role ごとに接続を1本しか持たない**ので、別ウィンドウはキャラクターの接続を奪う
+>
+> **rev.10 の変更点**（音声入力の精度を実測で追い込んだ。**3つとも「測って初めて分かった」もの**）
+> 1. **サンプルレート変換を自前の polyphase FIR にした** → [ADR-026](decisions/ADR-026-polyphase-resampler.md)。
+>    3-tap 移動平均は **8 kHz 上の成分を −6 dB しか落とさず音声帯域へ折り返していた**。
+>    日本語の摩擦音（し / す / つ）の鏡像が子音識別帯域に重なっており、**STT 精度が悪かった主因**。
+>    加えて VAD スレッドが 32 ms ごとに純関数を呼んでいたため、毎秒 31 回フィルタが再スタートしていた
+> 2. **VAD のプリロールを 80 → 400 ms にした** → [architecture/audio.md](architecture/audio.md) §5。
+>    **Silero の確率は無声子音では上がらない**ので、「ちょっと」「さっき」「机」のような語は
+>    閾値を超える時点で語頭が区間の外にあった。**落ちた語は全部無声子音で始まっていた**
+> 3. **STT の既定モデルを `small` → `large-v3-turbo` にした** → [ADR-027](decisions/ADR-027-stt-model-large-v3-turbo.md)。
+>    1 と 2 で語頭欠落は消えたが、**残った誤りが語彙の取り違えでパラメータでは消えなかった**。
+>    CER 7.2% → 3.6%。§7 の VRAM 実測を 0.4 → 1.0-1.2 GB に更新（**合計 6.9 → 7.5 / 12 GB**）
+> 4. **ユーザーの発話も吹き出しに出すことにした**（`stage.user.said`）→ [interfaces/renderer.md](interfaces/renderer.md)。
+>    **「聞き違えた」と「聞こえていなかった」は外から見ると区別がつかない**
+
+> **rev.9 の変更点**（Phase 1 の実測が設計を1つ覆した）
+> 1. **TTS に GPU を使えるようにした** → [ADR-025](decisions/ADR-025-tts-on-gpu.md)。
+>    ADR-008 の「TTS は CPU で VRAM を一切消費しない」を**実測により撤回**した。
+>    CPU の TTS は 24 コアを飽和させて 0.9 秒かかり、**p95 2.0 秒の完了条件に届かない**。
+>    GPU に 1.0 GB 置くと 440 ms になる。**守ろうとしていた VRAM の余裕は、そもそも使われていなかった**
+> 2. **§7 の VRAM 表に実測値を入れた**（LLM 5.5 / STT 0.4 / TTS 1.0 = 6.9 GB / 12 GB）
+> 3. **プロンプト組み立ての予算と切り落とし順序を定義した** → [architecture/agent.md](architecture/agent.md) §3（§12 に行を追加）
+
+> **rev.8 の変更点**（Phase 0 のクローズと、Phase 1 着手前に決めたこと）
+> 1. **Phase 0 の完了条件を達成した。** 別マシンのインストーラから起動し、キャラクターが立って一言喋るところまで確認した。
+>    **セットアップ周りの検証手順 15〜18 は未実施**（roadmap に残す）。
+>    **既定同梱 VRM モデルが決まった**（再配布 OK / 改変 OK / クレジット不要 / VRM 0.0）→ [licensing.md](licensing.md) §4.5。未確認 #5 が解消
+> 2. **LLM ランタイムと推論モデルの取得方針を決めた** → [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)。
+>    **Ollama は検出のみ**（取得もインストールもしない。ロールバックが保証できないため）/ **Silero VAD は同梱**（barge-in は中核機能で「取得するまで遮れない」を作らない）/ **STT モデルは同意に基づく実行時取得**。
+>    **ライブラリ既定の自動ダウンロードを無効化する**（Network-optional がライブラリの都合で迂回されるため）。roadmap 未確定事項 #3 が解消
+> 3. **Activity の priority 体系を決めた** → [ADR-024](decisions/ADR-024-activity-priority.md)。
+>    `interruptible_by: set[int]` を **`interruptible_at: int` の単一閾値**に置き換え、判定を `p.priority >= cur.interruptible_at` にした。
+>    **`>` ではなく `>=` なのは、barge-in が同一 priority の preempt だから。** roadmap 未確定事項 #10 が解消
+> 4. **`provenance.py` をトップレベルの依存ゼロモジュールにした** → [architecture/core.md](architecture/core.md) §4。
+>    `Signal` が `trust_level` を持つため、memory/ の下に置くと **kernel → memory の逆依存**が生まれる
 
 > **rev.7 の変更点**（Phase 0 の実装と実測による修正。**すべて「作ってみたら想定と違った」もの**）
 > 1. **リップシンクの生成方式を確定した。** 口の形はモーラ列から、時間は**合成された音声の長さ**から割り振る。
@@ -310,23 +360,33 @@ Core内部:
 | LLM | **Ollama**（Qwen3系 / Gemma3系）→ `LLMProvider` で交換可能 | ローカル無料優先。将来クラウドへ | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
 | STT | faster-whisper (CTranslate2, int8) | torch非依存でインストーラを小さく保てる | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
 | VAD | Silero VAD (ONNX Runtime, CPU) | 軽量。VRAM を使わない | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
-| TTS | **AivisSpeech**（第一）/ VOICEVOX（代替）/ Kokoro（英語） | **別プロセス・CPU 動作で VRAM を一切消費しない**。LLM に VRAM を全振りできる | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
+| TTS | **AivisSpeech**（第一）/ VOICEVOX（代替）/ Kokoro（英語） | 日本語品質・別プロセス・ライセンス境界。**GPU があれば使う**（CPU では約 2 倍遅い → ADR-025） | [ADR-008](decisions/ADR-008-provider-abstraction.md), [ADR-025](decisions/ADR-025-tts-on-gpu.md) |
 | Embedding | Ruri v3系 / bge-m3（ONNX, CPU） | 日本語検索品質。VRAM を使わない | [ADR-008](decisions/ADR-008-provider-abstraction.md) |
 | Browser | Playwright（out-of-process Extension） | Apache-2.0 | — |
 | ライセンス | **Core = MIT** | GPL/AGPL・非OSS を Core に入れない。Live2D / TTSエンジン / 音声モデル / 商用SDK は Extension・外部プロセス境界に隔離 | — |
 
 ### GPU / VRAM 戦略（RTX 4070 12GB、実効約10.8GB）
 
-| モデル | 配置 | VRAM |
-|---|---|---|
-| LLM (Qwen3 8B Q4_K_M等) | GPU / pinned | ~6.5 GB |
-| STT (faster-whisper int8) | GPU（空きがあれば）/ CPU | ~1.0 GB |
-| VAD (Silero ONNX) | **CPU固定** | 0 |
-| Embedding (ONNX) | **CPU固定** | 0 |
-| **TTS (AivisSpeech/VOICEVOX)** | **別プロセス・CPU** | **0** |
-| Vision (Phase 5) | オンデマンド、使用後アンロード | ~3-4 GB |
+| モデル | 配置 | VRAM（見積） | **Phase 1 実測** |
+|---|---|---|---|
+| LLM (Qwen3.5 9B Q4_K_M) | GPU / pinned | ~6.5 GB | **5.5 GB** |
+| STT (faster-whisper int8) | GPU（空きがあれば）/ CPU | ~1.0 GB | **1.0-1.2 GB**〔ADR-027〕 |
+| VAD (Silero ONNX) | **CPU固定** | 0 | 0 |
+| Embedding (ONNX) | **CPU固定** | 0 | — |
+| **TTS (AivisSpeech/VOICEVOX)** | **別プロセス。GPU があれば使う**〔ADR-025〕 | ~1.0 GB | **1.0 GB** |
+| Vision (Phase 5) | オンデマンド、使用後アンロード | ~3-4 GB | — |
 
-**TTS を CPU の別プロセスにしたことで、LLM に VRAM を全振りできる構成が成立している。** これが TTS 選定の主因。
+**合計 7.5 / 12 GB**〔2026-08-17 実測 → [measurements/phase1.md](measurements/phase1.md)〕。
+STT を `small`（0.4 GB）から `large-v3-turbo` に変えたぶん増えた（[ADR-027](decisions/ADR-027-stt-model-large-v3-turbo.md)）。
+**見積 ~1.0 GB の枠に対して実測が 0.4 GB だっただけで、枠を広げたわけではない。**
+
+**当初は「TTS を CPU に置いて LLM に VRAM を全振りする」を TTS 選定の主因としていたが、
+Phase 1 の実測で撤回した**（[ADR-025](decisions/ADR-025-tts-on-gpu.md)）。
+CPU の TTS は 24 コアを飽和させて 0.9 秒かかり、**p95 2.0 秒の完了条件に届かない**。
+GPU に 1.0 GB 置くと 440 ms になる。**守ろうとしていた VRAM の余裕は、そもそも使われていなかった。**
+
+**GPU が無い環境では CPU で動く。** ただし SLO は GPU 構成での約束である。
+
 `ModelResourceManager` の実装は Phase 5。Phase 1 では `Provider.load/unload/resource_hint()` の**窓口だけ**を確定させる（後から Provider にライフサイクルを追加すると全 Provider の書き換えになるため）。
 
 ---
@@ -358,6 +418,8 @@ Core内部:
 | Drive System の存在と決定論性 | **Confirmed** |
 | SQLite + sqlite-vec | Provisional |
 | Drive・Policy既定値・SLO具体値・モデル選定 | Provisional |
+| **Activity の priority の値**（割り込み判定の**方式**は Confirmed → [ADR-024](decisions/ADR-024-activity-priority.md)） | Provisional |
+| **推論スタックの取得方法**（Ollama は検出のみ / VAD は同梱 / STT モデルは実行時取得） | **Confirmed**〔rev.8〕→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) |
 | WS プロトコルの具体スキーマ | Provisional |
 | **公開配布を前提とすること・配布物の構成・クレジット義務** | **Confirmed**〔rev.6〕→ [licensing.md](licensing.md) |
 | 個別コンポーネントのライセンスの理解（AivisSpeech の LICENSE 本文など） | Provisional → [licensing.md](licensing.md) §7 の未確認事項 |
@@ -575,6 +637,15 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [020](decisions/ADR-020-split-audio-streams.md) | 入力と出力を別ストリームで開き、クロックドリフトを実測可能にする |
 | [021](decisions/ADR-021-sidecar-packaging.md) | Python Core を PyInstaller の onedir で固め、resources として同梱する |
 | [022](decisions/ADR-022-wire-contract.md) | プロセス境界を越える名前と定数を `wire.json` に一元化し、3言語のテストで突き合わせる |
+| [023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) | LLM ランタイムと推論モデルを配布物に含めず、種類ごとに取得方法を変える |
+| [024](decisions/ADR-024-activity-priority.md) | Activity の priority を表から決め、割り込み可否を単一の閾値で判定する |
+| [025](decisions/ADR-025-tts-on-gpu.md) | **TTS に GPU を使えるようにする**（ADR-008 の「VRAM を消費しない」を実測により撤回） |
+| [026](decisions/ADR-026-polyphase-resampler.md) | サンプルレート変換を自前の polyphase FIR にし、VAD 経路では状態を持たせる（STT 精度の主因） |
+| [027](decisions/ADR-027-stt-model-large-v3-turbo.md) | STT の既定モデルを `small` から `large-v3-turbo` にする（語彙混同。CER 半減） |
+| [028](decisions/ADR-028-stage-initiated-request.md) | Stage → Core の要求方向（`request`）を作る。**`command` は片方向のまま**（Core が決める非対称を名前で保つ） |
+| [029](decisions/ADR-029-content-pack-asset-delivery.md) | Content Pack のアセットは Shell が WebView に配信する（**Core をファイルサーバにしない**） |
+| [030](decisions/ADR-030-per-stream-dispatch.md) | DomainEvent の配送を stream ごとに直列化し、**同一 stream への再入 publish を拒否する** |
+| [031](decisions/ADR-031-request-side-effects.md) | `request` 経路が許す副作用を「**Core が所有する状態の変更**」に限定して定義する（ADR-028 条件4の修正） |
 
 ---
 
@@ -597,6 +668,8 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Policy（`decide()` / Risk 階層 / actor） | [architecture/permission.md](architecture/permission.md) |
 | Provenance の型・伝播・trust の3スコープ・隔離ブロック書式 | [contracts/provenance.md](contracts/provenance.md) |
 | Activity / Tool の状態機械・foreground の定義・Cancellation 3契約・barge-in 手順 | [contracts/state-machines.md](contracts/state-machines.md) |
+| **Activity の `priority` / `interruptible_at` の値と割り込み判定** | [architecture/agent.md](architecture/agent.md) §1 |
+| **PromptAssembly の構成・トークン予算・切り落とし順序** | [architecture/agent.md](architecture/agent.md) §3 |
 | Kernel 実行契約・Class A / Class B | [contracts/tool-execution.md](contracts/tool-execution.md) |
 | Signal / DomainEvent / Command・**Hook 一覧** | [contracts/event-model.md](contracts/event-model.md) |
 | 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |

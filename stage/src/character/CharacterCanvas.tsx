@@ -1,32 +1,43 @@
 /**
- * キャラクターの描画ホスト。
+ * The character's rendering host.
  *
- * - 透過背景（Stage は透過ウィンドウ。**背景を塗らない**）
- * - アイドルモーションでループ
- * - 描画結果から当たり判定領域を算出して Shell に渡す
- *   （docs/architecture/ui.md「ホバー検知の実装方針」）
+ * - Transparent background (the Stage is a transparent window. **Never paints a background**)
+ * - Loops on idle motion
+ * - Computes the hit region from the render output and hands it to Shell
+ *   (docs/architecture/ui.md "Hover-detection implementation approach")
  */
 
 import { useEffect, useRef } from "react";
 import {
+  AmbientLight,
   Box3,
   DirectionalLight,
-  HemisphereLight,
+  NoToneMapping,
   PerspectiveCamera,
   Scene,
+  SRGBColorSpace,
   Vector3,
   WebGLRenderer,
 } from "three";
 
 import { useStageStore } from "../core/store";
 import type { CssRect } from "../platform/geometry";
+import {
+  advanceExpression,
+  EXPRESSION_NEUTRAL,
+  type ExpressionWeights,
+  targetWeights,
+} from "./expression";
 import { advanceMouth, MOUTH_CLOSED, type MouthWeights, visemeAt } from "./lipsync";
-import { loadCharacter } from "./loadCharacter";
+import { loadCharacter, type ModelSource } from "./loadCharacter";
 import { hasMovedEnough, type NdcPoint, screenRectFromNdcPoints } from "./projection";
 import type { CharacterKind } from "./types";
 
-/** 当たり判定の再計算間隔（フレーム）。毎フレーム bounding box を取り直すのは高い。 */
+/** Recomputation interval for the hit region (in frames). Recomputing the bounding box every frame is expensive. */
 const BOUNDS_RECOMPUTE_INTERVAL = 10;
+
+/** SpringBone uses an explicit integrator; a long first/resume frame must not become one huge step. */
+const MAX_CHARACTER_DELTA_SECONDS = 1 / 30;
 
 export interface CharacterStatus {
   kind: CharacterKind | null;
@@ -34,14 +45,20 @@ export interface CharacterStatus {
 }
 
 export function CharacterCanvas({
+  source,
   onStatus,
   onBounds,
 }: {
+  /** Which model to draw. **Core's decision** (ADR-029) — the Stage never picks one. */
+  source: ModelSource;
   onStatus?: (status: CharacterStatus) => void;
-  /** 画面上でキャラクターが占めている矩形。**当たり判定の材料**（判定は Shell 側）。 */
+  /** The on-screen rectangle the character occupies. **The material for hit-testing** (the test itself runs in Shell). */
   onBounds?: (rect: CssRect | null) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  // **Depended on as primitives, not as the object.** A caller that rebuilds `source` every
+  // render would otherwise tear down the scene and re-download 25 MB on each one
+  const { path, reason } = source;
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -53,15 +70,18 @@ export function CharacterCanvas({
     const renderer = new WebGLRenderer({ canvas, alpha: true, antialias: true });
     renderer.setPixelRatio(window.devicePixelRatio);
     renderer.setClearAlpha(0);
+    renderer.outputColorSpace = SRGBColorSpace;
+    renderer.toneMapping = NoToneMapping;
 
     const scene = new Scene();
     const camera = new PerspectiveCamera(28, 1, 0.1, 20);
     camera.position.set(0, 1.05, 2.6);
     camera.lookAt(0, 1.0, 0);
 
-    scene.add(new HemisphereLight(0xffffff, 0x445566, 2.0));
-    const key = new DirectionalLight(0xffffff, 1.4);
-    key.position.set(1, 2, 2);
+    // アニメ調モデルの陰影を綺麗に出すため均一な白色の環境光と正面寄りの平行光を設定
+    scene.add(new AmbientLight(0xffffff, 0.8));
+    const key = new DirectionalLight(0xffffff, 1.2);
+    key.position.set(0.25, 1.0, 1.5).normalize();
     scene.add(key);
 
     const resize = () => {
@@ -81,7 +101,7 @@ export function CharacterCanvas({
     let animationFrame = 0;
     let disposeModel: (() => void) | null = null;
 
-    void loadCharacter().then(({ model, fallbackReason }) => {
+    void loadCharacter({ path, reason }).then(({ model, fallbackReason }) => {
       if (disposed) {
         model.dispose();
         return;
@@ -97,18 +117,30 @@ export function CharacterCanvas({
       let previousTime = performance.now();
       const startedAt = previousTime;
       let mouth: MouthWeights = MOUTH_CLOSED;
+      let face: ExpressionWeights = EXPRESSION_NEUTRAL;
 
       const tick = (now: number) => {
         animationFrame = requestAnimationFrame(tick);
-        const delta = Math.min((now - previousTime) / 1000, 0.1);
+        const delta = Math.min((now - previousTime) / 1000, MAX_CHARACTER_DELTA_SECONDS);
+        const previousFrameAt = previousTime;
         previousTime = now;
 
-        // **口を先に決めてから update する。** VRM は update の中で表情を反映するので、
-        // 順序を逆にすると1フレーム遅れる。
+        // **Decides the mouth before calling update.** VRM applies expressions
+        // inside update, so reversing the order would lag by one frame.
         const speech = useStageStore.getState().speech;
         const target = speech ? visemeAt(speech.timeline, now - speech.startedAtMs) : null;
         mouth = advanceMouth(mouth, target, delta);
         model.applyMouth(mouth);
+
+        // Same rule as the mouth: **Core states the target once, the Stage advances time.**
+        const expression = useStageStore.getState().expression;
+        face = advanceExpression(
+          face,
+          targetWeights(expression, now),
+          now - previousFrameAt,
+          expression?.intent.blendMs ?? 0,
+        );
+        model.applyExpression(face);
 
         model.update(delta, (now - startedAt) / 1000);
         renderer.render(scene, camera);
@@ -146,11 +178,11 @@ export function CharacterCanvas({
       observer.disconnect();
       disposeModel?.();
       renderer.dispose();
-      // **消えたことを伝える。** 伝えないと、キャラクターが居ない場所の
-      // 当たり判定が残り、そこだけクリックスルーが効かなくなる。
+      // **Reports that it disappeared.** Without this, a hit region would linger
+      // where the character no longer is, and click-through would stop working there.
       onBounds?.(null);
     };
-  }, [onStatus, onBounds]);
+  }, [path, reason, onStatus, onBounds]);
 
   return <canvas ref={canvasRef} className="character" />;
 }

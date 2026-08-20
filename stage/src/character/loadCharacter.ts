@@ -1,33 +1,68 @@
 /**
- * キャラクターの読み込み。**VRM を優先し、無ければプレースホルダに落とす。**
+ * Loading the character. **Prefers VRM, falls back to the placeholder if absent.**
  *
- * 落ちたことは呼び出し側に `fallbackReason` で伝える。
- * **黙って劣化しない**（docs/DESIGN.md の進め方の原則）ため、UI 側で「VRM 未配置」と表示する。
+ * The caller is told about a fallback via `fallbackReason`.
+ * **Never silently degrades** (a guiding principle from docs/DESIGN.md), so the UI
+ * shows why the placeholder is on screen.
+ *
+ * ## Who decides what (ADR-029)
+ *
+ * | | |
+ * |---|---|
+ * | **Core** | which model — it reads the Content Pack and sends the path |
+ * | **Shell** | serving the bytes — reading a file is an OS privilege, and the path is checked against a scope |
+ * | **Stage** | drawing it |
+ *
+ * **The Stage never picks a path of its own.** `PlatformShell.toAssetUrl` only rewrites the
+ * path into an address the WebView can fetch; it grants nothing. A path outside the Content
+ * Pack is refused by Shell, not by anything here.
  */
 
+import { cachedLocale, translate } from "../i18n";
+import { getPlatformShell } from "../platform/useStageShell";
 import { createPlaceholder } from "./placeholder";
 import type { CharacterModel } from "./types";
-import { DEFAULT_VRM_URL, loadVrm } from "./vrm";
+import { loadVrm } from "./vrm";
 
 export interface LoadedCharacter {
   model: CharacterModel;
-  /** VRM を使えなかった理由。使えたときは `null`。 */
+  /** The reason VRM couldn't be used. `null` when it worked. */
   fallbackReason: string | null;
 }
 
-export async function loadCharacter(url: string = DEFAULT_VRM_URL): Promise<LoadedCharacter> {
+/** What Core said about the model. `path: null` means the Content Pack ships none. */
+export interface ModelSource {
+  path: string | null;
+  reason: string;
+}
+
+export async function loadCharacter(source: ModelSource): Promise<LoadedCharacter> {
+  const locale = cachedLocale();
+  if (!source.path) {
+    // **Not an error.** A voice-only Content Pack is a legitimate Content Pack
+    return { model: createPlaceholder(), fallbackReason: source.reason };
+  }
+
   try {
-    // 404 のときに GLTFLoader の例外を待たず、先に存在を確かめる。
+    const url = getPlatformShell().toAssetUrl(source.path);
+    // Checks existence first instead of waiting for GLTFLoader's exception on a 404.
+    // **A refusal by Shell's scope arrives here as a failed response**, not as a throw
     const probe = await fetch(url, { method: "HEAD" });
     if (!probe.ok) {
       return {
         model: createPlaceholder(),
-        fallbackReason: `VRM が見つかりません (${probe.status}): ${url}`,
+        fallbackReason: translate(locale, "character.load.status", {
+          status: probe.status,
+          path: source.path,
+        }),
       };
     }
     return { model: await loadVrm(url), fallbackReason: null };
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    return { model: createPlaceholder(), fallbackReason: `VRM を読み込めません: ${reason}` };
+    return {
+      model: createPlaceholder(),
+      fallbackReason: translate(locale, "character.load.failed", { reason }),
+    };
   }
 }

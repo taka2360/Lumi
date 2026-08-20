@@ -1,6 +1,6 @@
-"""WAV を読む。**純粋関数**（デバイスに触らない）。
+"""Reads and writes WAV data. **Pure functions** (never touches a device).
 
-エンジンの出力を信用しない（Invariant 3）。壊れていたら明示的に失敗する。
+Never trust the engine's output (Invariant 3). Fails explicitly if malformed.
 """
 
 from __future__ import annotations
@@ -9,9 +9,13 @@ import io
 import wave
 from dataclasses import dataclass
 
+import numpy as np
+
+from lumi.audio.ring import Samples
+
 
 class WavError(ValueError):
-    """WAV として読めなかった。"""
+    """Couldn't be read as WAV."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -38,3 +42,21 @@ def decode_wav(data: bytes) -> Wav:
             )
     except (wave.Error, EOFError) as error:
         raise WavError(str(error)) from error
+
+
+def encode_wav(mono: Samples, sample_rate: int) -> bytes:
+    """Serialize a mono float32 waveform as 16-bit PCM WAV.
+
+    **For listening to what Core actually heard** (`lumi.audio.dump`). Values are clipped
+    rather than normalized: a scaled dump would hide clipping, which is one of the things
+    the dump exists to reveal.
+    """
+    clipped = np.clip(mono.astype(np.float32, copy=False), -1.0, 1.0)
+    pcm = (clipped * 32767.0).astype("<i2").tobytes()
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as sink:
+        sink.setnchannels(1)
+        sink.setsampwidth(2)
+        sink.setframerate(sample_rate)
+        sink.writeframes(pcm)
+    return buffer.getvalue()

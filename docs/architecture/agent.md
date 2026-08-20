@@ -31,8 +31,8 @@ class Activity:
     id: ActivityId
     kind: ActivityKind          # conversation | autonomous | task | game | idle
     actor: Actor                # user_initiated | self_initiated | scheduled | system
-    priority: int
-    interruptible_by: set[int]
+    priority: int               # priority_of(kind, actor) が決める。提案者は渡せない
+    interruptible_at: int       # この値**以上**の priority を持つ提案に割り込まれる
     state: ActivityState        # contracts/state-machines.md
     cancel_token: CancelToken
     deadline: datetime | None
@@ -66,13 +66,45 @@ class AttentionArbiter:
 
 詳細と根拠 → [../contracts/state-machines.md](../contracts/state-machines.md), [ADR-016](../decisions/ADR-016-always-one-activity.md), [ADR-018](../decisions/ADR-018-foreground-and-jobs.md)
 
+### priority と割り込み可否〔ADR-024。値は Provisional〕
+
+> **この表が priority の唯一の定義場所。**（DESIGN.md §12）
+
+**priority は `priority_of(kind, actor)` が決める。** 提案者（LLM・Stage・Extension）は渡せない。
+「この自律行動は緊急です」と主張する経路を作らないため（Invariant 1 を Arbiter 側でも守る）。
+
+| kind | actor | `priority` | `interruptible_at` | 意味 |
+|---|---|---|---|---|
+| `idle` | `system` | **0** | **0** | すべてに割り込まれる。消滅はせず `suspended` になる |
+| `autonomous` | `self_initiated` | 30 | 100 | ユーザー発話にだけ割り込まれる。他の自律には割り込まれない |
+| `task` | `scheduled` | 50 | 100 | 同上 |
+| `game` | （Phase 8） | 60 | 100 | 同上 |
+| **`conversation`** | `user_initiated` | **100** | **100** | **新しいユーザー発話に割り込まれる（barge-in）** |
+
+**値は 10 刻み。** 後から間に挿入できるようにしてある。
+
+```python
+def can_preempt(p: ActivityProposal, current: Activity) -> bool:
+    return p.priority >= current.interruptible_at      # ★ > ではない
+```
+
+**`>=` である理由: barge-in は同一 priority の preempt だから。** 会話中の新しいユーザー発話は
+priority 100 で、現在の会話も 100 である。`>` にすると barge-in が動かない。
+**同じ強さのものは、新しい方が勝つ。**
+
+**値を2つ持つ理由:** 「どれくらい重要か」（priority）と「どれくらい邪魔されたくないか」
+（`interruptible_at`）は別の軸である。1つに潰すと、game（強いが中断されたくない）と
+idle（弱いがいつでも中断してよい）を同時に表現できない。
+
+根拠・代替案・捨てたもの → [ADR-024](../decisions/ADR-024-activity-priority.md)
+
 ### propose の判定
 
 ```python
 def propose(self, p: ActivityProposal) -> Accepted | Deferred | Rejected:
     cur = self.current()
 
-    if p.priority in cur.interruptible_by:
+    if can_preempt(p, cur):
         new = self._accept(p)                        # 3. accepted
         self._begin_interrupt(cur, reason=f"preempted_by:{p.kind}")   # 1-2
         self._foreground = new.id                    # 4. ★切り替え
@@ -151,6 +183,49 @@ effective_trust = join(block_trust, history_trust, session_trust)
 ```
 
 **トークン予算を固定し、超過時に何を落とすかを決定論的に決める。** LLM に「適当に切る」をさせない。
+
+#### トークン予算と切り落とし順序〔Phase 1 実装時に確定。値は Provisional〕
+
+> **この表が切り落とし順序の唯一の定義場所。**（DESIGN.md §12）
+
+予算はモデルの文脈長ではなく **`prompt_budget_tokens`（既定 3000）** で固定する。
+文脈長に合わせると、モデルを替えた瞬間にレイテンシ特性が変わる。**SLO はモデルではなく
+Lumi が守る約束**なので、予算は Lumi 側が決める。
+
+| 順位 | 落とすもの | 理由 |
+|---|---|---|
+| — | **persona** | 落とすと人格が消える。**絶対に落とさない** |
+| — | **現在のユーザー発話** | 落とすと何に答えるのか分からなくなる。**絶対に落とさない** |
+| 1 | 会話ターン（**古い順**） | 落ちても会話は続く |
+| 2 | ContextBlock（**古い順**） | **このターンの判断材料**。落とすと「さっきのツール結果」を見ずに答える |
+
+**ContextBlock を会話履歴より後に落とすのは、ツールループのため。** ツール結果を先に落とすと、
+LLM は自分が呼んだツールの結果を見ないまま次の判断をする。それは間違った答えを速く出すだけである。
+
+#### 落とせないものだけで予算を超えたとき
+
+persona と現在の発話だけで予算を超えることはありうる（長い persona / 長い発話）。
+このとき**落とせるものは何も残っていない。**
+
+**そのまま組み立てて送る。ターンを拒否しない。** ただし `over_budget` を立て、
+Inspector とログに出す（`prompt.truncated` の `over_budget=true`）。**黙って超えない。**
+
+拒否しない理由は2つある。**予算はモデルの制限ではなく Lumi の遅延の約束**であり、
+超えても文脈長には収まるのが普通である。そして**トークン数は推定である**（下記）。
+近似が閾値をまたいだだけで Lumi が黙り込むのは、遅く答えることより悪い
+——ユーザーから見れば「話しかけたのに何も起きない」であり、理由は画面のどこにも出ない。
+
+**落とすのはプロンプトであって Working Memory ではない。** Session は落とさない。
+したがって `history_trust` も `session_trust` も切り落としで下がらない（Invariant 7）。
+
+**`block_trust` は「渡された全ブロックの join」であって「プロンプトに載ったブロックの join」ではない。**
+ここを取り違えると、**予算超過で untrusted ブロックが落ちた瞬間に taint が消える。**
+この経路は、sticky な `session_trust` と、この規則の2枚で塞いでいる。
+
+**保証しないこと**: トークン数は**推定である**。Phase 1 は文字数からの近似
+（日本語 1文字 ≈ 1トークン / ASCII 4文字 ≈ 1トークン）を使い、実際の tokenizer を呼ばない。
+LLM を替えるたびに tokenizer を取得するのは network-optional に反し、
+プロンプト組み立ての予算（p50 0.03 s）にも入らない。**近似なので予算は保守的に取る。**
 
 #### trust の集計
 
@@ -301,7 +376,10 @@ async with arbiter.inference_lease(job) as lease:
 | 2 | 会話中の自律提案が `Deferred` になり、`DeferredQueue` に入る |
 | 2b | `DeferredQueue` の提案が TTL で破棄される |
 | 3 | idle 中の自律提案が `Accepted` になる |
-| 4 | 会話中のユーザー発話が既存 Activity を preempt する |
+| 3b | **`priority_of()` が全 kind × actor で表通りの値を返す**（表駆動） |
+| 3c | **`ActivityProposal` に priority を渡す経路が存在しない**（静的検査。ADR-024） |
+| 3d | **`can_preempt` が生の数値ではなく `ActivityProposal` を受け取る**（誰も決めていない priority が比較に届く経路を作らない。ADR-024） |
+| 4 | 会話中のユーザー発話が既存 Activity を preempt する（**同一 priority の `>=` による preempt**） |
 | 4b | **Job が foreground を取らない** |
 | 4c | **foreground が推論を要求すると Job の `inference_lease` が revoke される** |
 | 4d | **revoke された Job が `cooperative` に中断し、後で再開する** |
@@ -310,6 +388,7 @@ async with arbiter.inference_lease(job) as lease:
 | 6 | `InterruptResult` が停止した Tool と abandoned な Tool を正しく報告する |
 | 7 | ツールループが `max_steps` / `deadline` / cancel で正しく抜ける |
 | 8 | PromptAssembly が予算超過時に決定論的に切り落とす（スナップショットテスト） |
+| 8b | **落とせないものだけで予算を超えても、persona と現在の発話は残り、`over_budget` が立つ**（黙って超えず、ターンも拒否しない） |
 | 9 | `<|ACT|>` マーカーが音声化テキストから除去される |
 | 10 | `before_tool` Hook の veto がツール実行を止める |
 | 11 | Activity の状態遷移が Arbiter 以外から実行できない |

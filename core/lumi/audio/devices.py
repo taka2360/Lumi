@@ -1,32 +1,36 @@
-"""どのデバイスを、どのホスト API で、どのレートで開くか。**純粋関数**。
+"""Which device, on which host API, at which rate to open. **Pure functions.**
 
-設計 → docs/architecture/audio.md §8 / docs/decisions/ADR-020-split-audio-streams.md
+Design → docs/architecture/audio.md §8 / docs/decisions/ADR-020-split-audio-streams.md
 
-**入出力は別ストリームで開く。** duplex は使わない（機材によって開けたり開けなかったりするため）。
-したがってここが決めるのは「入力の計画」と「出力の計画」であり、両者は独立している。
+**Input and output are opened as separate streams.** Duplex isn't used (whether it
+opens or not depends on hardware). So what's decided here is "the input plan" and "the
+output plan," independently of each other.
 
-デバイス一覧の取得（`sounddevice` に触る部分）は `probe.py` にある。
-ここは受け取ったテーブルから決めるだけなので、**デバイスが1つも無い CI でもテストできる。**
+Fetching the device list (the part that touches `sounddevice`) lives in `probe.py`.
+This module only decides from a table it's handed, so **it's testable even in CI with
+zero devices.**
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-#: Windows で優先するホスト API。**実測に基づく**（docs/measurements/phase0.md）。
-#: MME は出力遅延 209 ms で barge-in が成立しない。DirectSound は WASAPI の上に乗る分だけ遅い。
+# : Preferred host API on Windows. **Based on measurements** (docs/measurements/phase0.md). : MME
+# has 209 ms output latency, which rules out barge-in. DirectSound is slower by the layer it adds on
+# top of WASAPI.
 PREFERRED_HOST_APIS = ("Windows WASAPI",)
 
-#: 遅延が大きく barge-in に向かないホスト API。選ばざるを得ないときは警告する。
+#: Host APIs with high latency, unsuited to barge-in. Warns when there's no choice but to pick one.
 SLOW_HOST_APIS = ("MME", "Windows DirectSound")
 
 
 @dataclass(frozen=True, slots=True)
 class HostApi:
-    """ホスト API 1つと、**その中での既定デバイス**。
+    """One host API and **its default device within that API.**
 
-    既定はホスト API ごとに違う。`sounddevice` の全体既定（`sd.default.device`）は
-    PortAudio が選んだホスト API（Windows では MME）のものなので、**そちらを見てはいけない。**
+    The default differs per host API. `sounddevice`'s overall default
+    (`sd.default.device`) belongs to whichever host API PortAudio picked (MME on
+    Windows), so **that one must not be used.**
     """
 
     name: str
@@ -36,7 +40,7 @@ class HostApi:
 
 @dataclass(frozen=True, slots=True)
 class Device:
-    """PortAudio のデバイス1つ。**`sounddevice` の辞書をそのまま持ち回らない。**"""
+    """One PortAudio device. **Never pass `sounddevice`'s raw dict around as-is.**"""
 
     index: int
     name: str
@@ -56,7 +60,7 @@ class Device:
 
 @dataclass(frozen=True, slots=True)
 class StreamPlan:
-    """1本のストリームをどう開くか。"""
+    """How to open one stream."""
 
     device: Device
     samplerate: int
@@ -70,7 +74,7 @@ class StreamPlan:
 
 @dataclass(frozen=True, slots=True)
 class AudioPlan:
-    """入力と出力の計画。**入力が無いことは正常な状態**（壊れているのではない）。"""
+    """The input and output plans. **Having no input is a normal state** (not broken)."""
 
     capture: StreamPlan | None
     playback: StreamPlan | None
@@ -86,26 +90,27 @@ class AudioPlan:
 
 
 def _rate_of(device: Device) -> int:
-    """**デバイスが受け付けるレートで開く。**
+    """**Opens at whatever rate the device accepts.**
 
-    16 kHz（VAD のレート）で開くことはできない。WASAPI 共有モードは
-    エンドポイントの mix format のレートしか受け付けない（実測）。
-    16 kHz へは Core 内でリサンプルする（Phase 1）。
+    Can't open at 16 kHz (VAD's rate). WASAPI shared mode only accepts the endpoint's
+    mix format rate (observed). Resampling to 16 kHz happens inside Core (Phase 1).
     """
     return round(device.default_samplerate) or 48000
 
 
 def _ordered(host_apis: list[HostApi]) -> list[HostApi]:
-    """優先するホスト API を先に、残りは与えられた順に。"""
+    """Preferred host APIs first, the rest in the order given."""
     preferred = [api for name in PREFERRED_HOST_APIS for api in host_apis if api.name == name]
     return preferred + [api for api in host_apis if api not in preferred]
 
 
 def _pick(devices: list[Device], host_apis: list[HostApi], *, capture: bool) -> Device | None:
-    """**ユーザーが OS で選んだ既定デバイス**を、優先ホスト API から順に探す。
+    """Searches for **the default device the user picked in the OS**, going through
+    preferred host APIs in order.
 
-    デバイス列の先頭を採ってはいけない。そこに居るのは「電源の入っていないモニタ」や
-    「接続されていない Bluetooth ヘッドセット」であって、ユーザーが選んだものではない（実測）。
+    Never take the first entry in the device list. What sits there is things like "a
+    powered-off monitor" or "a disconnected Bluetooth headset" — not what the user
+    chose (observed).
     """
     by_index = {device.index: device for device in devices}
 
@@ -119,7 +124,8 @@ def _pick(devices: list[Device], host_apis: list[HostApi], *, capture: bool) -> 
         chosen = usable(by_index.get(index) if index is not None else None)
         if chosen is not None:
             return chosen
-    # 既定が無いホスト API しか無い場合の最後の手段。**それでも優先順は守る。**
+    # Last resort when only host APIs without a default exist. **Preference order is still
+    # respected.**
     for host_api in _ordered(host_apis):
         for device in devices:
             chosen = usable(device)
@@ -129,15 +135,15 @@ def _pick(devices: list[Device], host_apis: list[HostApi], *, capture: bool) -> 
 
 
 def plan_audio(devices: list[Device], host_apis: list[HostApi]) -> AudioPlan:
-    """開くべきストリームを決める。**デバイスに触らない。**"""
+    """Decides which streams to open. **Never touches a device.**"""
     warnings: list[str] = []
 
     capture_device = _pick(devices, host_apis, capture=True)
     playback_device = _pick(devices, host_apis, capture=False)
 
     if capture_device is None:
-        # **実在する。** 録音デバイスが1つも有効でない PC は珍しくない。
-        # 壊れているのではないので、例外ではなく状態として返す。
+        # **This happens for real.** PCs with zero enabled recording devices are not rare.
+        # Not broken, so this is returned as a state, not an exception.
         warnings.append("入力デバイスが1つも無い。音声入力は使えない")
     if playback_device is None:
         warnings.append("出力デバイスが1つも無い。音声出力は使えない")

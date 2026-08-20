@@ -1,58 +1,82 @@
 /**
- * 起動中の画面。**キャラクターが出るまでの間、何が起きているかを出す。**
+ * The screen shown while starting up. **Shows what's happening until the character appears.**
  *
- * 設計 → docs/architecture/ui.md「起動フェーズ」
+ * Design → docs/architecture/ui.md "Boot phases"
  *
- * 立っているのに反応しないキャラクターは壊れて見える。エンジンの取得に数分、
- * 起動に十数秒かかるので、その間は代わりにこれを出す。
+ * A character that's standing there but unresponsive looks broken. Fetching the
+ * engine takes minutes and starting it takes a dozen-odd seconds, so this is shown
+ * in the meantime instead.
  *
- * **主語は Lumi。** 見出しは常に「Lumi を起動しています」で、エンジンの取得・起動は
- * その内訳として下に添える。エンジン名だけを出すと、Lumi ではなく外部エンジンを
- * 起動しているように見える。
+ * **The subject is always Lumi.** The heading always reads "Starting Lumi," with
+ * fetching/starting the engine attached below as a detail. Showing just the engine
+ * name would make it look like an external engine, not Lumi, is starting.
  *
- * **フェーズを決めるのは Core。** ここは配られたものを表示するだけで、
- * 「そろそろ出してよいだろう」という判断を持たない。
+ * **Core decides the phase.** This component only displays what it's handed —
+ * it never judges "it's probably okay to show it now."
  */
 
-import type { TtsSetupSnapshot } from "../core/store";
+import type { SetupSnapshot } from "../core/store";
+import { type Locale, translate } from "../i18n";
+import { useLocale } from "../i18n/provider";
 
-const TITLE = "Lumi を起動しています…";
-
-function percent(progress: number | null): string {
-  return `${Math.round((progress ?? 0) * 100)}%`;
+interface Step {
+  step: string;
+  note: string;
+  /** The bar's value, or `null` for no bar. */
+  progress: number | null;
 }
 
-/** 今どの内訳を進めているか。**見出しではなく、その下に添える1行。** */
-function step(tts: TtsSetupSnapshot, connected: boolean): { step: string; note: string } {
+/**
+ * Which detail step is currently in progress. **Not the heading — a line attached below it.**
+ *
+ * `installing` covers two different fetches now, so **which one is running is read from
+ * the component states**, never guessed. Saying "fetching the engine" while the speech
+ * model downloads would be a plain lie about what the network is doing.
+ */
+function step(setup: SetupSnapshot, connected: boolean, locale: Locale): Step {
   if (!connected) {
-    return { step: "Lumi Core に接続しています…", note: "" };
+    return { step: translate(locale, "boot.connecting"), note: "", progress: null };
   }
-  const engine = tts.engine_name ?? "音声合成エンジン";
-  switch (tts.boot) {
-    case "installing":
+  const engine = setup.tts.engine_name ?? translate(locale, "setup.engine.generic");
+  if (setup.boot === "installing") {
+    if (setup.stt.state === "installing") {
       return {
-        step: `${engine} を取得しています… ${percent(tts.progress)}`,
-        note: "公式の配布元から取得しています。約 200MB あります。",
+        step: translate(locale, "boot.speechModel.fetching", {
+          percent: Math.round((setup.stt.progress ?? 0) * 100),
+        }),
+        note: translate(locale, "boot.speechModel.note"),
+        progress: setup.stt.progress ?? 0,
       };
-    case "starting":
-      return {
-        step: `${engine} を起動しています…`,
-        // **初回が長いことを先に言う。** 言わないと固まったように見える（実測 2 分）。
-        note: "初回はエンジンが音声モデルを取得するため、数分かかることがあります。",
-      };
-    default:
-      return { step: "準備しています…", note: "" };
+    }
+    return {
+      step: translate(locale, "boot.engine.fetching", {
+        engine,
+        percent: Math.round((setup.tts.progress ?? 0) * 100),
+      }),
+      note: translate(locale, "boot.engine.note"),
+      progress: setup.tts.progress ?? 0,
+    };
   }
+  if (setup.boot === "starting") {
+    return {
+      step: translate(locale, "boot.engine.starting", { engine }),
+      // **States up front that the first run takes a while.** Without this it looks frozen
+      // (observed at 2 minutes).
+      note: translate(locale, "boot.starting.note"),
+      progress: null,
+    };
+  }
+  return { step: translate(locale, "boot.preparing"), note: "", progress: null };
 }
 
-export function BootScreen({ tts, connected }: { tts: TtsSetupSnapshot; connected: boolean }) {
-  const { step: current, note } = step(tts, connected);
-  const progress = connected && tts.boot === "installing" ? (tts.progress ?? 0) : null;
+export function BootScreen({ setup, connected }: { setup: SetupSnapshot; connected: boolean }) {
+  const locale = useLocale();
+  const { step: current, note, progress } = step(setup, connected, locale);
 
   return (
     <div className="boot">
       <div className="boot__spinner" aria-hidden="true" />
-      <p className="boot__title">{TITLE}</p>
+      <p className="boot__title">{translate(locale, "boot.title")}</p>
       <p className="boot__step">{current}</p>
       {progress !== null && (
         <div className="boot__bar">

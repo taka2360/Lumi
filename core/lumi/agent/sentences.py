@@ -1,0 +1,118 @@
+"""Sentence splitting — cuts the LLM's token stream into TTS-sized units.
+
+Design → docs/architecture/audio.md §6
+
+## Why sentence-sized units
+
+**Time to first sound is almost the entire perceived experience** (SLO p50 < 1.2 s).
+Waiting for the full response means longer replies wait longer. Start speaking the first
+sentence as soon as it's ready.
+
+## Don't cut too aggressively — except for the very first segment
+
+Shorter cuts start speech sooner, but **choppy audio breaks intonation**.
+Cut on the punctuation mark "。", not "、". Only fall back to "、" when a segment is too long.
+
+**The first segment is the exception.** Waiting for "。" delays the first sound, and that
+delay happens exactly once per utterance, at the place that dominates how the reply feels
+(`llm_first_segment_ms` in docs/architecture/audio.md §7). So the first segment also cuts on
+"、" and has a much shorter length cap.
+
+The trade-off is accepted deliberately: **the first segment's intonation suffers.** Silence
+before the reply starts hurts more than that. It is a bet that "starts speaking right away"
+beats "pauses, then speaks naturally."
+
+## Don't wait for a terminator
+
+A `」` might follow right after `やった！` — but **waiting for it always delays the first
+sentence by a full chunk**. The delay hits "time to first sound," which is almost the entire
+perceived experience. Cut without waiting; stray closing marks get dropped by `is_speakable`.
+**Don't wait for something that won't be spoken.**
+"""
+
+from __future__ import annotations
+
+from typing import Final
+
+#: A sentence ends here
+TERMINATORS: Final = frozenset("。！？!?\n")
+# : Closing marks that may follow a terminator. **Include these before cutting** (don't drop the ！
+# in "そうだね！")
+CLOSERS: Final = frozenset("」』）)】〕》”\"'…♪〜~ 　")
+#: If nothing terminates before this length, give up and cut here [Provisional]
+MAX_CHARS: Final = 60
+#: Length cap for the **first** segment [Provisional]. Short, to get sound out fast
+FIRST_MAX_CHARS: Final = 20
+#: Preferred break points to use when giving up
+SOFT_BREAKS: Final = frozenset("、,・：:；;")
+
+#: Fragments consisting only of these are never sent to TTS (nothing to speak)
+_UNSPEAKABLE: Final = frozenset("。！？!?、,・：:；;「」『』（）()【】〕《》\"'…♪〜~\n\r\t 　")
+
+
+class SentenceStream:
+    """Streaming split. **Only returns confirmed sentences.**"""
+
+    __slots__ = ("_buffer", "_emitted")
+
+    def __init__(self) -> None:
+        self._buffer = ""
+        #: Whether the first segment has already been handed off. **Only it gets cut short**
+        self._emitted = False
+
+    def feed(self, text: str) -> list[str]:
+        self._buffer += text
+        sentences: list[str] = []
+
+        while True:
+            cut = self._find_cut()
+            if cut is None:
+                break
+            head, self._buffer = self._buffer[:cut], self._buffer[cut:]
+            if is_speakable(head):
+                sentences.append(head.strip())
+                self._emitted = True
+
+        return sentences
+
+    def flush(self) -> list[str]:
+        """The stream has ended. **Flush the remainder** (speak it even without a terminator)."""
+        remainder, self._buffer = self._buffer, ""
+        return [remainder.strip()] if is_speakable(remainder) else []
+
+    def _find_cut(self) -> int | None:
+        first = not self._emitted
+        limit = FIRST_MAX_CHARS if first else MAX_CHARS
+
+        # **Only the first `limit` characters are searched.** One long stream chunk can carry
+        # a terminator well past the cap, and scanning to it would emit the whole chunk —
+        # the cap exists precisely because "LLM が最初の句読点まで長く喋れば、上限文字数で
+        # 切られるまで待つ" (docs/architecture/audio.md §6)
+        window = self._buffer[:limit]
+        for index, char in enumerate(window):
+            if char in TERMINATORS:
+                end = index + 1
+                # Closers are read past the window: they follow a terminator that is already
+                # inside the cap, and **`」` must not be split off `そうだね！`**
+                while end < len(self._buffer) and self._buffer[end] in CLOSERS:
+                    end += 1
+                return end
+            # **The first segment also cuts on "、".** Getting sound out beats intonation, once
+            if first and char in SOFT_BREAKS:
+                return index + 1
+
+        if len(self._buffer) < limit:
+            return None
+
+        # No terminator arrived. **Give up, but still choose where to cut**
+        for index in range(len(window) - 1, 0, -1):
+            if window[index] in SOFT_BREAKS:
+                return index + 1
+        return limit
+
+
+def is_speakable(text: str) -> bool:
+    """Whether there's anything to speak. **Never send symbol-and-whitespace-only fragments to
+    TTS.**
+    """
+    return any(char not in _UNSPEAKABLE for char in text)

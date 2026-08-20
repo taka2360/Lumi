@@ -19,25 +19,28 @@ tauri-build = { version = "2.6.3", features = [] }
 serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-tauri = { version = "2.11.3", features = ["tray-icon", "image-png"] }
+# `protocol-asset`: Content Pack のアセットを WebView に読ませる（ADR-029）。
+# **読める範囲は実行時に Shell が決める** → src/content_pack.rs
+tauri = { version = "2.11.3", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-log = "2"
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "process", "io-util", "time", "sync"] }
 tokio-tungstenite = "0.29.0"
 futures-util = "0.3.34"
 rand = "0.9.5"
-windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61.2", features = ["Win32_System_JobObjects", "Win32_Foundation", "Win32_System_Threading", "Win32_Globalization"] }
 
 [profile.release]
-# 効果は限定的（実測でコード部分が 1 MB 程度縮む）。**MSVC はデバッグ情報を .pdb に出す**ので、
-# `strip` で exe が劇的に小さくなるわけではない。インストーラサイズを支配していたのは
-# フロントエンドに紛れ込んだアセットの方だった → docs/measurements/phase0.md
-# `panic = "abort"` は入れない。Shell は「拒否」を担うので、
-# **落ちるにしても巻き戻して落ちる**方がよい（unwind を殺すと Drop も走らない）。
+# Limited effect (measured: the code portion shrinks by about 1 MB). **MSVC
+# emits debug info to a .pdb**, so `strip` doesn't dramatically shrink the
+# exe. What dominated the installer size was assets that had crept into the
+# frontend → docs/measurements/phase0.md
+# `panic = "abort"` is not set. Shell is responsible for "rejection," so
+# **even if it does go down, unwinding on the way down is preferable** (killing unwind also skips Drop).
 strip = "symbols"
 lto = true
 codegen-units = 1
 
 [lints.clippy]
-# Shell は「拒否」だけを持つ。panic で落ちると拒否できなくなるため、
-# unwrap / expect は原則書かない（起動シーケンスの初期化のみ例外）。
+# Shell holds only "rejection." Panicking would make it unable to reject,
+# so unwrap / expect are avoided as a rule (the only exception is startup-sequence initialization).
 unwrap_used = "warn"

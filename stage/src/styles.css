@@ -1,5 +1,5 @@
-/* Stage は透過ウィンドウ。**背景を塗らない**。
-   ここで色を塗ると、透過ウィンドウの意味が無くなる。 */
+/* The Stage is a transparent window. **Never paint a background.**
+   Painting a color here would defeat the point of a transparent window. */
 :root {
   color-scheme: light dark;
 }
@@ -13,8 +13,9 @@ body,
   height: 100%;
   background: transparent;
   overflow: hidden;
-  /* 透過部分でマウスイベントを拾わない。クリックスルーの判定は Shell 側が持つが、
-     WebView 側でも拾わないようにしておく（多層防御ではなく、単純な整合性のため）。 */
+  /* Don't pick up mouse events on the transparent area. The click-through
+     decision belongs to the Shell side, but this keeps the WebView side from
+     picking them up too (for simple consistency, not defense in depth). */
   user-select: none;
   -webkit-user-select: none;
 }
@@ -35,15 +36,15 @@ body {
   height: 100%;
 }
 
-/* ホバー中はうっすら光らせる。クリックスルーが解除されている状態が見えること自体が
-   Phase 0 の検証項目（roadmap 検証手順 4）。 */
+/* A faint glow while hovered. Being able to see click-through released is
+   itself a Phase 0 verification item (roadmap verification step 4). */
 .stage--hover .character {
   filter: drop-shadow(0 0 12px rgba(160, 200, 255, 0.85));
 }
 
-/* オーバーレイ（セットアップ UI と注意書き）。
-   **中身に合わせて縮む**ようにする。ここが広いと、その分だけクリックスルーが
-   解除されてしまう（当たり判定として Shell に渡すため）。 */
+/* The overlay (setup UI and notices).
+   **Shrinks to fit its contents.** Making this wider releases click-through
+   over that much more area (since it's handed to Shell as the hit region). */
 .overlay {
   position: absolute;
   left: 50%;
@@ -98,8 +99,27 @@ body {
   color: #ffb4b4;
 }
 
-/* **取得する / しない を同等に提示する**（ADR-019 原則2）。
-   同じ大きさ・同じ色。片方を目立たせない。 */
+/* A command to run, or where to get something. Monospace so it can be typed accurately. */
+.panel__hint {
+  display: inline-block;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.12);
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  font-size: 11px;
+  /* The one thing here worth selecting — it exists to be copied. */
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+/* Several components can have something to say at once. */
+.panel--compact .panel__status + .panel__status {
+  margin-top: 8px;
+}
+
+/* **Presents "grant" and "decline" as equals** (ADR-019 principle 2).
+   Same size, same color. Never make one stand out over the other. */
 .panel__actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -121,9 +141,9 @@ body {
   background: rgba(255, 255, 255, 0.18);
 }
 
-/* キャラクターを掴む面。ドラッグで移動、ホイールで拡大縮小
-   （docs/architecture/ui.md「ウィンドウの移動と大きさ」）。
-   **キャラクターの上でだけ効く。** 透過部分は Shell がクリックスルーにしている。 */
+/* The surface for grabbing the character. Drag to move, wheel to resize
+   (docs/architecture/ui.md "Moving and resizing the window").
+   **Only active over the character.** Shell makes the transparent area click-through. */
 .stage__grab {
   width: 100%;
   height: 100%;
@@ -134,7 +154,7 @@ body {
   cursor: grabbing;
 }
 
-/* 起動中の表示。キャラクターが出るまでの間に何が起きているかを見せる。 */
+/* The boot-time display. Shows what's happening before the character appears. */
 .boot {
   display: flex;
   flex-direction: column;
@@ -164,14 +184,14 @@ body {
   }
 }
 
-/* 動きを減らす設定を尊重する。**回り続けるものは、その設定の主な対象**。 */
+/* Respects the reduced-motion setting. **Something that spins forever is exactly what that setting targets.** */
 @media (prefers-reduced-motion: reduce) {
   .boot__spinner {
     animation: none;
   }
 }
 
-/* **主語は Lumi。** ここが一番大きい（docs/architecture/ui.md「起動フェーズ」）。 */
+/* **The subject is Lumi.** This is the largest element here (docs/architecture/ui.md "Boot phase"). */
 .boot__title {
   margin: 0;
   font-size: 13px;
@@ -180,7 +200,7 @@ body {
   line-height: 1.5;
 }
 
-/* 今どの内訳を進めているか。見出しより小さくして、内訳であることを見せる。 */
+/* Which sub-step is currently in progress. Smaller than the heading, to show that it's a sub-step. */
 .boot__step {
   margin: 0;
   font-size: 12px;
@@ -211,7 +231,71 @@ body {
   transition: width 200ms ease-out;
 }
 
-/* VRM が未配置であることの表示。**隠さない。** */
+/* The speech bubble (docs/architecture/ui.md "The bubble also lives inside the `stage` window").
+   Sits above the character, inside the window.
+   **`pointer-events: none` is deliberate.** The bubble is never handed to Shell as part
+   of the hit region, so letting the WebView pick up clicks here would make the two
+   disagree about what is clickable. */
+.bubble {
+  position: absolute;
+  left: 50%;
+  top: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  box-sizing: border-box;
+  max-width: calc(100% - 16px);
+  width: max-content;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(20, 24, 34, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  color: #f2f5fb;
+  font-size: 13px;
+  line-height: 1.6;
+  /* Japanese has no spaces, so the default would overflow rather than wrap. */
+  overflow-wrap: anywhere;
+  animation: bubble-in 120ms ease-out;
+}
+
+/* What Core heard the user say. **Deliberately different from Lumi's**: it sits at the
+   bottom, reads lighter, and is right-aligned, so a misrecognition is never mistaken for
+   something Lumi said. */
+.bubble--user {
+  top: auto;
+  bottom: 8px;
+  left: auto;
+  right: 8px;
+  transform: none;
+  max-width: calc(100% - 16px);
+  background: rgba(226, 233, 245, 0.94);
+  border-color: rgba(20, 24, 34, 0.14);
+  color: #1b2130;
+  font-size: 12px;
+  animation-name: bubble-in-user;
+}
+
+@keyframes bubble-in {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+}
+
+@keyframes bubble-in-user {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bubble {
+    animation: none;
+  }
+}
+
+/* A notice that no VRM is placed yet. **Never hide it.** */
 .notice {
   margin: 0;
   padding: 4px 8px;
@@ -221,4 +305,169 @@ body {
   color: #fff;
   background: rgba(0, 0, 0, 0.45);
   border-radius: 6px;
+}
+
+/* Wrapper whose rectangle is handed to Shell as part of the hit region.
+   **Shrinks to its contents** — any wider and it would release click-through over
+   empty desktop for no reason.
+   Hidden by default and shown only on hover or when focused/expanded to preserve immersion. */
+.inspect-anchor {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  width: max-content;
+  max-width: 100%;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms ease-out;
+}
+
+.inspect-anchor--visible,
+.inspect-anchor:focus-within {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .inspect-anchor {
+    transition: none;
+  }
+}
+
+/* Inspector (docs/architecture/ui.md §5). **A development view**, so it is dense and plain.
+   Sits in the corner, collapsed, and is only rendered once Core has sent something. */
+.inspect {
+  margin: 6px;
+  max-width: calc(100% - 12px);
+  font-size: 10px;
+  line-height: 1.45;
+  color: #dfe6f5;
+}
+
+.inspect__toggle {
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(12, 15, 22, 0.85);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.inspect__body {
+  margin-top: 4px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(12, 15, 22, 0.92);
+  max-height: 46vh;
+  overflow: auto;
+  /* Numbers are read by eye and compared down the column. */
+  font-family: "Cascadia Mono", "Consolas", monospace;
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.inspect__acts,
+.inspect__children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inspect__children {
+  margin-left: 12px;
+  opacity: 0.85;
+}
+
+.inspect__act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 1px 0;
+}
+
+/* **The foreground Activity is always exactly one** (Invariant 4). Marked so that a
+   view showing two would be obvious at a glance rather than needing to be read. */
+.inspect__act--fg .inspect__kind {
+  color: #9fd0ff;
+  font-weight: 700;
+}
+
+.inspect__state {
+  opacity: 0.75;
+}
+
+.inspect__intent,
+.inspect__contract {
+  opacity: 0.6;
+}
+
+.inspect__lat {
+  margin-top: 6px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.inspect__lat th {
+  text-align: left;
+  font-weight: 400;
+  opacity: 0.75;
+  padding-right: 10px;
+}
+
+.inspect__lat td {
+  text-align: right;
+}
+
+.inspect__lat-sum th,
+.inspect__lat-sum td {
+  border-top: 1px solid rgba(255, 255, 255, 0.18);
+  opacity: 1;
+}
+
+.inspect__lat-cut th {
+  color: #ffd9a0;
+}
+
+.inspect__empty {
+  margin: 6px 0 0;
+  opacity: 0.6;
+}
+
+/* Settings (roadmap open item #9). Shares the Inspector's dense look — both are
+   information panels, not places to linger. */
+.settings {
+  margin: 6px;
+  max-width: calc(100% - 12px);
+  font-size: 10px;
+  line-height: 1.45;
+  color: #dfe6f5;
+}
+
+.settings__value {
+  text-align: left;
+  padding-right: 10px;
+}
+
+.settings__src {
+  text-align: right;
+  opacity: 0.6;
+}
+
+/* **An override has to stand out.** Otherwise "I changed it and nothing happened". */
+.settings__src--env {
+  color: #ffd9a0;
+  opacity: 1;
+}
+
+.settings__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
 }

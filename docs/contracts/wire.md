@@ -28,6 +28,26 @@ Lumi は Python（Core）・TypeScript（Stage）・Rust（Shell）の3言語で
 **片側だけで完結する値を契約に入れない。** 契約が大きくなるほど、
 「契約に載っているが実は片側にしかない」ものが混ざり、契約全体の信用が落ちる。
 
+### `PROTOCOL_VERSION` は**すべてのフレームに載る**
+
+`hello` だけでなく `command` / `notify` / `request` / `result` のすべてが `v` を持ち、
+**受け手は一致しないフレームを明示的に拒否する。** 「捨てて処理を続ける」だけではなく、
+拒否をログまたは接続状態の変化として観測できなければならない。片方向だけ検査すると、
+検査していない側が「載せなくても動く」状態で固まり、**後からバージョンを上げたときに
+そこだけ素通りする。**
+（Phase 1 実装時、Stage と Shell の `result` だけが `v` を落としており、
+Core が見ていなかったので誰も気づかなかった。）
+
+Core の受信側では、version mismatch は `ProtocolError` として拒否し、
+`WsServer` が `transport.hello.invalid` / `transport.message.invalid` を記録して
+protocol-error の close（4400）を行う。**意味を合意できないフレームに結果を返したり、
+正常なフレームとして処理したりしない。**
+
+Stage も version mismatch を `ProtocolVersionMismatch` として拒否し、close（4400）して
+既存の切断・再接続経路へ渡す。Shell は `parse_command` のエラーを
+`os.command.malformed` として記録する。通常の payload/schema 不正は各受信側の既存の
+fail-closed parser に従うが、**version mismatch だけは黙って drop しない。**
+
 ### 失敗理由（`reason`）を載せない理由
 
 `SetupError.reason` は Stage の `FAILURE_TEXT` が日本語に直しているが、
@@ -99,4 +119,6 @@ wire.json に足す
 | 2 | Stage の `PROTOCOL_VERSION` / イベント名 / コマンド名 / `stage.*` method / 選択肢 / enum 値が一致する | `stage/src/core/wire.test.ts` |
 | 3 | Shell の `PROTOCOL_VERSION` / イベント名 / `os.*` allowlist / ウィンドウ label が一致する | `shell/src-tauri/src/wire_contract.rs` |
 | 4 | **3言語すべてが `protocol_version` を検査している**（1つでも抜けるとその言語だけずれる） | 上記3つが各々検査する |
-| 5 | `wire.json` の `methods.stage` は全て `stage.` で始まり、`methods.os` は全て `os.` で始まる | 1（Core 側で検査） |
+| 5 | `command` / `notify` / `request` / `result` の全フレームが `v` を持つ | Core の `test_protocol.py` / `test_ws_server.py`、Stage の `protocol.test.ts`、Shell の `ws_client.rs` |
+| 6 | **version mismatch は明示的に拒否され、観測可能である**。Core は `ProtocolError`・ログ・close `4400`、Stage は protocol error・close `4400`、Shell はログ付き parse error で fail-closed にする | `core/tests/test_protocol.py` / `core/tests/test_ws_server.py` / `stage/src/core/protocol.test.ts` / `stage/src/core/protocol.request.test.ts` / `shell/src-tauri/src/ws_client.rs` |
+| 7 | `wire.json` の `methods.stage` は全て `stage.` で始まり、`methods.os` は全て `os.` で始まる | 1（Core 側で検査） |
