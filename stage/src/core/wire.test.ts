@@ -28,16 +28,6 @@ import {
   EVENT_HOVER_STATE,
 } from "../platform/tauri";
 import { CMD_CORE_ENDPOINT, EVENT_CORE_ENDPOINT } from "./connection";
-import { PROTOCOL_VERSION } from "./protocol";
-import {
-  BOOT_PHASES,
-  ENGINE_RUNTIMES,
-  LLM_SETUP_STATES,
-  SETTINGS_SOURCES,
-  SETUP_COMPONENTS,
-  STT_SETUP_STATES,
-  TTS_SETUP_STATES,
-} from "./store";
 import {
   CHOICE_INSTALL,
   CHOICE_SKIP,
@@ -51,7 +41,17 @@ import {
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
   METHOD_USER_SAID,
-} from "./useCoreConnection";
+} from "./methods";
+import {
+  BOOT_PHASES,
+  ENGINE_RUNTIMES,
+  LLM_SETUP_STATES,
+  SETTINGS_SOURCES,
+  SETUP_COMPONENTS,
+  STT_SETUP_STATES,
+  TTS_SETUP_STATES,
+} from "./payloads";
+import { PROTOCOL_VERSION } from "./protocol";
 
 interface Wire {
   protocol_version: number;

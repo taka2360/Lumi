@@ -1,20 +1,43 @@
 /**
  * Puts the connection to Core onto React's lifecycle.
  *
- * Only two `stage.*` methods are handled here (Phase 0):
+ * **This is the one place that maps a method name to what it changes.** Every handler
+ * does the same two things and nothing else: parse the payload (`payloads.ts`), then
+ * write it to the store. No handler decides anything — that is Core's job, and a
+ * handler that started branching would be logic leaking into the Stage.
  *
  * | method | kind | meaning |
  * |---|---|---|
- * | `stage.setup.state` | notify | TTS setup state changed |
- * | `stage.setup.prompt` | command | Asked whether to fetch. **The answer is returned as the result** |
+ * | `stage.setup.state` | notify | Setup state for all three components changed |
+ * | `stage.setup.prompt` | **command** | Asked whether to fetch. **The answer is returned as the result** |
  * | `stage.speech.started` | notify | Speech started. Comes with the mouth timeline |
  * | `stage.speech.ended` | notify | Speech ended |
  * | `stage.user.said` | notify | What Core heard the user say |
+ * | `stage.character.model` | notify | Which model to draw (ADR-029) |
+ * | `stage.character.expression` | notify | The face changed |
+ * | `stage.inspector.state` | notify | Activity tree and latency breakdown |
+ * | `stage.settings.state` | notify | The effective settings |
+ *
+ * The one outbound direction is `stage.settings.update` (ADR-028), sent by `updateSettings`.
  */
 
 import { useEffect } from "react";
 
 import { type CoreConnection, connectToCore } from "./connection";
+import {
+  type CHOICE_INSTALL,
+  type CHOICE_SKIP,
+  METHOD_EXPRESSION,
+  METHOD_INSPECTOR,
+  METHOD_MODEL,
+  METHOD_SETTINGS,
+  METHOD_SETTINGS_UPDATE,
+  METHOD_SETUP_PROMPT,
+  METHOD_SETUP_STATE,
+  METHOD_SPEECH_ENDED,
+  METHOD_SPEECH_STARTED,
+  METHOD_USER_SAID,
+} from "./methods";
 import {
   toCharacterModel,
   toExpression,
@@ -24,32 +47,8 @@ import {
   toSetupSnapshot,
   toSpeech,
   toUserSaid,
-  useStageStore,
-} from "./store";
-
-/**
- * The `stage.*` method names Core sends. **`docs/contracts/wire.json` is authoritative** (→ ADR-022).
- *
- * The corresponding constants on the Core side are `METHOD_STATE` / `METHOD_PROMPT`
- * in `setup/coordinator.py` and `METHOD_SPEECH_*` in `greeting.py`. Writing these
- * directly as handler keys means **a typo gets silently dropped as an "unknown
- * method"** (`unhandled_method`).
- */
-export const METHOD_SETUP_STATE = "stage.setup.state";
-export const METHOD_SETUP_PROMPT = "stage.setup.prompt";
-export const METHOD_SPEECH_STARTED = "stage.speech.started";
-export const METHOD_SPEECH_ENDED = "stage.speech.ended";
-export const METHOD_USER_SAID = "stage.user.said";
-export const METHOD_MODEL = "stage.character.model";
-export const METHOD_EXPRESSION = "stage.character.expression";
-export const METHOD_INSPECTOR = "stage.inspector.state";
-export const METHOD_SETTINGS = "stage.settings.state";
-/** Stage → Core (ADR-028). **The only inbound method in Phase 1.** */
-export const METHOD_SETTINGS_UPDATE = "stage.settings.update";
-
-/** The answer to whether to fetch. Core only compares against `CHOICE_INSTALL` (anything else means "don't"). */
-export const CHOICE_INSTALL = "install";
-export const CHOICE_SKIP = "skip";
+} from "./payloads";
+import { useStageStore } from "./store";
 
 type Answer = typeof CHOICE_INSTALL | typeof CHOICE_SKIP;
 
