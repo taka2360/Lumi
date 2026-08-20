@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import math
 import wave
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
@@ -298,13 +299,28 @@ async def test_a_turn_speaks_and_records() -> None:
     assert [t.text for t in rig.session.turns] == ["やあ", "こんにちは。げんきだよ。"]
 
 
-async def test_the_core_tts_speed_reaches_the_voice_config() -> None:
-    rig = Rig(FakeLlm([text("ゆっくり話すね。")]), tts_speed=1.4)
+async def test_runtime_tts_speed_applies_to_next_turn_only() -> None:
+    rig = Rig(
+        FakeLlm([text("最初の速度だよ。"), text("次の速度だよ。")]),
+        tts_speed=1.2,
+    )
     await rig.start()
 
-    await rig.loop.handle_text("速度を変えて")
+    await rig.loop.handle_text("最初のターン")
+    rig.loop.set_tts_speed(1.4)
+    await rig.loop.handle_text("次のターン")
 
-    assert rig.tts.voices[0].speed_scale == 1.4
+    assert [voice.speed_scale for voice in rig.tts.voices] == [1.2, 1.4]
+
+
+@pytest.mark.parametrize("speed", [0.49, 2.01, math.nan, math.inf, -math.inf])
+def test_tts_speed_rejects_invalid_values(speed: float) -> None:
+    with pytest.raises(ValueError, match="tts_speed"):
+        Rig(FakeLlm([text("話せないよ。")]), tts_speed=speed)
+
+    rig = Rig(FakeLlm([text("話せるよ。")]))
+    with pytest.raises(ValueError, match="tts_speed"):
+        rig.loop.set_tts_speed(speed)
 
 
 async def test_the_activity_returns_to_idle() -> None:

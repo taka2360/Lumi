@@ -725,9 +725,7 @@ async def test_aivisspeech_synthesize_sets_voice_parameters() -> None:
     client = AivisSpeechClient(port=10101)
     client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
-        audio = await client.synthesize(
-            "こんにちは", speaker=0, volume_scale=0.4, speed_scale=1.6
-        )
+        audio = await client.synthesize("こんにちは", speaker=0, volume_scale=0.4, speed_scale=1.6)
         assert sent_query.get("volumeScale") == 0.4
         assert sent_query.get("speedScale") == 1.6
         assert audio.wav

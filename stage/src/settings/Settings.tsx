@@ -40,10 +40,13 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
   const [draft, setDraft] = useState(value);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
-  const lastCommitted = useRef(value);
   const snapshot = useMemo(() => ({ value, source }), [value, source]);
+  const lastCommitted = useRef(value);
+  const currentSnapshot = useRef(snapshot);
+  const latestRequestId = useRef(0);
   useEffect(() => {
     // Core owns the value. A new snapshot supersedes any local draft or status.
+    currentSnapshot.current = snapshot;
     setDraft(snapshot.value);
     lastCommitted.current = snapshot.value;
     setError(null);
@@ -56,14 +59,32 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
     if (next === lastCommitted.current) {
       return;
     }
+    const requestId = ++latestRequestId.current;
+    const requestSnapshot = currentSnapshot.current;
     lastCommitted.current = next;
     setDraft(next);
     setError(null);
     setSaved(false);
     try {
       await updateSettings({ [name]: next });
+      if (
+        requestId !== latestRequestId.current ||
+        requestSnapshot !== currentSnapshot.current ||
+        lastCommitted.current !== next
+      ) {
+        return;
+      }
       setSaved(true);
     } catch (failure: unknown) {
+      // A newer request or Core snapshot supersedes this result. Do not let an older
+      // rejection restore a value that is no longer current.
+      if (
+        requestId !== latestRequestId.current ||
+        requestSnapshot !== currentSnapshot.current ||
+        lastCommitted.current !== next
+      ) {
+        return;
+      }
       // **The reason Core gave, shown as-is.** Never "failed to save" with nothing else
       setError(failure instanceof Error ? failure.message : translate(locale, "settings.refused"));
       lastCommitted.current = value;

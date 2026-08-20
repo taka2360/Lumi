@@ -27,6 +27,7 @@ path is the same as production.**
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final, cast
@@ -64,6 +65,7 @@ from lumi.providers.llm.base import (
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import AudioBuffer, STTProvider
 from lumi.providers.tts.base import TTSProvider, VoiceConfig
+from lumi.settings import TTS_SPEED_MAX, TTS_SPEED_MIN
 from lumi.tools.base import ToolContext, ToolResult
 from lumi.tools.registry import ToolRegistry
 from lumi.transport.protocol import Role
@@ -79,6 +81,15 @@ LANGUAGE: Final = "ja"
 #: turn goes nowhere (proposal rejected, LLM down). Seeing the misheard text is most of the
 #: value: "why did it answer that" and "it didn't hear me at all" look identical otherwise.
 METHOD_USER_SAID: Final = "stage.user.said"
+
+
+def _validate_tts_speed(speed: float) -> float:
+    """Keeps the runtime API aligned with the Core-owned settings contract."""
+    if not math.isfinite(speed) or not TTS_SPEED_MIN <= speed <= TTS_SPEED_MAX:
+        raise ValueError(
+            f"tts_speed must be finite and between {TTS_SPEED_MIN} and {TTS_SPEED_MAX}"
+        )
+    return speed
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,7 +142,7 @@ class ReactiveLoop:
         self._session = session or Session()
         self._limits = limits or LoopLimits()
         self._audio = audio
-        self._tts_speed = tts_speed
+        self._tts_speed = _validate_tts_speed(tts_speed)
         self._last_latency: TurnLatency | None = None
         #: `None` unless `LUMI_DEBUG_STT_DUMP=1`. **The only diagnostic that separates
         #: "the audio was already damaged" from "the model got clean audio and still
@@ -149,7 +160,7 @@ class ReactiveLoop:
 
     def set_tts_speed(self, speed: float) -> None:
         """Uses a new Core-owned speed for the next scheduler that is created."""
-        self._tts_speed = speed
+        self._tts_speed = _validate_tts_speed(speed)
 
     # ── Entry point ──────────────────────────────────────────────
 

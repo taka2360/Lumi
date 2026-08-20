@@ -185,9 +185,7 @@ class ConversationRuntime:
 
         payload_out = self._settings.to_payload()
         await self._server.notify(Role.STAGE, METHOD_SETTINGS, payload_out)
-        return {
-            "applied_at_next_start": any(key not in {"locale", "tts_speed"} for key in changes)
-        }
+        return {"applied_at_next_start": any(key not in {"locale", "tts_speed"} for key in changes)}
 
     async def _announce_model(self) -> None:
         """Tells the Stage **which model to draw, and the credit that goes with it** (ADR-029).
@@ -432,7 +430,9 @@ async def warm_tts(providers: ProviderRegistry, setup: SetupCoordinator) -> None
     """
     if not providers.has(ProviderKind.TTS):
         # Not set up, or the fetch was declined. **Not broken**, so the state stays
-        # `stopped` — it really isn't running, and nothing is starting it.
+        # `stopped` — it really isn't running, and nothing is starting it. Still publish
+        # the ready boundary here so `_warm` never invokes `on_ready` after a silent return.
+        await setup.set_runtime(EngineRuntime.STOPPED)
         return
 
     await setup.set_runtime(EngineRuntime.STARTING)
