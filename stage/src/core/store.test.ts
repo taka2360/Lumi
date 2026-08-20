@@ -19,7 +19,7 @@ import {
 
 describe("boot phase", () => {
   it("holds the phase Core broadcast, unchanged", () => {
-    for (const boot of ["setup", "installing", "starting", "ready"]) {
+    for (const boot of ["setup", "installing", "starting", "blocked", "ready"]) {
       expect(toSetupSnapshot({ boot }).boot).toBe(boot);
     }
   });

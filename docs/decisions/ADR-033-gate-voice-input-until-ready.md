@@ -6,6 +6,7 @@
 | Date | 2026-08-19 |
 | 関連 | [../architecture/core.md](../architecture/core.md) §7, [../architecture/ui.md](../architecture/ui.md)「起動フェーズ」, [../architecture/audio.md](../architecture/audio.md) §2 |
 | 実装 | `core/lumi/agent/runtime.py` |
+| 後続 | **[ADR-034](ADR-034-gate-startup-on-complete-setup.md) が Alternative 3 を採用側に変えた**（`ready` が3要素すべてのウォーム完了を意味するようになったため、音声入力の開始もそこまで下がる）。ゲートが `boot: ready` であること自体は変わらない |
 
 ---
 

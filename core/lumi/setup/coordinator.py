@@ -8,9 +8,10 @@ Flow:
 ```
 Startup → detection (local only) → state is determined
 Stage connects → state is broadcast
-  If state is not_configured and it hasn't been asked yet → ask whether to fetch
+  For each component that is not_configured → ask whether to fetch
     "Fetch" → installing (progress broadcast) → installed / failed
-    "Don't fetch" → stays not_configured. **Only remembers that it was asked**
+      failed → say so, and offer "retry" / "not now" again
+    "Not now" → stays not_configured. **Nothing is written down**
 ```
 
 ## Three components, asked about one at a time
@@ -22,6 +23,17 @@ through without reading.
 
 **The order is TTS first.** Being unable to speak is the more visible failure,
 and it is the one whose fetch the boot screen already waits on.
+
+## Nothing here is remembered across starts
+
+Lumi does not run until all three are usable (ADR-034), so **"not now" is not an
+answer to file away** — filing it would mean never asking again about the very
+thing that is blocking startup, leaving the user with a screen that says setup is
+incomplete and no way to finish it. The question comes back next start.
+
+**Re-asking within one start is a different thing, and it is not done.** Lumi
+never repeats a question by itself; the only way back to a question is the user
+pressing "retry" on a failure.
 """
 
 from __future__ import annotations
@@ -29,7 +41,6 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from pathlib import Path
 
 from lumi import logging as lumi_logging
 from lumi import paths, settings
@@ -44,15 +55,16 @@ from lumi.setup.install import (
 )
 from lumi.setup.models import FASTER_WHISPER_LARGE_V3_TURBO, STT_MODELS, ModelArtifact
 from lumi.setup.state import (
+    BootPhase,
     EngineRuntime,
     LlmSetup,
     LlmSetupState,
-    SetupAnswers,
     SetupSnapshot,
     SttSetup,
     SttSetupState,
     TtsSetup,
     TtsSetupState,
+    boot_phase,
 )
 from lumi.transport.protocol import Role
 from lumi.transport.server import NotConnectedError, WsServer
@@ -62,9 +74,6 @@ log = lumi_logging.get_logger(__name__)
 #: How long to wait for the user's choice. **Human time**, so it's long.
 PROMPT_TIMEOUT_S = 600.0
 
-#: The cap on how many times to ask (including retries after a failure). **Never nags.**
-MAX_PROMPTS = 2
-
 #: The method for broadcasting state (Core → Stage).
 METHOD_STATE = "stage.setup.state"
 #: The method for asking whether to fetch (Core → Stage, awaits the result).
@@ -73,6 +82,9 @@ METHOD_PROMPT = "stage.setup.prompt"
 #: The choices the Stage returns in `result`. **A value that goes on the wire**, so
 #: docs/contracts/wire.json is authoritative (→ ADR-022). `CHOICE_SKIP` isn't used in
 #: any comparison, but it's kept here so **only one side of the contract isn't documented**.
+#: The Stage labels `CHOICE_INSTALL` "retry" after a failure — **same choice, and the
+#: retry count is deliberately unbounded** since the press always comes from the user
+#: (ADR-034), and most fetch failures are the kind that fix themselves.
 CHOICE_INSTALL = "install"
 CHOICE_SKIP = "skip"
 
@@ -110,8 +122,6 @@ class SetupCoordinator:
         self._server = server
         self._env = env
         self._snapshot = SetupSnapshot()
-        self._answers_path: Path = paths.setup_state_file()
-        self._answers = SetupAnswers()
         # **Kept as two separate flags.** `_prompting` is "is this sequence
         # currently in progress" (prevents duplicate runs); `_awaiting_answer` is
         # "is a question currently shown on screen" (boot phase). Conflating them
@@ -128,10 +138,17 @@ class SetupCoordinator:
     def state(self) -> SetupSnapshot:
         return self._snapshot
 
+    @property
+    def boot(self) -> BootPhase:
+        """The phase the Stage is currently being shown. **The same derivation, not a
+        second one** — `_broadcast` and this read the one pure function, so what the
+        runtime acts on and what the user sees can never disagree (ADR-034).
+        """
+        return boot_phase(self._snapshot, prompting=self._awaiting_answer)
+
     async def initialize(self) -> None:
         """Called exactly once at startup. **No external communication.**"""
         try:
-            self._answers = await asyncio.to_thread(SetupAnswers.load, self._answers_path)
             await self._redetect()
         finally:
             # Even on failure, whatever is waiting is never left hanging.
@@ -274,16 +291,11 @@ class SetupCoordinator:
     async def _ask_for_tts(self) -> None:
         if self._snapshot.tts.state is not TtsSetupState.NOT_CONFIGURED:
             return
-        if self._answers.tts_prompt_answered:
-            # **Once answered, never asked again.** Asking every startup is the textbook definition
-            # of annoying.
-            return
         await self._ask_and_maybe_install(
             component=COMPONENT_TTS,
             install=self.install_tts_engine,
             failed=lambda: self._snapshot.tts.state is TtsSetupState.FAILED,
             reason=lambda: self._snapshot.tts.reason,
-            remember=lambda answers: replace(answers, tts_prompt_answered=True),
         )
 
     async def _ask_for_stt(self) -> None:
@@ -293,14 +305,11 @@ class SetupCoordinator:
             # The selected name is not pinned, so there is nothing this could fetch.
             # **A question with no good answer is worse than no question**
             return
-        if self._answers.stt_prompt_answered:
-            return
         await self._ask_and_maybe_install(
             component=COMPONENT_STT,
             install=self.install_speech_model,
             failed=lambda: self._snapshot.stt.state is SttSetupState.FAILED,
             reason=lambda: self._snapshot.stt.reason,
-            remember=lambda answers: replace(answers, stt_prompt_answered=True),
         )
 
     async def _ask_and_maybe_install(
@@ -310,17 +319,23 @@ class SetupCoordinator:
         install: Callable[[], Awaitable[None]],
         failed: Callable[[], bool],
         reason: Callable[[], str | None],
-        remember: Callable[[SetupAnswers], SetupAnswers],
     ) -> None:
-        """Asks, and fetches if chosen. **Asks again exactly once if it fails.**
+        """Asks, and fetches if chosen. **After a failure, offers the choice again.**
 
-        Only one retry. Beyond that, the annoyance outweighs the benefit.
-        State stays `failed` since it's never reverted to "not yet attempted."
+        The loop only turns when the user chose to fetch *and* the fetch failed, so
+        **every repetition is one the user asked for** — which is why there is no cap on
+        it (ADR-034). Most fetch failures are transient (a dropped connection, the
+        distributor having a bad minute), and without a retry the only way to use a
+        connection that already came back is to restart Lumi.
+
+        "Not now" ends it here. The state stays `not_configured` / `failed` — **never
+        reverted to "not yet attempted"** — and the boot phase becomes `blocked`, which
+        is what puts the missing pieces and their fixes on screen.
         """
         retry = False
         detail: str | None = None
 
-        for _ in range(MAX_PROMPTS):
+        while True:
             # **Broadcasts the phase before showing the question.** Forgetting this
             # would leave the Stage showing a loading indicator while the question
             # sits hidden behind it.
@@ -334,22 +349,20 @@ class SetupCoordinator:
                     timeout=PROMPT_TIMEOUT_S,
                 )
             except (NotConnectedError, TimeoutError):
-                # No answer was received. **Never counted as "asked"** (asked again next startup).
+                # Nobody is there to answer. **Stop asking** — the next start asks again.
                 log.info("setup.prompt.unanswered", component=component)
+                self._awaiting_answer = False
                 return
 
             # **The question disappears the moment an answer arrives.** Never lets the question
             # paint over the fetching phase.
             self._awaiting_answer = False
             choice = result.payload.get("choice") if result.ok else None
-            # **An unrecognized answer is treated the same as "don't fetch"** (fail-closed).
+            # **An unrecognized answer is treated the same as "not now"** (fail-closed).
             chose_install = choice == CHOICE_INSTALL
             log.info(
                 "setup.prompt.answered", component=component, choice=choice, install=chose_install
             )
-
-            self._answers = remember(self._answers)
-            await asyncio.to_thread(self._answers.save, self._answers_path)
 
             if not chose_install:
                 return
@@ -358,6 +371,8 @@ class SetupCoordinator:
             if not failed():
                 return
 
+            # **A failure is never smoothed over into "done".** It goes back to the user
+            # with its reason and the same two choices.
             retry = True
             detail = reason()
 

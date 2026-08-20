@@ -5,11 +5,17 @@ Startup sequence → docs/architecture/core.md §7
 Separated out from `__main__` so **"what connects to what" can be read on one screen**.
 This replaces Phase 0's `Greeter`; `greeting.py` was absorbed into here and no longer exists.
 
-## Not-yet-set-up is not "broken"
+## Not-yet-set-up is not "broken", but it does stop Lumi from coming out
 
-Ollama not installed / no STT model yet / no input device —
-all of these are **normal states**, and startup continues while making that explicit
-(ADR-023 / docs/architecture/setup.md). **Never silently degrade**, but never block startup either.
+Ollama not installed / no STT model yet — these are **normal states**, not crashes, and
+Core keeps running and keeps saying so. What they do *not* do is let the character
+appear: hearing, thinking and speaking are what a conversation is made of, so the boot
+phase stays `blocked` until all three work (ADR-034).
+
+**Assembly still completes either way.** Providers are registered, the engine is warmed
+and what each one turned out to be is reported — that reporting is exactly what decides
+whether the phase can leave `blocked`. What is gated is the microphone and the reactive
+loop (ADR-033), not the wiring.
 """
 
 from __future__ import annotations
@@ -43,7 +49,7 @@ from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
-from lumi.setup.state import EngineRuntime, LlmSetupState
+from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState
 from lumi.storage.audit import SqliteAuditLog
 from lumi.storage.events import SqliteEventStore
 from lumi.storage.sqlite import Database
@@ -216,7 +222,9 @@ class ConversationRuntime:
         return self._arbiter
 
     async def start(self) -> None:
-        """**Starts regardless of whether it can speak.** Missing pieces show up in logs/state."""
+        """**Assembles regardless of what is missing.** What is missing shows up in state,
+        and decides whether the character is allowed out (ADR-034).
+        """
         self._register_providers()
         # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
@@ -235,8 +243,8 @@ class ConversationRuntime:
         # first reply.
         #
         # **Not awaited.** The Stage connection handler must stay responsive while the engine
-        # starts. `_warm` opens audio and starts the reactive loop only after `warm_tts` has
-        # broadcast `boot: ready` (ADR-033).
+        # starts. `_warm` opens audio and starts the reactive loop only once all three have
+        # reported and the phase has actually reached `ready` (ADR-033 / ADR-034).
         self._warmup = asyncio.create_task(
             _warm(
                 self._providers,
@@ -252,7 +260,12 @@ class ConversationRuntime:
         self._warmup.add_done_callback(_report_warmup_exit)
 
     async def _start_listening(self) -> None:
-        """Open voice input only after Core has broadcast `boot: ready` (ADR-033)."""
+        """Open voice input only after Core has broadcast `boot: ready` (ADR-033).
+
+        **Never called while the phase is `blocked`.** A screen that says setup is
+        incomplete must not be quietly listening behind itself — and with no LLM or no
+        STT there is nothing that could answer anyway.
+        """
         await self._audio.start()
 
         if self._loop is None:
@@ -270,7 +283,9 @@ class ConversationRuntime:
         is the first point where "what's missing" can be stated concretely.
         """
         tts = self._setup.state.tts
-        if tts.usable and tts.port is not None:
+        # **Installed, not ready.** Whether the process comes up is what `warm_tts` is
+        # about to find out, and it needs a registered Provider to find it out with.
+        if tts.installed and tts.port is not None:
             executable = Path(tts.executable) if tts.executable else None
             self._providers.register(
                 AivisSpeechProvider(
@@ -364,14 +379,26 @@ async def _warm(
     memory — anything left cold is simply a bill handed to the first reply
     (docs/interfaces/provider.md "`load()` は接続確認ではない"), and STT was the one nobody
     was warming at all.
+
+    **Listening starts last, and only if the phase actually reached `ready`** (ADR-034).
+    It used to start right after the TTS engine, back when `ready` meant "the engine is
+    up"; now it means all three work, and the microphone follows that same boundary
+    rather than a weaker one (ADR-033). If anything is still missing the phase is
+    `blocked`, and Lumi does not listen behind a screen that says it has not started.
     """
     await warm_tts(providers, setup)
-    # `warm_tts` does not return until `boot: ready` has been broadcast. Audio capture must
-    # stay closed before this boundary so a loading screen never accepts hidden speech.
-    if on_ready is not None:
-        await on_ready()
     await warm_llm(providers, setup, model)
     await warm_stt(providers)
+
+    if on_ready is None:
+        return
+    if setup.boot is not BootPhase.READY:
+        # **The same derivation the Stage was handed**, read back rather than re-decided
+        # here. Two places deciding "is it ready" is how the screen and the microphone
+        # come to disagree.
+        log.info("conversation.not_started", boot=str(setup.boot))
+        return
+    await on_ready()
 
 
 async def warm_llm(providers: ProviderRegistry, setup: SetupCoordinator, model: str) -> None:
@@ -381,8 +408,10 @@ async def warm_llm(providers: ProviderRegistry, setup: SetupCoordinator, model: 
     the Provider talks to (docs/architecture/setup.md §2b). So the state is settled here,
     where the answer is known.
 
-    **Never blocks the character.** No LLM means a Lumi that listens and doesn't answer;
-    the SetupPanel is what says so (docs/architecture/ui.md).
+    **This report is what lets the character out** (ADR-034). A Lumi that hears and never
+    answers is not a lesser Lumi, it is a broken-looking one, so the phase stays `blocked`
+    until Ollama is there, running, and holding the configured model. What is missing and
+    what to do about it is on screen the whole time.
     """
     try:
         await providers.get(ProviderKind.LLM)
@@ -424,14 +453,15 @@ async def warm_tts(providers: ProviderRegistry, setup: SetupCoordinator) -> None
     Coordinator owns the state the Stage sees. **Whoever starts the process is the one
     who has to report it**, or the two silently drift apart.
 
-    Failing to start is **not** a reason to keep the user waiting — `failed` resolves to
-    boot phase `ready`, the character comes out, and the SetupPanel is what says it's
-    broken. **The character is never held hostage** (docs/architecture/ui.md).
+    Failing to start resolves to boot phase `blocked`, never `ready` (ADR-034): an
+    engine that is installed and will not run is broken, and **a fetch that failed must
+    never be able to read as a successful start.** The screen says which of the two it
+    was, and offers what to do next.
     """
     if not providers.has(ProviderKind.TTS):
         # Not set up, or the fetch was declined. **Not broken**, so the state stays
-        # `stopped` — it really isn't running, and nothing is starting it. Still publish
-        # the ready boundary here so `_warm` never invokes `on_ready` after a silent return.
+        # `stopped` — it really isn't running, and nothing is starting it. Broadcast it
+        # anyway: `stopped` is what moves the phase off `starting` and onto `blocked`.
         await setup.set_runtime(EngineRuntime.STOPPED)
         return
 

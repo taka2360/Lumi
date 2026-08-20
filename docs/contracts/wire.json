@@ -43,7 +43,8 @@
     "shell_core_endpoint",
     "shell_window_drag_start",
     "shell_window_scale",
-    "shell_locale_set"
+    "shell_locale_set",
+    "shell_app_quit"
   ],
   "window_labels": [
     "stage",
@@ -70,6 +71,7 @@
       "setup",
       "installing",
       "starting",
+      "blocked",
       "ready"
     ],
     "llm_setup_state": [

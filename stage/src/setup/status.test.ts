@@ -48,9 +48,11 @@ describe("nothing to say", () => {
 
 describe("TTS", () => {
   it("not set up is stated as a limitation, not an error", () => {
+    // **Still `normal`, not `bad`** (ADR-034 changed the consequence, not the tone):
+    // setup being unfinished is a state, and only an actual failure is worded as one.
     const line = ttsStatus(tts({ state: "not_configured" }));
     expect(line?.tone).toBe("normal");
-    expect(line?.text).toContain("喋りません");
+    expect(line?.text).toContain("喋れません");
   });
 
   it("installed-but-will-not-start is not painted over by installed", () => {

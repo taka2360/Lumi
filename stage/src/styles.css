@@ -91,6 +91,11 @@ body {
   opacity: 0.75;
 }
 
+/* Follows the list of what is missing, so it needs air above it as well. */
+.panel__note--spaced {
+  margin-top: 12px;
+}
+
 .panel__status {
   margin: 0;
 }
@@ -126,6 +131,14 @@ body {
   gap: 10px;
 }
 
+/* The incomplete-setup screen has one action, and it is not a choice between two
+   things. **Stretching one button across both columns** would make it read like a
+   primary action with its pair missing. */
+.panel__actions--single {
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+
 .panel__button {
   padding: 8px 12px;
   border-radius: 8px;
@@ -139,6 +152,11 @@ body {
 
 .panel__button:hover {
   background: rgba(255, 255, 255, 0.18);
+}
+
+/* Declared after `.panel__button` so the more specific rule is also the later one. */
+.panel__actions--single .panel__button {
+  min-width: 96px;
 }
 
 /* The surface for grabbing the character. Drag to move, wheel to resize

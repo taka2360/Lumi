@@ -8,14 +8,16 @@ the user differs.
 **Installation state and process state are separate axes throughout.** Collapsing them
 into one enum makes "installed but won't start" inexpressible, and hands the user the
 false advice "please install it."
+
+**Nothing here remembers what the user answered.** Setup is a precondition for Lumi
+running at all (ADR-034), so an answer of "not now" is not something to carry forward —
+remembering it would mean never asking again about something Lumi cannot start without.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass, field
 from enum import StrEnum
-from pathlib import Path
 from typing import Any
 
 
@@ -97,6 +99,10 @@ class BootPhase(StrEnum):
     A character that's standing there but unresponsive **looks broken.** While the
     engine takes minutes to fetch and a dozen-odd seconds to start, something
     showing what's actually happening is displayed instead.
+
+    **The same reasoning applies far harder to a missing component** (ADR-034): a dozen
+    seconds of starting is nothing next to a reply that is never coming. So the character
+    waits for all three, and `BLOCKED` says what is still missing.
     """
 
     #: Waiting for the user's choice.
@@ -105,7 +111,11 @@ class BootPhase(StrEnum):
     INSTALLING = "installing"
     #: Starting the engine's process.
     STARTING = "starting"
-    #: **The character may be shown.**
+    #: **Setup is not finished.** Something the conversation needs is missing, so the
+    #: character is not shown. What is missing and how to fix it is displayed instead
+    #: (ADR-034).
+    BLOCKED = "blocked"
+    #: **The character may be shown.** All three of STT / LLM / TTS are usable.
     READY = "ready"
 
 
@@ -139,9 +149,19 @@ class TtsSetup:
         }
 
     @property
-    def usable(self) -> bool:
-        """Whether it can speak as-is."""
+    def installed(self) -> bool:
+        """Whether an engine is **on the machine** — nothing about whether it runs.
+
+        This is what decides whether a Provider gets registered at all. **Not the same
+        question as `ready`**: an engine that is installed and refuses to start is
+        exactly the case a single flag would erase.
+        """
         return self.state in (TtsSetupState.DETECTED, TtsSetupState.INSTALLED)
+
+    @property
+    def ready(self) -> bool:
+        """Whether Lumi **can speak right now** (ADR-034). Both axes have to agree."""
+        return self.installed and self.runtime is EngineRuntime.READY
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,7 +187,12 @@ class LlmSetup:
         }
 
     @property
-    def usable(self) -> bool:
+    def ready(self) -> bool:
+        """Whether Lumi **can answer right now** (ADR-034).
+
+        `MODEL_MISSING` is deliberately not ready: Ollama answering is not the same as
+        Ollama being able to run the model Lumi was configured with.
+        """
         return self.state is LlmSetupState.DETECTED and self.runtime is EngineRuntime.READY
 
 
@@ -191,7 +216,8 @@ class SttSetup:
         }
 
     @property
-    def usable(self) -> bool:
+    def ready(self) -> bool:
+        """Whether Lumi **can hear right now** (ADR-034). A file check — there is no process."""
         return self.state is SttSetupState.INSTALLED
 
 
@@ -219,66 +245,35 @@ class SetupSnapshot:
 def boot_phase(setup: SetupSnapshot, *, prompting: bool) -> BootPhase:
     """Decides the boot phase. **A pure function** (docs/architecture/ui.md).
 
-    **The user is only made to wait when "this is about to become usable"**
-    (docs/architecture/setup.md §2b). Choosing not to fetch, and a failed fetch, both
-    resolve to `READY`. Being unable to speak and Lumi not having started are different
-    things — **the character is never held hostage.**
+    **The character does not come out until all three of STT / LLM / TTS are usable**
+    (ADR-034). Hearing, thinking and speaking are what a conversation is made of, and a
+    character standing on the desktop with any one of them missing reads as broken rather
+    than as unfinished — the loading screen's own reasoning, applied to a wait that never
+    ends.
 
-    **The LLM is deliberately absent from this.** Lumi neither fetches nor starts Ollama,
-    so waiting would accomplish nothing. No LLM means a Lumi that listens and doesn't
-    answer — **not a broken one.** Same for an STT model that was never fetched: only
-    *fetching* waits.
+    The three loading-ish phases are still separated from `BLOCKED`, because **only they
+    are actually waiting on Lumi**:
+
+    | phase | waiting on |
+    |---|---|
+    | `SETUP` | the user's answer to a question on screen |
+    | `INSTALLING` | a fetch with progress |
+    | `STARTING` | the engine process coming up |
+    | `BLOCKED` | **the user, outside Lumi** (install Ollama, retry, or give up) |
+
+    Order matters: the fetch and start phases are checked first so that a component
+    currently *becoming* usable shows its progress instead of being reported as missing.
     """
     if prompting:
         return BootPhase.SETUP
     if setup.tts.state is TtsSetupState.INSTALLING or setup.stt.state is SttSetupState.INSTALLING:
         return BootPhase.INSTALLING
-    if setup.tts.usable and setup.tts.runtime in (EngineRuntime.STOPPED, EngineRuntime.STARTING):
+    if setup.tts.installed and setup.tts.runtime in (EngineRuntime.STOPPED, EngineRuntime.STARTING):
         # **It just hasn't started yet — it's about to.** Marking this READY would make the
         # character flash in and then vanish (hit this in practice).
         return BootPhase.STARTING
+    if not (setup.tts.ready and setup.llm.ready and setup.stt.ready):
+        # **A failed fetch lands here, never in READY.** Treating it as done is precisely
+        # how "could not download" got overwritten by "started successfully" (ADR-034).
+        return BootPhase.BLOCKED
     return BootPhase.READY
-
-
-@dataclass(frozen=True, slots=True)
-class SetupAnswers:
-    """What's **already been asked** during first-run setup.
-
-    Not a general-purpose settings store (the settings storage format is roadmap
-    open item #9 / Phase 1). All this holds is which fetch questions have been
-    **asked and answered**.
-
-    **Tracked per component.** Answering "no" to the TTS engine says nothing about
-    whether the speech-recognition model is wanted, and treating one answer as
-    covering both would silently never ask the second question.
-    """
-
-    tts_prompt_answered: bool = False
-    stt_prompt_answered: bool = False
-
-    @classmethod
-    def load(cls, path: Path) -> SetupAnswers:
-        """Treated as "not yet asked" if unreadable (a corrupted file never blocks startup)."""
-        try:
-            raw = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return cls()
-        if not isinstance(raw, dict):
-            return cls()
-        return cls(
-            tts_prompt_answered=bool(raw.get("tts_prompt_answered", False)),
-            stt_prompt_answered=bool(raw.get("stt_prompt_answered", False)),
-        )
-
-    def save(self, path: Path) -> None:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(
-            json.dumps(
-                {
-                    "tts_prompt_answered": self.tts_prompt_answered,
-                    "stt_prompt_answered": self.stt_prompt_answered,
-                },
-                ensure_ascii=False,
-            ),
-            encoding="utf-8",
-        )

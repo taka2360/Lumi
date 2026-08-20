@@ -214,7 +214,10 @@ pub fn run() {
             shell_core_endpoint,
             shell_window_drag_start,
             shell_window_scale,
-            tray::shell_locale_set
+            tray::shell_locale_set,
+            // Quitting is the one thing the setup screen has to be able to do (ADR-034).
+            // **No judgment travels with it**, so `shell.*`'s rule holds.
+            tray::shell_app_quit
         ])
         .setup(move |app| {
             if cfg!(debug_assertions) {

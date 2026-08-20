@@ -119,7 +119,6 @@ class FakeTts:
 
 @pytest.fixture(autouse=True)
 def isolated_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(paths_module, "setup_state_file", lambda: tmp_path / "s.json")
     content_dir = tmp_path / "content"
     char_dir = content_dir / "characters" / "lumi"
     char_dir.mkdir(parents=True)
@@ -133,6 +132,35 @@ def isolated_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         )
     (char_dir / "model.vrm").write_bytes(b"glTF ")
     monkeypatch.setattr(paths_module, "default_character_dir", lambda: char_dir)
+    # **Never reads the developer's real model directory or settings.** Whether the boot
+    # phase reaches `ready` now depends on all three components (ADR-034), so anything
+    # left pointing at the real machine makes the outcome depend on whose machine it is.
+    monkeypatch.setattr(paths_module, "models_dir", lambda: tmp_path / "models")
+    monkeypatch.setattr(paths_module, "settings_file", lambda: tmp_path / "settings.json")
+
+
+@pytest.fixture(autouse=True)
+def no_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Detection must not touch 127.0.0.1 during tests.
+
+    **The default is "not installed"** — the state that blocks startup — so a test that
+    wants Lumi to actually come out has to say so (`conversation_is_possible`).
+    """
+
+    async def detect(_env: Any) -> DetectedEngine | None:
+        return None
+
+    monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+
+
+def conversation_is_possible(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Everything except the TTS engine is in place.
+
+    The LLM's state is settled by `warm_llm` from whatever Provider is registered, so all
+    that is needed here is the speech model on disk — the one component decided by
+    looking at the filesystem.
+    """
+    monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: True)
 
 
 def detects(monkeypatch: pytest.MonkeyPatch, engines: list[DetectedEngine]) -> None:
@@ -243,6 +271,9 @@ class TestAssembly:
             "FasterWhisperProvider",
             lambda _model, _root: FakeTts(kind=ProviderKind.STT),
         )
+        # **`ready` now means all three work** (ADR-034), so the speech model has to be
+        # there for the microphone to open at all.
+        conversation_is_possible(monkeypatch)
 
         coordinator = await make_coordinator(server)
         runtime = ConversationRuntime(
@@ -297,15 +328,17 @@ class TestEverythingIsWarmed:
         cold = [kind.value for kind, provider in registered.items() if not provider.is_loaded()]
         assert not cold, f"起動時に温めていない Provider がある: {cold}"
 
-    async def test_voice_input_starts_only_after_loading_is_ready(
+    async def test_voice_input_starts_only_after_everything_is_ready(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
         """★ The loading screen must never accept speech behind the character's back.
 
-        `warm_tts` owns the `starting` → `ready` transition, so the callback that opens
-        AudioIO must run after that broadcast and before the remaining warmups.
+        **Moved by ADR-034.** The callback used to run straight after `warm_tts`, back when
+        `ready` meant "the engine is up." Now it means all three work, and the microphone
+        follows that same boundary — so by the time it opens, the LLM and STT are warm too.
         """
         detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        conversation_is_possible(monkeypatch)
         server = FakeServer()
         coordinator = await make_coordinator(server)
         providers = ProviderRegistry()
@@ -329,26 +362,55 @@ class TestEverythingIsWarmed:
 
         await _warm(providers, coordinator, "qwen3:8b", on_ready=start_listening)
 
-        assert callback_observation == [("ready", False, False)]
+        assert callback_observation == [("ready", True, True)]
 
-    async def test_no_tts_provider_still_publishes_ready_before_callback(
+    async def test_no_tts_provider_never_opens_the_microphone(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
+        """★ **Setup is unfinished, so nothing listens** (ADR-034, setup.md §8 test 25).
+
+        Lumi cannot speak, so the phase ends at `blocked`. Listening behind a screen that
+        says Lumi has not started would take speech nobody could see being taken — and
+        nothing could answer it anyway.
+        """
         detects(monkeypatch, [])
+        conversation_is_possible(monkeypatch)
         server = FakeServer()
         coordinator = await make_coordinator(server)
-        initial_notifications = len(server.boots)
-        observed: list[tuple[int, str]] = []
+        observed: list[str] = []
 
         async def on_ready() -> None:
-            observed.append((len(server.boots), server.boots[-1]))
+            observed.append(server.boots[-1])
 
         await _warm(ProviderRegistry(), coordinator, "qwen3:8b", on_ready=on_ready)
 
-        # `_warm` reports LLM state after the callback as well. The callback must observe
-        # the additional ready notification emitted by the no-TTS branch first.
-        assert observed == [(initial_notifications + 1, "ready")]
-        assert server.boots[initial_notifications] == "ready"
+        assert observed == [], "セットアップ未完了なのにマイクを開いている"
+        assert server.boots[-1] == "blocked"
+
+    async def test_a_missing_speech_model_never_opens_the_microphone(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """**Every blocking component gates it, not just the TTS engine.**
+
+        The engine starts fine here; there is simply nothing to hear with.
+        """
+        detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: False)
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+        providers = ProviderRegistry()
+        for kind in (ProviderKind.TTS, ProviderKind.LLM):
+            providers.register(FakeTts(kind=kind))
+        opened = False
+
+        async def on_ready() -> None:
+            nonlocal opened
+            opened = True
+
+        await _warm(providers, coordinator, "qwen3:8b", on_ready=on_ready)
+
+        assert not opened
+        assert server.boots[-1] == "blocked"
 
     async def test_a_cold_stt_model_does_not_stop_startup(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -380,20 +442,25 @@ class TestWarmTts:
         provider = FakeTts()
         providers.register(provider)
 
+        conversation_is_possible(monkeypatch)
         await warm_tts(providers, coordinator)
 
         assert provider.load_calls == 1, "最初の発話まで起動を先送りしていない"
         assert coordinator.state.tts.runtime is EngineRuntime.READY
         assert server.boots[0] == "starting", "起動中であることを先に見せる"
-        assert server.boots[-1] == "ready"
+        # **Still `blocked`**: the engine speaks, but nothing here has said the LLM
+        # answers yet. `warm_llm` is what moves it the rest of the way (ADR-034).
+        assert server.boots[-1] == "blocked"
 
-    async def test_a_broken_engine_still_lets_the_character_out(
+    async def test_a_broken_engine_blocks_startup(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Installed but won't start = broken. **The character is never held hostage**
-        (docs/architecture/ui.md) — the SetupPanel is what says it's broken.
+        """★ Installed but won't start = broken, and **broken does not read as started**
+        (ADR-034). The old behaviour let the character out and left a warning line beside
+        it, which is exactly how "could not start" got overwritten by "here I am."
         """
         detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        conversation_is_possible(monkeypatch)
         server = FakeServer()
         coordinator = await make_coordinator(server)
         providers = ProviderRegistry()
@@ -402,7 +469,7 @@ class TestWarmTts:
         await warm_tts(providers, coordinator)
 
         assert coordinator.state.tts.runtime is EngineRuntime.FAILED
-        assert server.boots[-1] == "ready"
+        assert server.boots[-1] == "blocked"
 
     async def test_does_not_claim_to_be_starting_what_it_cannot_start(
         self, monkeypatch: pytest.MonkeyPatch
@@ -411,13 +478,15 @@ class TestWarmTts:
         for something nothing is starting.
         """
         detects(monkeypatch, [])
+        conversation_is_possible(monkeypatch)
         server = FakeServer()
         coordinator = await make_coordinator(server)
 
         await warm_tts(ProviderRegistry(), coordinator)
 
         assert coordinator.state.tts.runtime is EngineRuntime.STOPPED
-        assert server.boots[-1] == "ready"
+        assert "starting" not in server.boots
+        assert server.boots[-1] == "blocked"
 
 
 class TestShutdown:

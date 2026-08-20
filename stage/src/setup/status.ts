@@ -10,13 +10,20 @@
  *
  * ## What each component's absence means
  *
- * | Missing | Lumi still | What is asked of the user |
- * |---|---|---|
- * | TTS | listens and understands | let Lumi fetch the engine |
- * | LLM | listens, and says nothing | install Ollama, or pull the model **themselves** |
- * | STT | speaks when spoken to in text | let Lumi fetch the model |
+ * | Missing | What is asked of the user |
+ * |---|---|
+ * | TTS | let Lumi fetch the engine |
+ * | LLM | install Ollama, start it, or pull the model **themselves** |
+ * | STT | let Lumi fetch the model |
  *
- * **None of these is an error**, and none of them is worded as one.
+ * **None of these is an error**, and none of them is worded as one — but any one of them
+ * does stop Lumi from starting (ADR-034), so each line says what is missing rather than
+ * what Lumi can still do without it. "Lumi will run, but it will not speak" stopped being
+ * true the moment speaking became a precondition.
+ *
+ * These lines are what the `blocked` screen lists. **Every reason the phase can be
+ * `blocked` has to produce one**, or the screen would say setup is incomplete without
+ * saying what is incomplete.
  */
 
 import type {
@@ -132,12 +139,15 @@ export function llmStatus(llm: LlmSetupSnapshot, locale: Locale = "ja"): StatusL
         hint: `ollama pull ${llm.model ?? ""}`.trim(),
       };
     case "detected":
-      return llm.runtime === "stopped"
-        ? {
-            tone: "normal",
-            text: translate(locale, "status.llm.stopped"),
-          }
-        : null;
+      // Installed and found, but the process still has to answer for Lumi to reply.
+      // **`failed` is not `stopped`**: one is started by the user, the other is looked into
+      if (llm.runtime === "stopped") {
+        return { tone: "normal", text: translate(locale, "status.llm.stopped") };
+      }
+      if (llm.runtime === "failed") {
+        return { tone: "bad", text: translate(locale, "status.llm.failed") };
+      }
+      return null;
     default:
       return null;
   }
@@ -168,6 +178,9 @@ export function sttStatus(stt: SttSetupSnapshot, locale: Locale = "ja"): StatusL
  *
  * Order is TTS → LLM → STT, matching the order the pipeline fails in from the user's
  * point of view: not speaking is noticed first, then not answering, then not hearing.
+ *
+ * **All of them, not the first one.** Fixing what one line asks for and then being handed
+ * the next is how a two-minute setup turns into three restarts.
  */
 export function statusLines(setup: SetupSnapshot, locale: Locale = "ja"): StatusLine[] {
   return [

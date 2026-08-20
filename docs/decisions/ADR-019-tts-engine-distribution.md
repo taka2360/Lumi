@@ -5,6 +5,7 @@
 | Status | Accepted |
 | Date | 2026-08-15 |
 | 関連 | [../licensing.md](../licensing.md), [../roadmap.md](../roadmap.md) Phase 0, [ADR-008](ADR-008-provider-abstraction.md), [../interfaces/provider.md](../interfaces/provider.md), [../architecture/extension.md](../architecture/extension.md), [../DESIGN.md](../DESIGN.md) §1 |
+| 後続 | **[ADR-034](ADR-034-gate-startup-on-complete-setup.md) が Decision 2 の「取得しなくても Lumi は起動する」を修正した**（選択肢の対等さは維持。取得しなかった場合は起動せず、セットアップ未完了として終了する） |
 
 ---
 

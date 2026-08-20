@@ -21,6 +21,7 @@ import { EMOTIONS } from "../character/expression";
 import { VISEMES } from "../character/lipsync";
 import {
   CMD_DRAG_START,
+  CMD_QUIT,
   CMD_SCALE,
   CMD_SET_HIT_REGION,
   CMD_SET_LOCALE,
@@ -147,7 +148,14 @@ describe("wire contract", () => {
     // **A one-sided check.** The Shell side is a `#[tauri::command]` function name,
     // which can't be retrieved as data (docs/contracts/wire.md §4 "What this does not guarantee").
     expect(
-      new Set([CMD_SET_HIT_REGION, CMD_CORE_ENDPOINT, CMD_DRAG_START, CMD_SCALE, CMD_SET_LOCALE]),
+      new Set([
+        CMD_SET_HIT_REGION,
+        CMD_CORE_ENDPOINT,
+        CMD_DRAG_START,
+        CMD_SCALE,
+        CMD_SET_LOCALE,
+        CMD_QUIT,
+      ]),
     ).toEqual(new Set(wire.tauri_commands));
   });
 

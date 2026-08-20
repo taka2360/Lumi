@@ -52,6 +52,9 @@ interface PlatformShell {
   setTrayMenu(items: TrayItem[]): Promise<void>
   setLocale(locale: "ja" | "en"): Promise<void>
 
+  // ── プロセス ───────────────────────────────
+  quit(): Promise<void>                               // Lumi 全体を終了する
+
   // ── OS 特権（Core からの os.* を受けて実行）────
   captureScreen(spec: CaptureSpec): Promise<ImageData>
   injectInput(spec: InputSpec): Promise<void>
@@ -112,13 +115,30 @@ Rust 側で ~60Hz でカーソル位置を取得（GetCursorPos 相当）
 
 | 分類 | 呼ぶ主体 | 経路 |
 |---|---|---|
-| `setHitRegion` / `onHoverState` / ウィンドウ操作 | Stage | `shell.*`（Tauri IPC） |
+| `setHitRegion` / `onHoverState` / ウィンドウ操作 / `quit` | Stage | `shell.*`（Tauri IPC） |
 | `toAssetUrl` | Stage | PlatformShell adapter（Tauri asset protocol） |
 | `captureScreen` / `injectInput` / `launchProcess` / `spawnSidecar` | **Core** | `os.*`（WS） |
 
 **Stage 側の TypeScript の `PlatformShell` には OS 特権を載せない。**
 `stage.*` は絶対に OS 特権を要求しない、という規則を型で守るため
 （実装: `stage/src/platform/PlatformShell.ts`）。
+
+#### `quit` を Stage に露出してよい理由〔Phase 1・[ADR-034](../decisions/ADR-034-gate-startup-on-complete-setup.md)〕
+
+セットアップ未完了で止まった画面（`boot: blocked`）に **[終了]** を置くために要る。
+そこまで到達したユーザーは、**トレイに Lumi が居ることをまだ知らない**（[../architecture/ui.md](../architecture/ui.md)「トレイメニュー」）。
+
+**判断を載せない。** 引数は無く、呼ばれたら終了する。上限も分岐も無いので、
+Shell 側に「どう終了するか」を決める余地が残らない。
+
+**B1 / B2 の観点で見ても上限は変わらない。** Stage が乗っ取られたときにできるのは
+**Lumi を落とすこと**（ユーザーが再起動すれば戻る、可逆な妨害）であって、
+OS 特権の獲得でも、記憶の書き換えでも、外部への送信でもない。
+`captureScreen` / `injectInput` / `launchProcess` を露出しない規則は**そのまま**である。
+
+**保証しないこと**: Stage が繰り返し `quit` を呼ぶことは止められない。
+これは「起動するたびに即終了する」嫌がらせが可能ということであり、**可用性は守られていない。**
+守っているのは権限の上限だけである。
 
 #### `scaleWindow` に「大きさ」ではなく「倍率」を渡す理由〔Phase 0〕
 

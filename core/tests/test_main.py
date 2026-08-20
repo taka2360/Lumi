@@ -17,7 +17,6 @@ import pytest
 from websockets.asyncio.client import ClientConnection, connect
 
 from lumi import __main__ as main_module
-from lumi import paths as paths_module
 from lumi.audio.devices import AudioPlan
 from lumi.setup import coordinator as coordinator_module
 from lumi.transport.protocol import PROTOCOL_VERSION
@@ -77,7 +76,6 @@ async def test_two_stage_connects_start_exactly_one_conversation(
         return []
 
     monkeypatch.setattr(coordinator_module, "detect_engines", detect)
-    monkeypatch.setattr(paths_module, "setup_state_file", lambda: tmp_path / "setup.json")
     monkeypatch.setattr(main_module, "ConversationRuntime", SlowRuntime)
     monkeypatch.setattr(
         main_module, "_audio_plan", lambda: AudioPlan(capture=None, playback=None, warnings=())

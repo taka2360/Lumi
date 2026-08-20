@@ -61,6 +61,10 @@ export function App() {
   // then swapping it, which would read as a glitch rather than as a state
   const model = useStageStore((state) => state.model);
   const showCharacter = connected && setup.boot === "ready" && model !== null;
+  // **Setup is unfinished, so there is no character to show** (ADR-034). Not a loading
+  // state: nothing is in progress, and what happens next is up to the user. `connected`
+  // is required because `blocked` can only ever come from Core.
+  const blocked = connected && setup.boot === "blocked";
 
   const [status, setStatus] = useState<CharacterStatus>({ kind: null, fallbackReason: null });
   const onStatus = useCallback((next: CharacterStatus) => setStatus(next), []);
@@ -131,7 +135,7 @@ export function App() {
         {/* While preparing, shows what's happening instead of the character.
             **Always shows exactly one thing** (docs/architecture/ui.md "Boot phases").
             Showing loading and the panel side by side would describe the same situation twice. */}
-        {showCharacter || prompt ? (
+        {showCharacter || prompt || blocked ? (
           <SetupPanel />
         ) : (
           <BootScreen setup={setup} connected={connected} />

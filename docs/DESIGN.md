@@ -9,8 +9,20 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.11 |
+| Revision | rev.12 |
 | 実装フェーズ | **Phase 0 の完了条件を達成。Phase 1（MVP: Talking Desktop Character）着手。** セットアップ周りの検証手順 15〜18 が残る → [roadmap.md](roadmap.md) |
+
+> **rev.12 の変更点**（実際に起動してみて、Phase 0 からの前提が1つ崩れた）
+> 1. **会話に必要な3つ（STT / LLM / TTS）が揃うまでキャラクターを出さない** → [ADR-034](decisions/ADR-034-gate-startup-on-complete-setup.md)。
+>    起動フェーズに `blocked` を足し、不足があればセットアップ画面（**不足項目 + 解決方法 + 終了**）を出す。
+>    **「キャラクターを人質にしない」を取り消した** — 「立っているのに反応しない = 壊れて見える」は
+>    `starting` の十数秒より**永久に返事が来ない状態にこそ強く当てはまる**
+> 2. **取得の失敗をセットアップ完了として扱わない。** 失敗したら「再試行 / 今は取得しない」を出す
+>    （再試行の上限は無し。**押すのは常にユーザー**であり催促ではない）
+> 3. **「答えたか」を永続化しなくなった**（`setup.json` は廃止）。必須になった以上、
+>    答えを覚えることは「不足したまま二度と聞かない」と同義であり、**出口の無い状態**を作る
+> 4. **Stage から Lumi を終了できるようにした**（`shell_app_quit`）→ [interfaces/shell.md](interfaces/shell.md)。
+>    セットアップで止まっているユーザーは、**トレイに Lumi が居ることをまだ知らない**
 
 > **rev.11 の変更点**（Step G。Stage 側を作ったら、設計の穴が2つ出た）
 > 1. **Stage → Core の要求方向を作った**（`request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md)。

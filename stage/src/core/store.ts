@@ -24,8 +24,13 @@ export type EngineRuntime = "stopped" | "starting" | "ready" | "failed";
  *
  * Defined in → docs/architecture/ui.md "Boot phases".
  * The Stage only switches screens based on this — **it never judges on its own**.
+ *
+ * `blocked` means setup is not finished: something the conversation needs is missing,
+ * so no character appears and what is missing is shown instead (ADR-034). **Which
+ * pieces are missing is read off the three component states**, never re-derived into a
+ * separate verdict here.
  */
-export type BootPhase = "setup" | "installing" | "starting" | "ready";
+export type BootPhase = "setup" | "installing" | "starting" | "blocked" | "ready";
 
 export type TtsSetupState =
   | "unknown"
@@ -299,7 +304,13 @@ export const STT_SETUP_STATES: readonly SttSetupState[] = [
   "failed",
 ];
 export const ENGINE_RUNTIMES: readonly EngineRuntime[] = ["stopped", "starting", "ready", "failed"];
-export const BOOT_PHASES: readonly BootPhase[] = ["setup", "installing", "starting", "ready"];
+export const BOOT_PHASES: readonly BootPhase[] = [
+  "setup",
+  "installing",
+  "starting",
+  "blocked",
+  "ready",
+];
 export const SETUP_COMPONENTS: readonly SetupComponent[] = ["tts", "stt"];
 
 function asString(value: unknown): string | null {
