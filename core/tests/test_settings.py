@@ -37,6 +37,8 @@ def test_no_file_yet_is_all_defaults(tmp_path: Path) -> None:
 
     assert settings.inference_device.source is Source.DEFAULT
     assert settings.inference_device.value == "auto"
+    assert settings.tts_speed.source is Source.DEFAULT
+    assert settings.tts_speed.value == "1.2"
     assert settings.locale.value == "auto"
     assert not (tmp_path / "settings.json").exists()
 
@@ -58,6 +60,14 @@ def test_the_environment_wins_over_the_file(tmp_path: Path) -> None:
 
     assert settings.llm_model.value == "qwen3.5:9b"
     assert settings.llm_model.source is Source.ENV
+
+
+def test_tts_speed_accepts_a_stored_value_and_environment_override(tmp_path: Path) -> None:
+    file = write(tmp_path, {"tts_speed": "1.4"})
+    settings = load(file, {"LUMI_TTS_SPEED": "0.8"})
+
+    assert settings.tts_speed.value == "0.8"
+    assert settings.tts_speed.source is Source.ENV
 
 
 def test_one_bad_value_costs_only_that_key(tmp_path: Path) -> None:
@@ -186,6 +196,16 @@ def test_locale_accepts_only_supported_choices(tmp_path: Path) -> None:
 
     with pytest.raises(InvalidSettingValue, match="locale"):
         save(file, updated, {"locale": "fr"})
+
+
+def test_tts_speed_accepts_only_values_in_the_engine_range(tmp_path: Path) -> None:
+    file = write(tmp_path, {})
+    updated = save(file, load(file, {}), {"tts_speed": "1.5"})
+    assert updated.tts_speed.value == "1.5"
+
+    for value in ("0.49", "2.01", "fast", "nan", "inf"):
+        with pytest.raises(InvalidSettingValue, match="tts_speed"):
+            save(file, updated, {"tts_speed": value})
 
 
 def test_invalid_stored_locale_falls_back_without_costing_other_keys(tmp_path: Path) -> None:

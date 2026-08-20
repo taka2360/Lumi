@@ -681,8 +681,8 @@ def test_find_on_path_uses_the_given_environment() -> None:
 # ── AivisSpeech ──────────────────────────────────────────
 
 
-async def test_aivisspeech_synthesize_sets_volume_scale() -> None:
-    # Verify volumeScale from audio_query is overwritten during synthesis
+async def test_aivisspeech_synthesize_sets_voice_parameters() -> None:
+    # Verify voice parameters from audio_query are overwritten during synthesis
     import io
     import wave
 
@@ -725,8 +725,9 @@ async def test_aivisspeech_synthesize_sets_volume_scale() -> None:
     client = AivisSpeechClient(port=10101)
     client._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     try:
-        audio = await client.synthesize("こんにちは", speaker=0, volume_scale=0.4)
+        audio = await client.synthesize("こんにちは", speaker=0, volume_scale=0.4, speed_scale=1.6)
         assert sent_query.get("volumeScale") == 0.4
+        assert sent_query.get("speedScale") == 1.6
         assert audio.wav
     finally:
         await client.aclose()

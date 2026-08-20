@@ -646,6 +646,8 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | [029](decisions/ADR-029-content-pack-asset-delivery.md) | Content Pack のアセットは Shell が WebView に配信する（**Core をファイルサーバにしない**） |
 | [030](decisions/ADR-030-per-stream-dispatch.md) | DomainEvent の配送を stream ごとに直列化し、**同一 stream への再入 publish を拒否する** |
 | [031](decisions/ADR-031-request-side-effects.md) | `request` 経路が許す副作用を「**Core が所有する状態の変更**」に限定して定義する（ADR-028 条件4の修正） |
+| [032](decisions/ADR-032-tts-speed.md) | 読み上げ速度を **Core 所有の設定**として TTS と Stage に反映する |
+| [033](decisions/ADR-033-gate-voice-input-until-ready.md) | 起動フェーズが **`ready` になるまで音声入力を開始しない** |
 
 ---
 

@@ -205,6 +205,9 @@ class TTSProvider(Provider, Protocol):
     def supported_languages(self) -> frozenset[str]: ...
 ```
 
+`VoiceConfig` は話者 (`speaker`)、音量 (`volume_scale`)、読み上げ速度 (`speed_scale`) を持つ。
+`speed_scale` は 0.5〜2.0 の倍率で、既定値は 1.0。Provider は対応するエンジンの速度パラメータへ渡す。
+
 > **音声だけを返す契約にできない。**〔Phase 1 実装時に確定〕
 > **リップシンクのタイムラインは合成の「あと」にしか作れない**（AivisSpeech は `audio_query` で
 > 音素長を返さない → [renderer.md](renderer.md)）。音声と口のタイムラインは同時に決まるので、

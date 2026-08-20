@@ -64,6 +64,21 @@ class FakeServer:
         return cast(WsServer, self)
 
 
+class ReadyGateServer(FakeServer):
+    """Pauses the ready notification so startup ordering can be observed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.ready_seen = asyncio.Event()
+        self.release_ready = asyncio.Event()
+
+    async def notify(self, role: Role, method: str, payload: dict[str, Any] | None = None) -> None:
+        await super().notify(role, method, payload)
+        if method == "stage.setup.state" and payload is not None and payload["boot"] == "ready":
+            self.ready_seen.set()
+            await self.release_ready.wait()
+
+
 class FakeTts:
     """Holds only what `ProviderRegistry` touches. **Never starts a process.**"""
 
@@ -163,6 +178,82 @@ class TestAssembly:
         finally:
             await runtime.stop()
 
+    async def test_start_wires_audio_and_reactive_loop_after_ready(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        server = ReadyGateServer()
+        timeline: list[str] = []
+
+        class FakeAudio:
+            def __init__(self, _plan: AudioPlan) -> None:
+                self.started = False
+                self.started_event = asyncio.Event()
+
+            @property
+            def can_listen(self) -> bool:
+                return True
+
+            async def start(self) -> None:
+                timeline.append("audio.start")
+                self.started = True
+                self.started_event.set()
+
+            async def stop(self) -> None:
+                self.started = False
+
+        class FakeLoop:
+            def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+                self.started_event = asyncio.Event()
+                self._stop = asyncio.Event()
+
+            async def run(self) -> None:
+                timeline.append("reactive.run")
+                self.started_event.set()
+                await self._stop.wait()
+
+        monkeypatch.setattr(runtime_module, "AudioIO", FakeAudio)
+        monkeypatch.setattr(runtime_module, "ReactiveLoop", FakeLoop)
+        monkeypatch.setattr(
+            runtime_module,
+            "AivisSpeechProvider",
+            lambda *_args, **_kwargs: FakeTts(),
+        )
+        monkeypatch.setattr(
+            runtime_module,
+            "OllamaProvider",
+            lambda _model: FakeTts(kind=ProviderKind.LLM),
+        )
+        monkeypatch.setattr(
+            runtime_module,
+            "FasterWhisperProvider",
+            lambda _model, _root: FakeTts(kind=ProviderKind.STT),
+        )
+
+        coordinator = await make_coordinator(server)
+        runtime = ConversationRuntime(
+            server.as_server(),
+            coordinator,
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+        audio = cast(FakeAudio, runtime._audio)
+        loop = cast(FakeLoop, runtime._loop)
+        try:
+            await runtime.start()
+
+            await server.ready_seen.wait()
+            assert not audio.started, "boot: ready の通知完了前に AudioIO を開いている"
+
+            server.release_ready.set()
+            await audio.started_event.wait()
+            await loop.started_event.wait()
+
+            assert timeline == ["audio.start", "reactive.run"]
+            assert server.boots[-1] == "ready"
+        finally:
+            server.release_ready.set()
+            await runtime.stop()
+
 
 class TestEverythingIsWarmed:
     """★ **Whatever is left cold is a bill handed to the first reply.**
@@ -191,6 +282,59 @@ class TestEverythingIsWarmed:
 
         cold = [kind.value for kind, provider in registered.items() if not provider.is_loaded()]
         assert not cold, f"起動時に温めていない Provider がある: {cold}"
+
+    async def test_voice_input_starts_only_after_loading_is_ready(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ The loading screen must never accept speech behind the character's back.
+
+        `warm_tts` owns the `starting` → `ready` transition, so the callback that opens
+        AudioIO must run after that broadcast and before the remaining warmups.
+        """
+        detects(monkeypatch, [installed_by_lumi(tmp_path)])
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+        providers = ProviderRegistry()
+        registered = {
+            kind: FakeTts(kind=kind)
+            for kind in (ProviderKind.TTS, ProviderKind.LLM, ProviderKind.STT)
+        }
+        for provider in registered.values():
+            providers.register(provider)
+
+        callback_observation: list[tuple[str, bool, bool]] = []
+
+        async def start_listening() -> None:
+            callback_observation.append(
+                (
+                    server.boots[-1],
+                    registered[ProviderKind.LLM].is_loaded(),
+                    registered[ProviderKind.STT].is_loaded(),
+                )
+            )
+
+        await _warm(providers, coordinator, "qwen3:8b", on_ready=start_listening)
+
+        assert callback_observation == [("ready", False, False)]
+
+    async def test_no_tts_provider_still_publishes_ready_before_callback(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        coordinator = await make_coordinator(server)
+        initial_notifications = len(server.boots)
+        observed: list[tuple[int, str]] = []
+
+        async def on_ready() -> None:
+            observed.append((len(server.boots), server.boots[-1]))
+
+        await _warm(ProviderRegistry(), coordinator, "qwen3:8b", on_ready=on_ready)
+
+        # `_warm` reports LLM state after the callback as well. The callback must observe
+        # the additional ready notification emitted by the no-TTS branch first.
+        assert observed == [(initial_notifications + 1, "ready")]
+        assert server.boots[initial_notifications] == "ready"
 
     async def test_a_cold_stt_model_does_not_stop_startup(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -259,7 +403,7 @@ class TestWarmTts:
         await warm_tts(ProviderRegistry(), coordinator)
 
         assert coordinator.state.tts.runtime is EngineRuntime.STOPPED
-        assert server.boots == ["ready"]
+        assert server.boots[-1] == "ready"
 
 
 class TestShutdown:
@@ -348,6 +492,24 @@ class TestSettingsUpdate:
 
         assert answer == {"applied_at_next_start": False}
         assert server.settings[-1]["values"]["locale"]["value"] == "en"
+        del runtime
+
+    async def test_tts_speed_is_marked_as_applied_immediately(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        runtime, server = await self.build(monkeypatch, tmp_path)
+        received: list[float] = []
+
+        class RecordingLoop:
+            def set_tts_speed(self, speed: float) -> None:
+                received.append(speed)
+
+        runtime._loop = cast(Any, RecordingLoop())
+        answer = await server.inbound["stage.settings.update"]({"changes": {"tts_speed": "1.4"}})
+
+        assert answer == {"applied_at_next_start": False}
+        assert server.settings[-1]["values"]["tts_speed"]["value"] == "1.4"
+        assert received == [1.4]
         del runtime
 
     async def test_a_key_that_is_not_a_setting_is_refused(

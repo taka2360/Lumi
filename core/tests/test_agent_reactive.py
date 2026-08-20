@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import io
+import math
 import wave
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
@@ -155,12 +156,14 @@ class FakeTts(_Base):
     def __init__(self) -> None:
         super().__init__()
         self.texts: list[str] = []
+        self.voices: list[VoiceConfig] = []
 
     async def synthesize(
         self, text: str, voice: VoiceConfig, cancel_token: CancelToken
     ) -> SpeechAudio:
-        del voice, cancel_token
+        del cancel_token
         self.texts.append(text)
+        self.voices.append(voice)
         buffer = io.BytesIO()
         with wave.open(buffer, "wb") as sink:
             sink.setnchannels(1)
@@ -199,7 +202,14 @@ class FakeNotifier:
 class Rig:
     """The complete set of things needed to run one conversation."""
 
-    def __init__(self, llm: FakeLlm, *, stt_text: str = "やあ", limits: LoopLimits | None = None):
+    def __init__(
+        self,
+        llm: FakeLlm,
+        *,
+        stt_text: str = "やあ",
+        limits: LoopLimits | None = None,
+        tts_speed: float = 1.2,
+    ):
         self.database = Database.open(":memory:")
         self.database.migrate()
         bus = EventBus(SqliteEventStore(self.database))
@@ -238,6 +248,7 @@ class Rig:
             session=self.session,
             limits=limits,
             audio=self.audio,
+            tts_speed=tts_speed,
         )
 
     async def start(self) -> None:
@@ -286,6 +297,57 @@ async def test_a_turn_speaks_and_records() -> None:
 
     assert rig.notifier.spoken() == ["こんにちは。", "げんきだよ。"]
     assert [t.text for t in rig.session.turns] == ["やあ", "こんにちは。げんきだよ。"]
+
+
+async def test_runtime_tts_speed_applies_to_next_turn_only() -> None:
+    rig = Rig(
+        FakeLlm([text("最初の速度だよ。"), text("次の速度だよ。")]),
+        tts_speed=1.2,
+    )
+    await rig.start()
+
+    await rig.loop.handle_text("最初のターン")
+    rig.loop.set_tts_speed(1.4)
+    await rig.loop.handle_text("次のターン")
+
+    assert [voice.speed_scale for voice in rig.tts.voices] == [1.2, 1.4]
+
+
+async def test_tts_speed_is_frozen_when_changed_while_turn_is_blocked() -> None:
+    rig = Rig(FakeLlm([text("開始時の速度だよ。")]), tts_speed=1.2)
+    await rig.start()
+
+    user_said = asyncio.Event()
+    release_user_said = asyncio.Event()
+    original_notify = rig.notifier.notify
+
+    async def block_user_said(
+        role: Role, method: str, payload: dict[str, Any] | None = None
+    ) -> None:
+        if method == METHOD_USER_SAID:
+            user_said.set()
+            await release_user_said.wait()
+        await original_notify(role, method, payload)
+
+    rig.notifier.notify = block_user_said  # type: ignore[method-assign]
+    turn = asyncio.create_task(rig.loop.handle_text("速度を変える"))
+    await user_said.wait()
+
+    rig.loop.set_tts_speed(1.4)
+    release_user_said.set()
+    await turn
+
+    assert [voice.speed_scale for voice in rig.tts.voices] == [1.2]
+
+
+@pytest.mark.parametrize("speed", [0.49, 2.01, math.nan, math.inf, -math.inf])
+def test_tts_speed_rejects_invalid_values(speed: float) -> None:
+    with pytest.raises(ValueError, match="tts_speed"):
+        Rig(FakeLlm([text("話せないよ。")]), tts_speed=speed)
+
+    rig = Rig(FakeLlm([text("話せるよ。")]))
+    with pytest.raises(ValueError, match="tts_speed"):
+        rig.loop.set_tts_speed(speed)
 
 
 async def test_the_activity_returns_to_idle() -> None:

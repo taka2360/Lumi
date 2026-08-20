@@ -23,6 +23,7 @@ cannot survive a program rewriting the file anyway.
 from __future__ import annotations
 
 import json
+import math
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -68,6 +69,7 @@ class Settings:
     llm_model: Setting
     stt_model: Setting
     locale: Setting
+    tts_speed: Setting
     #: Keys this version does not know about. **Kept so a downgrade does not lose them**
     unknown: Mapping[str, Any]
     #: `True` when the file existed but could not be read. **Never overwrite it**
@@ -82,6 +84,7 @@ class Settings:
                 "llm_model": self.llm_model.to_payload(),
                 "stt_model": self.stt_model.to_payload(),
                 "locale": self.locale.to_payload(),
+                "tts_speed": self.tts_speed.to_payload(),
             },
         }
 
@@ -92,7 +95,11 @@ KEYS: Final[dict[str, tuple[str, str]]] = {
     "llm_model": ("LUMI_LLM_MODEL", "qwen3.5:9b"),
     "stt_model": ("LUMI_STT_MODEL", "large-v3-turbo"),
     "locale": ("LUMI_LOCALE", "auto"),
+    "tts_speed": ("LUMI_TTS_SPEED", "1.2"),
 }
+
+TTS_SPEED_MIN: Final = 0.5
+TTS_SPEED_MAX: Final = 2.0
 
 #: Closed choices are validated by Core. Free-form model names intentionally are not.
 VALID_VALUES: Final[dict[str, frozenset[str]]] = {
@@ -104,6 +111,12 @@ VALID_VALUES: Final[dict[str, frozenset[str]]] = {
 def _is_valid(key: str, value: object) -> bool:
     if not isinstance(value, str) or not value:
         return False
+    if key == "tts_speed":
+        try:
+            speed = float(value)
+        except ValueError:
+            return False
+        return math.isfinite(speed) and TTS_SPEED_MIN <= speed <= TTS_SPEED_MAX
     allowed = VALID_VALUES.get(key)
     return allowed is None or value in allowed
 
@@ -175,6 +188,7 @@ def load(path: Path, env: Mapping[str, str] | None = None) -> Settings:
         llm_model=_resolve("llm_model", stored, environ),
         stt_model=_resolve("stt_model", stored, environ),
         locale=_resolve("locale", stored, environ),
+        tts_speed=_resolve("tts_speed", stored, environ),
         unknown={key: value for key, value in stored.items() if key not in known},
         unreadable=unreadable,
     )
@@ -204,6 +218,7 @@ def save(path: Path, settings: Settings, changes: Mapping[str, str]) -> Settings
         ("llm_model", settings.llm_model),
         ("stt_model", settings.stt_model),
         ("locale", settings.locale),
+        ("tts_speed", settings.tts_speed),
     ):
         value = changes.get(key, current.value)
         if key in changes or current.source is Source.FILE:

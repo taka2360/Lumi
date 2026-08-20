@@ -27,6 +27,7 @@ path is the same as production.**
 from __future__ import annotations
 
 import asyncio
+import math
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final, cast
@@ -64,6 +65,7 @@ from lumi.providers.llm.base import (
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import AudioBuffer, STTProvider
 from lumi.providers.tts.base import TTSProvider, VoiceConfig
+from lumi.settings import TTS_SPEED_MAX, TTS_SPEED_MIN
 from lumi.tools.base import ToolContext, ToolResult
 from lumi.tools.registry import ToolRegistry
 from lumi.transport.protocol import Role
@@ -79,6 +81,15 @@ LANGUAGE: Final = "ja"
 #: turn goes nowhere (proposal rejected, LLM down). Seeing the misheard text is most of the
 #: value: "why did it answer that" and "it didn't hear me at all" look identical otherwise.
 METHOD_USER_SAID: Final = "stage.user.said"
+
+
+def _validate_tts_speed(speed: float) -> float:
+    """Keeps the runtime API aligned with the Core-owned settings contract."""
+    if not math.isfinite(speed) or not TTS_SPEED_MIN <= speed <= TTS_SPEED_MAX:
+        raise ValueError(
+            f"tts_speed must be finite and between {TTS_SPEED_MIN} and {TTS_SPEED_MAX}"
+        )
+    return speed
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,6 +116,7 @@ class ReactiveLoop:
         "_providers",
         "_session",
         "_tools",
+        "_tts_speed",
     )
 
     def __init__(
@@ -119,6 +131,7 @@ class ReactiveLoop:
         session: Session | None = None,
         limits: LoopLimits | None = None,
         audio: AudioIO | None = None,
+        tts_speed: float = 1.2,
     ) -> None:
         self._arbiter = arbiter
         self._providers = providers
@@ -129,6 +142,7 @@ class ReactiveLoop:
         self._session = session or Session()
         self._limits = limits or LoopLimits()
         self._audio = audio
+        self._tts_speed = _validate_tts_speed(tts_speed)
         self._last_latency: TurnLatency | None = None
         #: `None` unless `LUMI_DEBUG_STT_DUMP=1`. **The only diagnostic that separates
         #: "the audio was already damaged" from "the model got clean audio and still
@@ -143,6 +157,10 @@ class ReactiveLoop:
     def last_latency(self) -> TurnLatency | None:
         """The most recent turn's breakdown. **What the Inspector shows** (roadmap Phase 1)."""
         return self._last_latency
+
+    def set_tts_speed(self, speed: float) -> None:
+        """Uses a new Core-owned speed for the next scheduler that is created."""
+        self._tts_speed = _validate_tts_speed(speed)
 
     # ── Entry point ──────────────────────────────────────────────
 
@@ -246,6 +264,7 @@ class ReactiveLoop:
         them as 0 would drag the percentiles toward a speed the voice path never reaches.
         """
         timer = timer or TurnTimer(new_correlation_id())
+        turn_tts_speed = self._tts_speed
         await self._show_user_said(text)
         # Phase 1 has no memory retrieval. **Recorded explicitly so the spans stay contiguous**
         timer.record("retrieve_ms", 0)
@@ -267,7 +286,7 @@ class ReactiveLoop:
         activity = outcome.activity
         failed = False
         try:
-            await self._converse(activity, text, timer)
+            await self._converse(activity, text, timer, turn_tts_speed)
         except ProviderError as error:
             # **Record in the Activity's state that it failed to speak** (never silently mark it a
             # success)
@@ -283,7 +302,9 @@ class ReactiveLoop:
 
     # ── One turn ───────────────────────────────────────────
 
-    async def _converse(self, activity: Activity, text: str, timer: TurnTimer) -> None:
+    async def _converse(
+        self, activity: Activity, text: str, timer: TurnTimer, tts_speed: float
+    ) -> None:
         # **From here on, interruption is allowed.** Reset to a state that can accept the next
         # barge-in
         if self._audio is not None:
@@ -298,7 +319,7 @@ class ReactiveLoop:
             tts,
             self._require_playback(),
             self._notifier,
-            voice=self._voice(tts),
+            voice=self._voice(tts, tts_speed),
             cancel_token=activity.cancel_token,
             timer=timer,
         )
@@ -430,7 +451,7 @@ class ReactiveLoop:
         """`ProviderRegistry` returns one per kind. **Raises if not set up.**"""
         return cast("T", await self._providers.get(kind))
 
-    def _voice(self, tts: TTSProvider) -> VoiceConfig:
+    def _voice(self, tts: TTSProvider, tts_speed: float) -> VoiceConfig:
         """If the Content Pack doesn't specify a speaker, **defer to the engine's default.**
 
         Core doesn't hardcode a default because **which models are installed varies by
@@ -443,6 +464,7 @@ class ReactiveLoop:
                 speaker=speaker,
                 name=self._pack.voice.credit.name,
                 volume_scale=volume,
+                speed_scale=tts_speed,
             )
         default = getattr(tts, "default_voice", None)
         if default is None:
@@ -452,6 +474,7 @@ class ReactiveLoop:
             speaker=voice.speaker,
             name=voice.name,
             volume_scale=volume,
+            speed_scale=tts_speed,
         )
 
     def _require_playback(self) -> SpeakerPlayback:
