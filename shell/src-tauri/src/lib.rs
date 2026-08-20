@@ -187,7 +187,9 @@ fn allow_content_pack(app: &AppHandle, dir: &std::path::Path) {
         Ok(()) => log::info!("Allowed Content Pack directory: {}", dir.display()),
         // **Never silently degrade.** Without this the character simply never appears, and
         // the reason would exist nowhere
-        Err(error) => log::error!("Cannot allow Content Pack directory ({}): {error}", dir.display()),
+        Err(error) => {
+            log::error!("Cannot allow Content Pack directory ({}): {error}", dir.display())
+        }
     }
 }
 

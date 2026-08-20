@@ -97,7 +97,9 @@ async fn run_connection(app: &AppHandle, token: &str, port: u16) -> Result<(), S
     let url = format!("ws://127.0.0.1:{port}");
     let (mut ws, _) = connect_async(&url).await.map_err(|e| format!("Cannot connect: {e}"))?;
 
-    ws.send(Message::Text(hello(token).into())).await.map_err(|e| format!("Send hello failed: {e}"))?;
+    ws.send(Message::Text(hello(token).into()))
+        .await
+        .map_err(|e| format!("Send hello failed: {e}"))?;
 
     match ws.next().await {
         Some(Ok(Message::Text(text))) => {
@@ -125,7 +127,9 @@ async fn run_connection(app: &AppHandle, token: &str, port: u16) -> Result<(), S
                 continue;
             }
         };
-        ws.send(Message::Text(response.into())).await.map_err(|e| format!("Failed to send response: {e}"))?;
+        ws.send(Message::Text(response.into()))
+            .await
+            .map_err(|e| format!("Failed to send response: {e}"))?;
     }
     Ok(())
 }
