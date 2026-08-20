@@ -17,7 +17,7 @@
 - 設計変更を伴う場合、**ADR とドキュメント更新を同じコミットに含める**（コードだけ先に入れない）
 - 1コミット1論点。Invariant に関わる変更を他の変更に混ぜない
 
-```
+```text
 Split the Kernel execution contract into Class A and Class B
 
 Handles cannot cross process boundaries in out-of-process execution,
