@@ -7,6 +7,12 @@ const ENGLISH: Readonly<Record<string, string>> = {
   "Lumi Stage（画面）": "Lumi Stage (interface)",
   "Lumi Shell（デスクトップ）": "Lumi Shell (desktop)",
   "Lumi Core（判断と状態）": "Lumi Core (decisions and state)",
+  "Lumi Shell（Rust / exe にリンクされるもの）": "Lumi Shell (Rust / linked into the executable)",
+  "Lumi Core（Python / サイドカーに固められるもの）":
+    "Lumi Core (Python / bundled into the sidecar)",
+  "Stage（JavaScript / 配布物に入るもの）": "Stage (JavaScript / included in the distribution)",
+  依存グラフに現れないが配布されるもの:
+    "Included in the distribution but absent from dependency graphs",
   "初回セットアップで取得した場合、または AivisSpeech を自分でインストールしている場合":
     "You downloaded it during first-run setup or installed AivisSpeech yourself",
   "Lumi はこのエンジンを同梱していません。取得は公式の配布元から、あなたの PC の上で行われます。":
