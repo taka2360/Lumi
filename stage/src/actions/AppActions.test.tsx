@@ -78,11 +78,15 @@ describe("Stage application actions", () => {
 
   it("shows a failure when Shell cannot open credits", () => {
     const view = render();
+    const error = new Error("window unavailable");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
-    act(() => onCreditsError?.(new Error("window unavailable")));
+    act(() => onCreditsError?.(error));
 
     expect(view.querySelector('[role="alert"]')?.textContent).toBe(
       "クレジット画面を開けませんでした",
     );
+    expect(consoleError).toHaveBeenCalledWith("Failed to open credits window", error);
+    consoleError.mockRestore();
   });
 });

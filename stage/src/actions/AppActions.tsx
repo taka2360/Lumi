@@ -9,7 +9,12 @@ import { useOpenCredits, useQuit } from "../platform/useStageShell";
 export function AppActions() {
   const locale = useLocale();
   const [creditsError, setCreditsError] = useState(false);
-  const onCreditsError = useCallback(() => setCreditsError(true), []);
+  const onCreditsError = useCallback((error: unknown) => {
+    // Keep the underlying Shell failure available for diagnosing a failed invoke.
+    // biome-ignore lint/suspicious/noConsole: Stage has no shared telemetry sink yet.
+    console.error("Failed to open credits window", error);
+    setCreditsError(true);
+  }, []);
   const openCredits = useOpenCredits(onCreditsError);
   const quit = useQuit();
   const handleOpenCredits = useCallback(() => {
