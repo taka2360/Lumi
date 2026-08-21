@@ -46,6 +46,7 @@ export function cacheLocale(locale: Locale): void {
 const ja = {
   "actions.menu": "アプリ操作",
   "actions.credits": "クレジットとライセンス",
+  "actions.creditsFailed": "クレジット画面を開けませんでした",
   "actions.quit": "終了",
   "settings.title": "設定",
   "settings.source.default": "既定",
@@ -167,6 +168,7 @@ const ja = {
 const en: Record<keyof typeof ja, string> = {
   "actions.menu": "Application actions",
   "actions.credits": "Credits and licenses",
+  "actions.creditsFailed": "Could not open the credits window",
   "actions.quit": "Quit",
   "settings.title": "Settings",
   "settings.source.default": "Default",
