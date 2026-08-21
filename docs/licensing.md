@@ -322,7 +322,7 @@ Lumi の既存の設計要素で満たせるものを使い、足りない分だ
 
 | 何 | どこ | 理由 |
 |---|---|---|
-| クレジット画面 | Stage（トレイメニュー → クレジット） | 表現であり、判断を含まない |
+| クレジット画面 | Stage（トレイメニュー / `stage` の操作メニュー → クレジット） | 表現であり、判断を含まない |
 | **エンジンのクレジット文字列** | **`Provider.attribution()`** | Provider は交換可能。エンジンを差し替えたらクレジットも変わる。**Core がハードコードすると差し替え時に嘘になる** |
 | **音声モデルのクレジット / ライセンス** | Content Pack の `voice.toml` | モデルは Content Pack が選ぶ（[architecture/extension.md](architecture/extension.md) §9） |
 

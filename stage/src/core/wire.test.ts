@@ -21,6 +21,7 @@ import { EMOTIONS } from "../character/expression";
 import { VISEMES } from "../character/lipsync";
 import {
   CMD_DRAG_START,
+  CMD_OPEN_CREDITS,
   CMD_QUIT,
   CMD_SCALE,
   CMD_SET_HIT_REGION,
@@ -163,6 +164,7 @@ describe("wire contract", () => {
         CMD_DRAG_START,
         CMD_SCALE,
         CMD_SET_LOCALE,
+        CMD_OPEN_CREDITS,
         CMD_QUIT,
       ]),
     ).toEqual(new Set(wire.tauri_commands));

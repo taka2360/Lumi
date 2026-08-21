@@ -26,7 +26,7 @@
 pub enum WindowKind {
     /// The character itself. Transparent / always-on-top / click-through / unfocused.
     Stage,
-    /// The credits display (tray → credits). A normal window.
+    /// The credits display (tray or Stage action menu → credits). A normal window.
     Credits,
     /// The permission prompt. Must be focused / protected under Invariant 8. Implemented in Phase 4a.
     Permission,

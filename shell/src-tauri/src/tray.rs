@@ -102,6 +102,21 @@ pub fn shell_app_quit(app: AppHandle) {
     app.exit(0);
 }
 
+/// Opens the static credits and licenses window from the Stage action menu.
+///
+/// **No URL or window label comes from Stage.** The only possible result is the same
+/// bundled document opened by the tray, so exposing this does not grant arbitrary
+/// navigation or window creation.
+// A synchronous IPC command runs inline on the event-loop thread. Window creation then
+// dispatches back to that same loop and waits, deadlocking the app on Windows. `async`
+// runs this synchronous function on Tauri's thread pool, leaving the loop free to create
+// and paint the WebView (observed as a blank credits window plus frozen quit actions).
+#[tauri::command(async)]
+pub fn shell_credits_open(app: AppHandle) {
+    log::info!("shell.credits_open requested by stage");
+    crate::open_credits(&app);
+}
+
 /// Updates native Shell-owned labels after Core accepted a locale setting.
 #[tauri::command]
 pub fn shell_locale_set(app: AppHandle, locale: &str) -> Result<(), String> {
@@ -158,5 +173,13 @@ mod tests {
     #[test]
     fn unknown_locale_is_refused() {
         assert_eq!(Locale::from_code("fr"), None);
+    }
+
+    #[test]
+    fn credits_open_never_runs_inline_in_the_ipc_handler() {
+        // Regression: a synchronous command deadlocks Windows while window creation
+        // dispatches back to the event loop, leaving a blank window and freezing quit.
+        let source = include_str!("tray.rs").replace("\r\n", "\n");
+        assert!(source.contains("#[tauri::command(async)]\npub fn shell_credits_open"));
     }
 }

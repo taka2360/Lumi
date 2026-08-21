@@ -1,5 +1,5 @@
 /**
- * The credits and licenses screen (tray → credits).
+ * The credits and licenses screen (tray or Stage action menu → credits).
  *
  * Design → docs/licensing.md §6 / docs/architecture/ui.md
  *

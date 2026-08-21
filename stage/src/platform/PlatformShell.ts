@@ -70,6 +70,9 @@ export interface PlatformShell {
    */
   scaleWindow(factor: number): Promise<void>;
 
+  /** Opens the bundled static credits and licenses window, or brings it forward. */
+  openCredits(): Promise<void>;
+
   /**
    * Quits Lumi.
    *

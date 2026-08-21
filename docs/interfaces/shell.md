@@ -30,6 +30,7 @@ Tauri 2 には未検証のリスクがある（R2）。
 interface PlatformShell {
   // ── ウィンドウ ─────────────────────────────
   createWindow(spec: WindowSpec): Promise<WindowHandle>
+  openCredits(): Promise<void>                         // 静的な credits ウィンドウを開く / 前面へ出す
   setTransparent(w: WindowHandle, on: boolean): Promise<void>
   setAlwaysOnTop(w: WindowHandle, on: boolean): Promise<void>
   setClickThrough(w: WindowHandle, on: boolean): Promise<void>
@@ -115,7 +116,7 @@ Rust 側で ~60Hz でカーソル位置を取得（GetCursorPos 相当）
 
 | 分類 | 呼ぶ主体 | 経路 |
 |---|---|---|
-| `setHitRegion` / `onHoverState` / ウィンドウ操作 / `quit` | Stage | `shell.*`（Tauri IPC） |
+| `setHitRegion` / `onHoverState` / ウィンドウ操作 / `openCredits` / `quit` | Stage | `shell.*`（Tauri IPC） |
 | `toAssetUrl` | Stage | PlatformShell adapter（Tauri asset protocol） |
 | `captureScreen` / `injectInput` / `launchProcess` / `spawnSidecar` | **Core** | `os.*`（WS） |
 
@@ -139,6 +140,16 @@ OS 特権の獲得でも、記憶の書き換えでも、外部への送信で�
 **保証しないこと**: Stage が繰り返し `quit` を呼ぶことは止められない。
 これは「起動するたびに即終了する」嫌がらせが可能ということであり、**可用性は守られていない。**
 守っているのは権限の上限だけである。
+
+#### `openCredits` を Stage に露出してよい理由〔Phase 1〕
+
+`stage` の操作メニューから、Core の生死に依存しない静的な `credits` ウィンドウを開くために要る。
+引数はなく、既に開いていれば同じウィンドウを前面へ出すだけである。任意の URL やウィンドウ指定を
+Stage から渡せないため、外部通信や任意ウィンドウ生成の能力にはならない。
+
+Tauri 実装では `shell_credits_open` を**非同期コマンド**としてスレッドプールで実行する。
+同期 IPC ハンドラから `WebviewWindowBuilder::build()` を呼ぶと、Windows のメインイベントループが
+ウィンドウ生成の完了待ちと循環し、アプリ全体のイベント処理が停止するためである。
 
 #### `scaleWindow` に「大きさ」ではなく「倍率」を渡す理由〔Phase 0〕
 

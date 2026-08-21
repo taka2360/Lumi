@@ -44,6 +44,9 @@ export function cacheLocale(locale: Locale): void {
 }
 
 const ja = {
+  "actions.menu": "アプリ操作",
+  "actions.credits": "クレジットとライセンス",
+  "actions.quit": "終了",
   "settings.title": "設定",
   "settings.source.default": "既定",
   "settings.source.file": "設定ファイル",
@@ -162,6 +165,9 @@ const ja = {
 } as const;
 
 const en: Record<keyof typeof ja, string> = {
+  "actions.menu": "Application actions",
+  "actions.credits": "Credits and licenses",
+  "actions.quit": "Quit",
   "settings.title": "Settings",
   "settings.source.default": "Default",
   "settings.source.file": "Settings file",
