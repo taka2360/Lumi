@@ -80,7 +80,7 @@ body {
   left: auto;
   bottom: auto;
   transform: none;
-  margin-bottom: 10px;
+  margin-bottom: 0;
 }
 
 .panel {
@@ -377,6 +377,8 @@ body {
   left: auto;
   bottom: auto;
   align-self: flex-start;
+  order: -1;
+  margin-bottom: 10px;
 }
 
 .app-actions {

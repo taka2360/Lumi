@@ -118,7 +118,7 @@ export function Inspector({ onOpenChange }: { onOpenChange?: (open: boolean) => 
   return (
     <div className="inspect">
       <button type="button" className="inspect__toggle" onClick={handleToggle}>
-        {open ? "▾" : "▸"} Inspector
+        {open ? "▾" : "▸"} {translate(locale, "inspector.title")}
       </button>
       {open && (
         <div className="inspect__body">
