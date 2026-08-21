@@ -90,8 +90,21 @@ export function useQuit(): () => void {
 /** The scale factor per wheel notch. Kept **small** (jumping too far can't be undone). */
 const SCALE_STEP = 1.08;
 
+/** Elements whose own interaction must win over moving the whole window. */
+const WINDOW_DRAG_EXCLUSION =
+  "button, a, input, select, textarea, [contenteditable='true'], [data-window-drag='exclude']";
+
+/** Whether a pointer press is allowed to start native window dragging. Exported for regression tests. */
+export function canStartWindowDrag(button: number, target: EventTarget | null): boolean {
+  if (button !== 0 || !(target instanceof Element)) {
+    return false;
+  }
+  return target.closest(WINDOW_DRAG_EXCLUSION) === null;
+}
+
 /**
- * Handlers for moving and resizing the window. **Used only over the character.**
+ * Handlers for moving and resizing the window. Used over the character and over the
+ * temporary boot/setup surface shown before the character is available.
  *
  * The decision (how small / large it's allowed to get) lives on the Shell side
  * → docs/architecture/ui.md "Moving and resizing the window"
@@ -101,8 +114,9 @@ export function useWindowGestures() {
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent) => {
-      // Left button only. Right-click is reserved for a future menu.
-      if (event.button !== 0) {
+      // Buttons and selectable setup commands keep their native interaction. Everything
+      // else on the visible surface acts like the character and can move the window.
+      if (!canStartWindowDrag(event.button, event.target)) {
         return;
       }
       void shell.startWindowDrag();

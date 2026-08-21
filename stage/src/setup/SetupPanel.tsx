@@ -84,7 +84,9 @@ function StatusText({ line }: { line: StatusLine }) {
       {line.hint && (
         <>
           <br />
-          <code className="panel__hint">{line.hint}</code>
+          <code className="panel__hint" data-window-drag="exclude">
+            {line.hint}
+          </code>
         </>
       )}
     </p>
