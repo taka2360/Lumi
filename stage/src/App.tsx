@@ -131,7 +131,12 @@ export function App() {
       {/* Only while the character is out. A bubble floating over a loading screen would
           be speech with nobody visibly saying it. */}
       {showCharacter && <Bubble />}
-      <div className="overlay" ref={setPanel}>
+      <div
+        className="overlay"
+        ref={setPanel}
+        onPointerDown={gestures.onPointerDown}
+        onWheel={gestures.onWheel}
+      >
         {/* While preparing, shows what's happening instead of the character.
             **Always shows exactly one thing** (docs/architecture/ui.md "Boot phases").
             Showing loading and the panel side by side would describe the same situation twice. */}

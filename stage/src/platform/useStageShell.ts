@@ -90,8 +90,30 @@ export function useQuit(): () => void {
 /** The scale factor per wheel notch. Kept **small** (jumping too far can't be undone). */
 const SCALE_STEP = 1.08;
 
+/** Elements whose own interaction must win over moving or resizing the whole window. */
+const WINDOW_GESTURE_EXCLUSION =
+  "button, a, input, select, textarea, [contenteditable='true'], [data-window-gesture='exclude']";
+
+function isWindowGestureTarget(target: EventTarget | null): target is Element {
+  return target instanceof Element && target.closest(WINDOW_GESTURE_EXCLUSION) === null;
+}
+
+/** Whether a pointer press is allowed to start native window dragging. Exported for regression tests. */
+export function canStartWindowDrag(button: number, target: EventTarget | null): boolean {
+  return button === 0 && isWindowGestureTarget(target);
+}
+
+/** Returns the bounded Shell request for a wheel interaction, or null over an excluded control. */
+export function windowScaleFactor(deltaY: number, target: EventTarget | null): number | null {
+  if (!isWindowGestureTarget(target)) {
+    return null;
+  }
+  return deltaY < 0 ? SCALE_STEP : 1 / SCALE_STEP;
+}
+
 /**
- * Handlers for moving and resizing the window. **Used only over the character.**
+ * Handlers for moving and resizing the window. Used over the character and over the
+ * temporary boot/setup surface shown before the character is available.
  *
  * The decision (how small / large it's allowed to get) lives on the Shell side
  * → docs/architecture/ui.md "Moving and resizing the window"
@@ -101,8 +123,9 @@ export function useWindowGestures() {
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent) => {
-      // Left button only. Right-click is reserved for a future menu.
-      if (event.button !== 0) {
+      // Buttons and selectable setup commands keep their native interaction. Everything
+      // else on the visible surface acts like the character and can move the window.
+      if (!canStartWindowDrag(event.button, event.target)) {
         return;
       }
       void shell.startWindowDrag();
@@ -112,7 +135,11 @@ export function useWindowGestures() {
 
   const onWheel = useCallback(
     (event: React.WheelEvent) => {
-      void shell.scaleWindow(event.deltaY < 0 ? SCALE_STEP : 1 / SCALE_STEP);
+      const factor = windowScaleFactor(event.deltaY, event.target);
+      if (factor === null) {
+        return;
+      }
+      void shell.scaleWindow(factor);
     },
     [shell],
   );

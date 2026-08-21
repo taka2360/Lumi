@@ -56,6 +56,13 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 6px;
+  /* Before the character appears, this visible surface is the only place from which
+     the frameless window can be moved or resized. Interactive children override it. */
+  cursor: grab;
+}
+
+.overlay:active {
+  cursor: grabbing;
 }
 
 .panel {
@@ -116,6 +123,7 @@ body {
   /* The one thing here worth selecting — it exists to be copied. */
   user-select: text;
   -webkit-user-select: text;
+  cursor: text;
 }
 
 /* Several components can have something to say at once. */
@@ -160,8 +168,8 @@ body {
 }
 
 /* The surface for grabbing the character. Drag to move, wheel to resize
-   (docs/architecture/ui.md "Moving and resizing the window").
-   **Only active over the character.** Shell makes the transparent area click-through. */
+   (docs/architecture/ui.md "Moving and resizing the window"). Shell makes the
+   transparent area outside this and the boot/setup overlay click-through. */
 .stage__grab {
   width: 100%;
   height: 100%;
