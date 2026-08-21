@@ -18,7 +18,7 @@ const ACTIVITY = {
   state: "running",
   priority: 70,
   foreground: true,
-  cancellables: [{ label: "TTS 再生", contract: "hard", finished: false }],
+  cancellables: [{ label: "TTS playback", contract: "hard", finished: false }],
 };
 
 describe("the activity tree", () => {
@@ -28,7 +28,7 @@ describe("the activity tree", () => {
     expect(activity?.kind).toBe("conversation");
     expect(activity?.foreground).toBe(true);
     expect(activity?.cancellables).toEqual([
-      { label: "TTS 再生", contract: "hard", finished: false },
+      { label: "TTS playback", contract: "hard", finished: false },
     ]);
   });
 
@@ -40,7 +40,7 @@ describe("the activity tree", () => {
         {
           ...ACTIVITY,
           state: "cancelling",
-          cancellables: [{ label: "ツール", contract: "non_cancellable", finished: false }],
+          cancellables: [{ label: "tool", contract: "non_cancellable", finished: false }],
         },
       ],
     });

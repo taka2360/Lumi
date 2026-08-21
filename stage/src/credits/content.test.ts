@@ -64,7 +64,7 @@ describe("full license texts", () => {
     const ids = new Set(LICENSES.map((l) => l.id));
     for (const external of EXTERNAL) {
       for (const id of external.licenses) {
-        expect(ids.has(id), `${external.name} が参照する ${id} の全文が無い`).toBe(true);
+        expect(ids.has(id), `${external.name} references ${id} which lacks full text`).toBe(true);
       }
     }
   });
@@ -125,10 +125,10 @@ describe("credits never depend on Core", () => {
       if (file.endsWith(".test.ts")) {
         continue;
       }
-      expect(text, `${file} が Core の経路を参照している`).not.toMatch(/from\s+"\.\.\/core\//);
-      expect(text, `${file} が Shell の経路を参照している`).not.toMatch(/from\s+"\.\.\/platform\//);
+      expect(text, `${file} references Core path`).not.toMatch(/from\s+"\.\.\/core\//);
+      expect(text, `${file} references Shell path`).not.toMatch(/from\s+"\.\.\/platform\//);
       // The **name** of the dependency is listed (naturally, since this is credits). What's forbidden is the import.
-      expect(text, `${file} が Tauri API を import している`).not.toMatch(/from\s+"@tauri-apps/);
+      expect(text, `${file} imports Tauri API`).not.toMatch(/from\s+"@tauri-apps/);
     }
   });
 });
@@ -156,7 +156,7 @@ describe("bundled OSS", () => {
     const stage = BUNDLED.find((c) => c.component.includes("Stage"));
     const listed = new Map(stage?.dependencies.map((d) => [d.name, d.version]));
     for (const [name, range] of Object.entries(pkg.dependencies)) {
-      expect(listed.has(name), `${name} がクレジットに載っていない`).toBe(true);
+      expect(listed.has(name), `${name} is not listed in credits`).toBe(true);
       expect(listed.get(name), name).toBe(range.replace(/^[\^~]/, ""));
     }
     expect(listed.size).toBe(Object.keys(pkg.dependencies).length);
@@ -178,6 +178,7 @@ describe("the complete third-party list (generated)", () => {
     for (const dep of all) {
       expect(dep.license, dep.name).not.toBe("");
       expect(dep.license, dep.name).not.toBe("不明");
+      expect(dep.license, dep.name).not.toBe("Unknown");
     }
   });
 
@@ -193,7 +194,7 @@ describe("the complete third-party list (generated)", () => {
   it("nothing Lumi depends on heavily is missing", () => {
     const names = new Set(all.map((dep) => dep.name));
     for (const name of ["tauri", "sqlite-vec", "sounddevice", "three", "react", "PortAudio"]) {
-      expect(names.has(name), `${name} が一覧に無い`).toBe(true);
+      expect(names.has(name), `${name} is missing from the list`).toBe(true);
     }
   });
 });

@@ -77,8 +77,7 @@ def test_a_terminator_past_the_cap_does_not_extend_the_segment() -> None:
 
     The scan ran over the entire buffer, so a chunk that arrived in one piece with its
     first "。" far past the cap became one segment. TTS time scales with length, so that
-    lands on `llm_first_segment_ms` — the one place the delay is felt. audio.md §6:
-    「LLM が最初の句読点まで長く喋れば、上限文字数で切られるまで待つ」
+    lands on `llm_first_segment_ms` — the one place the delay is felt (audio.md §6).
     """
     stream = SentenceStream()
     assert stream.feed("あ" * 100 + "。")[0] == "あ" * FIRST_MAX_CHARS

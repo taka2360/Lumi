@@ -114,8 +114,9 @@ def can_preempt(proposal: ActivityProposal, current: Activity) -> bool:
 
     Takes the proposal, not a number (ADR-024). `ActivityProposal.priority` is derived
     from `priority_of(kind, actor)` and cannot be set, so **there is no way to hand this
-    a priority nobody decided** — which is what ADR-024 §3 ("priority を外部が提案できない")
-    asks of the boundary. A plain `int` here left that open.
+    a priority nobody decided** — which is what ADR-024 §3
+    ("priority cannot be proposed from the outside") asks of the boundary.
+    A plain `int` here left that open.
     """
     return proposal.priority >= current.interruptible_at
 

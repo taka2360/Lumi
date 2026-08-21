@@ -27,7 +27,7 @@ const VRM_EXPRESSION: Readonly<Record<Viseme, string>> = {
   O: "oh",
 };
 
-/** 腕を下ろしたデフォルトポーズを適用 */
+/** Apply default pose with arms down */
 function applyDefaultPose(vrm: VRM): void {
   const humanoid = vrm.humanoid;
   if (!humanoid) {
@@ -68,7 +68,7 @@ export async function loadVrm(url: string): Promise<CharacterModel> {
   // Faces it toward us. VRM 1.0 faces -Z.
   vrm.scene.rotation.y = Math.PI;
 
-  // 初期姿勢として腕を下ろす
+  // Lower arms as initial pose
   applyDefaultPose(vrm);
 
   const baseY = vrm.scene.position.y;

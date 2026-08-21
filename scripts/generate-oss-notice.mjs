@@ -1,19 +1,19 @@
 /**
- * 配布物に入るサードパーティの一覧を、**3つのエコシステムの依存グラフから生成する**。
+ * Generate a third-party license list for the distribution from **dependency graphs across three ecosystems**
  *
  *   node scripts/generate-oss-notice.mjs
- *   → stage/src/credits/third-party.generated.json
+ *   -> stage/src/credits/third-party.generated.json
  *
- * roadmap Phase 0「推移的依存を含む OSS 通知の生成」。
- * 手で書いた一覧は必ず古くなる。**依存を足したら通知も変わる**ようにしておく。
+ * roadmap Phase 0 "Generate OSS notice including transitive dependencies"
+ * Hand-written lists become outdated. **Ensure notices update when dependencies are added**
  *
- * 見ているのは「実際に配布物へ入るもの」だけ:
- *   - Rust  : `cargo tree -e normal`（build/dev 依存は exe に入らない）
- *   - Python: `uv export --no-dev`（PyInstaller が固める実行時依存）
- *   - JS    : `pnpm licenses list --prod`（Stage の dist に入るもの）
+ * Only inspecting components that are actually included in the distributable:
+ *   - Rust  : `cargo tree -e normal` (build/dev dependencies not included in exe)
+ *   - Python: `uv export --no-dev` (runtime dependencies bundled by PyInstaller)
+ *   - JS    : `pnpm licenses list --prod` (included in Stage dist)
  *
- * **依存グラフに出てこないのに配布されるもの**（CPython 本体、PortAudio、
- * PyInstaller の bootloader など）は下の MANUAL に手で書く。ここが抜けやすい。
+ * **Bundled items that do not appear in dependency graphs** (CPython runtime, PortAudio,
+ * PyInstaller bootloader, etc.) are manually specified in MANUAL below
  */
 
 import { execFileSync } from "node:child_process";
@@ -24,10 +24,10 @@ import { fileURLToPath } from "node:url";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const OUTPUT = join(ROOT, "stage", "src", "credits", "third-party.generated.json");
 
-/** Core = MIT の境界を守るための拒否リスト。**これに当たったら生成を失敗させる。** */
+/** Deny-list to preserve the Core = MIT boundary. **Generation fails if any match** */
 const REFUSED = [/\bGPL/i, /\bAGPL/i, /\bSSPL/i, /\bproprietary\b/i, /\bunlicensed\b/i];
 
-/** 依存グラフからは見えないが、配布物に入るもの。 */
+/** Items bundled into the distribution but absent from dependency graphs */
 const MANUAL = [
 	{
 		name: "CPython",
@@ -61,7 +61,7 @@ const MANUAL = [
 	},
 ];
 
-/** MANUAL に書いたものは拒否リストの対象外にする（例外条項を確認済みのものだけを置く）。 */
+/** Items listed in MANUAL are exempted from the deny-list (only items with verified exceptions are placed here) */
 function run(command, args, cwd) {
 	return execFileSync(command, args, {
 		cwd,
@@ -73,7 +73,7 @@ function run(command, args, cwd) {
 
 function rustPackages() {
 	const shell = join(ROOT, "shell", "src-tauri");
-	// 実際にリンクされるもの（normal 依存）だけ。build-dependencies は exe に入らない。
+	// Only packages actually linked (normal dependencies); build-dependencies are not included in the exe
 	const tree = run("cargo", ["tree", "-e", "normal", "--prefix", "none", "--no-dedupe"], shell);
 	const wanted = new Set();
 	for (const line of tree.split("\n")) {
@@ -89,7 +89,7 @@ function rustPackages() {
 		packages.push({
 			name: pkg.name,
 			version: pkg.version,
-			license: pkg.license ?? (pkg.license_file ? "（LICENSE ファイル同梱）" : "不明"),
+			license: pkg.license ?? (pkg.license_file ? "(Bundled LICENSE file)" : "Unknown"),
 		});
 	}
 	return packages;
@@ -115,7 +115,7 @@ function pythonPackages() {
 	return packages;
 }
 
-/** dist-info の METADATA から拾う。`License-Expression` → `License` → 分類子の順。 */
+/** Extract from dist-info METADATA in order: License-Expression -> License -> Classifier */
 function pythonLicense(sitePackages, distInfos, name, version) {
 	const normalized = name.replace(/[-_.]+/g, "_").toLowerCase();
 	const found = distInfos.find((dir) => {
@@ -123,7 +123,7 @@ function pythonLicense(sitePackages, distInfos, name, version) {
 		const [distName, distVersion] = base.split("-");
 		return distName.replace(/[-_.]+/g, "_").toLowerCase() === normalized && distVersion === version;
 	});
-	if (!found) return "不明";
+	if (!found) return "Unknown";
 
 	const metadata = readFileSync(join(sitePackages, found, "METADATA"), "utf8");
 	const expression = metadata.match(/^License-Expression:\s*(.+)$/m);
@@ -131,7 +131,7 @@ function pythonLicense(sitePackages, distInfos, name, version) {
 	const license = metadata.match(/^License:\s*(.+)$/m);
 	if (license && license[1].trim().length < 60) return license[1].trim();
 	const classifier = metadata.match(/^Classifier:\s*License\s*::\s*(?:OSI Approved\s*::\s*)?(.+)$/m);
-	return classifier ? classifier[1].trim() : "不明";
+	return classifier ? classifier[1].trim() : "Unknown";
 }
 
 function jsPackages() {
@@ -153,7 +153,7 @@ function refuse(packages, ecosystem) {
 	if (bad.length > 0) {
 		const listed = bad.map((pkg) => `  ${pkg.name} ${pkg.version} — ${pkg.license}`).join("\n");
 		throw new Error(
-			`${ecosystem} に受け入れられないライセンスの依存がある（Core = MIT の境界）:\n${listed}`,
+			`${ecosystem} contains dependencies with unacceptable licenses (Core = MIT boundary):\n${listed}`,
 		);
 	}
 }
@@ -174,6 +174,6 @@ ecosystems.push({
 });
 
 const total = ecosystems.reduce((sum, ecosystem) => sum + ecosystem.packages.length, 0);
-// **生成日時を書かない。** 中身が変わらないのに差分が出ると、変更に気づけなくなる。
+// **Do not write generation timestamp.** Diffs on unchanged content make real changes hard to notice
 writeFileSync(OUTPUT, `${JSON.stringify({ total, ecosystems }, null, 2)}\n`, "utf8");
-console.log(`${OUTPUT} を生成した（${total} 件）`);
+console.log(`Generated ${OUTPUT} (${total} items)`);

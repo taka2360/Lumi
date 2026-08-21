@@ -59,7 +59,7 @@ def test_overflow_drops_the_oldest_and_counts_it() -> None:
     ring = RingBuffer(4)
     ring.write(samples(1, 2, 3, 4))
     ring.write(samples(5, 6))
-    assert ring.available == 4, "1周を超えた分は、読み手が気づく前から既に無い"
+    assert ring.available == 4, "overflowed samples are gone before reader notices"
 
     out = ring.read(4)
     assert out is not None
@@ -205,7 +205,7 @@ def test_each_cursor_has_exactly_one_writer(method: str, forbidden: tuple[str, .
     Checked statically because the race itself is not reproducible on demand.
     """
     offenders = [name for name in assigned_attributes(method) if name in forbidden]
-    assert offenders == [], f"{method} が他方のカーソルを書いている: {offenders}"
+    assert offenders == [], f"{method} is writing to other cursor: {offenders}"
 
 
 def test_capacity_must_be_positive() -> None:
@@ -247,7 +247,7 @@ def test_downsampling_rejects_content_above_the_new_nyquist() -> None:
     """**The bug that made STT accuracy bad** 〔2026-08-17〕.
 
     A 3-tap moving average left 9–12 kHz folding back into 4–7 kHz at only −6 to −11 dB.
-    Japanese fricatives (し / す / つ) live there, so every sibilant got a mirror image
+    Sibilant sounds live there, so every sibilant got a mirror image
     laid on top of the consonant band. **Anything above 8 kHz has to disappear, not move.**
     """
     for frequency in (9000.0, 10000.0, 12000.0, 18000.0):

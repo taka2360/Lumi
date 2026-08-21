@@ -138,8 +138,8 @@ def test_a_newer_schema_is_never_rewritten_as_this_one(tmp_path: Path) -> None:
 
     settings = load(file, {})
 
-    assert settings.unreadable, "書き込みを止めるのは unreadable の経路"
-    assert settings.llm_model.source is Source.DEFAULT, "v99 の値を v1 として読まない"
+    assert settings.unreadable, "unreadable path prevents overwriting"
+    assert settings.llm_model.source is Source.DEFAULT, "v99 value must not be read as v1"
     with pytest.raises(SettingsUnreadable):
         save(file, settings, {"llm_model": "gemma3:12b"})
     assert json.loads(file.read_text(encoding="utf-8")) == original

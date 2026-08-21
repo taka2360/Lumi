@@ -91,7 +91,7 @@ def test_the_origin_prefix_ends_at_the_authority_boundary() -> None:
     host exactly. Drop it from `ALLOWED_ORIGIN_PREFIX` and both of these start passing,
     with `_download` sending its first request to the attacker before any digest is checked.
     """
-    assert ALLOWED_ORIGIN_PREFIX.endswith("/"), "権威部の終端まで固定していないと下が通る"
+    assert ALLOWED_ORIGIN_PREFIX.endswith("/"), "origin prefix must end at authority boundary"
     assert not is_allowed_origin("https://huggingface.co.evil.example/a")
     assert not is_allowed_origin("https://huggingface.co@evil.example/a")
     assert not is_allowed_origin("https://huggingface.co:443/a")
@@ -186,7 +186,7 @@ async def test_a_connection_that_dies_mid_download_says_so(tmp_path: Path) -> No
     assert error.value.reason == "network_unreachable"
     assert not is_model_installed(model, tmp_path)
     remaining = await asyncio.to_thread(lambda: list(tmp_path.iterdir()))
-    assert remaining == [], "一時ディレクトリが残っている"
+    assert remaining == [], "temporary directory was left behind"
 
 
 async def test_reinstalling_is_a_no_op(tmp_path: Path) -> None:
@@ -195,7 +195,7 @@ async def test_reinstalling_is_a_no_op(tmp_path: Path) -> None:
 
     # A handler that would fail if it were called again
     def refuse(_: httpx.Request) -> httpx.Response:
-        raise AssertionError("再取得してはいけない")
+        raise AssertionError("must not re-fetch")
 
     assert await _install(model, tmp_path, refuse) == model_directory(model, tmp_path)
 
@@ -307,7 +307,7 @@ class TestModelLocation:
             # `paths.py` is where the one definition lives
             if path.name != "paths.py" and 'models_dir() / "whisper"' in path.read_text("utf-8")
         ]
-        assert offenders == [], f"paths.stt_models_dir() を使うこと: {offenders}"
+        assert offenders == [], f"must use paths.stt_models_dir(): {offenders}"
 
     def test_the_fetched_model_is_the_one_the_provider_will_look_for(self) -> None:
         """**The two ends of the same decision.**
@@ -351,4 +351,4 @@ class TestModelLocation:
             for name in ("setup/coordinator.py", "agent/runtime.py")
         }
         for name, text in sources.items():
-            assert "paths.stt_models_dir()" in text, f"{name} が共通の定義を使っていない"
+            assert "paths.stt_models_dir()" in text, f"{name} is not using shared definition"

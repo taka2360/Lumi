@@ -1,5 +1,5 @@
 {
-  "total": 303,
+  "total": 304,
   "ecosystems": [
     {
       "name": "Lumi Shell（Rust / exe にリンクされるもの）",
@@ -363,6 +363,11 @@
           "name": "http",
           "version": "1.5.0",
           "license": "MIT OR Apache-2.0"
+        },
+        {
+          "name": "http-range",
+          "version": "0.1.5",
+          "license": "MIT"
         },
         {
           "name": "httparse",

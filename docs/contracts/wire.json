@@ -1,5 +1,5 @@
 {
-  "$comment": "線上に出る名前と定数の唯一の定義場所。規則と対象の線引きは wire.md、決定の経緯は ADR-022。JSON にコメントは書けないので、説明はすべて wire.md に置く。",
+  "$comment": "The single source of truth for on-the-wire names and constants. See wire.md for rules and boundaries, and ADR-022 for decision history. Since JSON does not support comments, all explanations live in wire.md",
   "protocol_version": 1,
   "namespace_by_role": {
     "shell": "os.",
@@ -22,7 +22,7 @@
       "os.window.set_position"
     ]
   },
-  "$comment_inbound": "Stage → Core の要求（ADR-028）。**ここに無い method は届かない**（WsServer.on_request の登録が allowlist そのもの）",
+  "$comment_inbound": "Stage -> Core requests (ADR-028). Methods not listed here will not be delivered (WsServer.on_request registration serves as the allowlist itself)",
   "inbound_methods": [
     "stage.settings.update"
   ],

@@ -435,7 +435,7 @@ def test_scope_metadata_cannot_be_rewritten_after_inspection() -> None:
         scope.metadata["emotion"] = "angry"  # type: ignore[index]
     with pytest.raises(TypeError):
         scope.metadata["nested"]["k"] = 2
-    assert isinstance(scope.metadata["tags"], tuple), "入れ子の list も書けてはいけない"
+    assert isinstance(scope.metadata["tags"], tuple), "nested list must also not be writable"
 
     # The caller's own dict stays its own: mutating it must not reach an inspected scope
     source["emotion"] = "angry"
