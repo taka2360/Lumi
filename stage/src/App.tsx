@@ -66,6 +66,7 @@ export function App() {
   // state: nothing is in progress, and what happens next is up to the user. `connected`
   // is required because `blocked` can only ever come from Core.
   const blocked = connected && setup.boot === "blocked";
+  const showBootScreen = !showCharacter && !prompt && !blocked;
 
   const [status, setStatus] = useState<CharacterStatus>({ kind: null, fallbackReason: null });
   const onStatus = useCallback((next: CharacterStatus) => setStatus(next), []);
@@ -117,7 +118,11 @@ export function App() {
   }, [characterRect, panelRect, inspectorRect, inspectVisible, reportHitRegion]);
 
   return (
-    <div className={hover === "inside" ? "stage stage--hover" : "stage"}>
+    <div
+      className={`${hover === "inside" ? "stage stage--hover" : "stage"}${
+        showBootScreen ? " stage--boot" : ""
+      }`}
+    >
       {/* The surface for grabbing the character to move the window. Never reachable
           from the keyboard (window move/resize follows OS conventions, not Stage UI). */}
       {showCharacter && (
@@ -133,7 +138,7 @@ export function App() {
           be speech with nobody visibly saying it. */}
       {showCharacter && <Bubble />}
       <div
-        className="overlay"
+        className={showBootScreen ? "overlay overlay--boot" : "overlay"}
         ref={setPanel}
         onPointerDown={gestures.onPointerDown}
         onWheel={gestures.onWheel}
@@ -141,11 +146,7 @@ export function App() {
         {/* While preparing, shows what's happening instead of the character.
             **Always shows exactly one thing** (docs/architecture/ui.md "Boot phases").
             Showing loading and the panel side by side would describe the same situation twice. */}
-        {showCharacter || prompt || blocked ? (
-          <SetupPanel />
-        ) : (
-          <BootScreen setup={setup} connected={connected} />
-        )}
+        {showBootScreen ? <BootScreen setup={setup} connected={connected} /> : <SetupPanel />}
         {/* **Never silently degrades.** Shows that a placeholder is running instead of the production VRM. */}
         {status.fallbackReason && <p className="notice">{status.fallbackReason}</p>}
       </div>
