@@ -84,7 +84,7 @@ function StatusText({ line }: { line: StatusLine }) {
       {line.hint && (
         <>
           <br />
-          <code className="panel__hint" data-window-drag="exclude">
+          <code className="panel__hint" data-window-gesture="exclude">
             {line.hint}
           </code>
         </>

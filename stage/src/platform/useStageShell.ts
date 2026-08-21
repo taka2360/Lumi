@@ -90,16 +90,25 @@ export function useQuit(): () => void {
 /** The scale factor per wheel notch. Kept **small** (jumping too far can't be undone). */
 const SCALE_STEP = 1.08;
 
-/** Elements whose own interaction must win over moving the whole window. */
-const WINDOW_DRAG_EXCLUSION =
-  "button, a, input, select, textarea, [contenteditable='true'], [data-window-drag='exclude']";
+/** Elements whose own interaction must win over moving or resizing the whole window. */
+const WINDOW_GESTURE_EXCLUSION =
+  "button, a, input, select, textarea, [contenteditable='true'], [data-window-gesture='exclude']";
+
+function isWindowGestureTarget(target: EventTarget | null): target is Element {
+  return target instanceof Element && target.closest(WINDOW_GESTURE_EXCLUSION) === null;
+}
 
 /** Whether a pointer press is allowed to start native window dragging. Exported for regression tests. */
 export function canStartWindowDrag(button: number, target: EventTarget | null): boolean {
-  if (button !== 0 || !(target instanceof Element)) {
-    return false;
+  return button === 0 && isWindowGestureTarget(target);
+}
+
+/** Returns the bounded Shell request for a wheel interaction, or null over an excluded control. */
+export function windowScaleFactor(deltaY: number, target: EventTarget | null): number | null {
+  if (!isWindowGestureTarget(target)) {
+    return null;
   }
-  return target.closest(WINDOW_DRAG_EXCLUSION) === null;
+  return deltaY < 0 ? SCALE_STEP : 1 / SCALE_STEP;
 }
 
 /**
@@ -126,7 +135,11 @@ export function useWindowGestures() {
 
   const onWheel = useCallback(
     (event: React.WheelEvent) => {
-      void shell.scaleWindow(event.deltaY < 0 ? SCALE_STEP : 1 / SCALE_STEP);
+      const factor = windowScaleFactor(event.deltaY, event.target);
+      if (factor === null) {
+        return;
+      }
+      void shell.scaleWindow(factor);
     },
     [shell],
   );

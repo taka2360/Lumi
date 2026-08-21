@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canStartWindowDrag } from "./useStageShell";
+import { canStartWindowDrag, windowScaleFactor } from "./useStageShell";
 
 describe("window drag surface", () => {
   it("lets the boot and setup surface move the window", () => {
@@ -26,11 +26,27 @@ describe("window drag surface", () => {
   it("keeps setup commands selectable", () => {
     const command = document.createElement("code");
     const text = document.createElement("span");
-    command.dataset.windowDrag = "exclude";
+    command.dataset.windowGesture = "exclude";
     command.appendChild(text);
 
     expect(canStartWindowDrag(0, command)).toBe(false);
     expect(canStartWindowDrag(0, text)).toBe(false);
+  });
+
+  it("does not resize for wheel events over setup controls or commands", () => {
+    const button = document.createElement("button");
+    const command = document.createElement("code");
+    command.dataset.windowGesture = "exclude";
+
+    expect(windowScaleFactor(-1, button)).toBeNull();
+    expect(windowScaleFactor(1, command)).toBeNull();
+  });
+
+  it("resizes for wheel events over the boot and setup surface", () => {
+    const surface = document.createElement("div");
+
+    expect(windowScaleFactor(-1, surface)).toBeGreaterThan(1);
+    expect(windowScaleFactor(1, surface)).toBeLessThan(1);
   });
 
   it("reserves non-left presses for their native behavior", () => {
