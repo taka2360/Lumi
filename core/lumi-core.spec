@@ -4,8 +4,12 @@
 Design: docs/decisions/ADR-021-sidecar-packaging.md / docs/architecture/setup.md
 
 ```
-cd core && uv run pyinstaller lumi-core.spec --noconfirm
+cd core && uv run pyinstaller lumi-core.spec --noconfirm --clean
 ```
+
+The repository build also passes `--clean`. PyInstaller's cached EXE target
+tracks the icon path, but not reliably the contents of the icon file, so a
+changed `icon.ico` can otherwise leave the previous icon in `lumi-core.exe`.
 
 **Not built as onefile.** It would extract 21 MB to `%TEMP%` on every launch,
 and **a force-kill leaves the extracted copy behind.** Lumi uses a Job Object

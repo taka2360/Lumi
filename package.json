@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "pnpm --filter @lumi/shell dev",
     "build": "pnpm build:core && pnpm --filter @lumi/shell build",
-    "build:core": "cd core && uv run pyinstaller lumi-core.spec --noconfirm",
+    "build:core": "cd core && uv run pyinstaller lumi-core.spec --noconfirm --clean",
     "stage:dev": "pnpm --filter @lumi/stage dev",
     "lint": "pnpm -r lint",
     "format": "pnpm -r format",
