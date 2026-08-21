@@ -30,6 +30,16 @@ body {
   height: 100%;
 }
 
+/* During boot, keep the loading card and the lower-left controls in normal flow.
+   Both are anchored to the bottom of the transparent window, so absolute positioning
+   lets the loading card cover the controls on smaller Stage windows. */
+.stage--boot {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+}
+
 .character {
   display: block;
   width: 100%;
@@ -63,6 +73,14 @@ body {
 
 .overlay:active {
   cursor: grabbing;
+}
+
+.overlay--boot {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  transform: none;
+  margin-bottom: 0;
 }
 
 .panel {
@@ -352,6 +370,15 @@ body {
 .inspect-anchor:focus-within {
   opacity: 1;
   pointer-events: auto;
+}
+
+.stage--boot .inspect-anchor {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  align-self: flex-start;
+  order: -1;
+  margin-bottom: 10px;
 }
 
 .app-actions {

@@ -66,6 +66,7 @@ const ja = {
   "settings.unreadable":
     "設定ファイルを読めませんでした。既定値で動いています（上書きはしないので、手で直せます）",
   "settings.restart": "モデルとデバイスの変更は次回起動から、読み上げ速度はすぐに反映されます",
+  "inspector.title": "インスペクター",
   "inspector.empty": "まだ1ターンも終わっていない",
   "inspector.interrupted": "途中で止まったターン",
   "boot.title": "Lumi を起動しています…",
@@ -189,6 +190,7 @@ const en: Record<keyof typeof ja, string> = {
     "The settings file could not be read. Lumi is using defaults and will not overwrite the file, so you can repair it manually.",
   "settings.restart":
     "Model and device changes take effect after restarting; speech speed applies immediately.",
+  "inspector.title": "Inspector",
   "inspector.empty": "No turn has finished yet",
   "inspector.interrupted": "Interrupted turn",
   "boot.title": "Starting Lumi…",
