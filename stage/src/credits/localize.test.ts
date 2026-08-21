@@ -1,6 +1,6 @@
 import { expect, it } from "vitest";
 
-import { BUNDLED, EXTERNAL, LICENSES, LUMI, PROHIBITIONS } from "./content";
+import { BUNDLED, EXTERNAL, LICENSES, LUMI, PROHIBITIONS, THIRD_PARTY } from "./content";
 import { creditText } from "./localize";
 
 it("has English notices for every Japanese credit field", () => {
@@ -15,6 +15,7 @@ it("has English notices for every Japanese credit field", () => {
     ]),
     ...PROHIBITIONS.flatMap((set) => [set.source, set.appliesWhen, ...set.items]),
     ...LICENSES.map((license) => license.note),
+    ...THIRD_PARTY.ecosystems.map((ecosystem) => ecosystem.name),
   ];
 
   for (const field of fields) {

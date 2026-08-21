@@ -149,7 +149,7 @@ export function Credits() {
         {THIRD_PARTY.ecosystems.map((ecosystem) => (
           <details key={ecosystem.name} className="credits__license">
             <summary className="credits__summary">
-              {ecosystem.name}{" "}
+              {ct(ecosystem.name)}{" "}
               <span className="credits__note">
                 {translate(locale, "credits.packages", { count: ecosystem.packages.length })}
               </span>
