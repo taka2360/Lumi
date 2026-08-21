@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { AppActions } from "./actions/AppActions";
 import { CharacterCanvas, type CharacterStatus } from "./character/CharacterCanvas";
 import { useStageStore } from "./core/store";
 import { useCoreConnection } from "./core/useCoreConnection";
@@ -157,6 +158,7 @@ export function App() {
         onPointerEnter={() => setAnchorHovered(true)}
         onPointerLeave={() => setAnchorHovered(false)}
       >
+        <AppActions />
         <Inspector onOpenChange={setInspectorOpen} />
         <Settings onOpenChange={setSettingsOpen} />
       </div>

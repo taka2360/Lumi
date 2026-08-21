@@ -75,7 +75,7 @@ fn create_window(
     Ok(win)
 }
 
-/// Opens credits and licenses (tray → credits).
+/// Opens credits and licenses (tray or Stage action menu → credits).
 ///
 /// **A static page that never connects to Core** (docs/architecture/ui.md).
 /// Presenting the license documents is an obligation independent of Lumi's
@@ -93,7 +93,7 @@ fn open_credits(app: &AppHandle) {
     }
 
     let spec = compute_credits_window_options(system_locale());
-    match create_window(app, &spec, WebviewUrl::App("credits.html".into())) {
+    match create_window(app, &spec, WebviewUrl::App("/credits.html".into())) {
         Ok(_) => log::info!("credits.opened"),
         // **Never let it silently do nothing.** Logs it if it couldn't open.
         Err(error) => log::error!("credits.open_failed {error}"),
@@ -215,8 +215,8 @@ pub fn run() {
             shell_window_drag_start,
             shell_window_scale,
             tray::shell_locale_set,
-            // Quitting is the one thing the setup screen has to be able to do (ADR-034).
-            // **No judgment travels with it**, so `shell.*`'s rule holds.
+            tray::shell_credits_open,
+            // Credits and quitting carry no judgment, so `shell.*`'s rule holds.
             tray::shell_app_quit
         ])
         .setup(move |app| {

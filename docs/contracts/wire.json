@@ -49,6 +49,7 @@
     "shell_window_drag_start",
     "shell_window_scale",
     "shell_locale_set",
+    "shell_credits_open",
     "shell_app_quit"
   ],
   "window_labels": [

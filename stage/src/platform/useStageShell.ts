@@ -21,6 +21,7 @@ const noopShell: PlatformShell = {
   onHoverState: async () => ({ dispose: () => {} }),
   startWindowDrag: async () => {},
   scaleWindow: async () => {},
+  openCredits: async () => {},
   // Outside Tauri there is no process to end. **Left as a no-op rather than closing the
   // tab**: a browser-opened Stage is a development view, and taking the window away from
   // whoever opened it would be a surprise, not a service.
@@ -85,6 +86,18 @@ export function useQuit(): () => void {
   return useCallback(() => {
     void shell.quit();
   }, [shell]);
+}
+
+/** Returns a function that opens the bundled static credits and licenses window. */
+export function useOpenCredits(onError?: (error: unknown) => void): () => void {
+  const shell = useMemo(getPlatformShell, []);
+  return useCallback(() => {
+    void shell.openCredits().catch((error: unknown) => {
+      // The caller owns the presentation of an actionable failure. Keeping the catch
+      // here prevents a rejected Tauri invoke from becoming an unhandled rejection.
+      onError?.(error);
+    });
+  }, [onError, shell]);
 }
 
 /** The scale factor per wheel notch. Kept **small** (jumping too far can't be undone). */

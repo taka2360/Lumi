@@ -61,7 +61,7 @@ Lumi は**公開配布される前提**で設計する。これによりクレ�
   - [x] TTS が未セットアップなら Lumi は起動せず、`blocked` 画面に不足項目と解決方法を表示し、
     ユーザーが [終了] を選べる〔[ADR-034](decisions/ADR-034-gate-startup-on-complete-setup.md)〕
   - [x] ユーザーが別途インストール済みの AivisSpeech / VOICEVOX を検出する
-- [x] **クレジット表示画面**（トレイ → クレジット）〔ADR-019 / 内容は [licensing.md](licensing.md) §6〕
+- [x] **クレジット表示画面**（トレイ / `stage` の操作メニュー → クレジット）〔ADR-019 / 内容は [licensing.md](licensing.md) §6〕
   - [x] エンジン名・音源のクレジット例・ライセンス全文・禁止事項をユーザーが読める
   - [x] Phase 0 では Stage 側に静的に作る。`Provider.attribution()` との接続は Phase 1
   - [x] **Core が落ちていても読める**（クレジット画面は Core に接続しない）
