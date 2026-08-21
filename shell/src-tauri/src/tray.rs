@@ -6,11 +6,17 @@
 //! opening/closing windows and terminating the process — nothing about what Lumi
 //! is thinking appears at all (`shell.*` never carries AI judgment).
 
+use tauri::image::Image;
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager as _};
 
 use crate::locale::Locale;
+
+/// The native tray icon is kept at the Windows notification-area size.
+/// Embedding the tracked asset makes the tray independent of whichever
+/// default window icon Tauri selects from the bundle icon set.
+const TRAY_ICON: &[u8] = include_bytes!("../icons/32x32.png");
 
 /// The tray menu's items. **Maps id to behavior via a pure function**, so it's
 /// testable without opening the menu.
@@ -64,10 +70,7 @@ fn resolve_tray_action(id: &str) -> Option<TrayAction> {
 pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
     let menu = build_menu(app, locale)?;
 
-    let icon = app
-        .default_window_icon()
-        .cloned()
-        .ok_or_else(|| tauri::Error::AssetNotFound("Icon for tray not found".into()))?;
+    let icon = Image::from_bytes(TRAY_ICON)?;
 
     TrayIconBuilder::with_id("lumi")
         .icon(icon)

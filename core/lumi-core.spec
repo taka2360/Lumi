@@ -1,16 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
 """Builds Core and places it in `dist/lumi-core/` (bundled by Tauri as `resources`).
 
-Design → docs/decisions/ADR-021-sidecar-packaging.md / docs/architecture/setup.md
+Design: docs/decisions/ADR-021-sidecar-packaging.md / docs/architecture/setup.md
 
 ```
-cd core && uv run pyinstaller lumi-core.spec --noconfirm
+cd core && uv run pyinstaller lumi-core.spec --noconfirm --clean
 ```
+
+The repository build also passes `--clean`. PyInstaller's cached EXE target
+tracks the icon path, but not reliably the contents of the icon file, so a
+changed `icon.ico` can otherwise leave the previous icon in `lumi-core.exe`.
 
 **Not built as onefile.** It would extract 21 MB to `%TEMP%` on every launch,
 and **a force-kill leaves the extracted copy behind.** Lumi uses a Job Object
 force-kill as "the only layer that survives a forced termination," so onefile
-would leave garbage behind on every exit (measured → docs/measurements/phase0.md).
+would leave garbage behind on every exit (see docs/measurements/phase0.md).
 
 **Native extensions aren't included automatically.** Worse, import still
 succeeds even without them, and it only fails once actually loaded. Whether
@@ -27,29 +31,36 @@ from pathlib import Path
 
 from PyInstaller.utils.hooks import get_package_paths
 
-# ── sqlite-vec's loadable extension ─────────────────────────────────
+# -- sqlite-vec's loadable extension ---------------------------------
 # `sqlite_vec.loadable_path()` returns `dirname(__file__)/vec0`, so it's
 # placed at the same relative position as the package. **Getting this wrong kills memory entirely in Phase 2.**
 _, sqlite_vec_dir = get_package_paths("sqlite_vec")
 vec0 = Path(sqlite_vec_dir) / "vec0.dll"
 if not vec0.is_file():
-    raise SystemExit(f"sqlite-vec の拡張が見つからない: {vec0}")
+    raise SystemExit(f"sqlite-vec extension not found: {vec0}")
 
-# ── Silero VAD's ONNX file ────────────────────────────────────────
-# **Borrows the copy faster-whisper already bundles** (docs/licensing.md §4.6 / ADR-023).
+# -- Silero VAD's ONNX file -----------------------------------------
+# **Borrows the copy faster-whisper already bundles** (docs/licensing.md, section 4.6 / ADR-023).
 # PyPI's `silero-vad` isn't used since it depends on torch (a direct hit to R1).
 # **This is a dependency on the package's internal structure.** This breaks if an update moves the path.
 _, faster_whisper_dir = get_package_paths("faster_whisper")
 silero = Path(faster_whisper_dir) / "assets" / "silero_vad_v6.onnx"
 if not silero.is_file():
-    raise SystemExit(f"Silero VAD の ONNX が見つからない: {silero}")
+    raise SystemExit(f"Silero VAD ONNX file not found: {silero}")
 
-# ── The default Content Pack ───────────────────────────────────────
+# -- The default Content Pack ---------------------------------------
 # **A Lumi without a personality isn't Lumi.** `paths.content_dir()` looks
 # at `sys._MEIPASS/content` in the built executable.
 content = Path(SPECPATH).parent / "content"
 if not (content / "characters" / "lumi" / "character.toml").is_file():
-    raise SystemExit(f"既定の Content Pack が無い: {content}")
+    raise SystemExit(f"Default Content Pack not found: {content}")
+
+# -- The application icon -------------------------------------------
+# Keep the bundled Core executable visually consistent with the Shell,
+# installer, and shortcuts. The Windows distributable uses the ICO asset.
+app_icon = Path(SPECPATH).parent / "shell" / "src-tauri" / "icons" / "icon.ico"
+if not app_icon.is_file():
+    raise SystemExit(f"Application icon not found: {app_icon}")
 
 # PortAudio itself is gathered by `sounddevice`'s hook, along with all of `_sounddevice_data`.
 # **The ASIO build ends up mixed in there**, so it's dropped after Analysis (`_drop_asio` below).
@@ -123,7 +134,9 @@ def _pin_vcruntime(entries):
         if name.lower().startswith(("msvcp140", "vcruntime140")) and Path(dest).parent == Path("."):
             replacement = system32 / name
             if not replacement.is_file():
-                raise SystemExit(f"System32 に {name} が無い（VC++ 再頒布可能パッケージを入れる）")
+                raise SystemExit(
+                    f"System32 does not contain {name}; install the Microsoft Visual C++ Redistributable"
+                )
             pinned.append((dest, str(replacement), kind))
         else:
             pinned.append((dest, source, kind))
@@ -143,16 +156,16 @@ def _require(entries, needle, message):
         raise SystemExit(message)
 
 
-_require(a.binaries, "sqlite_vec/vec0", "sqlite-vec の拡張が配布物に入っていない")
-_require(a.binaries + a.datas, "libportaudio64bit.dll", "PortAudio が配布物に入っていない")
-_require(a.datas, "silero_vad_v6.onnx", "Silero VAD が配布物に入っていない（barge-in が死ぬ）")
-_require(a.datas, "content/characters/lumi/character.toml", "既定の Content Pack が入っていない")
-# **既定キャラクターの体。** 再配布が許諾されているので配布物に入る（docs/licensing.md §4.5）。
-# 抜けても Lumi は起動してしまう（プレースホルダになる）ので、**ここで止める**
-_require(a.datas, "content/characters/lumi/model.vrm", "既定の VRM が入っていない（プレースホルダで配布される）")
-_require(a.binaries, "onnxruntime", "ONNX Runtime が配布物に入っていない")
+_require(a.binaries, "sqlite_vec/vec0", "sqlite-vec extension is missing from the distributable")
+_require(a.binaries + a.datas, "libportaudio64bit.dll", "PortAudio is missing from the distributable")
+_require(a.datas, "silero_vad_v6.onnx", "Silero VAD is missing from the distributable (barge-in will not work)")
+_require(a.datas, "content/characters/lumi/character.toml", "Default Content Pack is missing from the distributable")
+# **The default character model.** It is redistributable and must be included (docs/licensing.md, section 4.5).
+# If it is missing, Lumi still starts with a placeholder, so **fail here**.
+_require(a.datas, "content/characters/lumi/model.vrm", "Default VRM is missing from the distributable (Lumi would ship with a placeholder)")
+_require(a.binaries, "onnxruntime", "ONNX Runtime is missing from the distributable")
 if any("asio" in entry[0].lower() for entry in a.binaries + a.datas):
-    raise SystemExit("ASIO 版の PortAudio が残っている（再配布条件が別にある）")
+    raise SystemExit("The ASIO build of PortAudio remains in the distributable (it has separate redistribution terms)")
 
 pyz = PYZ(a.pure)
 
@@ -170,6 +183,7 @@ exe = EXE(
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
+    icon=str(app_icon),
     codesign_identity=None,
     entitlements_file=None,
 )
