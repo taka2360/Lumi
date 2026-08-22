@@ -110,7 +110,7 @@ screenshot / input injection / window create / process launch。
 | 6 | Extension プロトコルに `DomainEvent` を送る経路が無い | protocol |
 | 7 | `trust_level = trusted` の書き込みがユーザー確認ハンドラ以外に存在しない | Core |
 | 8 | `sequence_id` の代入が `EventBus` 以外に存在しない | Core |
-| 9 | `audit_log` への `DELETE` / `UPDATE` がコードベースに存在しない | Core |
+| 9 | `audit_log` への `DELETE` / `UPDATE` が、**保持期間ジョブと全消去サービス以外に**存在しない（→ [privacy.md](privacy.md) §5。`UPDATE` はどこにも存在しない） | Core |
 | 10 | `WorldFacet` の書き込みが Signal ハンドラ以外に存在しない | Core |
 | 11 | **Activity の状態遷移が `AttentionArbiter` 以外に存在しない** | Core |
 | 12 | **`_foreground` への代入が `AttentionArbiter` 以外に存在しない** | Core |

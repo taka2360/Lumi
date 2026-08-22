@@ -396,7 +396,7 @@ Scheduler を `audio/` に置くと `audio → providers → audio` のパッケ
 | 区間 | ログのキー | 目標 | クリティカルパス寄与 | 備考 |
 |---|---|---|---|---|
 | VAD 発話終端の確定 | `vad_ms` | **§5 の `min_silence_duration_ms` + フレーム境界**（現在 0.43 s） | 0.43 s | **ここに独立した数値を書かない**（下記） |
-| STT | `stt_ms` | 0.22 s | **0**（`vad_ms` と重なる） | faster-whisper int8。**GPU 0.06 s / CPU 0.92 s**（実測）。投機実行（下記） |
+| STT | `stt_ms` | 0.22 s | **0**（`max(0, stt_ms - vad_ms)`。予算では 0.22 ≤ 0.43） | faster-whisper int8。**GPU 0.06 s / CPU 0.92 s**（実測）。投機実行（下記） |
 | 記憶検索 | `retrieve_ms` | 0.05 s | 0.05 s | Phase 2 以降。Phase 1 は 0 |
 | プロンプト組み立て | `assemble_ms` | 0.03 s | 0.03 s | 予算計算・切り落とし・provenance 付与 |
 | LLM 初トークン | `llm_first_token_ms` | 0.28 s | 0.28 s | |
@@ -410,15 +410,37 @@ Scheduler を `audio/` に置くと `audio → providers → audio` のパッケ
 > **区間別の目標は据え置いている。** `stt_ms` のクリティカルパス寄与が 0 でも、
 > **STT が 0.22 s 以内であることは引き続き目標である**（0.43 s を超えたら隠れなくなる）。
 
+#### ★ 重なる区間の寄与は、実測の和集合で決める
+
+**表の 0 は予算の値であって、実測の値ではない。**
+
+```text
+stt の寄与 = stt_ms - stt_overlap_ms
+```
+
+`stt_overlap_ms` は **`vad_ms` と `stt_ms` が実際に重なっていた長さ**であり、
+**推定ではなく計測して記録する**（両区間の開始・終了時刻から求める）。**寄与を定数 0 として
+書き込まない。** 書き込むと、隠れていない時間が `critical_path_ms` から消えて `unaccounted_ms` が負に振れる。
+
+| 構成 | `stt_ms`（実測） | `vad_ms` | 寄与 |
+|---|---|---|---|
+| **GPU** | 0.06 s | 0.43 s | **0**（完全に隠れる） |
+| 予算 | 0.22 s | 0.43 s | **0** |
+| **CPU** | 0.92 s | 0.43 s | **0.49 s**（隠れきらない） |
+
+**CPU 構成では 0.49 s がクリティカルパスに残る。** これは悪化ではなく改善である
+（投機しなければ 0.92 s が丸ごと直列だった）。**ただし「隠れた」と書いてはならない。**
+SLO が GPU 構成での約束であることは変わらない（[ADR-025](../decisions/ADR-025-tts-on-gpu.md)）。
+
 #### ★ 投機 STT — VAD の無音待ちと STT を重ねる〔2026-08-22。[ADR-039](../decisions/ADR-039-speculative-stt.md)〕
 
 `vad_ms` の 0.43 s は「ユーザーが本当に喋り終わったか」を見極めるために**無音を待つ**時間である
 （下記）。**無音を待ち始めた時点で、発話本体の音声バッファはもう確定している。**
 待っている 400 ms のあいだ、STT は何もしていない。
 
-```
+```text
         ├─ vad 0.43 ────────────────┤
-        ├─ stt 0.22 ────┤            (重なる。クリティカルパス寄与 0)
+        ├─ stt 0.22 ────┤            (重なる。寄与 = max(0, stt - vad) = 0)
                                      ├ retrieve 0.05 ┤ assemble 0.03 ┤ llm ... ┤
 ```
 
@@ -429,8 +451,7 @@ Scheduler を `audio/` に置くと `audio → providers → audio` のパッケ
 | **破棄** | **無音が途切れて発話が続いたら、投機結果を捨てて再実行する** | **異常ではない。**`stt.speculation_discarded` として数えるだけ |
 | **層** | audio callback でも VAD 専用スレッドでもなく、**別のワーカー**（§2 の3層分離） | **ミュート判定は投機 STT を待たない** |
 
-**CPU 構成では隠れきらない**（STT 0.92 s > VAD 0.43 s なので 0.49 s が残る）。
-それでも直列だったときより速い。SLO が GPU 構成での約束であることは変わらない（[ADR-025](../decisions/ADR-025-tts-on-gpu.md)）。
+**CPU 構成で隠れきらないことは、上記「重なる区間の寄与」の表が扱う。**
 
 #### ★ `vad_ms` は実装のコストではなく、ターンテイキングの方針である〔2026-08-17 決着〕
 
@@ -554,9 +575,10 @@ Scheduler を `audio/` に置くと `audio → providers → audio` のパッケ
 
 **全区間を毎回計測してログに出す。** 守れない区間が設計の見直し点になる。
 
-```
+```json
 {"event": "turn_latency", "correlation_id": "...",
- "vad_ms": 430, "stt_ms": 240, "stt_speculative": true, "retrieve_ms": 48, "assemble_ms": 25,
+ "vad_ms": 430, "stt_ms": 240, "stt_speculative": true, "stt_overlap_ms": 240,
+ "retrieve_ms": 48, "assemble_ms": 25,
  "llm_first_token_ms": 310, "llm_first_segment_ms": 70,
  "tts_first_audio_ms": 210, "playback_ms": 35,
  "critical_path_ms": 1128, "total_ms": 1238, "unaccounted_ms": 110}
@@ -566,9 +588,21 @@ Scheduler を `audio/` に置くと `audio → providers → audio` のパッケ
 `vad_ms` の始端（実際に喋り終わった時刻）から `playback_ms` の終端（最初の音がリングに入った時刻）
 までが `total_ms` である。**隙間を作ると、そこが `unaccounted_ms` に化けて意味が薄まる。**
 
-**重なる区間は、重なると申告する。** 現在重なるのは `stt_ms` と `vad_ms` だけで、
-`stt_speculative: true` がその申告である（[ADR-039](../decisions/ADR-039-speculative-stt.md)）。
-**申告せずに区間を重ねると、`critical_path_ms` が実態より大きくなり、`unaccounted_ms` が負に振れる。**
+**重なる区間は、重なった長さを計測して申告する。** 現在重なるのは `stt_ms` と `vad_ms` だけで、
+`stt_speculative: true` と **`stt_overlap_ms`**（実際に重なっていた長さ）がその申告である
+（[ADR-039](../decisions/ADR-039-speculative-stt.md)）。
+
+```text
+critical_path_ms = vad_ms + (stt_ms - stt_overlap_ms) + retrieve_ms + assemble_ms
+                 + llm_first_token_ms + llm_first_segment_ms + tts_first_audio_ms + playback_ms
+```
+
+**`stt_overlap_ms` を定数（例えば `stt_ms` そのもの）で埋めない。** CPU 構成では
+STT が VAD の待ちに収まらず、隠れなかった分がクリティカルパスに残る。
+定数で埋めるとその時間が `critical_path_ms` から消え、`unaccounted_ms` が負に振れる。
+**逆に、申告せずに区間を重ねると `critical_path_ms` が実態より大きくなる。**
+
+**この式は決定論的であり、記録された値だけでテストできる**（LLM も実機も要らない）。
 
 **`unaccounted_ms`（= `total_ms - critical_path_ms`）を必ず出す。** これが予備枠を食い潰し始めたら、計測していない処理が増えているサイン。
 `critical_path_ms` は**重なりを除いた寄与の合計**であり、各区間の実測値の単純和ではない。

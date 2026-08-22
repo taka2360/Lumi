@@ -165,16 +165,16 @@ Shell 選定（Tauri → Electron）とパッケージング方針を見直す�
 ### Phase 0 からの持ち越し
 
 - [x] **検証手順 15〜18 を別マシンで通す**（取得の経路。**LLM / STT のセットアップが同じ経路に乗った後**にまとめて回す）
-  〔2026-08-22 完了 → [measurements/phase1.md](measurements/phase1.md)〕
+  〔2026-08-22 通過。**Win11 仮想環境 / GPU なし。所要時間は記録していない** → [measurements/phase1.md](measurements/phase1.md)〕
 - [x] **ネットワーク断線の実試験**（単体テストでは `.tmp-*` が残らないことを確認済み）
   - 〔2026-08-20〕**未実施のまま出た**: 実際の断線で `unexpected_error` が表示された。
     `httpx` の例外を理由に変換していなかったため → [architecture/setup.md](architecture/setup.md) §4「失敗は必ず『言える理由』になる」。
     単体テストは追加した（実例外を投げる）
-  - 〔2026-08-22 完了〕**実断線で試験し、理由が出ることと `.tmp-*` が残らないことを確認した**
-    → [measurements/phase1.md](measurements/phase1.md)
+  - 〔2026-08-22 通過〕**取得中にアダプタを切断し、理由が出ることと `.tmp-*` が残らないことを確認した。**
+    **試したのは1パターンのみ**（接続確立前・DNS 失敗・断続的な切断は未試験） → [measurements/phase1.md](measurements/phase1.md)
 - [x] **既定同梱 VRM モデル（光莉 / 作者: あわ）を `content/` に置き、配布物に含める経路を通す**（リポジトリにはコミットしない → [licensing.md](licensing.md) §4.5）〔2026-08-19。**Core が決め、Shell が配信し、Stage が描く** → [ADR-029](decisions/ADR-029-content-pack-asset-delivery.md)。PyInstaller spec が `model.vrm` の同梱を fail-closed で確認する〕
 - [x] release ビルドでのカーソル監視 CPU 実測（debug では 1コア 2.8%）
-  〔2026-08-22。**release では 1% 以下** → [measurements/phase1.md](measurements/phase1.md)〕
+  〔2026-08-22。**release では 1% 以下**（上限の観測。測定方法は記録していない） → [measurements/phase1.md](measurements/phase1.md)〕
 
 ### Stretch（詰まったら落とす）
 - [x] 表情変化（`<|ACT|>` マーカー → ExpressionIntent → VRM ブレンドシェイプ）〔Step G。VRM に無い4つは Renderer 側で控えめに借りる → [interfaces/renderer.md](interfaces/renderer.md)〕
@@ -191,16 +191,22 @@ Phase 0 からの carry-over 3件（別マシンでのセットアップ検証 /
 release ビルドのカーソル監視 CPU）もすべて閉じた。
 上記のレイテンシ計測自体はオフライン注入（録音済み音声）で行ったものである。
 
+> **carry-over 3件は「経路が通ること」の確認であって、分布や網羅の確認ではない。**
+> 何を記録していないかは [measurements/phase1.md](measurements/phase1.md) の各「保証しないこと」にある。
+> **別マシンの検証は GPU なしの仮想環境であり、そこでレイテンシ SLO は測っていない。**
+
 ### レイテンシ SLO
 
 **表と区間別予算は [architecture/audio.md](architecture/audio.md) §7 が唯一の定義場所。**
 
 要点: p50 < 1.5s / p95 < 2.0s / p99 < 3.0s。**区間合計は p50 目標の 85% 以下**に収め、残りを計測外処理の予備枠として空けておく。
 
-✅ **決着済み〔2026-08-22。[ADR-039](decisions/ADR-039-speculative-stt.md)〕**
+✅ **設計上は決着済み〔2026-08-22。[ADR-039](decisions/ADR-039-speculative-stt.md)〕。実装と実測は Phase 2。**
 Phase 1 の区間合計 1.27s（= p50 目標 1.50s の 85%）に記憶検索 0.05s を足すと 88% になる問題は、
-**目標を動かさず、STT を VAD の無音待ちに重ねる**ことで解いた（投機 STT）。
-クリティカルパスは **1.10s / 73%** になり、予備枠が 15% → 27% に増えた。
+**目標を動かさず、STT を VAD の無音待ちに重ねる**ことで解く（投機 STT）。
+予算上のクリティカルパスは **1.10s / 73%** になり、予備枠が 15% → 27% に増える。
+**これは予算の計算であって実測値ではない。** 実装と `critical_path_ms` / `stt_overlap_ms` の計測は
+Phase 2 の「やること」にある。
 
 ### なぜ Kernel 基盤を MVP に入れるのか
 **あとから Kernel を入れるのが一番危ない。** Attention Arbiter・Cancellation 契約・Provenance・Event 採番は、後から挿入すると全コードのシグネチャを書き換えることになる。L0 ツールしか無くても、**型と経路は本番と同じもの**を通す。
@@ -221,20 +227,9 @@ Phase 1 の区間合計 1.27s（= p50 目標 1.50s の 85%）に記憶検索 0.0
 **[contracts/privacy.md](contracts/privacy.md) を新設した**（決定は [ADR-038](decisions/ADR-038-privacy-and-data-retention.md)）。
 **永続化されるものの一覧・保存先・暗号化・保持期間・消去対象は、すべてそこが唯一の定義場所である。**
 
-要点のみ（**表を再掲しない**）:
-
-| # | 決めたこと |
-|---|---|
-| 1 | `%LOCALAPPDATA%\Lumi\` 配下。**会話由来のデータを含む DB は保存時に暗号化する**（ランダム鍵を DPAPI に預ける。ユーザーはパスワードを管理しない） |
-| 2 | Episode の生ログは**既定 90 日**。設定で延長・無期限も選べる |
-| 3 | アンインストール時は**既定でデータを残す**。「覚えたことも削除する」を既定オフで提示する |
-| 4 | **生の音声波形は永続化しない**（デバッグ用の録音経路も作らない）。話者識別しないので第三者の発話が残りうることは隠さず、**マイクが開いていることを常に表示し、即座にミュートできる** |
-| 5 | 「全部消して」は**単一の操作**。消去対象は privacy.md §2 の表が定義する |
-| 6 | 監査ログは**既定 180 日**。append-only であることと、無限に貯めることは別 |
-| 7 | Phase 1 からの `DomainEvent` は**既定 30 日**。「全部消して」の対象に含める |
-
-**「忘れる」と「消える」を混ぜない。** 記憶レコードは decay して archive されるものであり、
-**保持期間の対象ではない**。元ログが消えても記憶は残る。
+要点だけ: **会話由来のデータを含む DB は保存時に暗号化し**（鍵は OS の秘密保管に預ける。ユーザーは管理しない）、
+**保持期間は既定で期限あり・設定で無期限も選べる。「忘れる」と「消える」を混ぜない**——
+記憶レコードは decay/archive の対象であって、保持期間の対象ではない。
 
 ⚠ **未検証: 暗号化 DB と sqlite-vec / FTS5 / PyInstaller の統合。**
 下記「やること」の最初の項目。**ここが通らなければ ADR-038 を修正する新しい ADR を書く。黙って平文に落とさない。**
@@ -247,8 +242,11 @@ Phase 1 の区間合計 1.27s（= p50 目標 1.50s の 85%）に記憶検索 0.0
 - [ ] SQLite + sqlite-vec + FTS5 + マイグレーション基盤（`_schema_version`）
 - [ ] Embedding Provider（ONNX / CPU）
 - [ ] **投機 STT**（VAD の無音待ちと STT を重ねる → [ADR-039](decisions/ADR-039-speculative-stt.md)）。
+  不変スナップショット + 世代 ID + 原子的な照合。**曖昧なら採用しない**（fail-closed）。
   **記憶検索を配線する前に入れる**（逆順だと、その期間だけ 88% の状態で走ることになる）
-- [ ] `critical_path_ms` / `stt_speculative` の計測（[architecture/audio.md](architecture/audio.md) §7）
+- [ ] `critical_path_ms` / `stt_speculative` / `stt_overlap_ms` の計測（[architecture/audio.md](architecture/audio.md) §7）。
+  **寄与は `stt_ms - stt_overlap_ms`。定数 0 で埋めない**
+- [ ] 投機 STT の破棄率と `stt_overlap_ms` を実測して記録する（未確定事項 8f）
 - [ ] Episode 記録（会話の生ログ）
 - [ ] **Reflection Job**（セッション終了時 / 長いアイドル時。**`Job` として実行し、`inference_lease` を取る**）
 - [ ] **assertion_mode / evidence / provenance の実装**
@@ -440,7 +438,8 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
 | ~~8~~ | ~~**DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる）~~ | **✓ 解消**〔2026-08-22〕→ [contracts/privacy.md](contracts/privacy.md) §2。**既定 30 日 / 「全部消して」の対象**。Phase 3 まで持ち越さない |
 | ~~8b~~ | ~~区間合計が p50 目標を超えている~~ | **✓ 解消**〔2026-08-18〕。`llm_first_token` を 537→**421 ms** に縮めたうえで、**p50 目標を 1.2s → 1.5s に置き直した**（1.27/1.50 = 85%）。`vad_ms` 0.43s はターンテイキングの方針で動かせず、旧目標と両立しなかったため。**p95 2.0s（完了条件）と区間別予算は据え置き** → [architecture/audio.md](architecture/audio.md) §7 |
-| ~~8e~~ | ~~🔴 **記憶検索 0.05s を足すと 85% 規則を破る**~~ | **✓ 解消**〔2026-08-22〕→ [ADR-039](decisions/ADR-039-speculative-stt.md)。**目標を動かさず、STT を VAD の無音待ちに重ねた**（投機 STT）。クリティカルパス 1.27 → **1.10s / 73%**。予備枠が 15% → 27% |
+| ~~8e~~ | ~~🔴 **記憶検索 0.05s を足すと 85% 規則を破る**~~ | **✓ 設計上は解消**〔2026-08-22〕→ [ADR-039](decisions/ADR-039-speculative-stt.md)。**目標を動かさず、STT を VAD の無音待ちに重ねる**（投機 STT）。予算上のクリティカルパス 1.27 → **1.10s / 73%**、予備枠 15% → 27%。**実装と実測は Phase 2**（8f） |
+| 8f | **投機 STT の実測**（破棄率 / `stt_overlap_ms` / CPU 構成で隠れきらない分） | Phase 2（実装後） |
 | ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
 | ~~8d~~ | ~~🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**~~ | **✓ 解消**〔2026-08-17〕→ [architecture/audio.md](architecture/audio.md) §7。**予算の側が誤り**。パラメータは 400 ms のまま（下げると文中の間で区間が切れる。実測済み）。**表には数値を書かず §5 を参照する**（同じ値を2箇所に書いたのが原因） |
 | ~~9~~ | ~~設定の保存形式とスキーマ~~ | **✓ 解消**〔2026-08-17 / Step G〕→ [architecture/core.md](architecture/core.md) §6b。**JSON / `<data_dir>/settings.json`**。壊れたファイルは上書きしない・知らないキーは保持・環境変数の上書きは表示する。変更経路（Stage → Core の `request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md) |

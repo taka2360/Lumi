@@ -17,11 +17,13 @@
 >    記憶 DB は保存時に暗号化する（ランダム鍵を DPAPI に預ける。**ユーザーはパスワードを管理しない**）。
 >    保持期間は既定で期限あり・設定で無期限も選べる。**「忘れる」と「消える」を混ぜない**——
 >    記憶レコードは decay/archive の対象であって、保持期間の対象ではない
-> 2. **投機 STT を導入した** → [ADR-039](decisions/ADR-039-speculative-stt.md)。
->    VAD の無音待ち 0.43 s に STT 0.22 s を重ね、クリティカルパスを 1.27 → 1.10 s（p50 目標の 73%）にした。
->    **記憶検索 0.05 s を足しても 85% 規則を破らない。目標は動かしていない**
+> 2. **投機 STT を採ることに決めた** → [ADR-039](decisions/ADR-039-speculative-stt.md)。
+>    VAD の無音待ち 0.43 s に STT 0.22 s を重ねる設計で、予算上のクリティカルパスは
+>    1.27 → 1.10 s（p50 目標の 73%）になる。**記憶検索 0.05 s を足しても 85% 規則を破らない。目標は動かしていない**。
+>    **実装と実測は Phase 2**（[roadmap.md](roadmap.md)）。1.10 s は予算であって実測値ではない
 > 3. 予算表を「直列区間の表」から**クリティカルパスの表**に変えた。
->    `critical_path_ms` を新設し、`unaccounted_ms` の定義を `total_ms - critical_path_ms` にした
+>    `critical_path_ms` / `stt_overlap_ms` を新設し、`unaccounted_ms` の定義を `total_ms - critical_path_ms` にした。
+>    **重なりの寄与は `stt_ms - stt_overlap_ms` で、定数 0 ではない**（CPU 構成では隠れきらない）
 > 4. **DomainEvent の保持ポリシーが決着した**（既定 30 日 / 全消去の対象）。Phase 3 まで持ち越さない
 
 > **rev.14 の変更点**（Ollamaの通常インストール経路を、未起動と誤判定しない）
