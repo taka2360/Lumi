@@ -288,9 +288,11 @@ class TestShutdown:
 
         await runtime.stop()  # **raises nothing**
 
-        # The DB handle is the last thing `stop()` releases: closed means it ran to the end
-        with pytest.raises(apsw.ConnectionClosedError):
-            runtime._database._conn.execute("SELECT 1")
+        # The DB handles are the last thing `stop()` releases: closed means it ran to the
+        # end. **All three**, because closing one and leaking two is the same bug
+        for database in (runtime._memory_db, runtime._audit_db, runtime._events_db):
+            with pytest.raises(apsw.ConnectionClosedError):
+                database._conn.execute("SELECT 1")
 
 
 class TestSettingsUpdate:

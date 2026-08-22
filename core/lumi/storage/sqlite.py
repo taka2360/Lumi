@@ -12,16 +12,21 @@ Multiple Ciphers instead (ADR-040). **`lumi.storage` is the only place that talk
 turn encryption off — "just this once, in plaintext" is how the exception becomes
 the default. An in-memory database takes no key because it is never written down.
 
-## What each database holds
+## One file per store
 
-| Database | Contents |
-|---|---|
-| Event DB | Kernel facts (Activity start/end, Tool's 3-stage record, permission) |
-| Audit DB | The permission audit log |
-| Memory DB | Episodes, memory records, vectors, the FTS index (Phase 2c onwards) |
+| Database | Contents | Schema |
+|---|---|---|
+| `events.db` | Kernel facts (Activity, the Tool's 3-stage record, permission) | `storage.events` |
+| `audit.db` | The permission audit log, and the record of what deletion removed | `storage.audit` |
+| `memory.db` | Episodes and utterances; memory records and vectors follow | `storage.memory` |
 
 **Utterance text is never put into a DomainEvent's payload.** Kernel facts and
-conversation content stay in different places (docs/contracts/privacy.md §2).
+conversation content stay in different places (docs/contracts/privacy.md §2), and
+separate files are what make that checkable rather than merely intended.
+
+The audit log is the reason the split is structural rather than tidy: it is append-only
+to every Tool path, and deletable only by retention and by "erase everything"
+(docs/contracts/privacy.md §5). **A separate file is what a deny rule can name.**
 
 ## Transactions
 
@@ -37,6 +42,8 @@ from __future__ import annotations
 import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Final
 
@@ -47,67 +54,32 @@ from lumi import logging as lumi_logging
 log = lumi_logging.get_logger(__name__)
 
 #: The path that means "not written to disk". **The only path that may go unencrypted.**
-MEMORY: Final = ":memory:"
+IN_MEMORY: Final = ":memory:"
 
 #: Pinned explicitly rather than left to the library's default, so that a future
 #: change of default cannot make existing databases unopenable. ChaCha20-Poly1305
 #: (the sqleet scheme), which is what SQLite3 Multiple Ciphers uses by default today.
 CIPHER: Final = "chacha20"
 
-# : The current schema version. When a migration is added, **this must match `_MIGRATIONS`'s
-# length**.
-SCHEMA_VERSION: Final = 2
 
-# : Applying index 0 produces schema version 1. **Existing entries are never rewritten**
-# (append-only).
-_MIGRATIONS: Final[tuple[tuple[str, ...], ...]] = (
-    (
-        """
-        CREATE TABLE events (
-            id             TEXT    PRIMARY KEY,
-            stream_key     TEXT    NOT NULL,
-            sequence_id    INTEGER NOT NULL,
-            type           TEXT    NOT NULL,
-            payload        TEXT    NOT NULL,
-            correlation_id TEXT    NOT NULL,
-            causation_id   TEXT,
-            occurred_at    TEXT    NOT NULL,
-            UNIQUE (stream_key, sequence_id)
-        )
-        """,
-        "CREATE INDEX events_by_stream ON events (stream_key, sequence_id)",
-        "CREATE INDEX events_by_correlation ON events (correlation_id)",
-    ),
-    (
-        # The audit log. **append-only** (docs/architecture/permission.md §7).
-        # `prev_hash` / `record_hash` are added as a migration in Phase 4a.
-        # They aren't added now because **an unused column is never added "for the future."**
-        """
-        CREATE TABLE audit_log (
-            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts                  TEXT NOT NULL,
-            actor               TEXT NOT NULL,
-            activity_id         TEXT NOT NULL,
-            correlation_id      TEXT NOT NULL,
-            capability          TEXT NOT NULL,
-            security_scope_json TEXT NOT NULL,
-            raw_input_digest    TEXT NOT NULL,
-            decision            TEXT NOT NULL,
-            reason              TEXT NOT NULL,
-            policy_version      TEXT NOT NULL,
-            policy_rule_id      TEXT NOT NULL,
-            grant_id            TEXT,
-            tool                TEXT NOT NULL,
-            args_digest         TEXT NOT NULL,
-            result_digest       TEXT,
-            provenance_class    TEXT,
-            trust_level         TEXT
-        )
-        """,
-        "CREATE INDEX audit_by_activity ON audit_log (activity_id)",
-        "CREATE INDEX audit_by_ts ON audit_log (ts)",
-    ),
-)
+@dataclass(frozen=True, slots=True)
+class Schema:
+    """What one database file contains, as an ordered list of migrations.
+
+    **The version is the number of migrations**, so a schema and its version cannot drift:
+    adding a migration is the only way to move it. Applying index 0 produces version 1.
+
+    `component` is stamped into the file. Opening `events.db` expecting the memory schema
+    then fails at open instead of announcing that a dozen tables are missing.
+    """
+
+    component: str
+    #: **Existing entries are never rewritten** (append-only). A change is a new entry.
+    migrations: tuple[tuple[str, ...], ...]
+
+    @property
+    def version(self) -> int:
+        return len(self.migrations)
 
 
 class StorageError(RuntimeError):
@@ -139,22 +111,27 @@ class Database:
     exchange, a lock guarantees it is never touched concurrently.
     """
 
-    __slots__ = ("_conn", "_lock")
+    __slots__ = ("_conn", "_lock", "_schema")
 
-    def __init__(self, connection: apsw.Connection) -> None:
+    def __init__(self, connection: apsw.Connection, schema: Schema) -> None:
         self._conn = connection
+        self._schema = schema
         self._lock = threading.Lock()
 
+    @property
+    def schema(self) -> Schema:
+        return self._schema
+
     @classmethod
-    def open(cls, path: Path | str, *, key: str | None = None) -> Database:
-        """Opens the connection, unlocks it, and applies migrations.
+    def open(cls, path: Path | str, schema: Schema, *, key: str | None = None) -> Database:
+        """Opens the connection, unlocks it, and applies `schema`'s migrations.
 
         `key` is the hex database key from `lumi.storage.secret`. It is **required for
         any on-disk path**: a database Lumi writes to disk is encrypted, with no way to
-        ask for otherwise. Pass `MEMORY` (with no key) for tests and for state that is
+        ask for otherwise. Pass `IN_MEMORY` (with no key) for tests and for state that is
         deliberately not persisted.
         """
-        on_disk = str(path) != MEMORY
+        on_disk = str(path) != IN_MEMORY
         if on_disk and not key:
             raise StorageError(
                 f"An on-disk database requires a key (docs/contracts/privacy.md §3): {path}"
@@ -167,7 +144,7 @@ class Database:
         except apsw.Error as error:
             raise StorageError(f"Cannot open database: {path}") from error
 
-        database = cls(connection)
+        database = cls(connection, schema)
         try:
             if key:
                 database._unlock(key, path)
@@ -210,31 +187,54 @@ class Database:
                 raise
             self._conn.execute("COMMIT")
 
-    def migrate(self) -> None:
-        """Applies unapplied migrations in order. **No downgrade path exists.**"""
-        with self.transaction() as conn:
-            conn.execute("CREATE TABLE IF NOT EXISTS _schema_version (version INTEGER NOT NULL)")
-            row = conn.execute("SELECT version FROM _schema_version").fetchone()
-            current = int(row[0]) if row else 0
+    def migrate(self, now: datetime | None = None) -> None:
+        """Applies unapplied migrations in order. **No downgrade path exists.**
 
-            if current > SCHEMA_VERSION:
+        **Memories on a user\'s PC must still be readable by a version released six months
+        from now**, which is why every file carries its own version rather than relying on
+        the code and the file happening to match.
+        """
+        schema = self._schema
+        applied_at = (now or datetime.now(UTC)).isoformat()
+        with self.transaction() as conn:
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS _schema_version ("
+                " component  TEXT PRIMARY KEY,"
+                " version    INTEGER NOT NULL,"
+                " applied_at TEXT NOT NULL)"
+            )
+            row = conn.execute("SELECT component, version FROM _schema_version").fetchone()
+            if row is not None and row[0] != schema.component:
+                # **Never migrate a file into being something else.** Applying the memory
+                # schema to the event database would produce a file that opens and is wrong.
+                raise StorageError(f"This database holds {row[0]!r}, not {schema.component!r}")
+            current = int(row[1]) if row is not None else 0
+
+            if current > schema.version:
                 # A newer Lumi's DB was opened by an older Lumi. **Never guess and proceed anyway.**
                 raise StorageError(
                     f"Database schema version {current} is newer than "
-                    f"this Lumi version ({SCHEMA_VERSION})"
+                    f"this Lumi version ({schema.version})"
                 )
 
-            for statements in _MIGRATIONS[current:]:
+            for statements in schema.migrations[current:]:
                 for statement in statements:
                     conn.execute(statement)
 
-            if row is None:
-                conn.execute("INSERT INTO _schema_version (version) VALUES (?)", (SCHEMA_VERSION,))
-            else:
-                conn.execute("UPDATE _schema_version SET version = ?", (SCHEMA_VERSION,))
+            conn.execute(
+                "INSERT INTO _schema_version (component, version, applied_at) VALUES (?, ?, ?)"
+                " ON CONFLICT (component) DO UPDATE SET version = excluded.version,"
+                " applied_at = excluded.applied_at",
+                (schema.component, schema.version, applied_at),
+            )
 
-        if current != SCHEMA_VERSION:
-            log.info("storage.migrated", from_version=current, to_version=SCHEMA_VERSION)
+        if current != schema.version:
+            log.info(
+                "storage.migrated",
+                component=schema.component,
+                from_version=current,
+                to_version=schema.version,
+            )
 
     def load_extension(self, path: str) -> None:
         """Loads a SQLite loadable extension (sqlite-vec).

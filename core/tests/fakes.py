@@ -134,6 +134,11 @@ def isolated_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         )
     (char_dir / "model.vrm").write_bytes(b"glTF ")
     monkeypatch.setattr(paths_module, "default_character_dir", lambda: char_dir)
+    # ★ **Nothing under here touches the real `%LOCALAPPDATA%\Lumi`.** Every user-data
+    # path is derived from `data_dir`, so redirecting that one covers the databases, the
+    # database key and anything added later — a test that writes into the developer's own
+    # memory database is not a test, it is a conversation nobody had.
+    monkeypatch.setattr(paths_module, "data_dir", lambda: tmp_path / "data")
     # **Never reads the developer's real model directory or settings.** Whether the boot
     # phase reaches `ready` now depends on all three components (ADR-034), so anything
     # left pointing at the real machine makes the outcome depend on whose machine it is.

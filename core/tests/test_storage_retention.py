@@ -1,0 +1,248 @@
+"""Retention. **docs/contracts/privacy.md §4, §5 and §7.**
+
+privacy.md §7 says these must be testable by injecting time, and that is the whole design:
+a deletion policy whose only proof is waiting 90 days is a policy nobody ever verified.
+
+What is checked is both halves of the promise — **that expired records go**, and that
+**nothing else does**. The second is the one that costs a user their memories when it is
+wrong.
+"""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+
+import pytest
+
+from lumi.provenance import ProvenanceClass, TrustLevel
+from lumi.storage.audit import AUDIT_SCHEMA
+from lumi.storage.events import EVENTS_SCHEMA
+from lumi.storage.memory import MEMORY_SCHEMA, Episode, EpisodeStore, Utterance
+from lumi.storage.retention import RetentionPolicy, RetentionService, Target, Trigger
+from lumi.storage.sqlite import IN_MEMORY, Database, one
+
+NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+
+
+def days_ago(days: float) -> datetime:
+    return NOW - timedelta(days=days)
+
+
+class Rig:
+    """The three databases, plus the shortest way to put a dated row in each."""
+
+    def __init__(self) -> None:
+        self.memory = Database.open(IN_MEMORY, MEMORY_SCHEMA)
+        self.events = Database.open(IN_MEMORY, EVENTS_SCHEMA)
+        self.audit = Database.open(IN_MEMORY, AUDIT_SCHEMA)
+        self.service = RetentionService(memory=self.memory, events=self.events, audit=self.audit)
+        self.episodes = EpisodeStore(self.memory)
+        self._n = 0
+
+    def _next(self) -> int:
+        self._n += 1
+        return self._n
+
+    async def add_episode(self, when: datetime, *, lines: int = 1) -> str:
+        episode_id = f"e{self._next()}"
+        await self.episodes.open_episode(Episode(id=episode_id, session_id="s", started_at=when))
+        for index in range(lines):
+            await self.episodes.append(
+                Utterance(
+                    id=f"{episode_id}-{index}",
+                    episode_id=episode_id,
+                    turn_index=index,
+                    speaker="user",
+                    text="おはよう",
+                    provenance_class=ProvenanceClass.TRUSTED,
+                    trust_level=TrustLevel.TRUSTED,
+                    occurred_at=when,
+                )
+            )
+        return episode_id
+
+    def add_event(self, when: datetime) -> None:
+        index = self._next()
+        with self.events.transaction() as conn:
+            conn.execute(
+                "INSERT INTO events"
+                " (id, stream_key, sequence_id, type, payload, correlation_id, occurred_at)"
+                " VALUES (?, 'stream', ?, 'activity.started', '{}', 'c', ?)",
+                (f"ev{index}", index, when.isoformat()),
+            )
+
+    def add_audit(self, when: datetime) -> None:
+        with self.audit.transaction() as conn:
+            conn.execute(
+                "INSERT INTO audit_log"
+                " (ts, actor, activity_id, correlation_id, capability, security_scope_json,"
+                "  raw_input_digest, decision, reason, policy_version, policy_rule_id,"
+                "  tool, args_digest)"
+                " VALUES (?, 'user_initiated', 'a', 'c', 'character.expression', '{}',"
+                "  'd', 'allow', 'r', 'v1', 'rule', 'character.set_expression', 'd')",
+                (when.isoformat(),),
+            )
+
+    def counts(self) -> dict[str, int]:
+        with self.memory.transaction() as conn:
+            episodes = int(one(conn.execute("SELECT COUNT(*) FROM episodes"))[0])
+            utterances = int(one(conn.execute("SELECT COUNT(*) FROM utterances"))[0])
+        with self.events.transaction() as conn:
+            events = int(one(conn.execute("SELECT COUNT(*) FROM events"))[0])
+        with self.audit.transaction() as conn:
+            audit = int(one(conn.execute("SELECT COUNT(*) FROM audit_log"))[0])
+        return {
+            "episodes": episodes,
+            "utterances": utterances,
+            "events": events,
+            "audit": audit,
+        }
+
+    def deletion_records(self) -> list[tuple[str, int, str]]:
+        with self.audit.transaction() as conn:
+            rows = conn.execute(
+                "SELECT target, count, trigger FROM deletion_log ORDER BY id"
+            ).fetchall()
+        return [(str(row[0]), int(str(row[1])), str(row[2])) for row in rows]
+
+    def close(self) -> None:
+        for database in (self.memory, self.events, self.audit):
+            database.close()
+
+
+@pytest.fixture
+def rig() -> Rig:
+    return Rig()
+
+
+# ── What expires, and what does not ──────────────────────────
+
+
+async def test_each_target_expires_on_its_own_schedule(rig: Rig) -> None:
+    """The three deadlines differ (90 / 30 / 180 days), and **a shared cutoff would be
+    wrong for two of them.**
+    """
+    await rig.add_episode(days_ago(100))
+    await rig.add_episode(days_ago(80))
+    rig.add_event(days_ago(40))
+    rig.add_event(days_ago(20))
+    rig.add_audit(days_ago(200))
+    rig.add_audit(days_ago(100))
+
+    await rig.service.run(RetentionPolicy(), now=NOW)
+
+    assert rig.counts() == {"episodes": 1, "utterances": 1, "events": 1, "audit": 1}
+
+
+async def test_a_record_on_the_day_it_expires_is_kept(rig: Rig) -> None:
+    """**The boundary is exclusive.** Off by a day here is a day of somebody's memories."""
+    await rig.add_episode(days_ago(90) + timedelta(seconds=1))
+    await rig.service.run(RetentionPolicy(), now=NOW)
+
+    assert rig.counts()["episodes"] == 1
+
+
+async def test_deleting_an_episode_takes_its_utterances(rig: Rig) -> None:
+    """★ **An utterance nobody can reach is not deleted, it is hidden.**
+
+    The row would still be in the file, still readable by anything that opened the
+    database — while the user had been told the conversation was gone.
+    """
+    await rig.add_episode(days_ago(100), lines=3)
+    await rig.add_episode(days_ago(1), lines=2)
+
+    await rig.service.run(RetentionPolicy(), now=NOW)
+
+    assert rig.counts() == {"episodes": 1, "utterances": 2, "events": 0, "audit": 0}
+
+
+async def test_unlimited_deletes_nothing(rig: Rig) -> None:
+    """**The user chose no deadline.** That has to mean exactly nothing happens."""
+    await rig.add_episode(days_ago(1000))
+    rig.add_event(days_ago(1000))
+    rig.add_audit(days_ago(1000))
+
+    deletions = await rig.service.run(
+        RetentionPolicy(episode_days=None, audit_days=None, event_days=None), now=NOW
+    )
+
+    assert rig.counts() == {"episodes": 1, "utterances": 1, "events": 1, "audit": 1}
+    assert all(deletion.count == 0 for deletion in deletions)
+
+
+async def test_zero_days_deletes_everything_already_past(rig: Rig) -> None:
+    """`0` is a real answer, not a synonym for unlimited. **`None` is the one that means
+    "never"**, and conflating them is how "keep nothing" silently becomes "keep forever".
+    """
+    await rig.add_episode(days_ago(0.5))
+    await rig.service.run(RetentionPolicy(episode_days=0), now=NOW)
+
+    assert rig.counts()["episodes"] == 0
+
+
+async def test_a_negative_period_is_refused() -> None:
+    """**Fail rather than compute a cutoff in the future** and delete everything."""
+    with pytest.raises(ValueError):
+        RetentionPolicy().cutoff(-1, NOW)
+
+
+async def test_running_twice_deletes_nothing_the_second_time(rig: Rig) -> None:
+    await rig.add_episode(days_ago(100))
+    first = await rig.service.run(RetentionPolicy(), now=NOW)
+    second = await rig.service.run(RetentionPolicy(), now=NOW)
+
+    assert [d.count for d in first if d.target is Target.EPISODES] == [1]
+    assert [d.count for d in second if d.target is Target.EPISODES] == [0]
+
+
+# ── The record of deletion ───────────────────────────────────
+
+
+async def test_what_was_deleted_is_recorded(rig: Rig) -> None:
+    await rig.add_episode(days_ago(100), lines=2)
+    rig.add_event(days_ago(40))
+
+    await rig.service.run(RetentionPolicy(), now=NOW)
+
+    assert rig.deletion_records() == [
+        (Target.EPISODES.value, 1, Trigger.RETENTION.value),
+        (Target.EVENTS.value, 1, Trigger.RETENTION.value),
+    ]
+
+
+async def test_the_record_holds_no_trace_of_the_content(rig: Rig) -> None:
+    """★ **A digest of a deleted utterance is still a fact about that utterance.**
+
+    Keeping one would make "erase everything" a claim rather than a fact.
+    """
+    await rig.add_episode(days_ago(100))
+    await rig.service.run(RetentionPolicy(), now=NOW)
+
+    with rig.audit.transaction() as conn:
+        columns = {
+            str(row[1]) for row in conn.execute("PRAGMA table_info(deletion_log)").fetchall()
+        }
+    assert columns == {"id", "ts", "target", "count", "trigger"}
+
+
+async def test_a_pass_that_removed_nothing_writes_no_record(rig: Rig) -> None:
+    """**A row per target per start would bury the passes that did something.**"""
+    await rig.add_episode(days_ago(1))
+    await rig.service.run(RetentionPolicy(), now=NOW)
+
+    assert rig.deletion_records() == []
+
+
+async def test_the_deletion_record_outlives_the_audit_log_it_describes(rig: Rig) -> None:
+    """★ **The record is not itself on a deadline** (privacy.md §2, row 10).
+
+    If it expired with everything else, the fact that something had been removed would
+    disappear along with it.
+    """
+    rig.add_audit(days_ago(400))
+    await rig.service.run(RetentionPolicy(), now=NOW)
+    assert rig.deletion_records() == [(Target.AUDIT.value, 1, Trigger.RETENTION.value)]
+
+    # A year later, with the audit rows long gone, the record of their going is still here
+    await rig.service.run(RetentionPolicy(), now=NOW + timedelta(days=365))
+    assert rig.deletion_records() == [(Target.AUDIT.value, 1, Trigger.RETENTION.value)]

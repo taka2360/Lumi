@@ -25,13 +25,13 @@ from lumi.kernel.cancellation import Cancellable, Cancellation
 from lumi.kernel.event import EventBus
 from lumi.kernel.ids import new_correlation_id, new_job_id
 from lumi.kernel.job import Job, JobKind
-from lumi.storage.events import SqliteEventStore
-from lumi.storage.sqlite import Database
+from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
+from lumi.storage.sqlite import IN_MEMORY, Database
 
 
 @pytest.fixture
 def database() -> Iterator[Database]:
-    db = Database.open(":memory:")
+    db = Database.open(IN_MEMORY, EVENTS_SCHEMA)
     try:
         yield db
     finally:

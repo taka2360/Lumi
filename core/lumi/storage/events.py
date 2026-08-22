@@ -19,7 +19,35 @@ import apsw
 
 from lumi.kernel.event import DomainEventDraft
 from lumi.kernel.ids import EventId
-from lumi.storage.sqlite import Database, StorageError, one
+from lumi.storage.sqlite import Database, Schema, StorageError, one
+
+#: The event database. **Kernel facts only** — no utterance text ever lands here
+#: (docs/contracts/privacy.md §2). Kept 30 days by default (`lumi.storage.retention`).
+EVENTS_SCHEMA: Schema = Schema(
+    component="storage.events",
+    migrations=(
+        (
+            """
+            CREATE TABLE events (
+                id             TEXT    PRIMARY KEY,
+                stream_key     TEXT    NOT NULL,
+                sequence_id    INTEGER NOT NULL,
+                type           TEXT    NOT NULL,
+                payload        TEXT    NOT NULL,
+                correlation_id TEXT    NOT NULL,
+                causation_id   TEXT,
+                occurred_at    TEXT    NOT NULL,
+                UNIQUE (stream_key, sequence_id)
+            )
+            """,
+            "CREATE INDEX events_by_stream ON events (stream_key, sequence_id)",
+            "CREATE INDEX events_by_correlation ON events (correlation_id)",
+            # Retention deletes by age, and without this it is a full scan of every
+            # event ever recorded (docs/contracts/privacy.md §4).
+            "CREATE INDEX events_by_occurred_at ON events (occurred_at)",
+        ),
+    ),
+)
 
 
 class SqliteEventStore:

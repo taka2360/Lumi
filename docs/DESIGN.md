@@ -10,7 +10,7 @@
 |---|---|
 | Status | **承認済み（2026-08-15）** |
 | Revision | rev.17 |
-| 実装フェーズ | **Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）完了。2b（投機 STT）は実装完了・実測は未取得。** → [roadmap.md](roadmap.md) |
+| 実装フェーズ | **Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）/ 2c（Episode と保持期間）完了。2b（投機 STT）は実装完了・実測は未取得。** → [roadmap.md](roadmap.md) |
 
 > **rev.17 の変更点**（Phase 2 を 2a〜2g に分け、暗号化の未検証を潰した）
 > 1. **暗号化 SQLite の実装方式が決まった** → [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md)。
@@ -25,6 +25,11 @@
 >    `SILENCE_STARTED` と世代 ID、single-flight の所有者、`critical_path_ms`。
 >    **`unaccounted_ms` の基準が `measured_sum_ms` から `critical_path_ms` に変わった**。
 >    **1.10 s は予算であって実測値ではない** → [measurements/phase2.md](measurements/phase2.md)
+> 5. **会話の永続化を始めた**（2c）。Episode / utterance を暗号化した `memory.db` に書き、
+>    **同じ変更で保持期間の削除と削除の記録を入れた**——消す手段が無いまま書き始めない。
+>    **1ストア1ファイル**（`memory.db` / `events.db` / `audit.db`）にしたのは、
+>    privacy.md §5 の「監査ログは Tool 経路から到達不能」を**パスで名指しできる形にする**ため。
+>    ユーザーデータを消す `DELETE` は `storage/retention.py` の1ファイルだけにある
 > 3. **STT のデバッグ書き出しを撤去した** → [architecture/audio.md](architecture/audio.md)。
 >    [contracts/privacy.md](contracts/privacy.md) §6 が録音経路を禁じており、
 >    Phase 1 の実装は**ソースから実行すると既定で有効**だった。

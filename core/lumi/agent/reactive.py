@@ -35,6 +35,7 @@ from typing import Final, cast
 import numpy as np
 
 from lumi import logging as lumi_logging
+from lumi.agent.episodes import EpisodeRecorder
 from lumi.agent.latency import Speculation, TurnLatency, TurnTimer
 from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import ContextBlock, assemble
@@ -101,6 +102,7 @@ class ReactiveLoop:
     __slots__ = (
         "_arbiter",
         "_audio",
+        "_episodes",
         "_last_latency",
         "_limits",
         "_notifier",
@@ -126,6 +128,7 @@ class ReactiveLoop:
         limits: LoopLimits | None = None,
         audio: AudioIO | None = None,
         tts_speed: float = 1.2,
+        episodes: EpisodeRecorder | None = None,
     ) -> None:
         self._arbiter = arbiter
         self._providers = providers
@@ -136,6 +139,10 @@ class ReactiveLoop:
         self._session = session or Session()
         self._limits = limits or LoopLimits()
         self._audio = audio
+        #: Where the conversation is written down. **`None` means it is not** — the typed
+        #: test path and anything without a memory database still hold a conversation,
+        #: they just leave nothing behind
+        self._episodes = episodes
         self._tts_speed = _validate_tts_speed(tts_speed)
         self._last_latency: TurnLatency | None = None
         #: **The only place STT is started** (ADR-039). Speculations begin while VAD is
@@ -365,6 +372,10 @@ class ReactiveLoop:
             self._audio.resume_listening()
 
         self._session.record_user_utterance(text)
+        if self._episodes is not None:
+            # **Not awaited.** The reply is what the user is waiting for; filing the
+            # question away is not on that path (`agent/episodes.py`)
+            self._episodes.remember_user(text, correlation_id=str(activity.correlation_id))
 
         tts: TTSProvider = await self._get(ProviderKind.TTS)
         llm: LLMProvider = await self._get(ProviderKind.LLM)
@@ -467,7 +478,14 @@ class ReactiveLoop:
             scheduler.speak(sentence)
 
         # **Inherits the join of the inputs** (not "always tainted because it's LLM output")
-        self._session.record_lumi_turn("".join(spoken), prompt.context.effective_trust)
+        reply = "".join(spoken)
+        self._session.record_lumi_turn(reply, prompt.context.effective_trust)
+        if self._episodes is not None:
+            self._episodes.remember_lumi(
+                reply,
+                prompt.context.effective_trust,
+                correlation_id=str(activity.correlation_id),
+            )
         return calls
 
     # ── Tools ────────────────────────────────────────────

@@ -278,14 +278,29 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f）
   **実際に喋らないと出ない数値であり、実装では埋まらない。** → [measurements/phase2.md](measurements/phase2.md)
 
-#### 2c — Episode と保持期間
+#### 2c — Episode と保持期間〔2026-08-22 完了〕
 
-- [ ] 記憶 DB のスキーマ（Episode / 記憶レコード / vec / FTS5）とマイグレーション
-- [ ] Episode 記録（会話の生ログ）
-- [ ] **イベント DB / 監査 DB をオンディスク（暗号化）にする**
-- [ ] **保持期間の削除ジョブ**（Episode 90 日 / 監査ログ 180 日 / DomainEvent 30 日。
+- [x] 記憶 DB のスキーマ（Episode / utterance）とマイグレーション
+  〔**1ストア1ファイルに分けた**（`memory.db` / `events.db` / `audit.db`）。
+  `_schema_version` は `(component, version, applied_at)` になり、
+  **別のスキーマでそのファイルを開こうとしたら失敗する**〕
+  - **記憶レコード / vec / FTS5 のスキーマは 2d・2e に送った。**
+    `vec0` は作成時に次元を固定するので、**埋め込みモデルを選ぶ前に作ると次元を先に発明することになる**
+    （[architecture/memory.md](architecture/memory.md) §2 は Ruri v3系 / bge-m3 を Phase 2 の実測で決めるとしている）
+- [x] Episode 記録（会話の生ログ）
+  〔`lumi/storage/memory.py` + `lumi/agent/episodes.py`。**書き込みはターンの待ち時間に載せない**。
+  **trust_level を一緒に保存する**——後から計算し直せないため（Invariant 7）〕
+- [x] **イベント DB / 監査 DB をオンディスク（暗号化）にする**〔DPAPI の鍵で3つとも開く〕
+- [x] **保持期間の削除ジョブ**（Episode 90 日 / 監査ログ 180 日 / DomainEvent 30 日。
   **時刻を注入してテストできること**）と、無期限を選べる設定
-- [ ] **削除の記録**（privacy.md §5。何を消したかは残し、**中身は残さない**）
+  〔`lumi/storage/retention.py`。**起動ごとに1回**、`Job(kind=maintenance)` として実行。
+  設定は `retention_episodes` / `retention_events` / `retention_audit`（`unlimited` を選べる）〕
+- [x] **削除の記録**（privacy.md §5。何を消したかは残し、**中身は残さない**）
+  〔`deletion_log`。列は ts / target / count / trigger のみ。**ダイジェストも持たない**〕
+
+> **ユーザーデータを消すコードは `lumi/storage/retention.py` の1ファイルだけにした。**
+> privacy.md §5 の境界（Tool 経路からは到達不能、保持期間ジョブと全消去だけが例外）は、
+> **4つのモジュールに散らばっていたら誰も検査できない**。全消去（2g）も同じファイルに足す。
 
 #### 2d — 記憶コア
 

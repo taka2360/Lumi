@@ -54,8 +54,8 @@ from lumi.providers.llm.base import (
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import Transcription
 from lumi.providers.tts.base import SpeechAudio, VoiceConfig
-from lumi.storage.events import SqliteEventStore
-from lumi.storage.sqlite import Database
+from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
+from lumi.storage.sqlite import IN_MEMORY, Database
 from lumi.tools.base import ToolDescriptor
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
@@ -214,7 +214,7 @@ class Rig:
         limits: LoopLimits | None = None,
         tts_speed: float = 1.2,
     ):
-        self.database = Database.open(":memory:")
+        self.database = Database.open(IN_MEMORY, EVENTS_SCHEMA)
         self.database.migrate()
         bus = EventBus(SqliteEventStore(self.database))
         self.arbiter = AttentionArbiter(bus)

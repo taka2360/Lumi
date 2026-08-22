@@ -239,3 +239,46 @@ def test_the_payload_carries_where_each_value_came_from(tmp_path: Path) -> None:
 
     assert payload["values"]["inference_device"] == {"value": "cpu", "source": "env"}
     assert payload["version"] == SCHEMA_VERSION
+
+
+# ── Retention periods (docs/contracts/privacy.md §4) ──────────
+
+
+def test_retention_defaults_are_deadlines(tmp_path: Path) -> None:
+    """★ **Not "keep everything until someone deletes it".**
+
+    That sounds respectful and in practice means three years of conversation nobody has
+    read (docs/contracts/privacy.md §4). The numbers are §2's table.
+    """
+    settings = load(tmp_path / "settings.json", {})
+
+    assert settings.retention_episodes.value == "90"
+    assert settings.retention_events.value == "30"
+    assert settings.retention_audit.value == "180"
+
+
+def test_unlimited_is_a_value_the_user_can_choose(tmp_path: Path) -> None:
+    """**Choosing it is what makes the default mean anything.**"""
+    file = write(tmp_path, {"version": 1, "retention_episodes": "unlimited"})
+    settings = load(file, {})
+
+    assert settings.retention_episodes.value == "unlimited"
+    assert settings.retention_episodes.source is Source.FILE
+
+
+def test_zero_is_accepted_and_is_not_unlimited(tmp_path: Path) -> None:
+    """`0` means keep nothing. **Encoding "unlimited" as a number would collide with it.**"""
+    file = write(tmp_path, {"version": 1, "retention_episodes": "0"})
+    assert load(file, {}).retention_episodes.value == "0"
+
+
+def test_an_unparseable_period_keeps_the_deadline(tmp_path: Path) -> None:
+    """**The safe direction is the default, not "unlimited".** A typo must not turn into a
+    database that grows forever.
+    """
+    file = write(tmp_path, {"version": 1, "retention_episodes": "forever", "locale": "ja"})
+    settings = load(file, {})
+
+    assert settings.retention_episodes.value == "90"
+    assert settings.retention_episodes.source is Source.DEFAULT
+    assert settings.locale.value == "ja", "one bad value costs only that key"

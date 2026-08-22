@@ -28,6 +28,7 @@ from pathlib import Path
 from lumi import logging as lumi_logging
 from lumi import paths
 from lumi import settings as settings_module
+from lumi.agent.episodes import EpisodeRecorder
 from lumi.agent.inspector import InspectorPublisher
 from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.session import Session
@@ -38,8 +39,11 @@ from lumi.audio.io import AudioIO
 from lumi.character import ExpressionIntent
 from lumi.content.pack import CharacterPack, ContentPackError, load_character
 from lumi.kernel.arbiter import AttentionArbiter
+from lumi.kernel.cancellation import Cancellation
 from lumi.kernel.event import EventBus
 from lumi.kernel.hooks import HookRegistry
+from lumi.kernel.ids import new_job_id
+from lumi.kernel.job import Job, JobKind
 from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
@@ -52,8 +56,11 @@ from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState
-from lumi.storage.audit import SqliteAuditLog
-from lumi.storage.events import SqliteEventStore
+from lumi.storage.audit import AUDIT_SCHEMA, SqliteAuditLog
+from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
+from lumi.storage.memory import MEMORY_SCHEMA, EpisodeStore
+from lumi.storage.retention import RetentionPolicy, RetentionService
+from lumi.storage.secret import DpapiSecretStore, get_or_create_db_key
 from lumi.storage.sqlite import Database
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
@@ -83,14 +90,19 @@ class ConversationRuntime:
     __slots__ = (
         "_arbiter",
         "_audio",
-        "_database",
+        "_audit_db",
+        "_episodes",
+        "_events_db",
         "_inspector",
         "_listening",
         "_llm_retry",
         "_loop",
+        "_memory_db",
         "_model",
         "_pack",
         "_providers",
+        "_recorder",
+        "_retention",
         "_server",
         "_settings",
         "_setup",
@@ -113,9 +125,16 @@ class ConversationRuntime:
         self._audio = AudioIO(plan)
         self._providers = ProviderRegistry()
 
-        self._database = _open_event_store()
+        key = get_or_create_db_key(DpapiSecretStore(paths.secrets_dir()))
+        self._events_db = Database.open(paths.event_db_file(), EVENTS_SCHEMA, key=key)
+        self._audit_db = Database.open(paths.audit_db_file(), AUDIT_SCHEMA, key=key)
+        self._memory_db = Database.open(paths.memory_db_file(), MEMORY_SCHEMA, key=key)
+        self._episodes = EpisodeStore(self._memory_db)
+        self._retention = RetentionService(
+            memory=self._memory_db, events=self._events_db, audit=self._audit_db
+        )
 
-        bus = EventBus(SqliteEventStore(self._database))
+        bus = EventBus(SqliteEventStore(self._events_db))
         tools = self._build_tools(server, bus)
 
         # **Constructed here, started in `start()`** (creating the idle Activity publishes a
@@ -127,6 +146,9 @@ class ConversationRuntime:
         #: the Content Pack's decision**, and the Provider has to know it at `load()` time to
         #: initialize that voice rather than a different one
         self._pack = _load_pack()
+        #: One per session. **Holds the episode open** for as long as the process runs;
+        #: sessions do not end while Lumi is up (Phase 3 gives them boundaries)
+        self._recorder = EpisodeRecorder(self._episodes)
         self._loop = self._build_loop(server, tools)
 
         # **Subscribed, not called from the Arbiter.** The Arbiter does not know the Stage
@@ -149,7 +171,7 @@ class ConversationRuntime:
         which is the only way it can be trusted once L3 tools exist.
         """
         tools = ToolRegistry(
-            PermissionKernel(GrantStore(), SqliteAuditLog(self._database)),
+            PermissionKernel(GrantStore(), SqliteAuditLog(self._audit_db)),
             bus,
             HookRegistry(),
             canonicalizers={ScopeLane.CHARACTER: CharacterCanonicalizer()},
@@ -177,7 +199,40 @@ class ConversationRuntime:
             session=Session(),
             audio=self._audio,
             tts_speed=float(self._settings.tts_speed.value),
+            episodes=self._recorder,
         )
+
+    async def _expire_old_records(self) -> None:
+        """Delete what is past its deadline. **Every start, before anything is written.**
+
+        Run as a `Job`: it is background work with `actor=system`, so it never takes
+        foreground and never touches an L1 tool (ADR-018). It needs no inference and
+        therefore takes no lease — there is nothing here for barge-in to compete with.
+
+        **Once per start rather than on a timer.** A machine that is on for a week keeps
+        records a few days past their deadline; a timer that fires while Lumi is asleep
+        does nothing at all. The honest description is "expired records are removed when
+        Lumi runs", and that is what docs/contracts/privacy.md §4 promises.
+
+        A failure here is logged and does not stop startup. **Refusing to start because
+        old records could not be deleted would trade the whole product for a chore.**
+        """
+        job = Job(id=new_job_id(), kind=JobKind.MAINTENANCE, cancellation=Cancellation.COOPERATIVE)
+        default = RetentionPolicy()
+        policy = RetentionPolicy(
+            episode_days=_retention_days(
+                self._settings.retention_episodes.value, default.episode_days
+            ),
+            event_days=_retention_days(self._settings.retention_events.value, default.event_days),
+            audit_days=_retention_days(self._settings.retention_audit.value, default.audit_days),
+        )
+        try:
+            deletions = await self._retention.run(policy)
+        except Exception:
+            log.exception("retention.failed", job=str(job.id))
+            return
+        removed = sum(deletion.count for deletion in deletions)
+        log.info("retention.done", job=str(job.id), removed=removed)
 
     async def _update_settings(self, payload: dict[str, object]) -> dict[str, object]:
         """The Stage asked to change a setting. **Core validates and decides** (ADR-028).
@@ -252,6 +307,7 @@ class ConversationRuntime:
         # rest of the session (observed 2026-08-17).
         await self._arbiter.start()
         self._inspector.start()
+        await self._expire_old_records()
         # **Sent once at startup.** The Stage shows values, not judgments — including
         # which of them an environment variable is currently overriding
         await self._server.notify(Role.STAGE, METHOD_SETTINGS, self._settings.to_payload())
@@ -421,30 +477,33 @@ class ConversationRuntime:
         self._task = None
         self._listening = False
         await self._inspector.stop()
+        # **Before the databases close.** A pending episode write against a closed
+        # connection loses the last thing the user said
+        await self._recorder.close()
         await self._audio.stop()
         try:
             async with asyncio.timeout(30.0):
                 await self._providers.unload_all()
         except TimeoutError:
             log.warning("providers.unload_timeout")
-        self._database.close()
+        for database in (self._memory_db, self._audit_db, self._events_db):
+            database.close()
 
 
-def _open_event_store() -> Database:
-    """The DB the EventBus persists into. **Still in memory, deliberately.**
+def _retention_days(value: str, default: int | None) -> int | None:
+    """A settings value as a number of days. **`unlimited` is `None`, not a large number.**
 
-    docs/contracts/privacy.md has since settled where events live (encrypted, under
-    `data_dir()`, kept 30 days). **What it has not settled is anything that deletes
-    them.** Writing events to disk before the retention job exists would create a file
-    that only grows, under a policy nobody has implemented — a retention promise made in
-    a document and broken on disk.
-
-    Moved to disk in Phase 2c, in the same change that adds retention.
+    `lumi.settings` already refuses anything else, so reaching the fallback means the two
+    have drifted. It **keeps the deadline** rather than removing it: the failure mode of
+    guessing "unlimited" is a database that grows forever because of a typo.
     """
-    database = Database.open(":memory:")
-    database.migrate()
-    log.info("core.event_store.in_memory", reason="privacy contract is Phase 2")
-    return database
+    if value == settings_module.UNLIMITED:
+        return None
+    try:
+        return int(value)
+    except ValueError:
+        log.warning("retention.invalid_setting", value=value)
+        return default
 
 
 def _load_pack() -> CharacterPack | None:

@@ -30,9 +30,9 @@ from lumi.permission.verifiers import (
     CharacterCanonicalizer,
 )
 from lumi.provenance import ProvenanceClass, TrustLevel
-from lumi.storage.audit import SqliteAuditLog
-from lumi.storage.events import SqliteEventStore
-from lumi.storage.sqlite import Database, one
+from lumi.storage.audit import AUDIT_SCHEMA, SqliteAuditLog
+from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
+from lumi.storage.sqlite import IN_MEMORY, Database, one
 from lumi.tools.base import ToolContext, ToolKind, ToolOutcome
 from lumi.tools.builtin.character import CharacterHandle, SetExpressionTool
 from lumi.tools.registry import ToolRegistrationError, ToolRegistry
@@ -40,7 +40,17 @@ from lumi.tools.registry import ToolRegistrationError, ToolRegistry
 
 @pytest.fixture
 def database() -> Iterator[Database]:
-    db = Database.open(":memory:")
+    db = Database.open(IN_MEMORY, EVENTS_SCHEMA)
+    try:
+        yield db
+    finally:
+        db.close()
+
+
+@pytest.fixture
+def audit_database() -> Iterator[Database]:
+    """**A separate file from the events**, as in production (docs/contracts/privacy.md §5)."""
+    db = Database.open(IN_MEMORY, AUDIT_SCHEMA)
     try:
         yield db
     finally:
@@ -53,9 +63,11 @@ def hooks() -> HookRegistry:
 
 
 @pytest.fixture
-def registry(database: Database, hooks: HookRegistry) -> ToolRegistry:
+def registry(
+    database: Database, audit_database: Database, hooks: HookRegistry
+) -> ToolRegistry:
     return ToolRegistry(
-        PermissionKernel(GrantStore(), SqliteAuditLog(database)),
+        PermissionKernel(GrantStore(), SqliteAuditLog(audit_database)),
         EventBus(SqliteEventStore(database)),
         hooks,
         canonicalizers={ScopeLane.CHARACTER: CharacterCanonicalizer()},
@@ -88,10 +100,12 @@ class Recorder:
 # ── fail-closed at registration ─────────────────────────────────────
 
 
-def test_registering_without_a_canonicalizer_fails(database: Database) -> None:
+def test_registering_without_a_canonicalizer_fails(
+    database: Database, audit_database: Database
+) -> None:
     """**A Tool with no Canonicalizer for its lane cannot be registered.**"""
     empty = ToolRegistry(
-        PermissionKernel(GrantStore(), SqliteAuditLog(database)),
+        PermissionKernel(GrantStore(), SqliteAuditLog(audit_database)),
         EventBus(SqliteEventStore(database)),
         HookRegistry(),
     )
@@ -99,9 +113,11 @@ def test_registering_without_a_canonicalizer_fails(database: Database) -> None:
         empty.register(SetExpressionTool(Recorder()))
 
 
-def test_registering_without_a_bind_verifier_fails(database: Database) -> None:
+def test_registering_without_a_bind_verifier_fails(
+    database: Database, audit_database: Database
+) -> None:
     partial = ToolRegistry(
-        PermissionKernel(GrantStore(), SqliteAuditLog(database)),
+        PermissionKernel(GrantStore(), SqliteAuditLog(audit_database)),
         EventBus(SqliteEventStore(database)),
         HookRegistry(),
         canonicalizers={ScopeLane.CHARACTER: CharacterCanonicalizer()},
@@ -306,7 +322,7 @@ async def test_tainted_input_taints_the_result(registry: ToolRegistry) -> None:
 
 
 async def test_every_decision_is_audited_with_a_policy_version(
-    registry: ToolRegistry, database: Database
+    registry: ToolRegistry, audit_database: Database
 ) -> None:
     """**Records every entry regardless of the decision.**"""
     registry.register(SetExpressionTool(Recorder()))
@@ -315,7 +331,7 @@ async def test_every_decision_is_audited_with_a_policy_version(
         "character.set_expression", context(actor=Actor.SYSTEM), {"emotion": "happy"}
     )
 
-    with database.transaction() as conn:
+    with audit_database.transaction() as conn:
         rows = conn.execute(
             "SELECT decision, policy_version, policy_rule_id, capability FROM audit_log"
         ).fetchall()

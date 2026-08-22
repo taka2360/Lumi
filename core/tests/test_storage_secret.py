@@ -103,6 +103,7 @@ def test_an_empty_key_file_fails_loudly_and_is_left_alone(tmp_path: Path) -> Non
         get_or_create_db_key(store)
 
     assert empty.exists()
+    assert empty.read_bytes() == b"", "a failed load leaves the file exactly as it found it"
 
 
 def test_the_key_file_never_appears_before_it_is_complete(tmp_path: Path) -> None:
@@ -125,6 +126,9 @@ def test_a_second_creator_does_not_disturb_the_stored_secret(tmp_path: Path) -> 
 
     assert store.create("db-key", b"z" * KEY_SIZE) is False
     assert (tmp_path / "db-key.dpapi").read_bytes() == before
+    # **The loser cleans up after itself.** Its secret was already written to a temporary
+    # file before the name was claimed; leaving it behind would scatter live keys around.
+    assert [path.name for path in tmp_path.iterdir() if path.suffix == ".tmp"] == []
 
 
 def test_a_corrupted_blob_fails_loudly(tmp_path: Path) -> None:
