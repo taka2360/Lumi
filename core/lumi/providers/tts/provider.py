@@ -38,6 +38,11 @@ log = lumi_logging.get_logger(__name__)
 # never starting)
 START_TIMEOUT_S: Final = 180.0
 
+#: What `_warm` synthesizes and throws away. **Long enough to produce moras** — the engine
+#: rejects input it cannot break into any (`aivisspeech.py`: `no_moras`), and a warm-up that
+#: fails on every machine would warm nothing while looking like it did.
+WARM_TEXT: Final = "あー"
+
 
 class AivisSpeechProvider:
     """TTS provider backed by a separate process on GPU when available, else CPU."""
@@ -114,8 +119,31 @@ class AivisSpeechProvider:
             )
 
         self._default_speaker = speaker
+        await self._warm(speaker)
         self._loaded = True
         log.info("tts.loaded", provider=self.id, speaker=speaker)
+
+    async def _warm(self, speaker: int) -> None:
+        """Synthesizes one throwaway sentence, so **the next one runs at production latency.**
+
+        **Loading the voice model is not the same as being able to speak.** `initialize_speaker`
+        puts the weights in memory; the inference session's own first run is a separate cost,
+        and it was still landing on the first sentence — **1579 ms against a ~200 ms steady
+        state** (2026-08-22, same shape as the STT side of the same turn). Warming it here
+        moves that onto startup, where nobody is waiting.
+
+        **Discarded, never played.** Nothing is on the playback path at load time, and the
+        audio exists only to make the engine do the work once.
+
+        Failing is **slow, not broken** — the same judgment as `initialize_speaker` above.
+        """
+        started = time.perf_counter()
+        try:
+            await self._client.synthesize(WARM_TEXT, speaker)
+        except TtsError as error:
+            log.warning("tts.warmup_synthesis_failed", speaker=speaker, detail=error.detail)
+            return
+        log.info("tts.warmed", speaker=speaker, ms=round((time.perf_counter() - started) * 1000))
 
     async def unload(self) -> None:
         """**Only stops an engine Lumi itself started** (`EngineProcess` decides)."""

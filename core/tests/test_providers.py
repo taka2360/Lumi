@@ -40,9 +40,9 @@ from lumi.providers.llm.base import (
 from lumi.providers.llm.ollama import KEEP_ALIVE, OllamaProvider
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import SAMPLE_RATE
-from lumi.providers.stt.faster_whisper import FasterWhisperProvider
+from lumi.providers.stt.faster_whisper import WARM_SAMPLES, FasterWhisperProvider
 from lumi.providers.tts.aivisspeech import TtsError
-from lumi.providers.tts.provider import AivisSpeechProvider
+from lumi.providers.tts.provider import WARM_TEXT, AivisSpeechProvider
 from lumi.setup import detect as detect_module
 from lumi.setup.detect import detect_ollama, find_on_path
 from lumi.setup.state import EngineRuntime
@@ -282,11 +282,18 @@ class TestTtsSpeakerIsActuallyLoaded:
 
     The engine loads a voice model on its first `audio_query`, which put **3092 ms** inside
     `tts_first_audio_ms` on the first sentence (measured 2026-08-18) against a 200 ms budget.
+
+    **Loading the voice is in turn not the same as being able to speak it**: the first
+    synthesis was still 1579 ms against a ~200 ms steady state (measured 2026-08-22), so
+    `load()` also runs one throwaway sentence.
     """
 
-    def build(self, provider: AivisSpeechProvider, *, engine_default: int) -> list[int]:
+    def build(
+        self, provider: AivisSpeechProvider, *, engine_default: int
+    ) -> tuple[list[int], list[str]]:
         """Substitutes the engine process and the HTTP client. **Neither is started.**"""
         initialized: list[int] = []
+        synthesized: list[str] = []
 
         class FakeEngine:
             async def ensure_running(self) -> EngineRuntime:
@@ -299,17 +306,34 @@ class TestTtsSpeakerIsActuallyLoaded:
             async def initialize_speaker(self, speaker: int) -> None:
                 initialized.append(speaker)
 
+            async def synthesize(self, text: str, speaker: int) -> None:
+                synthesized.append(text)
+
         object.__setattr__(provider, "_engine", FakeEngine())
         object.__setattr__(provider, "_client", FakeClient())
-        return initialized
+        return initialized, synthesized
 
     async def test_load_initializes_the_voice(self) -> None:
         provider = AivisSpeechProvider(10101)
-        initialized = self.build(provider, engine_default=888)
+        initialized, _ = self.build(provider, engine_default=888)
 
         await provider.load()
 
         assert initialized == [888], "only selected speaker ID without loading voice"
+
+    async def test_load_synthesizes_once_so_the_first_sentence_does_not(self) -> None:
+        """★ **Loading the voice model is not running the engine.**
+
+        `initialize_speaker` puts the weights in memory; the inference session's own first
+        run is a separate cost, and it stayed on the first sentence — **1579 ms against a
+        ~200 ms steady state** (2026-08-22 実測 → docs/measurements/phase1.md).
+        """
+        provider = AivisSpeechProvider(10101)
+        _, synthesized = self.build(provider, engine_default=888)
+
+        await provider.load()
+
+        assert synthesized == [WARM_TEXT], "話者を載せただけで、一度も喋らせていない"
 
     async def test_it_initializes_the_voice_the_pack_chose(self) -> None:
         """★ **Warming the wrong voice is not warming.**
@@ -319,7 +343,7 @@ class TestTtsSpeakerIsActuallyLoaded:
         first sentence would pay the full 3 s anyway.
         """
         provider = AivisSpeechProvider(10101, speaker=42)
-        initialized = self.build(provider, engine_default=888)
+        initialized, _ = self.build(provider, engine_default=888)
 
         await provider.load()
 
@@ -341,6 +365,25 @@ class TestTtsSpeakerIsActuallyLoaded:
         await provider.load()
 
         assert provider.is_loaded(), "init failure must not make provider unusable"
+
+    async def test_a_warm_up_sentence_that_fails_is_not_fatal(self) -> None:
+        """**Slow is not broken**, the same judgment as the line above.
+
+        The warm-up only decides *when* the cost is paid, never *whether* the engine works,
+        so a throwaway sentence that fails must not keep the character off screen
+        (`warm_tts` would report `failed` and the boot phase would resolve to `blocked`).
+        """
+        provider = AivisSpeechProvider(10101)
+        self.build(provider, engine_default=888)
+
+        async def refuse(text: str, speaker: int) -> None:
+            raise TtsError("synthesis_failed", "500")
+
+        object.__setattr__(provider._client, "synthesize", refuse)
+
+        await provider.load()
+
+        assert provider.is_loaded(), "暖機に失敗しただけで喋れなくしてはいけない"
 
 
 class TestOllamaIsActuallyLoaded:
@@ -628,6 +671,69 @@ async def test_transcribe_before_load_is_refused(empty_model_dir: Path) -> None:
     audio = np.zeros(SAMPLE_RATE, dtype=np.float32)
     with pytest.raises(ProviderNotConfigured):
         await provider.transcribe(audio, "ja", CancelToken())
+
+
+class TestSttIsActuallyWarm:
+    """★ **Building the model is not being able to transcribe** — the same rule as the TTS
+    class above (docs/interfaces/provider.md「`load()` は接続確認ではない」).
+
+    The weights are in VRAM once `WhisperModel` returns, but the CUDA kernels the inference
+    needs load on first use: **1486 ms on the first utterance against a 151 ms steady
+    state** (2026-08-22 実測 → docs/measurements/phase1.md).
+    """
+
+    def build(
+        self, model_dir: Path, monkeypatch: pytest.MonkeyPatch, *, fail: bool = False
+    ) -> tuple[FasterWhisperProvider, list[object], list[bool]]:
+        """A model that records what it was asked to transcribe. **Nothing is built.**"""
+        transcribed: list[object] = []
+        drained: list[bool] = []
+
+        class FakeModel:
+            def transcribe(self, audio: object, **_kwargs: object) -> object:
+                transcribed.append(audio)
+                if fail:
+                    raise RuntimeError("CUDA out of memory")
+
+                def segments() -> Iterator[object]:
+                    drained.append(True)
+                    yield from ()
+
+                return segments(), SimpleNamespace(language="ja", language_probability=1.0)
+
+        class Installed(FasterWhisperProvider):
+            def _resolve(self) -> Path:
+                return model_dir
+
+        monkeypatch.setitem(
+            sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=lambda *a, **k: FakeModel())
+        )
+        return Installed("small", model_dir, device="cpu"), transcribed, drained
+
+    async def test_load_transcribes_once_so_the_first_utterance_does_not(
+        self, empty_model_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        provider, transcribed, drained = self.build(empty_model_dir, monkeypatch)
+
+        await provider.load()
+
+        assert len(transcribed) == 1, "重みを載せただけで、一度も推論していない"
+        assert len(transcribed[0]) == WARM_SAMPLES  # type: ignore[arg-type]
+        assert drained == [True], "遅延評価の segments を消費していない"
+
+    async def test_a_warm_up_that_fails_is_not_fatal(
+        self, empty_model_dir: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**Slow is not broken.** The model built; only the head start was lost.
+
+        Raising here would make `warm_stt` report `failed` and hold the boot phase at
+        `blocked` — no character and no microphone — over an inference nobody asked for.
+        """
+        provider, _, _ = self.build(empty_model_dir, monkeypatch, fail=True)
+
+        await provider.load()
+
+        assert provider.is_loaded(), "暖機に失敗しただけで聞こえなくしてはいけない"
 
 
 def test_stt_reports_the_device_it_resolved_to(empty_model_dir: Path) -> None:
