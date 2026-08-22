@@ -231,35 +231,77 @@ Phase 2 の「やること」にある。
 **保持期間は既定で期限あり・設定で無期限も選べる。「忘れる」と「消える」を混ぜない**——
 記憶レコードは decay/archive の対象であって、保持期間の対象ではない。
 
-⚠ **未検証: 暗号化 DB と sqlite-vec / FTS5 / PyInstaller の統合。**
-下記「やること」の最初の項目。**ここが通らなければ ADR-038 を修正する新しい ADR を書く。黙って平文に落とさない。**
+✅ **暗号化 DB と sqlite-vec / FTS5 / PyInstaller の統合は 2a で確認済み**〔2026-08-22〕。
+**4項目すべて通り、ADR-038 の修正は不要だった** → [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md) / [measurements/phase2.md](measurements/phase2.md)。
+
+### 実装順 — 2a〜2g に分けた〔2026-08-22〕
+
+Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証でき、次に進む前提を1つだけ確定させる単位**」。
+
+| | 何を | なぜこの順か |
+|---|---|---|
+| **2a** | 暗号化ストレージ基盤（spike / DB 鍵 / `Database` / selfcheck） | **他の全部の前提。** ここが通らなければ ADR-038 を書き直すことになる |
+| **2b** | 投機 STT + 計測 | **記憶検索を配線する前**（[ADR-039](decisions/ADR-039-speculative-stt.md)）。逆順だとその期間だけ予算の 88% で走る |
+| **2c** | 記憶 DB のスキーマ / Episode 記録 / **保持期間ジョブと削除の記録** | **永続化を始める変更と、消す手段を同じ単位に入れる。** 消せないまま書き始めない |
+| **2d** | MemoryStore（write / supersede / archive / purge / confirm）/ salience / 減衰 / 矛盾 | 検索の前に、**書かれるものの形**を確定させる |
+| **2e** | Embedding Provider / `SqliteVecStore` / ハイブリッド検索 / プロンプト配線 | ここで初めて「思い出す」が成立する |
+| **2f** | Reflection Job（LLM 抽出・`inference_lease`・provenance 伝播） | 検索が動いてから。**抽出の質は検索で確かめるしかない** |
+| **2g** | 記憶 UI / 全消去 / エクスポート / マイク表示とミュート / Inspector | ユーザーが**見て直せる**ようになって Phase 2 が閉じる |
 
 ### やること
 
-- [ ] 🔬 **spike: 暗号化 SQLite + sqlite-vec + FTS5 + PyInstaller**（**他の全部の前提**。
-  拡張ロード / Windows wheel / 配布物サイズ / 平文イベント DB からの移行 → [contracts/privacy.md](contracts/privacy.md) 末尾）
-- [ ] **DB 鍵の生成と OS 秘密保管への保存**（Windows: DPAPI。**OS ごとの窓口として抽象化する**）
-- [ ] SQLite + sqlite-vec + FTS5 + マイグレーション基盤（`_schema_version`）
-- [ ] Embedding Provider（ONNX / CPU）
+#### 2a — 暗号化ストレージ基盤〔2026-08-22 完了〕
+
+- [x] 🔬 **spike: 暗号化 SQLite + sqlite-vec + FTS5 + PyInstaller**（**他の全部の前提**）
+  〔4項目すべて通った。**+2.73 MiB / ADR-038 の修正は不要** → [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md) / [measurements/phase2.md](measurements/phase2.md)〕
+- [x] **DB 鍵の生成と OS 秘密保管への保存**（Windows: DPAPI。**OS ごとの窓口として抽象化する**）
+  〔`lumi/storage/secret.py`。**平文フォールバックは作らない**〕
+- [x] マイグレーション基盤（`_schema_version`）を暗号化 DB の上に載せ直す
+- [x] `--self-check` に「OS secret store」「Encrypted SQLite」を追加
+  〔**dev で緑・サイドカーで赤**を実際に踏んだ。配布物でしか出ない失敗がある〕
+- [x] **STT のデバッグ書き出しを撤去**（[contracts/privacy.md](contracts/privacy.md) §6 が録音経路を禁じている。
+  Phase 1 の `lumi/audio/dump.py` は**ソースから実行すると既定で有効**だった → [architecture/audio.md](architecture/audio.md)）
+
+#### 2b — 投機 STT
+
 - [ ] **投機 STT**（VAD の無音待ちと STT を重ねる → [ADR-039](decisions/ADR-039-speculative-stt.md)）。
   不変スナップショット + 世代 ID + 原子的な照合。**曖昧なら採用しない**（fail-closed）。
   **single-flight + 1ターンあたりの上限**（STT の推論はキャンセルできないので、有界性は起動を絞って作る）。
   **`SILENCE_STARTED` イベントと非破壊スナップショットの追加**（現在は `SPEECH_ENDED` しか出ない）。
-  **STT の実行経路は1本**（`SPEECH_ENDED` から直接呼ばない）。
-  **記憶検索を配線する前に入れる**（逆順だと、その期間だけ 88% の状態で走ることになる）
+  **STT の実行経路は1本**（`SPEECH_ENDED` から直接呼ばない）
 - [ ] `critical_path_ms` / `stt_speculative` / `stt_overlap_ms` / `stt_wait_ms` / `stt_discarded_ms` の計測
   （[architecture/audio.md](architecture/audio.md) §7）。**寄与は `stt_ms - stt_overlap_ms`。定数 0 で埋めない**
 - [ ] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f）
+
+#### 2c — Episode と保持期間
+
+- [ ] 記憶 DB のスキーマ（Episode / 記憶レコード / vec / FTS5）とマイグレーション
 - [ ] Episode 記録（会話の生ログ）
-- [ ] **Reflection Job**（セッション終了時 / 長いアイドル時。**`Job` として実行し、`inference_lease` を取る**）
+- [ ] **イベント DB / 監査 DB をオンディスク（暗号化）にする**
+- [ ] **保持期間の削除ジョブ**（Episode 90 日 / 監査ログ 180 日 / DomainEvent 30 日。
+  **時刻を注入してテストできること**）と、無期限を選べる設定
+- [ ] **削除の記録**（privacy.md §5。何を消したかは残し、**中身は残さない**）
+
+#### 2d — 記憶コア
+
 - [ ] **assertion_mode / evidence / provenance の実装**
 - [ ] salience の決定論的補正（感情強度・新規性・明示・反復・参照回数）
 - [ ] 減衰とアーカイブ（物理削除しない）
 - [ ] 矛盾の supersede（`valid_from` / `superseded_by`）
+
+#### 2e — 検索
+
+- [ ] Embedding Provider（ONNX / CPU）
 - [ ] ハイブリッド検索（vector + FTS5 + recency + salience + assertion_mode）+ トークン予算
+- [ ] プロンプトへの配線（**assertion_mode ごとの提示のしかたを含む**）
+
+#### 2f — Reflection Job
+
+- [ ] **Reflection Job**（セッション終了時 / 長いアイドル時。**`Job` として実行し、`inference_lease` を取る**）
+
+#### 2g — ユーザーが見て直せること
+
 - [ ] **記憶の閲覧・編集・削除 UI**
-- [ ] **保持期間の削除ジョブ**（Episode 90 日 / 監査ログ 180 日 / DomainEvent 30 日。
-  **時刻を注入してテストできること**）と、無期限を選べる設定
 - [ ] **「全部消して」**（privacy.md §2 の表の全行に到達すること。実行前に何が消えるかを見せる）
 - [ ] **エクスポート**（可搬形式。**出力は平文になることを出力時に明示する**）
 - [ ] アンインストーラの「覚えたことも削除する」（既定オフ）
@@ -435,9 +477,9 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 2 | ~~Python サイドカーのパッケージング（PyInstaller vs uv 同梱）~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-021](decisions/ADR-021-sidecar-packaging.md)。**PyInstaller の onedir** |
 | ~~3~~ | ~~Ollama を同梱するかユーザーに別途インストールさせるか~~ | **✓ 解消**〔2026-08-16〕→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)。**Ollama は検出のみ**（取得もしない）/ Silero VAD は同梱 / STT モデルは同意に基づく実行時取得 |
 | 4 | ~~入出力が別デバイスのときの duplex stream の扱い~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-020](decisions/ADR-020-split-audio-streams.md)。**duplex を使わない**（別ストリーム + Core が持つ reference） |
-| 5 | **✓ 推奨モデルを Qwen 3.5 9B、軽量候補を 4B に固定。** 日本語会話品質と Tool Calling 品質の継続実測 | Phase 1（利用条件は [licensing.md](licensing.md) §4.7 に記録済み） |
+| 5 | **✓ 推奨モデルを Qwen 3.5 9B、軽量候補を 4B に固定。** 日本語会話品質と Tool Calling 品質の継続実測 | Phase 1（利用条件は [licensing.md](licensing.md) §4.8 に記録済み） |
 | ~~6~~ | ~~🔴 **プライバシーとデータ保存の方針**~~ | **✓ 解消**〔2026-08-22〕→ [contracts/privacy.md](contracts/privacy.md), [ADR-038](decisions/ADR-038-privacy-and-data-retention.md)。**保存時の暗号化（DPAPI に預けたランダム鍵）/ 既定で期限のある保持期間 / 単一操作の全消去 / 生波形は永続化しない** |
-| 6b | **暗号化 DB と sqlite-vec / FTS5 / PyInstaller の統合**（未検証。通らなければ ADR-038 を修正する ADR が要る） | **Phase 2 の最初に spike** |
+| ~~6b~~ | ~~**暗号化 DB と sqlite-vec / FTS5 / PyInstaller の統合**~~ | **✓ 解消**〔2026-08-22 / Phase 2a〕→ [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md) / [measurements/phase2.md](measurements/phase2.md)。**APSW + SQLite3 Multiple Ciphers（chacha20）。暗号化 DB で sqlite-vec も FTS5 も動き、配布物への増分は +2.73 MiB。ADR-038 の修正は不要** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
 | ~~8~~ | ~~**DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる）~~ | **✓ 解消**〔2026-08-22〕→ [contracts/privacy.md](contracts/privacy.md) §2。**既定 30 日 / 「全部消して」の対象**。Phase 3 まで持ち越さない |
 | ~~8b~~ | ~~区間合計が p50 目標を超えている~~ | **✓ 解消**〔2026-08-18〕。`llm_first_token` を 537→**421 ms** に縮めたうえで、**p50 目標を 1.2s → 1.5s に置き直した**（1.27/1.50 = 85%）。`vad_ms` 0.43s はターンテイキングの方針で動かせず、旧目標と両立しなかったため。**p95 2.0s（完了条件）と区間別予算は据え置き** → [architecture/audio.md](architecture/audio.md) §7 |

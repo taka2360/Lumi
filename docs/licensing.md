@@ -268,7 +268,31 @@ MIT は著作権表示の保持を求めるが、**Silero Team の表示は依�
 **✓ 対応済み**〔2026-08-17 / Step G〕。生成スクリプトの `MANUAL` に追加した
 （CPython / SQLite / PortAudio / PyInstaller bootloader と同じ扱い）。
 
-### 4.7 推奨 LLM モデル〔2026-08-22 確認〕
+### 4.7 暗号化 SQLite（Phase 2a で追加）〔2026-08-22 確認〕
+
+記憶 DB の保存時暗号化のために追加した（→ [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md)）。**配布物に入る。**
+
+| コンポーネント | ライセンス | 用途 |
+|---|---|---|
+| APSW（`apsw-sqlite3mc`） | **zlib 型**（Copyright (c) 2004-2026 Roger Binns。SPDX: `any-OSI`） | Python から SQLite を触る層 |
+| **SQLite3 Multiple Ciphers 2.4.0** | **MIT**（Copyright (c) 2019-2026 Ulrich Telle） | 保存時暗号化（`chacha20`） |
+| SQLite 3.53.4 | Public Domain | 上に静的リンクされる本体（FTS5 を含む） |
+
+**GPL / AGPL は含まれない。** Core = MIT の境界を侵さない。
+
+#### ★ ここもクレジットの自動生成に素直には載らない
+
+2つ問題があり、**どちらも手で足して解決した**〔2026-08-22〕。
+
+1. **`apsw-sqlite3mc` の METADATA は `License: OSI Approved` としか書いていない。**
+   同梱の LICENSE 本文は zlib 型 + 「任意の OSI 承認ライセンスを選んでよい」条項である。
+   生成スクリプトに**根拠付きの上書き**を置いた（`PYTHON_LICENSE_OVERRIDES`）
+2. **SQLite3 Multiple Ciphers は依存グラフに現れない**（`.pyd` に静的リンクされている）。
+   Silero VAD と同じ扱いで `MANUAL` に足した
+
+**依存を1つ足すと、クレジットが2つ増えることがある。** 依存グラフは配布物の中身と一致しない。
+
+### 4.8 推奨 LLM モデル〔2026-08-22 確認〕
 
 | モデル | 表示サイズ | ライセンス | 取得方法 |
 |---|---:|---|---|
@@ -363,13 +387,16 @@ Lumi の既存の設計要素で満たせるものを使い、足りない分だ
 
 | エコシステム | 取得元 | 件数〔2026-08-15〕 |
 |---|---|---|
-| Rust | `cargo tree -e normal`（build 依存は exe に入らない） | 245 |
-| Python | `uv export --no-dev`（PyInstaller が固める実行時依存） | 13 |
+| Rust | `cargo tree -e normal`（build 依存は exe に入らない） | 246 |
+| Python | `uv export --no-dev`（PyInstaller が固める実行時依存） | 32 |
 | JavaScript | `pnpm licenses list --prod` | 22 |
-| **依存グラフに現れないもの** | **手で書く** | 4 |
+| **依存グラフに現れないもの** | **手で書く** | 6 |
 
-**最後の行が抜けやすい。** CPython 本体・SQLite・PortAudio・**PyInstaller の bootloader** は
-どの依存グラフにも出てこないのに配布物へ入る。特に bootloader は
+（件数は 2026-08-22 時点。**生成のたびに変わる。** 正は
+`stage/src/credits/third-party.generated.json` であってこの表ではない）
+
+**最後の行が抜けやすい。** CPython 本体・SQLite・**SQLite3 Multiple Ciphers**・PortAudio・
+**Silero VAD**・**PyInstaller の bootloader** はどの依存グラフにも出てこないのに配布物へ入る。特に bootloader は
 **GPL-2.0-or-later WITH Bootloader-exception** であり、例外条項によって
 これを使って作った実行体に GPL は伝播しない（→ [ADR-021](decisions/ADR-021-sidecar-packaging.md)）。
 
@@ -399,13 +426,13 @@ Core = MIT の境界を、レビューではなくビルドで守るため。
 | 3 | ~~VOICEVOX Engine の OSS ライセンス~~ | VOICEVOX を代替として実装する場合 | **✓ 一部解消**〔2026-08-15〕LGPL-3.0 と非公開ライセンスの**デュアル**（README 記載）。同梱しないので配布物には影響しない |
 | ~~4~~ | ~~公式配布元の URL と、取得物の検証方法~~ | — | **✓ 解消**〔2026-08-15〕→ [architecture/setup.md](architecture/setup.md) §3-4。GitHub Releases をピン留めし、URL・サイズ・SHA-256 の3点で検証する |
 | ~~5~~ | ~~既定 VRM モデルの再配布可否~~ | — | **✓ 解消**〔2026-08-16〕→ §4.5。**再配布 OK / 改変 OK / クレジット不要**（VRM 0.0） |
-| 6 | Embedding モデルのライセンス | モデル選定時 | LLM / STT は **✓ 解消** → §4.7 / §7 #10b。Embedding は Phase 2 |
+| 6 | Embedding モデルのライセンス | モデル選定時 | LLM / STT は **✓ 解消** → §4.8 / §7 #10b。Embedding は Phase 2 |
 | 7 | Kokoro（英語 TTS）のライセンス | 英語対応時 | 未定 |
 | 8 | Live2D Cubism Core の配布形態ごとの条件 | Live2D 導入時 | Phase 9 |
 | ~~9~~ | ~~Silero VAD（ONNX モデルファイル本体）の LICENSE 本文~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**MIT**（Silero Team）。faster-whisper が同梱 |
 | ~~10~~ | ~~faster-whisper / CTranslate2 / onnxruntime のライセンス~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**すべて MIT / BSD / Apache-2.0** |
 | ~~10b~~ | ~~**取得する STT モデル**のライセンス~~ | — | **✓ 解消**〔2026-08-17〕。ピン留めした2つとも **MIT**。`Systran/faster-whisper-small` / `dropbox-dash/faster-whisper-large-v3-turbo`（[ADR-027](decisions/ADR-027-stt-model-large-v3-turbo.md)）。**配布物には含めず、同意に基づいて取得する**ので再配布義務は生じない |
-| ~~11~~ | ~~案内する LLM モデルの利用条件（Qwen3 系 / Gemma3 系）~~ | — | **✓ 解消**〔2026-08-22〕→ §4.7。推奨を Qwen 3.5 9B、軽量候補を 4B に固定 |
+| ~~11~~ | ~~案内する LLM モデルの利用条件（Qwen3 系 / Gemma3 系）~~ | — | **✓ 解消**〔2026-08-22〕→ §4.8。推奨を Qwen 3.5 9B、軽量候補を 4B に固定 |
 
 ---
 

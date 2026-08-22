@@ -1,6 +1,10 @@
-"""Reads and writes WAV data. **Pure functions** (never touches a device).
+"""Reads WAV data. **Pure functions** (never touches a device, never touches a file).
 
 Never trust the engine's output (Invariant 3). Fails explicitly if malformed.
+
+**There is no encoder here.** One existed to write captured microphone audio out for
+debugging; docs/contracts/privacy.md §6 forbids that path, in either direction, so the
+only thing this module does is decode what a TTS engine hands back.
 """
 
 from __future__ import annotations
@@ -8,10 +12,6 @@ from __future__ import annotations
 import io
 import wave
 from dataclasses import dataclass
-
-import numpy as np
-
-from lumi.audio.ring import Samples
 
 
 class WavError(ValueError):
@@ -42,21 +42,3 @@ def decode_wav(data: bytes) -> Wav:
             )
     except (wave.Error, EOFError) as error:
         raise WavError(str(error)) from error
-
-
-def encode_wav(mono: Samples, sample_rate: int) -> bytes:
-    """Serialize a mono float32 waveform as 16-bit PCM WAV.
-
-    **For listening to what Core actually heard** (`lumi.audio.dump`). Values are clipped
-    rather than normalized: a scaled dump would hide clipping, which is one of the things
-    the dump exists to reveal.
-    """
-    clipped = np.clip(mono.astype(np.float32, copy=False), -1.0, 1.0)
-    pcm = (clipped * 32767.0).astype("<i2").tobytes()
-    buffer = io.BytesIO()
-    with wave.open(buffer, "wb") as sink:
-        sink.setnchannels(1)
-        sink.setsampwidth(2)
-        sink.setframerate(sample_rate)
-        sink.writeframes(pcm)
-    return buffer.getvalue()

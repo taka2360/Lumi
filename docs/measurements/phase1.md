@@ -490,6 +490,11 @@ VAD スレッドは 32 ms ごとに変換を呼ぶ。状態を持たない関数
 **聞けば1秒で分かった。** そのために `LUMI_DEBUG_STT_DUMP=1` を入れた
 （`lumi/audio/dump.py` → STT に渡った音声そのものを WAV + 認識結果で書き出す）。
 
+> 〔2026-08-22 追記〕**この書き出しは Phase 2a で撤去した。**
+> [contracts/privacy.md](../contracts/privacy.md) §6 が録音経路そのものを禁じている
+> → [architecture/audio.md](../architecture/audio.md)「音声入力のデバッグ」。
+> 当時この手段が有効だったという記録は、そのまま残す。
+
 ## ★ 残っていた語頭欠落は、プリロール不足だった〔2026-08-17 実測〕
 
 リサンプラ修正後もまだ認識が微妙だったので、**AivisSpeech で日本語を合成し、

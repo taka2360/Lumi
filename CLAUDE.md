@@ -6,10 +6,11 @@
 
 ## 現在の状態
 
-**Phase 1 完了。Phase 2（Memory）着手準備。** 設計は rev.16 まで完了し承認済み。
+**Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）完了。** 設計は rev.17 まで完了し承認済み。
 コードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
 
-Phase 1 の進捗と実測値 → [docs/measurements/phase1.md](docs/measurements/phase1.md) / [docs/roadmap.md](docs/roadmap.md)
+Phase 2 は 2a〜2g に分けてある（[docs/roadmap.md](docs/roadmap.md)）。**次は 2b（投機 STT）。**
+実測値 → [docs/measurements/phase2.md](docs/measurements/phase2.md) / [docs/measurements/phase1.md](docs/measurements/phase1.md)
 
 ## リポジトリ構成
 

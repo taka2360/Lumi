@@ -9,6 +9,10 @@ dependencies = [
     "websockets>=13.0",
     "structlog>=24.4.0",
     "sqlite-vec>=0.1.9",
+    # Phase 2. **Encryption at rest** for the memory / event / audit DBs (ADR-038, ADR-040).
+    # SQLite3 Multiple Ciphers (MIT) built into APSW (any-OSI). **Replaces the stdlib
+    # `sqlite3` driver**: the stdlib module cannot open an encrypted database
+    "apsw-sqlite3mc>=3.53.4.0",
     "httpx>=0.28.1",
     "sounddevice>=0.5.5",
     # Phase 1. Audio is handled as a 16kHz mono float32 array (the shared representation for VAD / STT)

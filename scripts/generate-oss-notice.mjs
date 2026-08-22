@@ -42,6 +42,12 @@ const MANUAL = [
 		note: "CPython に同梱（FTS5 を含む）",
 	},
 	{
+		name: "SQLite3 Multiple Ciphers",
+		version: "2.4.0 (SQLite 3.53.4)",
+		license: "MIT",
+		note: "Copyright (c) 2019-2026 Ulrich Telle。**apsw-sqlite3mc の .pyd に静的リンクされる**ため依存グラフには現れない。記憶 DB の保存時暗号化はこれが担う（ADR-040）",
+	},
+	{
 		name: "PortAudio",
 		version: "V19.7.0",
 		license: "MIT",
@@ -115,8 +121,22 @@ function pythonPackages() {
 	return packages;
 }
 
+/**
+ * Explicit overrides for packages whose METADATA carries no usable license value.
+ * **Always record why**, and only after reading the bundled LICENSE file.
+ */
+const PYTHON_LICENSE_OVERRIDES = {
+	// METADATA says only `License: OSI Approved`. The bundled LICENSE is the zlib-style
+	// APSW license (Copyright (c) 2004-2026 Roger Binns) with an "or any OSI approved
+	// license" clause; SPDX-License-Identifier: any-OSI
+	"apsw-sqlite3mc": "Zlib-style (SPDX: any-OSI)",
+};
+
 /** Extract from dist-info METADATA in order: License-Expression -> License -> Classifier */
 function pythonLicense(sitePackages, distInfos, name, version) {
+	const override = PYTHON_LICENSE_OVERRIDES[name.toLowerCase()];
+	if (override) return override;
+
 	const normalized = name.replace(/[-_.]+/g, "_").toLowerCase();
 	const found = distInfos.find((dir) => {
 		const base = dir.slice(0, -".dist-info".length);

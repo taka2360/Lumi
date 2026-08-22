@@ -35,7 +35,8 @@ Memory         覚えていること   高い / curated / 減衰する
 > [../contracts/privacy.md](../contracts/privacy.md)（決定は [ADR-038](../decisions/ADR-038-privacy-and-data-retention.md)）。
 > 要点のみ: ランダム鍵を Lumi が生成し、OS の秘密保管（Windows は DPAPI）に預ける。
 > **ユーザーはパスワードを管理しない。** 同一ユーザー権限で動くソフトウェアからは守らない。
-> **暗号化ビルドで sqlite-vec 拡張が使えるかは未検証であり、Phase 2 の最初に spike で確認する。**
+> **暗号化ビルドで sqlite-vec と FTS5 が使えることは確認済み**〔2026-08-22〕
+> → [ADR-040](../decisions/ADR-040-encrypted-sqlite-driver.md) / [../measurements/phase2.md](../measurements/phase2.md)。
 
 | 選択肢 | 評価 |
 |---|---|

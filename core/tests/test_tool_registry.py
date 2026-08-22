@@ -32,7 +32,7 @@ from lumi.permission.verifiers import (
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.storage.audit import SqliteAuditLog
 from lumi.storage.events import SqliteEventStore
-from lumi.storage.sqlite import Database
+from lumi.storage.sqlite import Database, one
 from lumi.tools.base import ToolContext, ToolKind, ToolOutcome
 from lumi.tools.builtin.character import CharacterHandle, SetExpressionTool
 from lumi.tools.registry import ToolRegistrationError, ToolRegistry
@@ -377,7 +377,7 @@ async def test_a_denied_call_leaves_no_lifecycle_events(
         "character.set_expression", context(actor=Actor.SYSTEM), {"emotion": "happy"}
     )
     with database.transaction() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM events").fetchone()[0]
+        count = one(conn.execute("SELECT COUNT(*) FROM events"))[0]
     assert count == 0
 
 

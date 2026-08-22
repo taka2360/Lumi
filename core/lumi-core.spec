@@ -157,6 +157,9 @@ def _require(entries, needle, message):
 
 
 _require(a.binaries, "sqlite_vec/vec0", "sqlite-vec extension is missing from the distributable")
+# **APSW carries the encrypted SQLite build** (SQLite3 Multiple Ciphers, ADR-040).
+# Without it there is no database at all: Core refuses to open one in plaintext.
+_require(a.binaries, "apsw/__init__", "APSW (encrypted SQLite) is missing from the distributable")
 _require(a.binaries + a.datas, "libportaudio64bit.dll", "PortAudio is missing from the distributable")
 _require(a.datas, "silero_vad_v6.onnx", "Silero VAD is missing from the distributable (barge-in will not work)")
 _require(a.datas, "content/characters/lumi/character.toml", "Default Content Pack is missing from the distributable")

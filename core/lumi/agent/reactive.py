@@ -35,7 +35,6 @@ from typing import Final, cast
 import numpy as np
 
 from lumi import logging as lumi_logging
-from lumi import paths
 from lumi.agent.latency import TurnLatency, TurnTimer
 from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import ContextBlock, assemble
@@ -43,7 +42,6 @@ from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
 from lumi.agent.tasks import report_task_exit
-from lumi.audio.dump import open_dump
 from lumi.audio.io import AudioIO
 from lumi.audio.playback import SpeakerPlayback
 from lumi.audio.vad import SAMPLE_RATE, VadEvent
@@ -102,7 +100,6 @@ class ReactiveLoop:
     __slots__ = (
         "_arbiter",
         "_audio",
-        "_dump",
         "_last_latency",
         "_limits",
         "_notifier",
@@ -139,10 +136,6 @@ class ReactiveLoop:
         self._audio = audio
         self._tts_speed = _validate_tts_speed(tts_speed)
         self._last_latency: TurnLatency | None = None
-        #: `None` unless `LUMI_DEBUG_STT_DUMP=1`. **The only diagnostic that separates
-        #: "the audio was already damaged" from "the model got clean audio and still
-        #: got it wrong"** (`lumi.audio.dump`)
-        self._dump = open_dump(paths.stt_dump_dir())
 
     @property
     def session(self) -> Session:
@@ -225,9 +218,18 @@ class ReactiveLoop:
         """
         timer = TurnTimer(new_correlation_id(), started_at=ended_at)
         timer.since_start("vad_ms")
-        # **Written before STT runs**, so a segment that makes STT fail outright is still
-        # on disk to listen to. Off unless `LUMI_DEBUG_STT_DUMP=1`
-        dumped = self._dump.write(audio, SAMPLE_RATE) if self._dump is not None else None
+        # **Measured before STT runs**, so a segment that makes STT fail outright still
+        # says something about what went in. Peak and RMS separate "the audio was already
+        # damaged" from "the model got clean audio and still got it wrong" — the 48 kHz →
+        # 16 kHz aliasing found on 2026-08-17 shows up here as a peak near 1.0 with speech
+        # nowhere near that loud. **The audio itself is never written down**
+        # (docs/contracts/privacy.md §6).
+        log.info(
+            "reactive.segment",
+            seconds=round(len(audio) / SAMPLE_RATE, 2),
+            peak=round(float(np.max(np.abs(audio))) if len(audio) else 0.0, 4),
+            rms=round(float(np.sqrt(np.mean(audio**2))) if len(audio) else 0.0, 4),
+        )
         try:
             stt: STTProvider = await self._get(ProviderKind.STT)
             with timer.span("stt_ms"):
@@ -238,18 +240,6 @@ class ReactiveLoop:
             return
 
         text = transcription.text.strip()
-        if dumped is not None and self._dump is not None:
-            log.info(
-                "reactive.stt_dumped",
-                path=str(dumped),
-                seconds=round(len(audio) / SAMPLE_RATE, 2),
-                # Peak and RMS say whether the segment was clipped or barely above the noise
-                # floor. **A dump nobody listens to should still carry that much**
-                peak=round(float(np.max(np.abs(audio))) if len(audio) else 0.0, 4),
-                rms=round(float(np.sqrt(np.mean(audio**2))) if len(audio) else 0.0, 4),
-                text=text,
-            )
-            self._dump.annotate(dumped, text)
         if not text:
             log.info("reactive.empty_transcription")
             return
