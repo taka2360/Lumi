@@ -110,7 +110,7 @@ screenshot / input injection / window create / process launch。
 | 6 | Extension プロトコルに `DomainEvent` を送る経路が無い | protocol |
 | 7 | `trust_level = trusted` の書き込みがユーザー確認ハンドラ以外に存在しない | Core |
 | 8 | `sequence_id` の代入が `EventBus` 以外に存在しない | Core |
-| 9 | `audit_log` への `DELETE` / `UPDATE` がコードベースに存在しない | Core |
+| 9 | `audit_log` への `DELETE` / `UPDATE` が、**保持期間ジョブと全消去サービス以外に**存在しない（→ [privacy.md](privacy.md) §5。`UPDATE` はどこにも存在しない） | Core |
 | 10 | `WorldFacet` の書き込みが Signal ハンドラ以外に存在しない | Core |
 | 11 | **Activity の状態遷移が `AttentionArbiter` 以外に存在しない** | Core |
 | 12 | **`_foreground` への代入が `AttentionArbiter` 以外に存在しない** | Core |
@@ -118,6 +118,9 @@ screenshot / input injection / window create / process launch。
 | 14 | **Class A の lane を out-of-process Extension が提供していない** | Core |
 | 15 | **Policy 判断が `decide()` 以外の場所で行われていない**（`Decision` を返す関数が1つだけ） | Core |
 | 16 | **オーディオコールバック内で推論・メモリ確保・ロック取得をしていない** | Core |
+| 17 | **永続化先が [privacy.md](privacy.md) §2 の表に無い場所を書いていない** | Core |
+| 18 | **`DomainEvent` の payload に発話本文が入っていない** | Core |
+| 19 | **音声バッファを扱うモジュールにファイル書き込み経路が無い**（生波形を残さない） | Core |
 
 ---
 

@@ -9,8 +9,22 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.15 |
-| 実装フェーズ | **Phase 0 の完了条件を達成。Phase 1（MVP: Talking Desktop Character）着手。** セットアップ周りの検証手順 15〜18 が残る → [roadmap.md](roadmap.md) |
+| Revision | rev.16 |
+| 実装フェーズ | **Phase 1（MVP: Talking Desktop Character）完了。Phase 2（Memory）着手前の 🔴 2件を決着。** → [roadmap.md](roadmap.md) |
+
+> **rev.16 の変更点**（Phase 1 を閉じ、Phase 2 の 🔴 2件を決着させた）
+> 1. **`contracts/privacy.md` を新設した** → [ADR-038](decisions/ADR-038-privacy-and-data-retention.md)。
+>    記憶 DB は保存時に暗号化する（ランダム鍵を DPAPI に預ける。**ユーザーはパスワードを管理しない**）。
+>    保持期間は既定で期限あり・設定で無期限も選べる。**「忘れる」と「消える」を混ぜない**——
+>    記憶レコードは decay/archive の対象であって、保持期間の対象ではない
+> 2. **投機 STT を採ることに決めた** → [ADR-039](decisions/ADR-039-speculative-stt.md)。
+>    VAD の無音待ち 0.43 s に STT 0.22 s を重ねる設計で、予算上のクリティカルパスは
+>    1.27 → 1.10 s（p50 目標の 73%）になる。**記憶検索 0.05 s を足しても 85% 規則を破らない。目標は動かしていない**。
+>    **実装と実測は Phase 2**（[roadmap.md](roadmap.md)）。1.10 s は予算であって実測値ではない
+> 3. 予算表を「直列区間の表」から**クリティカルパスの表**に変えた。
+>    `critical_path_ms` / `stt_overlap_ms` を新設し、`unaccounted_ms` の定義を `total_ms - critical_path_ms` にした。
+>    **重なりの寄与は `stt_ms - stt_overlap_ms` で、定数 0 ではない**（CPU 構成では隠れきらない）
+> 4. **DomainEvent の保持ポリシーが決着した**（既定 30 日 / 全消去の対象）。Phase 3 まで持ち越さない
 
 > **rev.14 の変更点**（Ollamaの通常インストール経路を、未起動と誤判定しない）
 > 1. 実行ファイル初検出後、APIが立つまで15秒の起動猶予を設けた → [ADR-037](decisions/ADR-037-consented-ollama-model-pull.md)。
@@ -432,7 +446,7 @@ GPU に 1.0 GB 置くと 440 ms になる。**守ろうとしていた VRAM の�
 | 項目 | 確定度 |
 |---|---|
 | 8つの Invariant | **Confirmed** |
-| `contracts/` の全内容（Authority Matrix / Security Boundary / Provenance / 状態機械 / Event model / Kernel実行契約） | **Confirmed** |
+| `contracts/` の全内容（Authority Matrix / Security Boundary / Provenance / 状態機械 / Event model / Kernel実行契約 / **Privacy**） | **Confirmed** |
 | Core ハブ + namespace 分離 | **Confirmed** |
 | World State / Internal State / Memory の三分離 | **Confirmed** |
 | Extension 2機構 + `in-core ⟹ official` 制約 | **Confirmed** |
@@ -446,14 +460,15 @@ GPU に 1.0 GB 置くと 440 ms になる。**守ろうとしていた VRAM の�
 | Drive System の存在と決定論性 | **Confirmed** |
 | SQLite + sqlite-vec | Provisional |
 | Drive・Policy既定値・SLO具体値・モデル選定 | Provisional |
+| **記憶 DB の暗号化方式**（暗号化ビルドと sqlite-vec / FTS5 / PyInstaller の統合） | Provisional — **Phase 2 の最初に spike で確認する** → [contracts/privacy.md](contracts/privacy.md) 末尾 |
 | **Activity の priority の値**（割り込み判定の**方式**は Confirmed → [ADR-024](decisions/ADR-024-activity-priority.md)） | Provisional |
 | **推論スタックの取得方法**（Ollama は検出のみ / VAD は同梱 / STT モデルは実行時取得） | **Confirmed**〔rev.8〕→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) |
 | WS プロトコルの具体スキーマ | Provisional |
 | **公開配布を前提とすること・配布物の構成・クレジット義務** | **Confirmed**〔rev.6〕→ [licensing.md](licensing.md) |
 | 個別コンポーネントのライセンスの理解（AivisSpeech の LICENSE 本文など） | Provisional → [licensing.md](licensing.md) §7 の未確認事項 |
-| **プライバシー / データ保存の方針** | **未着手 — Phase 2 着手前に決める**（`contracts/privacy.md`） |
+| **プライバシー / データ保存の方針**（保存先・暗号化・保持期間・消去対象） | **Confirmed**〔rev.16〕→ [contracts/privacy.md](contracts/privacy.md) / [ADR-038](decisions/ADR-038-privacy-and-data-retention.md) |
 | **Invariant 8 の実装方式**（全画面キャプチャ / 座標注入） | **未決 — Phase 4c 着手前に決める** |
-| **DomainEvent の保持ポリシー** | **未決 — Phase 3 着手前に決める** |
+| **DomainEvent の保持ポリシー** | **Confirmed**〔rev.16〕→ [contracts/privacy.md](contracts/privacy.md) §2（既定 30 日） |
 | Audit log の hash chain | **Deferred (Phase 4a)** |
 | Crash Recovery の実装 | **Deferred (Phase 4a)** — 語彙と型は確定済み |
 | Model Resource Manager の実装 | **Deferred (Phase 5)** — 窓口は確定済み |
@@ -711,6 +726,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Shell / Stage の責務・ウィンドウ一覧・**トレイメニュー**・**起動フェーズ**・**ウィンドウ操作**・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
 | 音声の3層構造・EchoGuard・VAD パラメータ・**レイテンシ SLO**・**デバイス選択とストリームの開き方** | [architecture/audio.md](architecture/audio.md) |
 | 記憶の形成・忘却・矛盾・**検索スコアリング式**・salience 補正 | [architecture/memory.md](architecture/memory.md) |
+| **永続化されるものの一覧・保存先・暗号化・保持期間・消去対象** | [contracts/privacy.md](contracts/privacy.md) |
 | Extension の2機構・信頼レベル・ライフサイクル・Content Pack | [architecture/extension.md](architecture/extension.md) |
 | Drive / AutonomyGate / AutonomyBudget | [architecture/autonomy.md](architecture/autonomy.md) |
 | World / Internal State の分離と facet 定義 | [architecture/world-state.md](architecture/world-state.md) |

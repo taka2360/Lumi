@@ -31,6 +31,12 @@ Memory         覚えていること   高い / curated / 減衰する
 
 **SQLite + sqlite-vec + FTS5。単一ファイル、追加プロセスゼロ。** 〔Provisional〕
 
+> **記憶 DB は保存時に暗号化する。** 保存先・鍵の扱い・保持期間・消去対象の唯一の定義場所は
+> [../contracts/privacy.md](../contracts/privacy.md)（決定は [ADR-038](../decisions/ADR-038-privacy-and-data-retention.md)）。
+> 要点のみ: ランダム鍵を Lumi が生成し、OS の秘密保管（Windows は DPAPI）に預ける。
+> **ユーザーはパスワードを管理しない。** 同一ユーザー権限で動くソフトウェアからは守らない。
+> **暗号化ビルドで sqlite-vec 拡張が使えるかは未検証であり、Phase 2 の最初に spike で確認する。**
+
 | 選択肢 | 評価 |
 |---|---|
 | **SQLite + sqlite-vec** ✓ | 単一ファイル。常駐プロセスもRAMも増えない。数十万ベクトルなら十分 |
@@ -221,6 +227,7 @@ def effective_salience(m: MemoryRecord, now: datetime) -> float:
 
 - archived な記憶は通常の検索にヒットしない
 - ユーザーが記憶 UI で明示的に削除したときのみ物理削除する
+- **記憶レコードは保持期間の対象ではない**（Episode の生ログとは別扱い → [../contracts/privacy.md](../contracts/privacy.md) §4）
 - 「あれ、なんだっけ…」と言ったあとで、関連する強い手がかりがあれば思い出せる余地を残す
 
 ### τ の目安〔Provisional〕

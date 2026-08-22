@@ -2,8 +2,15 @@
 
 **Phase 1 only persists DomainEvents.** sqlite-vec / FTS5 / memory tables are Phase 2.
 The reason they aren't built first is that the memory schema depends on the privacy
-policy (docs/roadmap.md Phase 2 🔴), and writing it before that policy is decided
-would mean rebuilding it later.
+policy, which is now decided: see docs/contracts/privacy.md (ADR-038).
+
+Two things there change this module in Phase 2:
+
+- **Encryption at rest.** Databases holding conversation-derived data must be
+  encrypted, with a random key protected by the OS secret store (DPAPI on Windows).
+  This event database is in scope, so it needs a migration from plaintext.
+- **Retention.** DomainEvents default to 30 days and are covered by "erase
+  everything". Neither is implemented yet.
 
 ## What Phase 1 persists / doesn't persist
 
@@ -12,9 +19,9 @@ would mean rebuilding it later.
 | Kernel facts (Activity start/end, Tool's 3-stage record, permission) | **Utterance text** |
 
 **Utterance text is never put into a DomainEvent's payload.** Phase 1's Working Memory
-lives in in-session memory only; persisting conversation starts in Phase 2 (after
-`contracts/privacy.md` is written). Starting to write utterance text here first would
-grow "a log nobody knows how to delete" before the policy is even decided.
+lives in in-session memory only; persisting conversation starts in Phase 2 as Episodes.
+This separation is now a rule, not a temporary state: Kernel facts and conversation
+content stay in different places (docs/contracts/privacy.md §2).
 
 ## Transactions
 
