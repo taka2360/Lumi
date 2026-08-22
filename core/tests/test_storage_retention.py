@@ -15,6 +15,8 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from lumi.memory.records import AssertionMode, MemoryCandidate, MemoryType
+from lumi.memory.store import MemoryStore
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.storage.audit import AUDIT_SCHEMA
 from lumi.storage.events import EVENTS_SCHEMA
@@ -38,7 +40,28 @@ class Rig:
         self.audit = Database.open(IN_MEMORY, AUDIT_SCHEMA)
         self.service = RetentionService(memory=self.memory, events=self.events, audit=self.audit)
         self.episodes = EpisodeStore(self.memory)
+        self.memories = MemoryStore(self.memory)
         self._n = 0
+
+    async def add_memory(
+        self,
+        content: str = "ユーザーは Factorio が好き",
+        *,
+        subject: str = "user.hobby",
+        when: datetime = NOW,
+    ) -> str:
+        record = await self.memories.write(
+            MemoryCandidate(
+                type=MemoryType.SEMANTIC,
+                subject=subject,
+                content=content,
+                assertion_mode=AssertionMode.SELF_GENERATED,
+                provenance_class=ProvenanceClass.TRUSTED,
+                trust_level=TrustLevel.TRUSTED,
+            ),
+            now=when,
+        )
+        return record.id
 
     def _next(self) -> int:
         self._n += 1
@@ -276,3 +299,135 @@ async def test_the_deletion_record_outlives_the_audit_log_it_describes(rig: Rig)
     # A year later, with the audit rows long gone, the record of their going is still here
     await rig.service.run(RetentionPolicy(), now=NOW + timedelta(days=365))
     assert rig.deletion_records() == [(Target.AUDIT.value, 1, Trigger.RETENTION.value)]
+
+
+# ── Deleting a memory, which no deadline ever does ───────────
+
+
+async def test_a_memory_record_never_expires(rig: Rig) -> None:
+    """★ **privacy.md §4.** Deleting "the user likes Factorio" after 90 days is not
+    forgetting, it is destruction. Forgetting is decay and archiving, and it is
+    recoverable; this is not, which is why no deadline reaches it.
+    """
+    memory_id = await rig.add_memory(when=days_ago(4000))
+
+    await rig.service.run(RetentionPolicy(episode_days=1, event_days=1, audit_days=1), now=NOW)
+
+    assert await rig.memories.get(memory_id) is not None
+
+
+async def test_deleting_the_conversation_does_not_delete_what_was_learned(rig: Rig) -> None:
+    """★ The Episode expires; the belief does not. **The evidence reference is deliberately
+    not a foreign key** — with one, retention would either fail to delete the episode or
+    take the belief with it.
+    """
+    episode_id = await rig.add_episode(days_ago(100))
+    record = await rig.memories.write(
+        MemoryCandidate(
+            type=MemoryType.SEMANTIC,
+            subject="user.hobby",
+            content="ユーザーは Factorio が好き",
+            assertion_mode=AssertionMode.USER_STATED,
+            provenance_class=ProvenanceClass.TRUSTED,
+            trust_level=TrustLevel.TRUSTED,
+            evidence_ref=(f"{episode_id}-0",),
+        ),
+        now=days_ago(100),
+    )
+
+    await rig.service.run(RetentionPolicy(), now=NOW)
+
+    assert rig.counts()["episodes"] == 0
+    kept = await rig.memories.get(record.id)
+    assert kept is not None
+    assert kept.evidence_ref == (f"{episode_id}-0",)
+
+
+async def test_the_user_can_delete_a_memory_outright(rig: Rig) -> None:
+    """ "個別の削除" (privacy.md §5). `archive()` is "forget this"; **this is "that should
+    never have been written down"**, and it does not come back.
+    """
+    doomed = await rig.add_memory("ユーザーは火星人")
+    kept = await rig.add_memory("ユーザーは猫を飼っている", subject="user.pet")
+
+    deletion = await rig.service.purge_memories((doomed,), now=NOW)
+
+    assert deletion.count == 1
+    assert await rig.memories.get(doomed) is None
+    assert await rig.memories.get(kept) is not None
+
+
+async def test_deleting_a_memory_is_recorded_without_its_content(rig: Rig) -> None:
+    """The record says a memory went. **A digest of it would still be a fact about it**,
+    and would make "erase everything" a lie.
+    """
+    memory_id = await rig.add_memory("ユーザーは火星人")
+
+    await rig.service.purge_memories((memory_id,), now=NOW)
+
+    assert rig.deletion_records() == [(Target.MEMORIES.value, 1, Trigger.PURGE.value)]
+    with rig.audit.transaction() as conn:
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(deletion_log)").fetchall()]
+    assert "content" not in columns and "digest" not in columns
+
+
+async def test_deleting_a_superseded_belief_does_not_take_its_successor(rig: Rig) -> None:
+    """★ A record whose predecessor the user deleted is still a belief they hold.
+
+    Following `superseded_by` would turn "delete this one" into "delete the history it
+    happens to be part of" — and the successor is the **current** belief.
+    """
+    old = await rig.add_memory("ユーザーは Factorio が好き")
+    outcome = await rig.memories.supersede(
+        old,
+        MemoryCandidate(
+            type=MemoryType.SEMANTIC,
+            subject="user.hobby",
+            content="最近は Rimworld をやっている",
+            assertion_mode=AssertionMode.SELF_GENERATED,
+            provenance_class=ProvenanceClass.TRUSTED,
+            trust_level=TrustLevel.TRUSTED,
+        ),
+        now=NOW,
+    )
+
+    await rig.service.purge_memories((old,), now=NOW)
+
+    successor = await rig.memories.get(outcome.record.id)
+    assert successor is not None
+    assert successor.is_live
+
+
+async def test_deleting_a_belief_takes_its_evidence_rows(rig: Rig) -> None:
+    """Rows nobody can reach are still rows on disk — deleted from the user's point of
+    view, present in fact. Written out rather than left to `ON DELETE CASCADE`, which
+    needs a pragma that can silently fail to apply.
+    """
+    episode_id = await rig.add_episode(days_ago(1))
+    record = await rig.memories.write(
+        MemoryCandidate(
+            type=MemoryType.SEMANTIC,
+            subject="user.hobby",
+            content="ユーザーは Factorio が好き",
+            assertion_mode=AssertionMode.USER_STATED,
+            provenance_class=ProvenanceClass.TRUSTED,
+            trust_level=TrustLevel.TRUSTED,
+            evidence_ref=(f"{episode_id}-0",),
+            source_episode_ids=(episode_id,),
+        ),
+        now=NOW,
+    )
+
+    await rig.service.purge_memories((record.id,), now=NOW)
+
+    with rig.memory.transaction() as conn:
+        evidence = int(one(conn.execute("SELECT COUNT(*) FROM memory_evidence"))[0])
+        sources = int(one(conn.execute("SELECT COUNT(*) FROM memory_sources"))[0])
+    assert (evidence, sources) == (0, 0)
+
+
+async def test_deleting_nothing_writes_no_record(rig: Rig) -> None:
+    deletion = await rig.service.purge_memories((), now=NOW)
+
+    assert deletion.count == 0
+    assert rig.deletion_records() == []

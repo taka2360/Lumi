@@ -178,23 +178,56 @@ def test_the_audit_log_is_append_only() -> None:
         assert "UPDATE AUDIT_LOG" not in text, source.name
 
 
+def grants_trusted(path: Path) -> bool:
+    """Whether this module hands `TrustLevel.TRUSTED` to anything as a value.
+
+    **Not a substring search for `trust_level=`.** The first version of this check looked
+    for that spelling, and would have missed `MemoryStore.confirm()` writing the level as
+    a SQL parameter — an escalation path the check exists to enumerate, invisible to it
+    because of how the call happened to be written.
+
+    Comparisons are not grants: `if level is TrustLevel.TRUSTED` reads the value, and a
+    check that flagged reads would be silenced by adding every module to the allow list.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    compared: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Compare):
+            for operand in (node.left, *node.comparators):
+                compared.add(id(operand))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Attribute)
+            and node.attr == "TRUSTED"
+            and isinstance(node.value, ast.Name)
+            and node.value.id == "TrustLevel"
+            and id(node) not in compared
+        ):
+            return True
+    return False
+
+
 def test_trust_level_trusted_is_only_written_where_allowed() -> None:
     """**No automatic-escalation implementation is ever built**
     (Invariant 7 / provenance.md test 5).
 
-    Exactly two places are allowed:
-    1. The handler that receives direct user input → `Session.record_user_utterance`
-    2. The memory UI's user-confirmation handler (**Phase 2. Doesn't exist yet**)
+    Exactly two places grant it, plus the module that defines propagation:
 
-    **When adding one, re-examine whether it's genuinely an expression of the user's
-    intent.** "Because it's an STT result" or "because it was summarized" are not
+    1. The handler that receives direct user input → `Session.record_user_utterance`
+    2. The memory UI's user-confirmation handler → `MemoryStore.confirm` (Phase 2d)
+    3. `provenance.py` itself, whose `join` / `taint` / `propagate` return it **only when
+       every input was already trusted** — propagation, never escalation
+
+    The Episode log is deliberately *not* on this list: it records the level the Session
+    granted rather than deciding one, so that "who decides the user's input is trusted"
+    has a single answer.
+
+    **When adding one, re-examine whether it is genuinely an expression of the user's
+    intent.** "Because it is an STT result" or "because it was summarized" are not
     valid reasons.
     """
-    allowed = {"agent/session.py"}
-    writers = {
-        source.relative_to(LUMI).as_posix()
-        for source in lumi_sources()
-        if "trust_level=TrustLevel.TRUSTED" in source.read_text(encoding="utf-8")
-        or "trust_level = TrustLevel.TRUSTED" in source.read_text(encoding="utf-8")
+    allowed = {"agent/session.py", "memory/store.py", "provenance.py"}
+    granters = {
+        source.relative_to(LUMI).as_posix() for source in lumi_sources() if grants_trusted(source)
     }
-    assert writers == allowed
+    assert granters == allowed

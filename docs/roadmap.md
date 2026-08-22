@@ -302,12 +302,24 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 > privacy.md §5 の境界（Tool 経路からは到達不能、保持期間ジョブと全消去だけが例外）は、
 > **4つのモジュールに散らばっていたら誰も検査できない**。全消去（2g）も同じファイルに足す。
 
-#### 2d — 記憶コア
+#### 2d — 記憶コア〔2026-08-22 完了〕
 
-- [ ] **assertion_mode / evidence / provenance の実装**
-- [ ] salience の決定論的補正（感情強度・新規性・明示・反復・参照回数）
-- [ ] 減衰とアーカイブ（物理削除しない）
-- [ ] 矛盾の supersede（`valid_from` / `superseded_by`）
+- [x] **assertion_mode / evidence / provenance の実装**
+  〔`lumi/memory/records.py` / `lumi/memory/store.py`。**候補の申告をそのまま採らない**——
+  `evidence_ref` の発話を実際に読んで trust を join し、**存在しない根拠は拒否する**。
+  `write()` は `user_confirmed` を受け付けない（**昇格経路を2本にしない**）〕
+- [x] salience の決定論的補正（感情強度・新規性・明示・反復・参照回数）
+  〔`lumi/memory/decay.py` の純粋関数。**LLM の数値は範囲外で来る前提で丸める**〕
+- [x] 減衰とアーカイブ（物理削除しない）
+  〔τ と floor に具体値を置いた（[architecture/memory.md](architecture/memory.md) §5、Provisional）。
+  起動ごとに `Job(kind=maintenance)` で 1 回掃く。**まだ何も書かないが、
+  「忘れる手段が無いまま覚えられる状態にしない」**——2c と同じ規則〕
+- [x] 矛盾の supersede（`valid_from` / `superseded_by`）
+  〔判定は `lumi/memory/contradiction.py` の純粋関数。**同等なら新しい方が勝つ**（人は考えを変える）。
+  矛盾の episodic 記録は `supersede()` と同じトランザクションで書く〕
+- [x] **物理削除（`purge`）を `storage/retention.py` に置いた**
+  〔`MemoryStore` に削除経路は無い。privacy.md §5 の境界を1ファイルに保つため。
+  `lumi/` 配下で `DELETE FROM` を含むファイルが1つだけであることをテストで検査する〕
 
 #### 2e — 検索
 

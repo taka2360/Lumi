@@ -159,6 +159,11 @@ class TestAssembly:
             server.release_ready.set()
             await runtime.stop()
 
+        # **Stopping the runtime tears the loop down, it does not just drop it.** Cancelling
+        # the loop task leaves the turns it spawned running, and one of those writing an
+        # episode into a database that has already closed loses the last thing that was said
+        assert timeline == ["audio.start", "reactive.run", "reactive.shutdown"]
+
     async def test_a_successful_model_pull_is_warmed_again_before_continuing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

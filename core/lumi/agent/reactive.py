@@ -391,11 +391,13 @@ class ReactiveLoop:
         if self._audio is not None:
             self._audio.resume_listening()
 
-        self._session.record_user_utterance(text)
+        turn = self._session.record_user_utterance(text)
         if self._episodes is not None:
             # **Not awaited.** The reply is what the user is waiting for; filing the
             # question away is not on that path (`agent/episodes.py`)
-            self._episodes.remember_user(text, correlation_id=str(activity.correlation_id))
+            self._episodes.remember_user(
+                text, turn.trust_level, correlation_id=str(activity.correlation_id)
+            )
 
         tts: TTSProvider = await self._get(ProviderKind.TTS)
         llm: LLMProvider = await self._get(ProviderKind.LLM)

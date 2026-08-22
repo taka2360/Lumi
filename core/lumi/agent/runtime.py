@@ -44,6 +44,7 @@ from lumi.kernel.event import EventBus
 from lumi.kernel.hooks import HookRegistry
 from lumi.kernel.ids import new_job_id
 from lumi.kernel.job import Job, JobKind
+from lumi.memory.store import MemoryStore
 from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
@@ -97,6 +98,7 @@ class ConversationRuntime:
         "_listening",
         "_llm_retry",
         "_loop",
+        "_memories",
         "_memory_db",
         "_model",
         "_pack",
@@ -130,6 +132,11 @@ class ConversationRuntime:
         self._audit_db = Database.open(paths.audit_db_file(), AUDIT_SCHEMA, key=key)
         self._memory_db = Database.open(paths.memory_db_file(), MEMORY_SCHEMA, key=key)
         self._episodes = EpisodeStore(self._memory_db)
+        #: **Nothing writes to it until the Reflection Job (2f).** It is built here, and
+        #: the sweep below runs from the first release that can hold a memory at all —
+        #: the same rule as 2c: do not become able to keep something without the
+        #: mechanism that lets go of it.
+        self._memories = MemoryStore(self._memory_db)
         self._retention = RetentionService(
             memory=self._memory_db, events=self._events_db, audit=self._audit_db
         )
@@ -234,6 +241,25 @@ class ConversationRuntime:
         removed = sum(deletion.count for deletion in deletions)
         log.info("retention.done", job=str(job.id), removed=removed)
 
+    async def _forget_faded_memories(self) -> None:
+        """Archive memories that have decayed below the floor. **Not a deletion.**
+
+        The rows stay; they stop turning up in ordinary retrieval
+        (docs/architecture/memory.md §5). Deleting them would be destruction — forgetting
+        is supposed to be recoverable by a strong enough cue.
+
+        Runs in the same `Job` shape as retention, and for the same reason as its timing:
+        decay is a function of elapsed time, so a sweep at each start is what "expired
+        while Lumi was off" means in practice.
+        """
+        job = Job(id=new_job_id(), kind=JobKind.MAINTENANCE, cancellation=Cancellation.COOPERATIVE)
+        try:
+            faded = await self._memories.archive_faded()
+        except Exception:
+            log.exception("memory.archive_failed", job=str(job.id))
+            return
+        log.info("memory.archive_done", job=str(job.id), archived=len(faded))
+
     async def _update_settings(self, payload: dict[str, object]) -> dict[str, object]:
         """The Stage asked to change a setting. **Core validates and decides** (ADR-028).
 
@@ -306,6 +332,7 @@ class ConversationRuntime:
         # DomainEvent, and a pass that runs after that has already let this session's first
         # record in before deciding what is too old to keep
         await self._expire_old_records()
+        await self._forget_faded_memories()
         # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
         # rest of the session (observed 2026-08-17).

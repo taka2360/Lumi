@@ -208,6 +208,12 @@ append-only が守るのは前者であり、**後者まで禁じると「消し
 記憶 UI から、記憶レコード単位で物理削除できる。**物理削除はユーザーの明示操作でのみ**である
 （[../architecture/memory.md](../architecture/memory.md) §5）。
 
+> **実装〔2026-08-22 / Phase 2d〕: これも `retention.py` にある。**
+> `MemoryStore` に `purge()` は無く、`archive()`（`UPDATE`）までしか持たない
+> （[../interfaces/memory.md](../interfaces/memory.md)）。**記憶 UI の削除だけが別の場所にあれば、
+> 上の境界は「1ファイルを見れば分かる」ではなくなる。**
+> 個別削除も `deletion_log` に残る（対象は §2 の表の 2 行目、件数のみ）。
+
 ### アンインストール時
 
 **既定でデータを残す。** アンインストーラが「Lumi が覚えたことも削除する」を
