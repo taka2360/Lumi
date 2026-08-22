@@ -9,8 +9,22 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.16 |
-| 実装フェーズ | **Phase 1（MVP: Talking Desktop Character）完了。Phase 2（Memory）着手前の 🔴 2件を決着。** → [roadmap.md](roadmap.md) |
+| Revision | rev.17 |
+| 実装フェーズ | **Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）完了。** → [roadmap.md](roadmap.md) |
+
+> **rev.17 の変更点**（Phase 2 を 2a〜2g に分け、暗号化の未検証を潰した）
+> 1. **暗号化 SQLite の実装方式が決まった** → [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md)。
+>    APSW + SQLite3 Multiple Ciphers（`chacha20`）。**暗号化 DB で sqlite-vec も FTS5 も動き、
+>    配布物への増分は +2.73 MiB**（[measurements/phase2.md](measurements/phase2.md)）。
+>    **ADR-038 は修正しない。** 標準ライブラリの `sqlite3` は暗号化 DB を開けないため、
+>    Core の SQLite ドライバごと差し替えた。**オンディスクの DB は鍵なしでは開けない**
+> 2. **Phase 2 を 2a〜2g に分けた** → [roadmap.md](roadmap.md)。軸は
+>    「単体で検証でき、次に進む前提を1つだけ確定させる単位」。
+>    **永続化を始める変更と、消す手段（保持期間ジョブ）を同じ単位に入れる**
+> 3. **STT のデバッグ書き出しを撤去した** → [architecture/audio.md](architecture/audio.md)。
+>    [contracts/privacy.md](contracts/privacy.md) §6 が録音経路を禁じており、
+>    Phase 1 の実装は**ソースから実行すると既定で有効**だった。
+>    契約が「開発時だけの抜け道は、そのまま出荷される」と書いていた形そのものである
 
 > **rev.16 の変更点**（Phase 1 を閉じ、Phase 2 の 🔴 2件を決着させた）
 > 1. **`contracts/privacy.md` を新設した** → [ADR-038](decisions/ADR-038-privacy-and-data-retention.md)。

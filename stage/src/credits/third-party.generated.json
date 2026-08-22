@@ -1,5 +1,5 @@
 {
-  "total": 304,
+  "total": 306,
   "ecosystems": [
     {
       "name": "Lumi Shell（Rust / exe にリンクされるもの）",
@@ -1245,6 +1245,11 @@
           "license": "MIT"
         },
         {
+          "name": "apsw-sqlite3mc",
+          "version": "3.53.4.0",
+          "license": "Zlib-style (SPDX: any-OSI)"
+        },
+        {
           "name": "av",
           "version": "18.1.0",
           "license": "BSD-3-Clause"
@@ -1525,6 +1530,12 @@
           "version": "3.49.1",
           "license": "Public Domain",
           "note": "CPython に同梱（FTS5 を含む）"
+        },
+        {
+          "name": "SQLite3 Multiple Ciphers",
+          "version": "2.4.0 (SQLite 3.53.4)",
+          "license": "MIT",
+          "note": "Copyright (c) 2019-2026 Ulrich Telle。**apsw-sqlite3mc の .pyd に静的リンクされる**ため依存グラフには現れない。記憶 DB の保存時暗号化はこれが担う（ADR-040）"
         },
         {
           "name": "PortAudio",

@@ -3,8 +3,8 @@
 **Confined to one place.** Scattering them makes "delete everything" impossible to honor
 (docs/roadmap.md Phase 2 🔴 privacy item #5).
 
-Phase 0 only uses `engines_dir`. Where the memory DB / audit log live is
-decided in Phase 2 (after `contracts/privacy.md` is written).
+Where the memory DB / audit log live is settled by docs/contracts/privacy.md §1:
+under `data_dir()`, never in the install location and never roaming.
 
 **User data (erasable) and bundled assets (read-only) are different things.** The former
 lives under `data_dir()`, the latter under `content_dir()`, and what gets erased differs.
@@ -80,13 +80,14 @@ def stt_models_dir() -> Path:
     return models_dir() / "whisper"
 
 
-def stt_dump_dir() -> Path:
-    """Where `LUMI_DEBUG_STT_DUMP=1` writes the audio STT received → `lumi.audio.dump`.
+def secrets_dir() -> Path:
+    """Where OS-protected secrets live (the database key) → `lumi.storage.secret`.
 
-    **Under user data, not a temp dir**, so it survives long enough to be listened to and
-    is somewhere the user can find and delete.
+    **The blob here is protected, not hidden.** DPAPI encrypts the contents; the file
+    itself is an ordinary one, which is why it is a row in the table in
+    docs/contracts/privacy.md §2 like anything else written to disk.
     """
-    return data_dir() / "debug" / "stt"
+    return data_dir() / "secrets"
 
 
 def settings_file() -> Path:

@@ -419,12 +419,15 @@ class ConversationRuntime:
 
 
 def _open_event_store() -> Database:
-    """The DB the EventBus persists into. **In memory, deliberately.**
+    """The DB the EventBus persists into. **Still in memory, deliberately.**
 
-    **Where events live is not decided here.** Deciding where requires deciding what is
-    allowed to be written, which is what Phase 2's `contracts/privacy.md` will settle
-    (roadmap Phase 2, item 7). **Don't pin down a location first and attach meaning to it
-    later** — a file on disk from Phase 1 would become a retention policy nobody chose.
+    docs/contracts/privacy.md has since settled where events live (encrypted, under
+    `data_dir()`, kept 30 days). **What it has not settled is anything that deletes
+    them.** Writing events to disk before the retention job exists would create a file
+    that only grows, under a policy nobody has implemented — a retention promise made in
+    a document and broken on disk.
+
+    Moved to disk in Phase 2c, in the same change that adds retention.
     """
     database = Database.open(":memory:")
     database.migrate()

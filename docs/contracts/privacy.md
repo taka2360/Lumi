@@ -62,6 +62,7 @@
 | 8 | セットアップ済みの外部資産（STT モデル・TTS エンジン） | インストール先 | しない | 期限なし | ✗（データではない） |
 | 9 | 構造化ログ（structlog / SLO 計測） | ログファイル | しない | **7 日**（ローテーション） | ✓ |
 | 10 | **削除の記録**（いつ・何件・どの対象を消したか） | 監査 DB | **する** | 期限なし | **✗**（§5。消した記録まで消えると、消えたことが分からなくなる） |
+| 11 | **DB 鍵**（DPAPI で保護された blob） | `%LOCALAPPDATA%\Lumi\secrets\` | **する**（DPAPI / current user） | 期限なし | ✓（**最後に消す**。先に消すと 1〜4・5・6 に到達できなくなる） |
 
 ### 永続化しないもの
 
@@ -83,10 +84,13 @@
 **会話由来のデータを含む DB は、保存時に暗号化する。**
 
 ```text
-Lumi がランダムな DB 鍵を生成
+Lumi がランダムな DB 鍵を生成（32 バイト）
   → OS の秘密保管に預ける（Windows: DPAPI / current user スコープ）
   → 起動時に取り出して DB を開く
 ```
+
+実装は APSW + SQLite3 Multiple Ciphers（`chacha20`）→ [ADR-040](../decisions/ADR-040-encrypted-sqlite-driver.md)。
+**保護された blob 自体はファイルである**（上の表の 11 行目）。DPAPI が守るのは中身であって置き場所ではない。
 
 **ユーザーはパスワードを作らないし、管理しない。** 鍵の存在を意識させない。
 
@@ -241,16 +245,22 @@ append-only が守るのは前者であり、**後者まで禁じると「消し
 
 ---
 
-## 未決 — Phase 2 の実装前に確認すること
+## 決着 — 暗号化の実装〔2026-08-22 / Phase 2a〕
 
-**暗号化 DB と sqlite-vec 拡張・FTS5・PyInstaller の組み合わせは未検証である。**
+**暗号化 DB と sqlite-vec 拡張・FTS5・PyInstaller の組み合わせは、spike で確認済みである。**
+**4項目すべて通った** → [../measurements/phase2.md](../measurements/phase2.md) / 決定は [ADR-040](../decisions/ADR-040-encrypted-sqlite-driver.md)。
 
-| 確認すること |
-|---|
-| 暗号化ビルドで拡張のロード（sqlite-vec）が動くか |
-| Windows の wheel があるか。無ければビルドが要るか |
-| PyInstaller の配布物に載るか。ネイティブ DLL のサイズ増（R1 への影響） |
-| 既存の平文イベント DB からの移行経路 |
+| 確認したこと | 結果 |
+|---|---|
+| 暗号化ビルドで sqlite-vec がロードでき、FTS5 が引けるか | **通る** |
+| Windows の wheel があるか | **ある**（`apsw-sqlite3mc` cp312 win_amd64） |
+| PyInstaller の配布物に載るか。サイズ増 | **載る。+2.73 MiB** |
+| 既存の平文イベント DB からの移行経路 | **移行対象が存在しない**（Phase 1 のイベント DB はインメモリ）。手順は確認済み |
 
-**Phase 2 の最初に spike で確認する。** ここが通らなければ [ADR-038](../decisions/ADR-038-privacy-and-data-retention.md) を修正する新しい ADR が要る。
-**黙って平文に落とさない。**
+したがって **[ADR-038](../decisions/ADR-038-privacy-and-data-retention.md) は修正しない。**
+
+実装上の帰結:
+
+- 標準ライブラリの `sqlite3` では暗号化 DB を開けないため、**Core の SQLite ドライバは APSW に替わった**
+- **オンディスクの DB は鍵なしでは開けない**（`Database.open` が拒否する）。平文で開く引数は無い
+- `lumi-core.exe --self-check` が「**この配布物で暗号化が効いているか**」を毎回答える

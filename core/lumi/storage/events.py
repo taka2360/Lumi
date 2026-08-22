@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 from datetime import datetime
+
+import apsw
 
 from lumi.kernel.event import DomainEventDraft
 from lumi.kernel.ids import EventId
-from lumi.storage.sqlite import Database, StorageError
+from lumi.storage.sqlite import Database, StorageError, one
 
 
 class SqliteEventStore:
@@ -49,10 +50,12 @@ class SqliteEventStore:
             raise StorageError(f"Cannot serialize payload to JSON: {draft.type}") from error
 
         with self._db.transaction() as conn:
-            row = conn.execute(
-                "SELECT COALESCE(MAX(sequence_id), 0) FROM events WHERE stream_key = ?",
-                (draft.stream_key,),
-            ).fetchone()
+            row = one(
+                conn.execute(
+                    "SELECT COALESCE(MAX(sequence_id), 0) FROM events WHERE stream_key = ?",
+                    (draft.stream_key,),
+                )
+            )
             sequence_id = int(row[0]) + 1
             try:
                 conn.execute(
@@ -71,7 +74,7 @@ class SqliteEventStore:
                         occurred_at.isoformat(),
                     ),
                 )
-            except sqlite3.IntegrityError as error:
+            except apsw.ConstraintError as error:
                 # A UNIQUE violation means serialization is broken. **Never overwrite or renumber.**
                 raise StorageError(
                     f"Sequence collision: {draft.stream_key}#{sequence_id}"

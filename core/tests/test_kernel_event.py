@@ -19,7 +19,7 @@ from lumi.kernel.event import (
 )
 from lumi.kernel.ids import new_correlation_id
 from lumi.storage.events import SqliteEventStore
-from lumi.storage.sqlite import Database, StorageError
+from lumi.storage.sqlite import Database, StorageError, one
 
 
 @pytest.fixture
@@ -89,9 +89,7 @@ async def test_events_are_persisted_before_dispatch(bus: EventBus, database: Dat
 
     async def handler(event: DomainEvent) -> None:
         with database.transaction() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) FROM events WHERE id = ?", (str(event.id),)
-            ).fetchone()
+            row = one(conn.execute("SELECT COUNT(*) FROM events WHERE id = ?", (str(event.id),)))
         seen.append(int(row[0]))
 
     bus.subscribe(handler)

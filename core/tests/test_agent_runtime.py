@@ -13,10 +13,10 @@ from __future__ import annotations
 
 import asyncio
 import json
-import sqlite3
 from pathlib import Path
 from typing import Any, cast
 
+import apsw
 import pytest
 from fakes import (  # noqa: F401  — `isolated_paths` / `no_ollama` are autouse fixtures
     FakeServer,
@@ -230,7 +230,7 @@ class TestShutdown:
         await runtime.stop()  # **raises nothing**
 
         # The DB handle is the last thing `stop()` releases: closed means it ran to the end
-        with pytest.raises(sqlite3.ProgrammingError):
+        with pytest.raises(apsw.ConnectionClosedError):
             runtime._database._conn.execute("SELECT 1")
 
 
