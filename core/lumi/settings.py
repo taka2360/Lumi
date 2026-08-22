@@ -36,7 +36,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from lumi import logging as lumi_logging
 
@@ -87,20 +87,18 @@ class Settings:
     #: `True` when the file existed but could not be read. **Never overwrite it**
     unreadable: bool = False
 
+    def get(self, key: str) -> Setting:
+        """One effective value by key. **The field names are the keys** in `KEYS`."""
+        return cast(Setting, getattr(self, key))
+
     def to_payload(self) -> dict[str, Any]:
+        # **Built from `KEYS`, never from a second list.** A key added to one list and not
+        # the other is a setting the user can change and never see — or, worse, one that
+        # saves and silently reverts on the next start.
         return {
             "version": SCHEMA_VERSION,
             "unreadable": self.unreadable,
-            "values": {
-                "inference_device": self.inference_device.to_payload(),
-                "llm_model": self.llm_model.to_payload(),
-                "stt_model": self.stt_model.to_payload(),
-                "locale": self.locale.to_payload(),
-                "tts_speed": self.tts_speed.to_payload(),
-                "retention_episodes": self.retention_episodes.to_payload(),
-                "retention_events": self.retention_events.to_payload(),
-                "retention_audit": self.retention_audit.to_payload(),
-            },
+            "values": {key: self.get(key).to_payload() for key in KEYS},
         }
 
 
@@ -126,6 +124,10 @@ UNLIMITED: Final = "unlimited"
 #: Keys holding a retention period.
 RETENTION_KEYS: Final = ("retention_episodes", "retention_events", "retention_audit")
 
+#: A century. **Not a policy, a guard**: `timedelta` refuses much larger numbers, and a
+#: deadline nobody alive will see is what `unlimited` is for.
+MAX_RETENTION_DAYS: Final = 36_500
+
 TTS_SPEED_MIN: Final = 0.5
 TTS_SPEED_MAX: Final = 2.0
 
@@ -142,9 +144,13 @@ def _is_valid(key: str, value: object) -> bool:
     if key in RETENTION_KEYS:
         if value == UNLIMITED:
             return True
-        # **A period nobody can parse is not "probably fine".** Falling back to the default
-        # is the safe direction: it keeps a deadline rather than inventing one.
-        return value.isdigit()
+        # `isdigit()` alone accepts "１２３" and "٣", which `int()` then happily parses —
+        # a retention period in Arabic-Indic digits is a typo, not a preference.
+        if not (value.isascii() and value.isdigit()):
+            return False
+        # **An upper bound, because the number becomes a `timedelta`.** Past a century the
+        # honest answer is `unlimited`, and far past it the arithmetic raises instead
+        return int(value) <= MAX_RETENTION_DAYS
     if key == "tts_speed":
         try:
             speed = float(value)
@@ -250,13 +256,10 @@ def save(path: Path, settings: Settings, changes: Mapping[str, str]) -> Settings
             raise InvalidSettingValue(f"Invalid value for {key}: {value!r}")
 
     stored: dict[str, Any] = {"version": SCHEMA_VERSION, **settings.unknown}
-    for key, current in (
-        ("inference_device", settings.inference_device),
-        ("llm_model", settings.llm_model),
-        ("stt_model", settings.stt_model),
-        ("locale", settings.locale),
-        ("tts_speed", settings.tts_speed),
-    ):
+    # **Every key in `KEYS`.** A hand-maintained list here once left the retention
+    # settings out: they validated, they were accepted, and they vanished on restart.
+    for key in KEYS:
+        current = settings.get(key)
         value = changes.get(key, current.value)
         if key in changes or current.source is Source.FILE:
             stored[key] = value

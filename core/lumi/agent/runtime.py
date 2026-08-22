@@ -302,12 +302,15 @@ class ConversationRuntime:
         self._register_providers()
         self._setup.set_ollama_detected_handler(self._schedule_llm_warmup)
         self._setup.set_llm_model_selected_handler(self._select_llm_model)
+        # **Before anything writes.** Starting the Arbiter publishes the idle Activity's
+        # DomainEvent, and a pass that runs after that has already let this session's first
+        # record in before deciding what is too old to keep
+        await self._expire_old_records()
         # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
         # rest of the session (observed 2026-08-17).
         await self._arbiter.start()
         self._inspector.start()
-        await self._expire_old_records()
         # **Sent once at startup.** The Stage shows values, not judgments — including
         # which of them an environment variable is currently overriding
         await self._server.notify(Role.STAGE, METHOD_SETTINGS, self._settings.to_payload())
@@ -477,6 +480,11 @@ class ConversationRuntime:
         self._task = None
         self._listening = False
         await self._inspector.stop()
+        if self._loop is not None:
+            # **Cancelling the loop task does not stop the turns it spawned.** Each turn
+            # runs as its own task, and one waiting on an uncancellable STT would still be
+            # alive here — writing an episode into a database that is about to close
+            await self._loop.shutdown()
         # **Before the databases close.** A pending episode write against a closed
         # connection loses the last thing the user said
         await self._recorder.close()

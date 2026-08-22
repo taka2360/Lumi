@@ -110,6 +110,10 @@ class TestAssembly:
                 self.started_event.set()
                 await self._stop.wait()
 
+            async def shutdown(self) -> None:
+                """Shutdown stops the turns the loop spawned, before the databases close."""
+                timeline.append("reactive.shutdown")
+
         monkeypatch.setattr(runtime_module, "AudioIO", FakeAudio)
         monkeypatch.setattr(runtime_module, "ReactiveLoop", FakeLoop)
         monkeypatch.setattr(

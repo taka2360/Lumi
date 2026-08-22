@@ -60,7 +60,7 @@ Memory         覚えていること   高い / curated / 減衰する
 
 | | 中身 | 寿命 |
 |---|---|---|
-| Episode / utterance | 発話そのもの（話者・本文・**trust_level**・時刻） | **90 日で消える** |
+| Episode / utterance | 発話そのもの（話者・本文・**trust_level**・時刻） | **既定 90 日で消える**（設定で `unlimited` も選べる） |
 | 記憶レコード | そこから作られた信念 | 減衰して archive。**期限なし** |
 
 **utterance には trust_level を一緒に保存する。** 後から計算し直すことはできず、

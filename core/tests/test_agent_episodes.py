@@ -8,6 +8,7 @@ rather than the reply.**
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -124,6 +125,31 @@ async def test_closing_stamps_the_end(store: EpisodeStore) -> None:
     assert episode is not None
     assert episode.started_at == START
     assert episode.ended_at == START + timedelta(minutes=30)
+
+
+async def test_an_utterance_is_never_written_before_its_episode(store: EpisodeStore) -> None:
+    """★ **The second line must not overtake the episode it belongs to.**
+
+    Both writes are tasks. If the append runs while the episode is still being created,
+    the foreign key throws it away — the user said something and nothing kept it. Here the
+    open is deliberately slow, which is what a cold database actually looks like.
+    """
+
+    class SlowToOpen(EpisodeStore):
+        async def open_episode(self, episode: Episode) -> None:
+            await asyncio.sleep(0.02)
+            await super().open_episode(episode)
+
+    slow_store = SlowToOpen(Database.open(IN_MEMORY, MEMORY_SCHEMA))
+    recorder = EpisodeRecorder(slow_store, session_id="s1")
+    recorder.remember_user("おはよう")
+    recorder.remember_lumi("おはよう。", TrustLevel.TRUSTED)
+    await recorder.flush()
+
+    episode_id = recorder.episode_id
+    assert episode_id is not None
+    lines = await slow_store.utterances(episode_id)
+    assert [line.text for line in lines] == ["おはよう", "おはよう。"]
 
 
 async def test_a_failing_database_does_not_break_the_turn(store: EpisodeStore) -> None:

@@ -10,6 +10,7 @@ wrong.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -111,8 +112,12 @@ class Rig:
 
 
 @pytest.fixture
-def rig() -> Rig:
-    return Rig()
+def rig() -> Iterator[Rig]:
+    fixture = Rig()
+    try:
+        yield fixture
+    finally:
+        fixture.close()
 
 
 # ── What expires, and what does not ──────────────────────────
@@ -180,10 +185,35 @@ async def test_zero_days_deletes_everything_already_past(rig: Rig) -> None:
     assert rig.counts()["episodes"] == 0
 
 
-async def test_a_negative_period_is_refused() -> None:
-    """**Fail rather than compute a cutoff in the future** and delete everything."""
+def test_a_negative_period_is_refused_when_the_policy_is_built() -> None:
+    """★ **Refused at the door, not halfway through a pass.**
+
+    A negative period is a cutoff in the future, which deletes everything. Discovering
+    that inside `run` means some targets are already gone and the rest are not.
+    """
+    with pytest.raises(ValueError):
+        RetentionPolicy(episode_days=-1)
+
+    # The same guard still holds for a period handed straight to `cutoff`
     with pytest.raises(ValueError):
         RetentionPolicy().cutoff(-1, NOW)
+
+
+async def test_a_deletion_that_could_not_be_recorded_is_still_reported(rig: Rig) -> None:
+    """★ **The rows are already gone.**
+
+    Reporting the pass as failed would leave the caller believing the records are still
+    there, which is the more dangerous of the two wrong beliefs. It is logged loudly
+    instead (docs/contracts/privacy.md §5).
+    """
+    await rig.add_episode(days_ago(100))
+    with rig.audit.transaction() as conn:
+        conn.execute("DROP TABLE deletion_log")
+
+    deletions = await rig.service.run(RetentionPolicy(), now=NOW)
+
+    assert [d.count for d in deletions if d.target is Target.EPISODES] == [1]
+    assert rig.counts()["episodes"] == 0
 
 
 async def test_running_twice_deletes_nothing_the_second_time(rig: Rig) -> None:

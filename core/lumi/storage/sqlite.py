@@ -221,12 +221,19 @@ class Database:
                 for statement in statements:
                     conn.execute(statement)
 
-            conn.execute(
-                "INSERT INTO _schema_version (component, version, applied_at) VALUES (?, ?, ?)"
-                " ON CONFLICT (component) DO UPDATE SET version = excluded.version,"
-                " applied_at = excluded.applied_at",
-                (schema.component, schema.version, applied_at),
-            )
+            if row is None:
+                conn.execute(
+                    "INSERT INTO _schema_version (component, version, applied_at) VALUES (?, ?, ?)",
+                    (schema.component, schema.version, applied_at),
+                )
+            elif current != schema.version:
+                # **Only when something was actually applied.** Stamping the row on every
+                # open would make `applied_at` mean "last started", and the one question it
+                # exists to answer — when did this database become version N — unanswerable.
+                conn.execute(
+                    "UPDATE _schema_version SET version = ?, applied_at = ? WHERE component = ?",
+                    (schema.version, applied_at, schema.component),
+                )
 
         if current != schema.version:
             log.info(

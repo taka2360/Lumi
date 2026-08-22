@@ -802,6 +802,39 @@ async def test_the_loop_re_runs_when_the_user_kept_talking() -> None:
         await _drain(task)
 
 
+async def test_shutdown_stops_the_turns_the_loop_spawned() -> None:
+    """★ **Cancelling the loop does not stop its turns.**
+
+    Each turn is its own task. One waiting on an uncancellable STT is still alive after
+    the loop task ends — and finishes by writing an episode into a database that is
+    already closing (`ConversationRuntime.stop`).
+    """
+    rig = Rig(FakeLlm([text("ながいはなしを。")], delay=5.0), stt_text="おーい")
+    await rig.start()
+
+    task = asyncio.create_task(rig.loop.run())
+    try:
+        started = time.perf_counter()
+        rig.audio._offer(VadNotification(VadEvent.SPEECH_STARTED, None, started, 1))
+        rig.audio._offer(
+            VadNotification(VadEvent.SPEECH_ENDED, np.zeros(1600, dtype=np.float32), started, 1)
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+        turns = [t for t in asyncio.all_tasks() if t.get_name() == "turn"]
+        assert turns, "a turn is running"
+
+        task.cancel()
+        with contextlib.suppress(BaseException):
+            await task
+        assert not all(t.done() for t in turns), "cancelling the loop leaves the turn running"
+
+        await asyncio.wait_for(rig.loop.shutdown(), timeout=5.0)
+        assert all(t.done() for t in turns), "shutdown waited for them"
+    finally:
+        await _drain(task)
+
+
 async def _finish_turns() -> None:
     """Wait for the spawned turn tasks. **`wait_for_speech` returns before the turn closes**,
     and the latency is only recorded once it does.

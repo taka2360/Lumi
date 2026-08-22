@@ -50,6 +50,8 @@ class Target(StrEnum):
     """A row of the table in docs/contracts/privacy.md §2. **The names are the record.**"""
 
     EPISODES = "episodes"
+    #: The `events` table. **Named for the record, not the table**: privacy.md calls it a
+    #: DomainEvent, and the deletion record is read by people, not by SQL.
     EVENTS = "domain_events"
     AUDIT = "audit_log"
 
@@ -83,6 +85,16 @@ class RetentionPolicy:
     episode_days: int | None = DEFAULT_EPISODE_DAYS
     audit_days: int | None = DEFAULT_AUDIT_DAYS
     event_days: int | None = DEFAULT_EVENT_DAYS
+
+    def __post_init__(self) -> None:
+        """**Refused at the door.** A negative period is a cutoff in the future, which
+        deletes everything; finding that out halfway through a pass means some targets
+        are already gone and the rest are not.
+        """
+        for name in ("episode_days", "audit_days", "event_days"):
+            days = getattr(self, name)
+            if days is not None and days < 0:
+                raise ValueError(f"Retention in days cannot be negative: {name}={days}")
 
     def cutoff(self, days: int | None, now: datetime) -> datetime | None:
         """The timestamp before which records of that kind expire, or `None` if never."""
@@ -156,7 +168,10 @@ class RetentionService:
                 cutoff=policy.cutoff(policy.audit_days, now),
             ),
         ]
-        self._record(deletions, now)
+        try:
+            self._record(deletions, now)
+        except Exception:
+            log.exception("retention.record_failed", removed=sum(d.count for d in deletions))
         return deletions
 
     def _expire(
@@ -193,6 +208,12 @@ class RetentionService:
 
         **Only the counts.** The content is exactly what was being deleted, and a record
         that keeps a shadow of it is not a record of deletion.
+
+        **A failure here does not turn a completed deletion into a failed pass.** The rows
+        are already gone; reporting the pass as failed would leave the caller believing
+        they are still there, which is the more dangerous of the two wrong beliefs. It is
+        logged at error level, because a deletion nobody recorded is exactly what §5 says
+        must not happen quietly.
         """
         timestamp = now.isoformat()
         with self._audit.transaction() as conn:

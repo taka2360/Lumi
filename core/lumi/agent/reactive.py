@@ -27,6 +27,7 @@ path is the same as production.**
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import math
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -113,6 +114,7 @@ class ReactiveLoop:
         "_stt",
         "_tools",
         "_tts_speed",
+        "_turns",
     )
 
     def __init__(
@@ -145,6 +147,10 @@ class ReactiveLoop:
         self._episodes = episodes
         self._tts_speed = _validate_tts_speed(tts_speed)
         self._last_latency: TurnLatency | None = None
+        #: The turns currently running. **Held on the loop, not inside `run`**: shutdown
+        #: has to be able to reach them, and a turn that outlives the databases writes an
+        #: episode into a closed connection
+        self._turns: set[asyncio.Task[None]] = set()
         #: **The only place STT is started** (ADR-039). Speculations begin while VAD is
         #: still waiting out the silence, and `SPEECH_ENDED` adopts one instead of starting
         #: its own — two entry points would mean two inferences in flight
@@ -184,7 +190,6 @@ class ReactiveLoop:
             log.warning("reactive.no_input")
             return
 
-        turns: set[asyncio.Task[None]] = set()
         async for notification in self._audio.events():
             event = notification.event
             if event is VadEvent.SPEECH_STARTED:
@@ -206,9 +211,24 @@ class ReactiveLoop:
                     ),
                     name="turn",
                 )
-                turns.add(task)
-                task.add_done_callback(turns.discard)
+                self._turns.add(task)
+                task.add_done_callback(self._turns.discard)
                 task.add_done_callback(report_task_exit("reactive.turn_crashed"))
+
+    async def shutdown(self) -> None:
+        """Stop the turns still running. **Called before the databases close.**
+
+        Cancelling the loop's own task ends the event stream but leaves the turns it
+        started: a turn blocked on an uncancellable STT keeps going, and finishes by
+        writing to resources that are being torn down. Each turn's cancellation is
+        cooperative, so this waits for them rather than assuming they stopped.
+        """
+        turns = tuple(self._turns)
+        for task in turns:
+            task.cancel()
+        for task in turns:
+            with contextlib.suppress(BaseException):
+                await task
 
     async def _show_user_said(self, text: str) -> None:
         """Put the user's utterance in a bubble. **Never costs a turn.**

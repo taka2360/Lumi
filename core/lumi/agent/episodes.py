@@ -13,9 +13,10 @@ The user's utterance is recorded before the LLM is asked anything, so an `await`
 would put a disk write on the turn's critical path (docs/architecture/audio.md §7). The
 write is handed to a task instead, and the turn carries on.
 
-**Ordering does not depend on those tasks finishing in order.** `turn_index` is assigned
-synchronously when the turn happens, so the log reads back in the order it was spoken
-even if two writes land out of order.
+**The writes are serialized among themselves.** `turn_index` is assigned synchronously
+when the turn happens, so the log reads back in the order it was spoken; a lock keeps the
+writes themselves in that order too, because **an utterance cannot be written before the
+episode that contains it exists.**
 
 ## Failure is loud, and costs the log rather than the conversation
 
@@ -46,7 +47,15 @@ log = lumi_logging.get_logger(__name__)
 class EpisodeRecorder:
     """One session's worth of conversation, on its way to disk."""
 
-    __slots__ = ("_clock", "_episode_id", "_session_id", "_store", "_turn_index", "_writes")
+    __slots__ = (
+        "_clock",
+        "_episode_id",
+        "_order",
+        "_session_id",
+        "_store",
+        "_turn_index",
+        "_writes",
+    )
 
     def __init__(
         self,
@@ -61,6 +70,11 @@ class EpisodeRecorder:
         self._episode_id: str | None = None
         self._turn_index = 0
         self._writes: set[asyncio.Task[None]] = set()
+        #: **Writes run one at a time, in the order the turns happened.** Without it the
+        #: second utterance can reach the database before the episode it belongs to has
+        #: been created, and the foreign key throws it away — the user said something and
+        #: nothing kept it. Tasks acquire this in creation order, which is turn order.
+        self._order = asyncio.Lock()
 
     @property
     def episode_id(self) -> str | None:
@@ -117,13 +131,14 @@ class EpisodeRecorder:
         self._spawn(self._write(opening, utterance))
 
     async def _write(self, opening: Episode | None, utterance: Utterance) -> None:
-        try:
-            if opening is not None:
-                await self._store.open_episode(opening)
-            await self._store.append(utterance)
-        except Exception as error:
-            # **The conversation is not cancelled because the filing cabinet is stuck.**
-            log.warning("episode.write_failed", error=str(error), speaker=utterance.speaker)
+        async with self._order:
+            try:
+                if opening is not None:
+                    await self._store.open_episode(opening)
+                await self._store.append(utterance)
+            except Exception as error:
+                # **The conversation is not cancelled because the filing cabinet is stuck.**
+                log.warning("episode.write_failed", error=str(error), speaker=utterance.speaker)
 
     def _spawn(self, coroutine: Coroutine[None, None, None]) -> None:
         """**Tracked, not fired and forgotten.** `flush` is what makes a test able to read

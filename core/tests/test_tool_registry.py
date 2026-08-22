@@ -63,9 +63,7 @@ def hooks() -> HookRegistry:
 
 
 @pytest.fixture
-def registry(
-    database: Database, audit_database: Database, hooks: HookRegistry
-) -> ToolRegistry:
+def registry(database: Database, audit_database: Database, hooks: HookRegistry) -> ToolRegistry:
     return ToolRegistry(
         PermissionKernel(GrantStore(), SqliteAuditLog(audit_database)),
         EventBus(SqliteEventStore(database)),
