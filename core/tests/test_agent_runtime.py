@@ -69,7 +69,9 @@ class TestAssembly:
 
             foreground = runtime.arbiter.current()
             assert foreground.kind is ActivityKind.IDLE
-            assert foreground.state is ActivityState.RUNNING, "idle は running で生成される"
+            assert foreground.state is ActivityState.RUNNING, (
+                "idle must be created with running state"
+            )
         finally:
             await runtime.stop()
 
@@ -140,7 +142,7 @@ class TestAssembly:
             await runtime.start()
 
             await server.ready_seen.wait()
-            assert not audio.started, "boot: ready の通知完了前に AudioIO を開いている"
+            assert not audio.started, "AudioIO opened before boot: ready notification completed"
 
             server.release_ready.set()
             await audio.started_event.wait()

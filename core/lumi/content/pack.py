@@ -155,8 +155,8 @@ def load_character(root: Path) -> CharacterPack:
             credit=_credit(_table(voice, "credit", root), root / "voice.toml"),
             volume=_parse_volume(voice_section.get("volume"), root / "voice.toml"),
         ),
-        # **`[model]` はトップレベル**（`[character]` の中ではない）。voice.toml の
-        # `[voice]` / `[credit]` と同じ並び
+        # **`[model]` is at the top level** (not inside `[character]`)
+        # Same layout as `[voice]` / `[credit]` in voice.toml
         model=_model(character, root),
     )
     log.info("content.loaded", name=pack.name, root=str(root))

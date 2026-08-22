@@ -98,7 +98,7 @@ class AivisSpeechProvider:
 
         # **Deciding the speaker is not loading it.** The engine loads the voice model on its
         # first `audio_query`, which put 3092 ms inside `tts_first_audio_ms` on the first
-        # sentence (2026-08-18) → docs/interfaces/provider.md "`load()` は接続確認ではない"
+        # sentence (2026-08-18) -> docs/interfaces/provider.md "`load()` is not a connection check"
         started = time.perf_counter()
         try:
             await self._client.initialize_speaker(speaker)

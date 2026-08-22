@@ -98,7 +98,7 @@ def test_untrusted_blocks_are_isolated() -> None:
 
     assert ISOLATION_HEADER in system
     assert "怪しい本文" in system
-    assert "未検証" in system
+    assert "unverified" in system
 
 
 def test_trusted_blocks_are_not_isolated() -> None:

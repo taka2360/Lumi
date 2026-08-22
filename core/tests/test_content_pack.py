@@ -81,11 +81,11 @@ def test_an_integer_volume_is_read_as_float(tmp_path: Path) -> None:
     assert load_character(root).voice.volume == 1.0
 
 
-# ── 見た目（[model]） ────────────────────────────────────────
+# ── Appearance ([model]) ────────────────────────────────────────
 
 
 def test_a_pack_without_a_model_is_valid(tmp_path: Path) -> None:
-    """**声だけの Content Pack も Content Pack である。** プレースホルダで動く。"""
+    """**A voice-only Content Pack is still a Content Pack.** Runs with a placeholder"""
     assert load_character(pack(tmp_path)).model is None
 
 
@@ -99,16 +99,17 @@ def test_a_declared_model_is_read(tmp_path: Path) -> None:
 
 
 def test_a_model_that_is_not_shipped_is_rejected(tmp_path: Path) -> None:
-    """**黙ってプレースホルダに落とさない。** 名前を書いたのに実体が無いのは壊れている。"""
+    """**Never silently falls back to a placeholder.** Having a name with no entity is broken"""
     with pytest.raises(ContentPackError, match=r"model\.vrm"):
         load_character(pack(tmp_path, character=CHARACTER + MODEL))
 
 
 def test_a_model_without_credit_is_rejected(tmp_path: Path) -> None:
-    """★ **アセットを同梱するなら、クレジットを宣言する** (extension.md §9).
+    """★ **If bundling assets, declare credit** (extension.md §9)
 
-    `voice.toml` の `[credit]` と同じ規則。**「後で足す」ができない性質のもの**であり、
-    その license がクレジットを要求するかどうかとは別の判断（Lumi はどちらでも出す）。
+    Same rule as [credit] in voice.toml. **Cannot be added retroactively**,
+    and is a separate decision from whether the license requires attribution
+    (Lumi shows it either way)
     """
     declared = CHARACTER + '\n[model]\nfile = "model.vrm"\n'
     with pytest.raises(ContentPackError, match=r"\[credit\]"):
@@ -116,12 +117,12 @@ def test_a_model_without_credit_is_rejected(tmp_path: Path) -> None:
 
 
 def test_a_model_outside_the_pack_is_rejected(tmp_path: Path) -> None:
-    """★ **Content Pack は再配布されるデータであり、境界の外を指してよい根拠が無い。**
+    """★ **Content Pack is redistributed data; there is no basis to point outside the boundary**
 
-    `root / declared` は絶対パスをそのまま採用し、`..` も素通りする。読めた path は
-    そのまま Stage に配信される（ADR-029）ので、**パックが任意のローカルファイルを
-    名指しできてしまう。** Shell の asset scope が配信を拒むとしても、
-    向こう側も見ているから成立する境界は境界ではない。
+    `root / declared` accepts absolute paths as-is and passes `..` through. The read path
+    is delivered to Stage as-is (ADR-029), so **the pack could name any arbitrary local file**
+    Even if Shell asset scope refuses delivery, a boundary that holds only because
+    the far side checks is not a boundary
     """
     outside = tmp_path / "secret.vrm"
     outside.write_bytes(b"glTF")
@@ -241,9 +242,8 @@ def test_the_bundled_default_pack_loads(monkeypatch: pytest.MonkeyPatch) -> None
     # ordinary volume adjustment fail CI (2026-08-17); what matters is that it parsed
     # and landed in a usable range.
     assert 0.0 < loaded.voice.volume <= 2.0
-    # ★ **既定キャラクターには見た目がある** — docs/licensing.md §4.5（光莉 / ひかり）。
-    # `[model]` はトップレベルの表なので、`[character]` の中を探すと黙って `None` になる
-    # （実際にそう書いて、この行が無ければ気づかなかった。2026-08-19）
-    assert loaded.model is not None, "既定 Content Pack がモデルを宣言していない"
+    # ★ **Default character has an appearance** — docs/licensing.md §4.5 (光莉 / ひかり)
+    # `[model]` is a top-level table, so searching inside `[character]` would silently return `None`
+    assert loaded.model is not None, "Default Content Pack does not declare a model"
     assert loaded.model.path == model_path
     assert loaded.model.credit.credit_text

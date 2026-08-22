@@ -46,7 +46,7 @@ class SetExpressionTool:
     """`character.set_expression`. **L0** (neither a read nor a write — Lumi's own expression)."""
 
     name = "character.set_expression"
-    description = "Lumi の表情を変える。感情の名前と強さを指定する"
+    description = "Change Lumi's facial expression. Specify the emotion and intensity"
     input_schema: Mapping[str, Any] = {
         "type": "object",
         "properties": {

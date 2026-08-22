@@ -1,7 +1,7 @@
 [project]
 name = "lumi-core"
 version = "0.0.0"
-description = "Lumi Core — 権威（判断・状態・ポリシー・記憶）を持つ AI Core"
+description = "Lumi Core — AI Core holding authority (decisions, state, policy, memory)"
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 license = "MIT"

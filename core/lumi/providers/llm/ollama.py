@@ -136,7 +136,7 @@ class OllamaProvider:
         Lumi's problem" doesn't survive contact with the user: the wait is the same either way,
         and **which process allocated the memory is invisible to them.**
 
-        → docs/interfaces/provider.md "`load()` は接続確認ではない"
+        -> docs/interfaces/provider.md "`load()` is not a connection check"
         """
         if self._loaded:
             return

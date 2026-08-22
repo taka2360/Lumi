@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Stage / Credits ウィンドウに与える最小の権限。B1（Shell ↔ Stage）の allowlist。",
+  "description": "Minimal permissions granted to Stage / Credits windows. Allowlist for B1 (Shell <-> Stage)",
   "windows": ["stage", "credits"],
   "permissions": ["core:default"]
 }
