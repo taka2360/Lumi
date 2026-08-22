@@ -26,6 +26,16 @@ interface Step {
   progress: number | null;
 }
 
+function gigabytes(bytes: number): string {
+  return `${(bytes / 1_000_000_000).toFixed(1)} GB`;
+}
+
+function modelName(model: string | null): string {
+  if (model === "qwen3.5:9b") return "Qwen 3.5 9B";
+  if (model === "qwen3.5:4b") return "Qwen 3.5 4B";
+  return model ?? "";
+}
+
 /**
  * Which detail step is currently in progress. **Not the heading — a line attached below it.**
  *
@@ -39,6 +49,25 @@ function step(setup: SetupSnapshot, connected: boolean, locale: Locale): Step {
   }
   const engine = setup.tts.engine_name ?? translate(locale, "setup.engine.generic");
   if (setup.boot === "installing") {
+    if (setup.llm.state === "model_installing") {
+      const progress = setup.llm.progress ?? 0;
+      const completed = setup.llm.completed_bytes ?? 0;
+      const total = setup.llm.total_bytes ?? 0;
+      return {
+        step: translate(locale, "boot.llmModel.fetching", {
+          model: modelName(setup.llm.model),
+          percent: Math.round(progress * 100),
+        }),
+        note:
+          total > 0
+            ? translate(locale, "boot.llmModel.bytes", {
+                completed: gigabytes(completed),
+                total: gigabytes(total),
+              })
+            : translate(locale, "boot.llmModel.note"),
+        progress,
+      };
+    }
     if (setup.stt.state === "installing") {
       return {
         step: translate(locale, "boot.speechModel.fetching", {

@@ -32,7 +32,7 @@ from lumi.agent.inspector import InspectorPublisher
 from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.session import Session
 from lumi.agent.tasks import report_task_exit
-from lumi.agent.warmup import warm_all
+from lumi.agent.warmup import warm_all, warm_llm
 from lumi.audio.devices import AudioPlan
 from lumi.audio.io import AudioIO
 from lumi.character import ExpressionIntent
@@ -44,12 +44,14 @@ from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
+from lumi.providers.base import ProviderKind
 from lumi.providers.llm.base import LLMOptions
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
+from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState
 from lumi.storage.audit import SqliteAuditLog
 from lumi.storage.events import SqliteEventStore
 from lumi.storage.sqlite import Database
@@ -83,6 +85,8 @@ class ConversationRuntime:
         "_audio",
         "_database",
         "_inspector",
+        "_listening",
+        "_llm_retry",
         "_loop",
         "_model",
         "_pack",
@@ -104,6 +108,8 @@ class ConversationRuntime:
         self._model = self._settings.llm_model.value
         self._task: asyncio.Task[None] | None = None
         self._warmup: asyncio.Task[None] | None = None
+        self._llm_retry: asyncio.Task[None] | None = None
+        self._listening = False
         self._audio = AudioIO(plan)
         self._providers = ProviderRegistry()
 
@@ -239,6 +245,8 @@ class ConversationRuntime:
         and decides whether the character is allowed out (ADR-034).
         """
         self._register_providers()
+        self._setup.set_ollama_detected_handler(self._schedule_llm_warmup)
+        self._setup.set_llm_model_selected_handler(self._select_llm_model)
         # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
         # rest of the session (observed 2026-08-17).
@@ -272,6 +280,66 @@ class ConversationRuntime:
         # exception that aborts the rest of shutdown
         self._warmup.add_done_callback(report_task_exit("warmup.crashed"))
 
+    def _schedule_llm_warmup(self) -> None:
+        """Continues setup after a re-check finds Ollama's local API.
+
+        If the initial all-provider warm-up is still running, the retry waits behind it.
+        Repeated UI polls cannot fan out into multiple model loads.
+        """
+        if self._llm_retry is not None and not self._llm_retry.done():
+            return
+        self._llm_retry = asyncio.create_task(self._warm_llm_after_detection(), name="llm-recheck")
+        self._llm_retry.add_done_callback(report_task_exit("llm.recheck_crashed"))
+
+    async def _warm_llm_after_detection(self) -> None:
+        # Ollama may appear while the initial sequence is still warming STT. Wait for
+        # that sequence to finish, then revisit the LLM it already passed. Merely
+        # ignoring this signal would leave `detected × starting` stuck forever.
+        initial = self._warmup
+        if initial is not None and not initial.done():
+            try:
+                await asyncio.shield(initial)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # The initial sequence already reports its own crash. A failure in another
+                # provider must not discard the user's successful Ollama installation.
+                log.exception("warmup.failed_before_llm_recheck")
+        while True:
+            await warm_llm(self._providers, self._setup, self._model)
+            llm = self._setup.state.llm
+            # A missing-model warm-up can stay alive while the consent prompt and pull run.
+            # In that case the completion callback cannot schedule a second task because this
+            # task is still active. Repeat here so a successful pull is verified immediately.
+            if not (
+                llm.state is LlmSetupState.DETECTED
+                and llm.runtime is EngineRuntime.STARTING
+                and llm.reason == "model_checking"
+            ):
+                break
+        if self._setup.boot is BootPhase.READY:
+            await self._start_listening()
+
+    async def _select_llm_model(self, model: str) -> None:
+        """Applies an explicitly selected setup model before Ollama pulls it."""
+        if model == self._model:
+            return
+        self._settings = await asyncio.to_thread(
+            settings_module.save,
+            paths.settings_file(),
+            self._settings,
+            {"llm_model": model},
+        )
+        self._model = model
+        if self._providers.has(ProviderKind.LLM):
+            # Registering a replacement does not unload the previous provider. Release its
+            # HTTP client and Ollama residency before the new model becomes selected.
+            await self._providers.peek(ProviderKind.LLM).unload()
+        self._providers.register(OllamaProvider(model))
+        if self._loop is not None:
+            self._loop.set_llm_model(model)
+        await self._server.notify(Role.STAGE, METHOD_SETTINGS, self._settings.to_payload())
+
     async def _start_listening(self) -> None:
         """Open voice input only after Core has broadcast `boot: ready` (ADR-033).
 
@@ -279,7 +347,17 @@ class ConversationRuntime:
         incomplete must not be quietly listening behind itself — and with no LLM or no
         STT there is nothing that could answer anyway.
         """
-        await self._audio.start()
+        if self._listening:
+            return
+        self._listening = True
+        try:
+            await self._audio.start()
+        except asyncio.CancelledError:
+            self._listening = False
+            raise
+        except Exception:
+            self._listening = False
+            raise
 
         if self._loop is None:
             log.warning("conversation.disabled", reason="content pack")
@@ -325,7 +403,7 @@ class ConversationRuntime:
 
     async def stop(self) -> None:
         """**Only stops what Lumi itself started** (docs/architecture/core.md §6)."""
-        for task in (self._warmup, self._task):
+        for task in (self._warmup, self._llm_retry, self._task):
             if task is None:
                 continue
             task.cancel()
@@ -339,7 +417,9 @@ class ConversationRuntime:
                 # of them may be skipped because a warmup raised (it is logged, not swallowed)
                 log.exception("conversation.task_failed_on_stop", task=task.get_name())
         self._warmup = None
+        self._llm_retry = None
         self._task = None
+        self._listening = False
         await self._inspector.stop()
         await self._audio.stop()
         try:

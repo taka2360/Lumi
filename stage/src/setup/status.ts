@@ -13,7 +13,7 @@
  * | Missing | What is asked of the user |
  * |---|---|
  * | TTS | let Lumi fetch the engine |
- * | LLM | install Ollama, start it, or pull the model **themselves** |
+ * | LLM | install/start Ollama, then consent before Lumi fetches a model |
  * | STT | let Lumi fetch the model |
  *
  * **None of these is an error**, and none of them is worded as one — but any one of them
@@ -64,6 +64,13 @@ const FAILURE_KEYS: Record<string, MessageKey> = Object.fromEntries(
     "unknown_model",
     "cancelled",
     "unexpected_error",
+    "ollama_pull_http_error",
+    "ollama_pull_invalid_response",
+    "ollama_pull_failed",
+    "ollama_pull_incomplete",
+    "ollama_pull_unreachable",
+    "model_selection_unavailable",
+    "settings_save_failed",
   ].map((reason) => [reason, `status.failure.${reason}` as MessageKey]),
 );
 
@@ -122,8 +129,8 @@ export function ttsStatus(tts: TtsSetupSnapshot, locale: Locale = "ja"): StatusL
 }
 
 /**
- * **The one component whose message asks the user to act themselves** — Lumi neither
- * fetches nor starts Ollama (ADR-023).
+ * Lumi never installs or starts Ollama. It can fetch an allowlisted model only after an
+ * explicit setup choice (ADR-037).
  */
 export function llmStatus(llm: LlmSetupSnapshot, locale: Locale = "ja"): StatusLine | null {
   switch (llm.state) {
@@ -134,12 +141,14 @@ export function llmStatus(llm: LlmSetupSnapshot, locale: Locale = "ja"): StatusL
         hint: translate(locale, "status.llm.installHint"),
       };
     case "model_missing":
-      // **Installed, running, just missing the model.** A different instruction entirely
       return {
         tone: "normal",
         text: translate(locale, "status.llm.modelMissing", { model: llm.model ?? "" }).trim(),
-        hint: `ollama pull ${llm.model ?? ""}`.trim(),
       };
+    case "model_installing":
+      return null;
+    case "model_failed":
+      return { tone: "bad", text: failureText(llm.reason, locale) };
     case "detected":
       // Installed and found, but the process still has to answer for Lumi to reply.
       // **`failed` is not `stopped`**: one is started by the user, the other is looked into

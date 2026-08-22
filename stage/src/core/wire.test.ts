@@ -22,6 +22,7 @@ import { VISEMES } from "../character/lipsync";
 import {
   CMD_DRAG_START,
   CMD_OPEN_CREDITS,
+  CMD_OPEN_OLLAMA_SITE,
   CMD_QUIT,
   CMD_SCALE,
   CMD_SET_HIT_REGION,
@@ -32,6 +33,7 @@ import { CMD_CORE_ENDPOINT, EVENT_CORE_ENDPOINT } from "./connection";
 import {
   CHARACTER_MODEL_REASONS,
   CHOICE_INSTALL,
+  CHOICE_SELECT,
   CHOICE_SKIP,
   METHOD_EXPRESSION,
   METHOD_INSPECTOR,
@@ -39,6 +41,7 @@ import {
   METHOD_SETTINGS,
   METHOD_SETTINGS_UPDATE,
   METHOD_SETUP_PROMPT,
+  METHOD_SETUP_RECHECK_OLLAMA,
   METHOD_SETUP_STATE,
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
@@ -58,7 +61,7 @@ import { PROTOCOL_VERSION } from "./protocol";
 interface Wire {
   protocol_version: number;
   methods: { stage: string[]; os: string[] };
-  setup_prompt_choices: { install: string; skip: string };
+  setup_prompt_choices: { install: string; skip: string; select: string };
   tauri_events: { hover_state: string; core_endpoint: string };
   tauri_commands: string[];
   enums: {
@@ -127,7 +130,7 @@ describe("wire contract", () => {
     // ★ **The Stage → Core direction** (ADR-028). The real allowlist is Core's registry;
     // this pins the Stage's constant against the same contract, so a rename on one side
     // fails here instead of turning into a silent `unknown_method` at runtime.
-    expect([METHOD_SETTINGS_UPDATE]).toEqual(wire.inbound_methods);
+    expect([METHOD_SETTINGS_UPDATE, METHOD_SETUP_RECHECK_OLLAMA]).toEqual(wire.inbound_methods);
   });
 
   it("what a fetch question can be about", () => {
@@ -144,7 +147,9 @@ describe("wire contract", () => {
   });
 
   it("the fetch-or-not choices", () => {
-    expect({ install: CHOICE_INSTALL, skip: CHOICE_SKIP }).toEqual(wire.setup_prompt_choices);
+    expect({ install: CHOICE_INSTALL, skip: CHOICE_SKIP, select: CHOICE_SELECT }).toEqual(
+      wire.setup_prompt_choices,
+    );
   });
 
   it("Tauri event names", () => {
@@ -165,6 +170,7 @@ describe("wire contract", () => {
         CMD_SCALE,
         CMD_SET_LOCALE,
         CMD_OPEN_CREDITS,
+        CMD_OPEN_OLLAMA_SITE,
         CMD_QUIT,
       ]),
     ).toEqual(new Set(wire.tauri_commands));

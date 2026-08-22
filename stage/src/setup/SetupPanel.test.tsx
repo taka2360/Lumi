@@ -16,11 +16,20 @@ import { LocaleProvider } from "../i18n/provider";
 import { SetupPanel } from "./SetupPanel";
 
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-vi.mock("../core/useCoreConnection", () => ({ answerSetupPrompt: vi.fn() }));
+const { answerSetupPrompt, recheckOllama, quit, openOllamaSite } = vi.hoisted(() => ({
+  answerSetupPrompt: vi.fn(),
+  recheckOllama: vi.fn(async () => {}),
+  quit: vi.fn(),
+  openOllamaSite: vi.fn(),
+}));
+vi.mock("../core/useCoreConnection", () => ({
+  answerSetupPrompt,
+  recheckOllama,
+}));
 
-const quit = vi.fn();
 vi.mock("../platform/useStageShell", () => ({
   useQuit: () => quit,
+  useOpenOllamaSite: () => openOllamaSite,
   getPlatformShell: () => ({ setLocale: async () => {} }),
 }));
 
@@ -71,6 +80,11 @@ describe("the incomplete-setup screen", () => {
     container = null;
     useStageStore.setState({ setup: UNKNOWN_SETUP, prompt: null });
     quit.mockReset();
+    openOllamaSite.mockReset();
+    recheckOllama.mockClear();
+    answerSetupPrompt.mockClear();
+    vi.clearAllTimers();
+    vi.useRealTimers();
   });
 
   it("lists every missing component, not just the first", () => {
@@ -85,20 +99,87 @@ describe("the incomplete-setup screen", () => {
     );
     const lines = view.querySelectorAll(".panel__status");
 
-    expect(lines).toHaveLength(3);
+    expect(lines).toHaveLength(2);
     expect(view.textContent).toContain("音声合成エンジン");
     expect(view.textContent).toContain("Ollama");
     expect(view.textContent).toContain("音声認識モデル");
   });
 
-  it("shows how to fix what Lumi will not fix itself", () => {
-    // Lumi neither fetches nor starts Ollama (ADR-023), so the screen has to hand over
-    // the command instead of a button.
+  it("guides a missing Ollama install without a manual recheck action", () => {
+    const view = render(working({ llm: { ...UNKNOWN_SETUP.llm, state: "not_configured" } }));
+    const buttons = [...view.querySelectorAll("button")];
+
+    expect(view.textContent).toContain("Ollama が見つかりません");
+    expect(view.textContent).toContain("AI モデルを PC 上で動かすために使用します");
+    expect(buttons.map((button) => button.textContent)).toEqual(["公式サイトを開く", "終了"]);
+
+    act(() => buttons[0]?.click());
+    expect(openOllamaSite).toHaveBeenCalledOnce();
+  });
+
+  it("rechecks Ollama every second while the missing screen is visible", async () => {
+    vi.useFakeTimers();
+    render(working({ llm: { ...UNKNOWN_SETUP.llm, state: "not_configured" } }));
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1_000);
+    });
+
+    expect(recheckOllama).toHaveBeenCalledOnce();
+  });
+
+  it("waits automatically while an installed Ollama may still be starting", () => {
+    const view = render(
+      working({
+        llm: {
+          ...UNKNOWN_SETUP.llm,
+          state: "detected",
+          runtime: "starting",
+          reason: "ollama_starting",
+        },
+      }),
+    );
+
+    expect(view.textContent).toContain("Ollama のセットアップを完了しています");
+    expect(view.textContent).toContain("Ollama の起動を待っています");
+    expect(view.querySelector(".boot__spinner")).not.toBeNull();
+    expect([...view.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "終了",
+    ]);
+  });
+
+  it("only asks the user to start Ollama after the grace period", () => {
+    const view = render(
+      working({
+        llm: { ...UNKNOWN_SETUP.llm, state: "detected", runtime: "stopped" },
+      }),
+    );
+
+    expect(view.textContent).toContain("Ollama はインストールされていますが");
+    expect(view.textContent).toContain("ローカル API が応答していません");
+    expect(view.textContent).toContain("Ollama を起動してください");
+    expect(view.textContent).not.toContain("公式サイトを開く");
+  });
+
+  it("shows detection while the model is being confirmed", () => {
+    const view = render(
+      working({
+        llm: { ...UNKNOWN_SETUP.llm, state: "detected", runtime: "starting" },
+      }),
+    );
+
+    expect(view.textContent).toContain("Ollama を検出しました");
+    expect(view.textContent).toContain("モデルを確認しています");
+    expect(view.querySelector(".boot__spinner")).not.toBeNull();
+  });
+
+  it("offers the missing model through an explicit consent prompt", () => {
     const view = render(
       working({ llm: { ...UNKNOWN_SETUP.llm, state: "model_missing", model: "qwen3:8b" } }),
     );
 
-    expect(view.querySelector(".panel__hint")?.textContent).toBe("ollama pull qwen3:8b");
+    expect(view.textContent).toContain("Lumiのセットアップから取得できます");
+    expect(view.querySelector(".panel__hint")).toBeNull();
   });
 
   it("says a failed download failed, and why", () => {
@@ -202,7 +283,13 @@ describe("the question", () => {
     act(() => {
       useStageStore.setState({
         setup: working(),
-        prompt: { component: "stt", retry, reason: retry ? "network_unreachable" : null },
+        prompt: {
+          component: "stt",
+          retry,
+          reason: retry ? "network_unreachable" : null,
+          model: null,
+          alternatives: [],
+        },
       });
       root?.render(
         <LocaleProvider>
@@ -219,6 +306,108 @@ describe("the question", () => {
     container?.remove();
     container = null;
     useStageStore.setState({ setup: UNKNOWN_SETUP, prompt: null });
+    answerSetupPrompt.mockClear();
+  });
+
+  it("names and sizes the recommended model before downloading it", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      useStageStore.setState({
+        setup: working(),
+        prompt: {
+          component: "llm_model",
+          retry: false,
+          reason: null,
+          model: {
+            model: "qwen3.5:9b",
+            display_name: "Qwen 3.5 9B",
+            size_bytes: 6_600_000_000,
+            installed: false,
+          },
+          alternatives: [
+            {
+              model: "qwen3.5:4b",
+              display_name: "Qwen 3.5 4B",
+              size_bytes: 3_400_000_000,
+              installed: false,
+            },
+          ],
+        },
+      });
+      root?.render(
+        <LocaleProvider>
+          <SetupPanel />
+        </LocaleProvider>,
+      );
+    });
+
+    expect(container.textContent).toContain("Qwen 3.5 9B");
+    expect(container.textContent).toContain("6.6 GB");
+    expect([...container.querySelectorAll("button")].map((button) => button.textContent)).toEqual([
+      "Qwen 3.5 9B（約 6.6 GB）をダウンロード",
+      "別のモデルを選ぶ",
+      "今は取得しない",
+    ]);
+
+    act(() => container?.querySelectorAll("button")[1]?.click());
+    expect(container.textContent).toContain("Qwen 3.5 4B（約 3.4 GB）をダウンロード");
+
+    act(() => container?.querySelector("button")?.click());
+    expect(answerSetupPrompt).toHaveBeenCalledWith("install", "qwen3.5:4b");
+  });
+
+  it("shows local Ollama models and selects them without a download", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      useStageStore.setState({
+        setup: working(),
+        prompt: {
+          component: "llm_model",
+          retry: false,
+          reason: null,
+          model: {
+            model: "qwen3.5:9b",
+            display_name: "Qwen 3.5 9B",
+            size_bytes: 6_600_000_000,
+            installed: false,
+          },
+          alternatives: [
+            {
+              model: "llama3.1:8b",
+              display_name: "llama3.1:8b",
+              size_bytes: 4_200_000_000,
+              installed: true,
+            },
+          ],
+        },
+      });
+      root?.render(
+        <LocaleProvider>
+          <SetupPanel />
+        </LocaleProvider>,
+      );
+    });
+
+    act(() => {
+      [...(container?.querySelectorAll("button") ?? [])]
+        .find((button) => button.textContent === "別のモデルを選ぶ")
+        ?.click();
+    });
+
+    expect(container.textContent).toContain("使用するAIモデルを選択");
+    expect(container.textContent).toContain("Ollamaで利用できるモデルを選択してください");
+    expect(container.textContent).toContain("llama3.1:8b（約 4.2 GB・ローカル）を使用");
+
+    act(() => {
+      [...(container?.querySelectorAll("button") ?? [])]
+        .find((button) => button.textContent?.includes("ローカル"))
+        ?.click();
+    });
+    expect(answerSetupPrompt).toHaveBeenCalledWith("select", "llama3.1:8b");
   });
 
   it("offers to fetch, and to not fetch, as equals", () => {

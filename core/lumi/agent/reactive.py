@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Final, cast
 
@@ -156,6 +156,10 @@ class ReactiveLoop:
     def set_tts_speed(self, speed: float) -> None:
         """Uses a new Core-owned speed for the next scheduler that is created."""
         self._tts_speed = _validate_tts_speed(speed)
+
+    def set_llm_model(self, model: str) -> None:
+        """Uses a setup-selected model for subsequent turns without rebuilding the loop."""
+        self._options = replace(self._options, model=model)
 
     # ── Entry point ──────────────────────────────────────────────
 

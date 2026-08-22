@@ -38,6 +38,7 @@ from lumi.kernel.activity import ActivityKind, ActivityState
 from lumi.providers.base import (
     ProviderKind,
 )
+from lumi.setup.state import BootPhase, EngineRuntime, LlmSetup, LlmSetupState, SetupSnapshot
 from lumi.transport.server import RequestRefused
 
 
@@ -152,6 +153,103 @@ class TestAssembly:
             assert server.boots[-1] == "ready"
         finally:
             server.release_ready.set()
+            await runtime.stop()
+
+    async def test_a_successful_model_pull_is_warmed_again_before_continuing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The prompt/pull can finish inside the current warm-up task, so it must loop."""
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+
+        class PullingSetup:
+            boot = BootPhase.BLOCKED
+            state = SetupSnapshot()
+
+        setup = PullingSetup()
+        runtime._setup = cast(Any, setup)
+        calls = 0
+
+        async def model_warmup(*_args: Any) -> None:
+            nonlocal calls
+            calls += 1
+            setup.state = SetupSnapshot(
+                llm=LlmSetup(
+                    state=LlmSetupState.DETECTED,
+                    runtime=EngineRuntime.STARTING if calls == 1 else EngineRuntime.READY,
+                    reason="model_checking" if calls == 1 else None,
+                )
+            )
+
+        monkeypatch.setattr(runtime_module, "warm_llm", model_warmup)
+
+        try:
+            await runtime._warm_llm_after_detection()
+
+            assert calls == 2
+        finally:
+            await runtime.stop()
+
+    async def test_listening_stays_false_when_audio_start_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+
+        class BrokenAudio:
+            async def start(self) -> None:
+                raise OSError("capture unavailable")
+
+            async def stop(self) -> None:
+                pass
+
+        runtime._audio = cast(Any, BrokenAudio())
+        try:
+            with pytest.raises(OSError, match="capture unavailable"):
+                await runtime._start_listening()
+            assert not runtime._listening
+        finally:
+            await runtime.stop()
+
+    async def test_model_selection_unloads_the_previous_llm_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+
+        class TrackedLlm(FakeTts):
+            def __init__(self) -> None:
+                super().__init__(kind=ProviderKind.LLM)
+                self.unloaded = False
+
+            async def unload(self) -> None:
+                self.unloaded = True
+                await super().unload()
+
+        previous = TrackedLlm()
+        runtime._model = "old"
+        runtime._providers.register(previous)
+        try:
+            await runtime._select_llm_model("new")
+
+            assert previous.unloaded
+            assert runtime._providers.peek(ProviderKind.LLM).id == "ollama:new"
+        finally:
             await runtime.stop()
 
 

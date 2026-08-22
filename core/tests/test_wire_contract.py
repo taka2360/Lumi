@@ -34,7 +34,9 @@ from lumi.setup.state import (
 from lumi.transport.methods import (
     CHARACTER_MODEL_REASONS,
     CHOICE_INSTALL,
+    CHOICE_SELECT,
     CHOICE_SKIP,
+    COMPONENT_LLM_MODEL,
     COMPONENT_STT,
     COMPONENT_TTS,
     INBOUND_METHODS,
@@ -106,7 +108,11 @@ class TestCoreMatchesTheContract:
         assert STAGE_METHODS == set(wire["methods"]["stage"])
 
     def test_setup_prompt_choices(self, wire: dict[str, Any]) -> None:
-        assert {"install": CHOICE_INSTALL, "skip": CHOICE_SKIP} == wire["setup_prompt_choices"]
+        assert {
+            "install": CHOICE_INSTALL,
+            "skip": CHOICE_SKIP,
+            "select": CHOICE_SELECT,
+        } == wire["setup_prompt_choices"]
 
     def test_inbound_methods(self, wire: dict[str, Any]) -> None:
         """★ **What the Stage may initiate** (ADR-028).
@@ -135,7 +141,7 @@ class TestCoreMatchesTheContract:
     def test_setup_components(self, wire: dict[str, Any]) -> None:
         # **What is being asked about has to be on the contract too.** The panel picks its
         # wording from this value; a drift would ask permission to fetch the wrong thing.
-        assert [COMPONENT_TTS, COMPONENT_STT] == wire["setup_components"]
+        assert [COMPONENT_TTS, COMPONENT_STT, COMPONENT_LLM_MODEL] == wire["setup_components"]
 
     @pytest.mark.parametrize(
         ("enum", "key"),

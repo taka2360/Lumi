@@ -81,9 +81,16 @@ describe("LLM", () => {
     expect(line?.hint).toContain("ollama.com");
   });
 
-  it("a missing model gives the exact command", () => {
+  it("a missing model says Lumi can fetch it after consent", () => {
     const line = llmStatus(llm({ state: "model_missing", model: "qwen3.5:9b" }));
-    expect(line?.hint).toBe("ollama pull qwen3.5:9b");
+    expect(line?.text).toContain("Lumiのセットアップから取得できます");
+    expect(line?.hint).toBeUndefined();
+  });
+
+  it("keeps a failed model download visible as a failure", () => {
+    const line = llmStatus(llm({ state: "model_failed", reason: "ollama_pull_unreachable" }));
+    expect(line?.tone).toBe("bad");
+    expect(line?.text).toContain("Ollamaへ接続できなくなりました");
   });
 
   it("★ never tells someone to install what they already have", () => {

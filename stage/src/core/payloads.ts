@@ -31,6 +31,7 @@ import type {
   SettingsSource,
   SettingValue,
   SetupComponent,
+  SetupModelOption,
   SetupPrompt,
   SetupSnapshot,
   Speech,
@@ -71,6 +72,8 @@ export const LLM_SETUP_STATES: readonly LlmSetupState[] = [
   "not_configured",
   "detected",
   "model_missing",
+  "model_installing",
+  "model_failed",
 ];
 export const STT_SETUP_STATES: readonly SttSetupState[] = [
   "unknown",
@@ -87,7 +90,7 @@ export const BOOT_PHASES: readonly BootPhase[] = [
   "blocked",
   "ready",
 ];
-export const SETUP_COMPONENTS: readonly SetupComponent[] = ["tts", "stt"];
+export const SETUP_COMPONENTS: readonly SetupComponent[] = ["tts", "stt", "llm_model"];
 
 /**
  * Picks `value` out of `candidates`, or falls back. **`fallback` is required.**
@@ -152,6 +155,9 @@ export function toLlmSnapshot(payload: Record<string, unknown>): LlmSetupSnapsho
     runtime: oneOf(ENGINE_RUNTIMES, payload.runtime, "stopped"),
     model: asString(payload.model),
     reason: asString(payload.reason),
+    progress: asNumber(payload.progress),
+    completed_bytes: asNumber(payload.completed_bytes),
+    total_bytes: asNumber(payload.total_bytes),
   };
 }
 
@@ -172,10 +178,39 @@ export function toSttSnapshot(payload: Record<string, unknown>): SttSetupSnapsho
  * than one that names the more likely subject.
  */
 export function toSetupPrompt(payload: Record<string, unknown>): SetupPrompt {
+  const component = oneOf(SETUP_COMPONENTS, payload.component, "tts");
+  const model = setupModelOption(payload.model);
+  if (component === "llm_model" && model === null) {
+    // A model prompt without a valid primary option cannot safely render a fallback or
+    // answer Core without an identifier. Reject the command so the protocol reports drift.
+    throw new Error("invalid_llm_model");
+  }
+  const alternatives = Array.isArray(payload.alternatives)
+    ? payload.alternatives
+        .filter(isRecord)
+        .map(setupModelOption)
+        .filter((item) => item !== null)
+    : [];
   return {
-    component: oneOf(SETUP_COMPONENTS, payload.component, "tts"),
+    component,
     retry: payload.retry === true,
     reason: asString(payload.reason),
+    model,
+    alternatives,
+  };
+}
+
+function setupModelOption(value: unknown): SetupModelOption | null {
+  if (!isRecord(value)) return null;
+  const model = asString(value.model);
+  const displayName = asString(value.display_name);
+  const sizeBytes = asNumber(value.size_bytes);
+  if (!model || !displayName || sizeBytes === null || sizeBytes <= 0) return null;
+  return {
+    model,
+    display_name: displayName,
+    size_bytes: sizeBytes,
+    installed: value.installed === true,
   };
 }
 

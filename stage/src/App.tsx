@@ -67,6 +67,10 @@ export function App() {
   // is required because `blocked` can only ever come from Core.
   const blocked = connected && setup.boot === "blocked";
   const showBootScreen = !showCharacter && !prompt && !blocked;
+  // Setup commands belong above any actionable setup card, including the blocked
+  // screen. Keeping this condition separate from `prompt` avoids hiding the
+  // settings/diagnostics entry points when setup is waiting for user action.
+  const controlsAbovePanel = prompt !== null || blocked;
 
   const [status, setStatus] = useState<CharacterStatus>({ kind: null, fallbackReason: null });
   const onStatus = useCallback((next: CharacterStatus) => setStatus(next), []);
@@ -88,6 +92,18 @@ export function App() {
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [anchorHovered, setAnchorHovered] = useState(false);
+
+  // Prompt/setup and normal character mode render the controls in different hosts. Their
+  // child components are remounted when that host changes, so clear parent-owned flags that
+  // otherwise keep the hidden normal-mode anchor visible after an open panel disappears.
+  useEffect(() => {
+    if (controlsAbovePanel) {
+      return;
+    }
+    setInspectorOpen(false);
+    setSettingsOpen(false);
+    setAnchorHovered(false);
+  }, [controlsAbovePanel]);
 
   const isActivelyHovered = hover === "inside" || anchorHovered || inspectorOpen || settingsOpen;
   const [inspectVisible, setInspectVisible] = useState(false);
@@ -117,6 +133,14 @@ export function App() {
     reportHitRegion(rects);
   }, [characterRect, panelRect, inspectorRect, inspectVisible, reportHitRegion]);
 
+  const inspectorControls = (
+    <>
+      <AppActions />
+      <Inspector onOpenChange={setInspectorOpen} />
+      <Settings onOpenChange={setSettingsOpen} />
+    </>
+  );
+
   return (
     <div
       className={`${hover === "inside" ? "stage stage--hover" : "stage"}${
@@ -143,6 +167,16 @@ export function App() {
         onPointerDown={gestures.onPointerDown}
         onWheel={gestures.onWheel}
       >
+        {controlsAbovePanel && (
+          <div
+            ref={setInspector}
+            className="inspect-anchor inspect-anchor--setup"
+            onPointerEnter={() => setAnchorHovered(true)}
+            onPointerLeave={() => setAnchorHovered(false)}
+          >
+            {inspectorControls}
+          </div>
+        )}
         {/* While preparing, shows what's happening instead of the character.
             **Always shows exactly one thing** (docs/architecture/ui.md "Boot phases").
             Showing loading and the panel side by side would describe the same situation twice. */}
@@ -153,16 +187,16 @@ export function App() {
       {/* **A development view** (docs/architecture/ui.md §5). Inside the `stage` window
           because `WsServer` keeps one connection per role — a second window would take
           the character's connection. Shown on hover or when expanded. */}
-      <div
-        ref={setInspector}
-        className={inspectVisible ? "inspect-anchor inspect-anchor--visible" : "inspect-anchor"}
-        onPointerEnter={() => setAnchorHovered(true)}
-        onPointerLeave={() => setAnchorHovered(false)}
-      >
-        <AppActions />
-        <Inspector onOpenChange={setInspectorOpen} />
-        <Settings onOpenChange={setSettingsOpen} />
-      </div>
+      {!controlsAbovePanel && (
+        <div
+          ref={setInspector}
+          className={inspectVisible ? "inspect-anchor inspect-anchor--visible" : "inspect-anchor"}
+          onPointerEnter={() => setAnchorHovered(true)}
+          onPointerLeave={() => setAnchorHovered(false)}
+        >
+          {inspectorControls}
+        </div>
+      )}
     </div>
   );
 }

@@ -77,25 +77,34 @@ STAGE_METHODS: Final[frozenset[str]] = frozenset(
 #: The Stage asks; Core validates, decides, writes, and broadcasts the result (ADR-028).
 METHOD_SETTINGS_UPDATE: Final = "stage.settings.update"
 
+#: Re-runs Ollama's local-only detection from the setup screen. The automatic timer and
+#: the visible button use the same route, so there is only one decision path.
+METHOD_SETUP_RECHECK_OLLAMA: Final = "stage.setup.recheck_ollama"
+
 #: What the Stage may initiate. **A tuple, because the contract's order is checked too.**
-INBOUND_METHODS: Final[tuple[str, ...]] = (METHOD_SETTINGS_UPDATE,)
+INBOUND_METHODS: Final[tuple[str, ...]] = (
+    METHOD_SETTINGS_UPDATE,
+    METHOD_SETUP_RECHECK_OLLAMA,
+)
 
 # ── Payload values ────────────────────────────────────────────
 
-#: The choices the Stage returns in `result`. `CHOICE_SKIP` isn't used in any comparison
-#: (anything that isn't `CHOICE_INSTALL` means "not now"), but it's declared here so
-#: **only one side of the contract isn't documented**.
+#: The choices the Stage returns in `result`. `select` means an already-local model;
+#: `skip` isn't used in any comparison, but both are declared so **only one side of the
+#: contract isn't documented**.
 #:
 #: The Stage labels `CHOICE_INSTALL` "retry" after a failure — **same choice, and the
 #: retry count is deliberately unbounded** since the press always comes from the user
 #: (ADR-034).
 CHOICE_INSTALL: Final = "install"
 CHOICE_SKIP: Final = "skip"
+CHOICE_SELECT: Final = "select"
 
 #: Which component a question is about. **The panel has to say what it is fetching** —
 #: "may I download this?" without a subject is not consent.
 COMPONENT_TTS: Final = "tts"
 COMPONENT_STT: Final = "stt"
+COMPONENT_LLM_MODEL: Final = "llm_model"
 
 #: Why there is no character model to draw (ADR-036). **A code, never a sentence** —
 #: Core does not know the Stage's locale, and a display string sent from here is the one

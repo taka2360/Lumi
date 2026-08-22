@@ -13,14 +13,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+import httpx
+
 from lumi import logging as lumi_logging
 from lumi import paths
+from lumi.providers.llm.ollama import DEFAULT_PORT, HOST
 from lumi.setup.engines import AIVISSPEECH_ENGINE, EngineArtifact
 
 log = lumi_logging.get_logger(__name__)
 
 #: Wait time for checking whether a port is open. **Never waits long** (never delays startup).
 PROBE_TIMEOUT_S = 0.3
+OLLAMA_API_TIMEOUT_S = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +69,7 @@ KNOWN_ENGINES: tuple[KnownEngine, ...] = (
 OLLAMA: KnownEngine = KnownEngine(
     name="ollama",
     display_name="Ollama",
-    port=11434,
+    port=DEFAULT_PORT,
     candidates=(
         ("LOCALAPPDATA", r"Programs\Ollama\ollama.exe"),
         ("ProgramFiles", r"Ollama\ollama.exe"),
@@ -124,6 +128,31 @@ async def is_port_open(port: int, *, host: str = "127.0.0.1") -> bool:
         async with asyncio.timeout(PROBE_TIMEOUT_S):
             await writer.wait_closed()
     return True
+
+
+async def ollama_api_version(
+    port: int = OLLAMA.port, *, transport: httpx.AsyncBaseTransport | None = None
+) -> str | None:
+    """Returns Ollama's version only when its fixed local API actually answers.
+
+    A TCP listener on port 11434 is not enough to claim "Ollama detected". This probes
+    the endpoint shown in the setup flow, with proxy/environment handling disabled so
+    the request cannot be redirected outside the machine.
+    """
+    try:
+        async with httpx.AsyncClient(
+            timeout=OLLAMA_API_TIMEOUT_S,
+            transport=transport,
+            trust_env=False,
+        ) as client:
+            response = await client.get(f"http://{HOST}:{port}/api/version")
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError):
+        return None
+    if not isinstance(payload, dict) or "version" not in payload:
+        return None
+    return str(payload["version"])
 
 
 async def detect_engines(env: Mapping[str, str]) -> list[DetectedEngine]:
@@ -186,7 +215,7 @@ async def detect_ollama(env: Mapping[str, str]) -> DetectedEngine | None:
     executable = next(
         (path for path in candidate_executables(OLLAMA, env) if path.is_file()), None
     ) or find_on_path("ollama", env)
-    running = await is_port_open(OLLAMA.port)
+    running = await ollama_api_version(OLLAMA.port) is not None
     if executable is None and not running:
         return None
     return DetectedEngine(

@@ -69,8 +69,12 @@ class LlmSetupState(StrEnum):
     NOT_CONFIGURED = "not_configured"
     #: Ollama is there.
     DETECTED = "detected"
-    #: **Ollama is there but the configured model isn't.** Suggest `ollama pull <model>`
+    #: **Ollama is there but the configured model isn't.** Ask before pulling it (ADR-037).
     MODEL_MISSING = "model_missing"
+    #: The user approved a pinned model and Ollama is downloading it.
+    MODEL_INSTALLING = "model_installing"
+    #: An approved model pull failed. Never becomes "not asked yet" again.
+    MODEL_FAILED = "model_failed"
 
 
 class SttSetupState(StrEnum):
@@ -166,16 +170,18 @@ class TtsSetup:
 
 @dataclass(frozen=True, slots=True)
 class LlmSetup:
-    """The LLM's state. **Lumi neither fetches nor starts it** (ADR-023), so there is no
-    progress and no `starting`.
-    """
+    """Ollama installation/runtime plus consent-gated model acquisition (ADR-037)."""
 
     state: LlmSetupState = LlmSetupState.UNKNOWN
     #: The model that was looked for. **Named so `model_missing` can say which one**
     model: str | None = None
     #: What to tell the user. Populated for `not_configured` / `model_missing`
     reason: str | None = None
-    #: Whether the API on 127.0.0.1 answers. `STARTING` never occurs (nothing starts it)
+    #: Model pull progress. Only populated for MODEL_INSTALLING.
+    progress: float | None = None
+    completed_bytes: int | None = None
+    total_bytes: int | None = None
+    #: Whether the API on 127.0.0.1 answers. STARTING also covers the 15-second grace.
     runtime: EngineRuntime = EngineRuntime.STOPPED
 
     def to_payload(self) -> dict[str, Any]:
@@ -183,6 +189,9 @@ class LlmSetup:
             "state": str(self.state),
             "model": self.model,
             "reason": self.reason,
+            "progress": self.progress,
+            "completed_bytes": self.completed_bytes,
+            "total_bytes": self.total_bytes,
             "runtime": str(self.runtime),
         }
 
@@ -282,10 +291,14 @@ def boot_phase(setup: SetupSnapshot, *, prompting: bool) -> BootPhase:
     """
     if prompting:
         return BootPhase.SETUP
-    if setup.tts.state is TtsSetupState.INSTALLING or setup.stt.state is SttSetupState.INSTALLING:
+    if (
+        setup.tts.state is TtsSetupState.INSTALLING
+        or setup.stt.state is SttSetupState.INSTALLING
+        or setup.llm.state is LlmSetupState.MODEL_INSTALLING
+    ):
         return BootPhase.INSTALLING
     if not setup.llm.ready:
-        # Lumi neither installs nor starts Ollama, so waiting cannot change this state.
+        # Lumi does not install/start Ollama; model acquisition has its own INSTALLING state.
         return BootPhase.BLOCKED
     if not setup.tts.installed or setup.stt.state is not SttSetupState.INSTALLED:
         # Missing / failed acquisition is settled against us. A runtime warmup cannot fix it.
