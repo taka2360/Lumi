@@ -16,7 +16,6 @@
 > 1. 実行ファイル初検出後、APIが立つまで15秒の起動猶予を設けた → [ADR-037](decisions/ADR-037-consented-ollama-model-pull.md)。
 > 2. Ollama本体は引き続き検出のみだが、推論モデルは対象・概算サイズを明示して同意を得た後、
 >    ローカル `/api/pull` から取得できるようにした。
-
 > **rev.15 の変更点**（モデル選択時の既存ローカルモデルと操作配置）
 > 1. 「別のモデルを選ぶ」では Ollama の `/api/tags` から既存モデルも表示し、
 >    既存モデルは追加取得なしの `select` として選べるようにした → [ADR-037](decisions/ADR-037-consented-ollama-model-pull.md)。

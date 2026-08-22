@@ -17,6 +17,7 @@ import httpx
 
 from lumi import logging as lumi_logging
 from lumi import paths
+from lumi.providers.llm.ollama import DEFAULT_PORT, HOST
 from lumi.setup.engines import AIVISSPEECH_ENGINE, EngineArtifact
 
 log = lumi_logging.get_logger(__name__)
@@ -68,7 +69,7 @@ KNOWN_ENGINES: tuple[KnownEngine, ...] = (
 OLLAMA: KnownEngine = KnownEngine(
     name="ollama",
     display_name="Ollama",
-    port=11434,
+    port=DEFAULT_PORT,
     candidates=(
         ("LOCALAPPDATA", r"Programs\Ollama\ollama.exe"),
         ("ProgramFiles", r"Ollama\ollama.exe"),
@@ -130,7 +131,7 @@ async def is_port_open(port: int, *, host: str = "127.0.0.1") -> bool:
 
 
 async def ollama_api_version(
-    port: int = 11434, *, transport: httpx.AsyncBaseTransport | None = None
+    port: int = OLLAMA.port, *, transport: httpx.AsyncBaseTransport | None = None
 ) -> str | None:
     """Returns Ollama's version only when its fixed local API actually answers.
 
@@ -144,7 +145,7 @@ async def ollama_api_version(
             transport=transport,
             trust_env=False,
         ) as client:
-            response = await client.get(f"http://127.0.0.1:{port}/api/version")
+            response = await client.get(f"http://{HOST}:{port}/api/version")
             response.raise_for_status()
             payload = response.json()
     except (httpx.HTTPError, ValueError):

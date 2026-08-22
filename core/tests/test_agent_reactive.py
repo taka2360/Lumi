@@ -299,6 +299,25 @@ async def test_a_turn_speaks_and_records() -> None:
     assert [t.text for t in rig.session.turns] == ["やあ", "こんにちは。げんきだよ。"]
 
 
+def test_selecting_a_model_preserves_the_other_llm_options() -> None:
+    rig = Rig(FakeLlm([text("こんにちは。")]))
+    rig.loop._options = LLMOptions(
+        model="old",
+        temperature=0.25,
+        max_tokens=256,
+        think=True,
+    )
+
+    rig.loop.set_llm_model("new")
+
+    assert rig.loop._options == LLMOptions(
+        model="new",
+        temperature=0.25,
+        max_tokens=256,
+        think=True,
+    )
+
+
 async def test_runtime_tts_speed_applies_to_next_turn_only() -> None:
     rig = Rig(
         FakeLlm([text("最初の速度だよ。"), text("次の速度だよ。")]),

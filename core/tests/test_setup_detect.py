@@ -77,13 +77,13 @@ class TestOllamaApiProbe:
         seen: list[str] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
-            seen.append(request.url.path)
+            seen.append(str(request.url))
             return httpx.Response(200, json={"version": "0.12.0"})
 
         version = await ollama_api_version(transport=httpx.MockTransport(handler))
 
         assert version == "0.12.0"
-        assert seen == ["/api/version"]
+        assert seen == ["http://127.0.0.1:11434/api/version"]
 
     async def test_rejects_a_non_ollama_response(self) -> None:
         def handler(_request: httpx.Request) -> httpx.Response:

@@ -7,12 +7,14 @@ a race condition found in practice.
 from __future__ import annotations
 
 import asyncio
+from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
 from lumi import paths as paths_module
+from lumi import settings as settings_module
 from lumi.setup import coordinator as coordinator_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
@@ -21,6 +23,7 @@ from lumi.setup.ollama import OllamaLocalModel
 from lumi.setup.state import (
     BootPhase,
     EngineRuntime,
+    LlmSetup,
     LlmSetupState,
     SttSetupState,
     TtsSetupState,
@@ -916,6 +919,102 @@ class TestLlm:
         assert coordinator.state.llm.state is LlmSetupState.DETECTED
         assert coordinator.state.llm.reason == "model_checking"
         assert warmups == [None]
+
+    async def test_recheck_preserves_model_missing_while_model_prompt_is_open(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        one_engine(monkeypatch)
+        server = FakeServer([])
+        coordinator = SetupCoordinator(server.as_server(), {})
+        await coordinator.initialize()
+        coordinator._snapshot = replace(
+            coordinator.state,
+            llm=LlmSetup(
+                state=LlmSetupState.MODEL_MISSING,
+                model="qwen3.5:9b",
+                runtime=EngineRuntime.READY,
+            ),
+        )
+        coordinator._model_prompting = True
+
+        result = await coordinator._recheck_ollama({})
+
+        assert result == {"detected": True, "running": True}
+        assert coordinator.state.llm.state is LlmSetupState.MODEL_MISSING
+
+    async def test_model_pull_progress_restarts_for_a_same_sized_layer(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        one_engine(monkeypatch)
+        progress_values: list[float] = []
+
+        async def pull(_artifact: Any, *, progress: Any = None) -> None:
+            assert progress is not None
+            for completed in (100, 500, 10, 100):
+                await progress(completed, 1_000)
+
+        monkeypatch.setattr(coordinator_module, "pull_ollama_model", pull)
+        server = FakeServer([{"choice": "install", "model": "qwen3.5:9b"}])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        async def select(_model: str) -> None:
+            pass
+
+        coordinator.set_llm_model_selected_handler(select)
+        await coordinator.initialize()
+        await coordinator.report_llm(
+            LlmSetupState.MODEL_MISSING,
+            reason="model_missing",
+            model="qwen3.5:9b",
+        )
+        progress_values.extend(
+            float(notification["llm"]["progress"])
+            for notification in server.notifications
+            if notification.get("llm", {}).get("progress") is not None
+        )
+
+        assert 0.5 in progress_values
+        assert 0.01 in progress_values
+
+    async def test_model_selection_settings_failure_becomes_retryable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        one_engine(monkeypatch)
+        server = FakeServer([{"choice": "install", "model": "qwen3.5:9b"}])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        async def select(_model: str) -> None:
+            raise settings_module.SettingsUnreadable("settings.json")
+
+        coordinator.set_llm_model_selected_handler(select)
+        await coordinator.initialize()
+
+        await coordinator.report_llm(
+            LlmSetupState.MODEL_MISSING,
+            reason="model_missing",
+            model="qwen3.5:9b",
+        )
+
+        assert coordinator.state.llm.state is LlmSetupState.MODEL_FAILED
+        assert coordinator.state.llm.reason == "settings_save_failed"
+        assert len([item for item in server.invocations if item[0] == "stage.setup.prompt"]) == 2
+
+    async def test_local_model_selection_settings_failure_is_reported(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        one_engine(monkeypatch)
+        coordinator = SetupCoordinator(FakeServer([]).as_server(), {})
+        await coordinator.initialize()
+        local = OllamaLocalModel("llama3.1:8b", "llama3.1:8b", 4_200_000_000)
+
+        async def select(_model: str) -> None:
+            raise settings_module.SettingsUnreadable("settings.json")
+
+        coordinator.set_llm_model_selected_handler(select)
+        await coordinator.select_local_llm_model(local)
+
+        assert coordinator.state.llm.state is LlmSetupState.MODEL_FAILED
+        assert coordinator.state.llm.reason == "settings_save_failed"
 
     async def test_declining_model_pull_never_calls_ollama_pull(
         self, monkeypatch: pytest.MonkeyPatch

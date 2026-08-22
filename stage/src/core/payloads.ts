@@ -178,7 +178,13 @@ export function toSttSnapshot(payload: Record<string, unknown>): SttSetupSnapsho
  * than one that names the more likely subject.
  */
 export function toSetupPrompt(payload: Record<string, unknown>): SetupPrompt {
+  const component = oneOf(SETUP_COMPONENTS, payload.component, "tts");
   const model = setupModelOption(payload.model);
+  if (component === "llm_model" && model === null) {
+    // A model prompt without a valid primary option cannot safely render a fallback or
+    // answer Core without an identifier. Reject the command so the protocol reports drift.
+    throw new Error("invalid_llm_model");
+  }
   const alternatives = Array.isArray(payload.alternatives)
     ? payload.alternatives
         .filter(isRecord)
@@ -186,7 +192,7 @@ export function toSetupPrompt(payload: Record<string, unknown>): SetupPrompt {
         .filter((item) => item !== null)
     : [];
   return {
-    component: oneOf(SETUP_COMPONENTS, payload.component, "tts"),
+    component,
     retry: payload.retry === true,
     reason: asString(payload.reason),
     model,

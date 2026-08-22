@@ -70,6 +70,7 @@ const FAILURE_KEYS: Record<string, MessageKey> = Object.fromEntries(
     "ollama_pull_incomplete",
     "ollama_pull_unreachable",
     "model_selection_unavailable",
+    "settings_save_failed",
   ].map((reason) => [reason, `status.failure.${reason}` as MessageKey]),
 );
 
