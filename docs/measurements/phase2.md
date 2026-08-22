@@ -69,7 +69,7 @@
 
 ### 固めた配布物での `--self-check`
 
-```
+```text
 ✓ OS secret store: DPAPI (current user) round-trips the key
 ✓ Encrypted SQLite: chacha20 / APSW 3.53.4.0 / SQLite 3.53.4
 ✓ sqlite-vec: v0.1.9 / KNN search works in an encrypted DB

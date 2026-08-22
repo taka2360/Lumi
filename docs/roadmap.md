@@ -231,8 +231,8 @@ Phase 2 の「やること」にある。
 **保持期間は既定で期限あり・設定で無期限も選べる。「忘れる」と「消える」を混ぜない**——
 記憶レコードは decay/archive の対象であって、保持期間の対象ではない。
 
-⚠ **未検証: 暗号化 DB と sqlite-vec / FTS5 / PyInstaller の統合。**
-下記「やること」の最初の項目。**ここが通らなければ ADR-038 を修正する新しい ADR を書く。黙って平文に落とさない。**
+✅ **暗号化 DB と sqlite-vec / FTS5 / PyInstaller の統合は 2a で確認済み**〔2026-08-22〕。
+**4項目すべて通り、ADR-038 の修正は不要だった** → [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md) / [measurements/phase2.md](measurements/phase2.md)。
 
 ### 実装順 — 2a〜2g に分けた〔2026-08-22〕
 
@@ -479,7 +479,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 4 | ~~入出力が別デバイスのときの duplex stream の扱い~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-020](decisions/ADR-020-split-audio-streams.md)。**duplex を使わない**（別ストリーム + Core が持つ reference） |
 | 5 | **✓ 推奨モデルを Qwen 3.5 9B、軽量候補を 4B に固定。** 日本語会話品質と Tool Calling 品質の継続実測 | Phase 1（利用条件は [licensing.md](licensing.md) §4.8 に記録済み） |
 | ~~6~~ | ~~🔴 **プライバシーとデータ保存の方針**~~ | **✓ 解消**〔2026-08-22〕→ [contracts/privacy.md](contracts/privacy.md), [ADR-038](decisions/ADR-038-privacy-and-data-retention.md)。**保存時の暗号化（DPAPI に預けたランダム鍵）/ 既定で期限のある保持期間 / 単一操作の全消去 / 生波形は永続化しない** |
-| 6b | **暗号化 DB と sqlite-vec / FTS5 / PyInstaller の統合**（未検証。通らなければ ADR-038 を修正する ADR が要る） | **Phase 2 の最初に spike** |
+| ~~6b~~ | ~~**暗号化 DB と sqlite-vec / FTS5 / PyInstaller の統合**~~ | **✓ 解消**〔2026-08-22 / Phase 2a〕→ [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md) / [measurements/phase2.md](measurements/phase2.md)。**APSW + SQLite3 Multiple Ciphers（chacha20）。暗号化 DB で sqlite-vec も FTS5 も動き、配布物への増分は +2.73 MiB。ADR-038 の修正は不要** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
 | ~~8~~ | ~~**DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる）~~ | **✓ 解消**〔2026-08-22〕→ [contracts/privacy.md](contracts/privacy.md) §2。**既定 30 日 / 「全部消して」の対象**。Phase 3 まで持ち越さない |
 | ~~8b~~ | ~~区間合計が p50 目標を超えている~~ | **✓ 解消**〔2026-08-18〕。`llm_first_token` を 537→**421 ms** に縮めたうえで、**p50 目標を 1.2s → 1.5s に置き直した**（1.27/1.50 = 85%）。`vad_ms` 0.43s はターンテイキングの方針で動かせず、旧目標と両立しなかったため。**p95 2.0s（完了条件）と区間別予算は据え置き** → [architecture/audio.md](architecture/audio.md) §7 |

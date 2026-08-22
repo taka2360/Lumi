@@ -475,7 +475,7 @@ GPU に 1.0 GB 置くと 440 ms になる。**守ろうとしていた VRAM の�
 | Drive System の存在と決定論性 | **Confirmed** |
 | SQLite + sqlite-vec | Provisional |
 | Drive・Policy既定値・SLO具体値・モデル選定 | Provisional |
-| **記憶 DB の暗号化方式**（暗号化ビルドと sqlite-vec / FTS5 / PyInstaller の統合） | Provisional — **Phase 2 の最初に spike で確認する** → [contracts/privacy.md](contracts/privacy.md) 末尾 |
+| **記憶 DB の暗号化方式**（APSW + SQLite3 Multiple Ciphers / `chacha20`） | **Confirmed**〔rev.17〕→ [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md)。sqlite-vec / FTS5 / PyInstaller との統合は実測で確認済み → [measurements/phase2.md](measurements/phase2.md) |
 | **Activity の priority の値**（割り込み判定の**方式**は Confirmed → [ADR-024](decisions/ADR-024-activity-priority.md)） | Provisional |
 | **推論スタックの取得方法**（Ollama は検出のみ / VAD は同梱 / STT モデルは実行時取得） | **Confirmed**〔rev.8〕→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) |
 | WS プロトコルの具体スキーマ | Provisional |

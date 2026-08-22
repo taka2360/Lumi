@@ -45,7 +45,7 @@ Phase 2a の最初に spike を回して確認した。**通った。**
 SQLite3MC の既定も `chacha20`（sqleet 方式）だが、**既定に依存しない。**
 ライブラリ更新で既定が変われば、**既存の DB がその日から開けなくなる。**
 
-```
+```sql
 PRAGMA cipher = 'chacha20';
 PRAGMA key    = '<64 hex chars>';
 ```

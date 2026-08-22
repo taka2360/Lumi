@@ -105,6 +105,14 @@ def test_the_file_is_not_a_plaintext_sqlite_database(tmp_path: Path) -> None:
             " VALUES ('x', 's', 1, 'utterance', ?, 'c', 'now')",
             ('{"text": "SENTINEL"}',),
         )
+    # **Checked while the connection is still open**, so the WAL is still on disk.
+    # A committed row may live only in the sidecar until a checkpoint, and a plaintext
+    # WAL next to an encrypted database would leak exactly what the database hides.
+    assert b"SENTINEL" not in path.read_bytes()
+    wal = Path(f"{path}-wal")
+    assert wal.exists(), "WAL is expected to be enabled for on-disk databases"
+    assert b"SENTINEL" not in wal.read_bytes()
+
     db.close()
 
     assert b"SENTINEL" not in path.read_bytes()

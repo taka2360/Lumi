@@ -49,7 +49,14 @@ class SecretStore(Protocol):
         """The stored secret, or `None` if nothing is filed under `name`."""
         ...
 
-    def store(self, name: str, secret: bytes) -> None: ...
+    def create(self, name: str, secret: bytes) -> bool:
+        """Files `secret` under `name` **only if nothing is there yet.**
+
+        `False` means someone else got there first, and **their** secret is the one
+        that counts. There is deliberately no method that overwrites: a database key
+        that can be replaced is a database that can be lost.
+        """
+        ...
 
     def delete(self, name: str) -> None:
         """Removes it. **Missing is not an error** ("erase everything" may run twice)."""
@@ -62,19 +69,36 @@ def get_or_create_db_key(store: SecretStore, name: str = DB_KEY_NAME) -> str:
     **A key of the wrong length is an error, not a reason to generate a new one.**
     A replacement key would leave every existing database unopenable — data loss
     dressed up as recovery. Failing loudly leaves the databases intact.
+
+    **Two Lumi processes may reach first run at the same moment** (a second launch
+    while the first is still starting). Creation is therefore exclusive, and the
+    loser of that race adopts the winner's key rather than overwriting it — the
+    winner may already have created a database with it.
     """
     existing = store.load(name)
     if existing is not None:
-        if len(existing) != KEY_SIZE:
-            raise SecretStoreError(
-                f"Stored database key has an unexpected length: {len(existing)} bytes "
-                f"(expected {KEY_SIZE}). Refusing to replace it."
-            )
-        return existing.hex()
+        return _validated(existing, name)
 
     key = secrets.token_bytes(KEY_SIZE)
-    store.store(name, key)
-    log.info("storage.db_key.created", name=name)
+    if store.create(name, key):
+        log.info("storage.db_key.created", name=name)
+        return key.hex()
+
+    stored = store.load(name)
+    if stored is None:
+        # Someone holds the name but nothing readable is there. **Never generate a
+        # second key to get past this** — that is how two databases with two keys happen.
+        raise SecretStoreError(f"The database key could not be created or read: {name}")
+    log.info("storage.db_key.adopted", name=name)
+    return _validated(stored, name)
+
+
+def _validated(key: bytes, name: str) -> str:
+    if len(key) != KEY_SIZE:
+        raise SecretStoreError(
+            f"Stored secret {name!r} has an unexpected length: {len(key)} bytes "
+            f"(expected {KEY_SIZE}). Refusing to replace it."
+        )
     return key.hex()
 
 
@@ -107,21 +131,57 @@ class DpapiSecretStore:
             return None
         except OSError as error:
             raise SecretStoreError(f"Cannot read the protected secret: {path}") from error
+        if not blob:
+            # An empty file can only come from a `create` that died between making the
+            # file and writing it. **It holds no key**, so it is treated as absent
+            # rather than as a corrupted secret nobody can clear.
+            log.warning("storage.secret.empty", name=name, path=str(path))
+            return None
         return _unprotect(blob, _entropy(name))
 
-    def store(self, name: str, secret: bytes) -> None:
+    def create(self, name: str, secret: bytes) -> bool:
+        """Exclusive create. **Never overwrites, and never partially replaces.**
+
+        `O_EXCL` is what makes two processes racing on first run safe: exactly one of
+        them creates the file, and the other is told so.
+        """
         blob = _protect(secret, _entropy(name))
         path = self._path(name)
-        temporary = path.with_suffix(".tmp")
         try:
             self._directory.mkdir(parents=True, exist_ok=True)
-            temporary.write_bytes(blob)
-            # **Replaced atomically.** A half-written key file is indistinguishable from
-            # a corrupted one, and either one means the databases never open again.
-            os.replace(temporary, path)
         except OSError as error:
-            temporary.unlink(missing_ok=True)
-            raise SecretStoreError(f"Cannot write the protected secret: {path}") from error
+            raise SecretStoreError(f"Cannot create the secrets directory: {path}") from error
+
+        # Two passes: the second one exists only to reclaim an empty file left behind
+        # by an interrupted create (see `load`). **A file with content is never touched.**
+        for _ in range(2):
+            try:
+                descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+            except FileExistsError:
+                try:
+                    occupied = path.stat().st_size > 0
+                except OSError:
+                    continue
+                if occupied:
+                    return False
+                path.unlink(missing_ok=True)
+                continue
+            except OSError as error:
+                raise SecretStoreError(f"Cannot write the protected secret: {path}") from error
+
+            try:
+                with os.fdopen(descriptor, "wb") as sink:
+                    sink.write(blob)
+                    sink.flush()
+                    os.fsync(sink.fileno())
+            except OSError as error:
+                # **The half-written file goes away.** Leaving it would look like a
+                # corrupted key rather than a create that never finished.
+                path.unlink(missing_ok=True)
+                raise SecretStoreError(f"Cannot write the protected secret: {path}") from error
+            return True
+
+        return False
 
     def delete(self, name: str) -> None:
         try:

@@ -387,13 +387,16 @@ Lumi の既存の設計要素で満たせるものを使い、足りない分だ
 
 | エコシステム | 取得元 | 件数〔2026-08-15〕 |
 |---|---|---|
-| Rust | `cargo tree -e normal`（build 依存は exe に入らない） | 245 |
-| Python | `uv export --no-dev`（PyInstaller が固める実行時依存） | 13 |
+| Rust | `cargo tree -e normal`（build 依存は exe に入らない） | 246 |
+| Python | `uv export --no-dev`（PyInstaller が固める実行時依存） | 32 |
 | JavaScript | `pnpm licenses list --prod` | 22 |
-| **依存グラフに現れないもの** | **手で書く** | 4 |
+| **依存グラフに現れないもの** | **手で書く** | 6 |
 
-**最後の行が抜けやすい。** CPython 本体・SQLite・PortAudio・**PyInstaller の bootloader** は
-どの依存グラフにも出てこないのに配布物へ入る。特に bootloader は
+（件数は 2026-08-22 時点。**生成のたびに変わる。** 正は
+`stage/src/credits/third-party.generated.json` であってこの表ではない）
+
+**最後の行が抜けやすい。** CPython 本体・SQLite・**SQLite3 Multiple Ciphers**・PortAudio・
+**Silero VAD**・**PyInstaller の bootloader** はどの依存グラフにも出てこないのに配布物へ入る。特に bootloader は
 **GPL-2.0-or-later WITH Bootloader-exception** であり、例外条項によって
 これを使って作った実行体に GPL は伝播しない（→ [ADR-021](decisions/ADR-021-sidecar-packaging.md)）。
 
