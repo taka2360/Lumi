@@ -110,6 +110,23 @@ def to_tensors(encodings: Sequence[Sequence[int]], *, pad_id: int) -> tuple[np.n
     return tokens, mask
 
 
+def check_dimension(shape: Sequence[object], *, expected: int = DIMENSION) -> None:
+    """Refuse a model whose output is not the width the vector table was built with.
+
+    **Fail-closed, and here rather than at insert time.** `vec0` fixes the width at
+    creation (ADR-041); a 768-wide vector reaching it fails as a blob-length error from
+    inside SQLite, which names the storage layer for a problem that belongs to the model.
+
+    A symbolic dimension (`"batch_size"`, `None`) is not a mismatch — it is the export
+    saying it does not know, and nothing can be concluded from it.
+    """
+    if len(shape) != 2:
+        return
+    width = shape[1]
+    if isinstance(width, int) and width != expected:
+        raise ProviderFailed("embedding_dimension_mismatch", f"model={width} expected={expected}")
+
+
 def truncate(ids: Sequence[int], *, limit: int, eos_id: int) -> list[int]:
     """Cut to `limit`, **keeping EOS last.** Pure.
 
@@ -121,12 +138,34 @@ def truncate(ids: Sequence[int], *, limit: int, eos_id: int) -> list[int]:
     return [*ids[: limit - 1], eos_id]
 
 
+def _required_token(tokenizer: Any, token: str) -> int:
+    """The id of a token the padding and the pooling both depend on.
+
+    **Fails closed.** Guessing 0 for `<pad>` would pad with whatever that id happens to
+    mean, and guessing for `<eos>` would truncate onto the wrong token — in both cases the
+    vectors come out valid, different, and unmatchable against the ones already stored.
+    """
+    found = tokenizer.token_to_id(token)
+    if found is None:
+        raise ProviderFailed("embedding_tokenizer_incomplete", f"missing {token}")
+    return int(found)
+
+
 class HarrierEmbeddingProvider:
     """Implementation of `EmbeddingProvider`. **CPU only; uses no VRAM.**"""
 
     kind = ProviderKind.EMBEDDING
 
-    __slots__ = ("_artifact", "_eos_id", "_model_dir", "_pad_id", "_session", "_tokenizer", "id")
+    __slots__ = (
+        "_artifact",
+        "_eos_id",
+        "_loading",
+        "_model_dir",
+        "_pad_id",
+        "_session",
+        "_tokenizer",
+        "id",
+    )
 
     def __init__(self, models_dir: Path, *, artifact: ModelArtifact = HARRIER_OSS_V1_270M) -> None:
         self.id = f"harrier:{artifact.name}"
@@ -136,6 +175,10 @@ class HarrierEmbeddingProvider:
         self._tokenizer: Any | None = None
         self._pad_id = 0
         self._eos_id = 1
+        #: **One session, even if two callers load at once.** The check before the `await`
+        #: is not enough on its own: both would see `None` and both would build, and the
+        #: loser's session — 200 MB of it — would sit allocated until the collector noticed.
+        self._loading = asyncio.Lock()
 
     # ── lifecycle ──────────────────────────────────────────────────────────
 
@@ -146,11 +189,18 @@ class HarrierEmbeddingProvider:
         a SHA-256 per file (ADR-023); a library quietly downloading 196 MiB would put the
         first external request before the user's consent.
         """
-        if self._session is not None:
-            return
-        self._session, self._tokenizer = await asyncio.to_thread(self._build)
-        self._pad_id = self._token_id("<pad>", default=0)
-        self._eos_id = self._token_id("<eos>", default=1)
+        # **Checked inside the lock, and only there.** Two callers that both look before
+        # awaiting would both build; `load()` is called once at startup, so there is
+        # nothing to buy by testing it outside first.
+        async with self._loading:
+            if self._session is not None:
+                return
+            session, tokenizer = await asyncio.to_thread(self._build)
+            self._pad_id = _required_token(tokenizer, "<pad>")
+            self._eos_id = _required_token(tokenizer, "<eos>")
+            # **Assigned last.** `is_loaded()` and `_embed` read `_session`, so it becoming
+            # non-`None` is what publishes the whole thing as ready.
+            self._session, self._tokenizer = session, tokenizer
         log.info("embedding.loaded", provider=self.id, dimension=DIMENSION)
 
     async def unload(self) -> None:
@@ -229,11 +279,6 @@ class HarrierEmbeddingProvider:
 
     # ── internals ──────────────────────────────────────────────────────────
 
-    def _token_id(self, token: str, *, default: int) -> int:
-        assert self._tokenizer is not None
-        found = self._tokenizer.token_to_id(token)
-        return default if found is None else int(found)
-
     def _build(self) -> tuple[Any, Any]:
         try:
             import onnxruntime as ort
@@ -255,13 +300,7 @@ class HarrierEmbeddingProvider:
             # of the user (`providers/base.py`).
             raise ProviderFailed("embedding_model_unusable", str(error)) from error
 
-        produced = session.get_outputs()[0].shape
-        if len(produced) == 2 and isinstance(produced[1], int) and produced[1] != DIMENSION:
-            # **Fail-closed.** A different width than the `vec0` table was created with
-            # cannot be stored, and finding out at insert time would name the wrong culprit.
-            raise ProviderFailed(
-                "embedding_dimension_mismatch", f"model={produced[1]} expected={DIMENSION}"
-            )
+        check_dimension(session.get_outputs()[0].shape)
         return session, tokenizer
 
     def _resolve(self) -> Path:

@@ -138,23 +138,27 @@ def score(
 def pack_into_budget(
     scored: Sequence[ScoredMemory],
     budget_tokens: int,
-    estimate: Callable[[str], int],
+    cost: Callable[[MemoryRecord], int],
 ) -> tuple[tuple[ScoredMemory, ...], tuple[ScoredMemory, ...]]:
     """Highest score first, until the budget runs out. **Pure and deterministic.**
 
     A memory that does not fit is skipped and the next one is tried, rather than ending the
     packing: one long memory should not cost every shorter memory behind it. **Ties are
     broken by id** so the same inputs always produce the same prompt (snapshottable).
+
+    `cost` takes the **record**, not its text: what reaches the prompt is a rendered line
+    with the grounds spelled out (`agent.recall`), and budgeting against the bare content
+    would quietly overflow by the length of those qualifiers.
     """
     ordered = sorted(scored, key=lambda item: (-item.score, item.record.id))
     selected: list[ScoredMemory] = []
     dropped: list[ScoredMemory] = []
     remaining = budget_tokens
     for item in ordered:
-        cost = estimate(item.record.content)
-        if cost <= remaining:
+        spend = cost(item.record)
+        if spend <= remaining:
             selected.append(item)
-            remaining -= cost
+            remaining -= spend
         else:
             dropped.append(item)
     return tuple(selected), tuple(dropped)
@@ -167,7 +171,7 @@ class Retriever:
     reads the wall clock cannot be tested for either.
     """
 
-    __slots__ = ("_embedder", "_estimate", "_index", "_store")
+    __slots__ = ("_cost", "_embedder", "_index", "_store")
 
     def __init__(
         self,
@@ -175,17 +179,25 @@ class Retriever:
         index: MemoryIndex,
         embedder: EmbeddingProvider | None,
         *,
-        estimate_tokens: Callable[[str], int],
+        cost: Callable[[MemoryRecord], int],
     ) -> None:
         self._store = store
         self._index = index
         #: **`None` is a supported state.** The model is fetched at runtime and the user may
         #: not have taken it; conversation continues without semantic search.
         self._embedder = embedder
-        self._estimate = estimate_tokens
+        #: What a memory will cost the prompt. **Supplied by the caller**, because how a
+        #: memory is rendered belongs to prompt assembly and memory does not depend on it.
+        self._cost = cost
 
     async def retrieve(self, query: str, *, token_budget: int, now: datetime) -> RetrievalResult:
-        """Memories worth putting in front of this utterance."""
+        """Memories worth putting in front of this utterance.
+
+        **Every source fails on its own.** A broken index costs the hits it would have
+        produced and nothing else: the remaining sources still run, `degraded` says so, and
+        the turn continues. Failing the whole lookup because FTS5 raised would take away
+        the vector results that were already in hand.
+        """
         similarities: dict[str, float] = {}
         sources: dict[str, set[str]] = {}
         degraded = self._embedder is None
@@ -201,18 +213,33 @@ class Retriever:
                 log.warning("memory.embed_failed", error=str(error))
                 degraded = True
             else:
-                for hit in await self._index.search(vector, VECTOR_K):
-                    similarities[hit.memory_id] = hit.similarity
-                    sources.setdefault(hit.memory_id, set()).add("vector")
+                try:
+                    for hit in await self._index.search(vector, VECTOR_K):
+                        similarities[hit.memory_id] = hit.similarity
+                        sources.setdefault(hit.memory_id, set()).add("vector")
+                except Exception as error:
+                    log.warning("memory.vector_search_failed", error=str(error))
+                    degraded = True
             embed_ms = (time.perf_counter() - started) * 1000
 
-        for hit in await self._index.search_keywords(query, KEYWORD_K):
-            # **Keeps the larger of the two.** A keyword hit's score is a rank position, not
-            # a cosine, so it must never pull a genuine semantic match downwards.
-            similarities[hit.memory_id] = max(similarities.get(hit.memory_id, 0.0), hit.similarity)
-            sources.setdefault(hit.memory_id, set()).add("keyword")
+        try:
+            for hit in await self._index.search_keywords(query, KEYWORD_K):
+                # **Keeps the larger of the two.** A keyword hit's score is a rank position,
+                # not a cosine, so it must never pull a semantic match downwards.
+                similarities[hit.memory_id] = max(
+                    similarities.get(hit.memory_id, 0.0), hit.similarity
+                )
+                sources.setdefault(hit.memory_id, set()).add("keyword")
+        except Exception as error:
+            log.warning("memory.keyword_search_failed", error=str(error))
+            degraded = True
 
-        recent = await self._store.recent(RECENT_K)
+        recent: Sequence[MemoryRecord] = ()
+        try:
+            recent = await self._store.recent(RECENT_K)
+        except Exception as error:
+            log.warning("memory.recent_failed", error=str(error))
+            degraded = True
         for record in recent:
             similarities.setdefault(record.id, 0.0)
             sources.setdefault(record.id, set()).add("recent")
@@ -220,7 +247,13 @@ class Retriever:
         if not similarities:
             return RetrievalResult(embed_ms=embed_ms, degraded=degraded)
 
-        found = await self._store.get_many(list(similarities))
+        try:
+            found = await self._store.get_many(list(similarities))
+        except Exception as error:
+            # **The last source standing.** Without the records themselves there is nothing
+            # to score, so this one degrades to "no memories" rather than to fewer.
+            log.warning("memory.read_failed", error=str(error))
+            return RetrievalResult(embed_ms=embed_ms, degraded=True)
         for record in recent:
             found.setdefault(record.id, record)
 
@@ -239,7 +272,7 @@ class Retriever:
             # **The index is allowed to be stale; the answer is not.**
             if record.is_live
         ]
-        selected, dropped = pack_into_budget(scored, token_budget, self._estimate)
+        selected, dropped = pack_into_budget(scored, token_budget, self._cost)
         log.info(
             "memory.retrieved",
             selected=len(selected),

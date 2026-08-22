@@ -13,6 +13,7 @@ checked on the tensors themselves.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,7 @@ from lumi.providers.embedding.harrier import (
     MAX_TOKENS,
     HarrierEmbeddingProvider,
     as_query,
+    check_dimension,
     to_tensors,
     truncate,
 )
@@ -253,3 +255,69 @@ def test_the_pinned_files_are_what_the_provider_opens() -> None:
 def test_the_dimension_matches_what_the_vector_table_will_be_created_with() -> None:
     """`vec0` fixes the width at creation (ADR-041 / docs/architecture/memory.md §2)."""
     assert DIMENSION == 640
+
+
+# ── The width the vector table was built with ────────────────
+
+
+def test_a_model_of_the_wrong_width_is_refused() -> None:
+    """★ `vec0` fixes the width at creation (ADR-041). A 768-wide vector reaching it fails
+    as a blob-length error from inside SQLite — **naming storage for a problem that belongs
+    to the model.** This says so at load instead.
+    """
+    with pytest.raises(ProviderFailed) as raised:
+        check_dimension(["batch_size", 768])
+
+    assert raised.value.reason == "embedding_dimension_mismatch"
+
+
+def test_the_expected_width_passes() -> None:
+    check_dimension(["batch_size", DIMENSION])
+
+
+def test_a_width_the_export_did_not_state_is_not_a_mismatch() -> None:
+    """A symbolic dimension is the export saying it does not know. **Nothing follows from
+    it** — refusing would reject a model that is actually fine.
+    """
+    check_dimension(["batch_size", "hidden"])
+    check_dimension([DIMENSION])
+
+
+def test_a_tokenizer_without_the_tokens_pooling_needs_is_refused() -> None:
+    """★ Guessing 0 for `<pad>` pads with whatever that id means, and guessing `<eos>`
+    truncates onto the wrong token. **Both produce valid vectors that match nothing** —
+    including the ones already stored for the same sentences.
+    """
+
+    class Nameless:
+        def token_to_id(self, token: str) -> int | None:
+            return None
+
+    class WithNamelessTokenizer(HarrierEmbeddingProvider):
+        def _build(self) -> tuple[Any, Any]:
+            return FakeSession(), Nameless()
+
+    with pytest.raises(ProviderFailed) as raised:
+        asyncio.run(WithNamelessTokenizer(Path(".")).load())
+
+    assert raised.value.reason == "embedding_tokenizer_incomplete"
+
+
+async def test_loading_twice_at_once_builds_one_session(tmp_path: Path) -> None:
+    """★ The check before the `await` is not enough on its own: both callers see `None`,
+    both build, and **the loser's 200 MB sits allocated** until the collector notices.
+    """
+    built: list[FakeSession] = []
+
+    class Counted(HarrierEmbeddingProvider):
+        def _build(self) -> tuple[Any, Any]:
+            session = FakeSession()
+            built.append(session)
+            return session, FakeTokenizer()
+
+    provider = Counted(tmp_path)
+
+    await asyncio.gather(provider.load(), provider.load())
+
+    assert len(built) == 1
+    assert provider.is_loaded()

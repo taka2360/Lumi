@@ -19,6 +19,12 @@ dependencies = [
     "numpy>=2.1",
     # Phase 1. STT. **CTranslate2 / int8. Doesn't depend on torch** (R1)
     "faster-whisper>=1.1",
+    # Phase 1 (Silero VAD) and Phase 2e (embeddings). **Declared, not inherited**: both
+    # arrive transitively through faster-whisper today, and Core imports them directly —
+    # a Core that only works because of another package's dependency list is one that
+    # breaks the day that list changes
+    "onnxruntime>=1.20",
+    "tokenizers>=0.20",
 ]
 
 # Doesn't depend on torch (installer size R1).

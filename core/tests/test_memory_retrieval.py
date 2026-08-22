@@ -17,10 +17,12 @@ from __future__ import annotations
 
 from collections.abc import Iterator, Sequence
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import numpy as np
 import pytest
 
+from lumi.agent.recall import cost_of
 from lumi.memory.decay import FLOOR
 from lumi.memory.indexing import Indexer
 from lumi.memory.records import AssertionMode, MemoryCandidate, MemoryRecord, MemoryType
@@ -87,7 +89,7 @@ class Rig:
         self.index = MemoryIndex(self.db)
         self.embedder = FakeEmbedder()
         self.retriever = Retriever(
-            self.store, self.index, self.embedder, estimate_tokens=lambda text: len(text)
+            self.store, self.index, self.embedder, cost=lambda record: len(record.content)
         )
 
     async def remember(
@@ -227,7 +229,7 @@ def test_packing_takes_the_best_and_reports_the_rest() -> None:
         ScoredMemory(memory(identifier="b", content="y" * 10), score(memory(), 0.1, NOW)),
     ]
 
-    selected, dropped = pack_into_budget(items, 10, len)
+    selected, dropped = pack_into_budget(items, 10, lambda record: len(record.content))
 
     assert [item.record.id for item in selected] == ["a"]
     assert [item.record.id for item in dropped] == ["b"]
@@ -240,7 +242,7 @@ def test_one_oversized_memory_does_not_block_the_rest() -> None:
     huge = ScoredMemory(memory(identifier="a", content="x" * 100), score(memory(), 0.9, NOW))
     small = ScoredMemory(memory(identifier="b", content="y"), score(memory(), 0.8, NOW))
 
-    selected, dropped = pack_into_budget([huge, small], 10, len)
+    selected, dropped = pack_into_budget([huge, small], 10, lambda record: len(record.content))
 
     assert [item.record.id for item in selected] == ["b"]
     assert [item.record.id for item in dropped] == ["a"]
@@ -255,8 +257,8 @@ def test_packing_is_deterministic_down_to_the_tie() -> None:
         for name in ("b", "a", "c")
     ]
 
-    first, _ = pack_into_budget(tied, 2, len)
-    again, _ = pack_into_budget(list(reversed(tied)), 2, len)
+    first, _ = pack_into_budget(tied, 2, lambda record: len(record.content))
+    again, _ = pack_into_budget(list(reversed(tied)), 2, lambda record: len(record.content))
 
     assert [item.record.id for item in first] == ["a", "b"]
     assert [item.record.id for item in again] == ["a", "b"]
@@ -265,7 +267,7 @@ def test_packing_is_deterministic_down_to_the_tie() -> None:
 def test_nothing_fits_in_no_budget() -> None:
     items = [ScoredMemory(memory(content="x"), score(memory(), 0.9, NOW))]
 
-    selected, dropped = pack_into_budget(items, 0, len)
+    selected, dropped = pack_into_budget(items, 0, lambda record: len(record.content))
 
     assert selected == ()
     assert len(dropped) == 1
@@ -398,7 +400,7 @@ async def test_retrieval_without_an_embedder_still_returns_memories(rig: Rig) ->
     answering without a memory is a worse answer; Lumi not answering is a broken product.**
     """
     await rig.remember("ユーザーは猫を飼っている")
-    retriever = Retriever(rig.store, rig.index, None, estimate_tokens=len)
+    retriever = Retriever(rig.store, rig.index, None, cost=lambda record: len(record.content))
 
     result = await retriever.retrieve("猫は元気?", token_budget=1000, now=NOW)
 
@@ -412,7 +414,7 @@ async def test_a_failing_embedder_degrades_the_search_not_the_turn(rig: Rig) -> 
             raise RuntimeError("session died")
 
     await rig.remember("ユーザーは猫を飼っている")
-    retriever = Retriever(rig.store, rig.index, Broken(), estimate_tokens=len)
+    retriever = Retriever(rig.store, rig.index, Broken(), cost=lambda record: len(record.content))
 
     result = await retriever.retrieve("猫は元気?", token_budget=1000, now=NOW)
 
@@ -523,3 +525,92 @@ async def test_the_mark_is_only_written_for_what_was_stored(rig: Rig) -> None:
 
     pending = await rig.store.needing_embedding(rig.embedder.model_id(), limit=10)
     assert len(pending) == 1
+
+
+# ── One broken source does not take the others down ──────────
+
+
+async def test_a_broken_keyword_index_still_leaves_the_vector_hits(rig: Rig) -> None:
+    """★ Failing the whole lookup because FTS5 raised would throw away vector results that
+    were **already in hand**. The turn gets fewer memories and is told the search was
+    degraded; it does not get an exception.
+    """
+    record = await rig.remember("ユーザーは猫を飼っている", subject="user.pet")
+    await rig.index_everything()
+
+    class NoKeywords(MemoryIndex):
+        async def search_keywords(self, text: str, k: int) -> list[Any]:
+            raise RuntimeError("fts5 is unhappy")
+
+    retriever = Retriever(
+        rig.store, NoKeywords(rig.db), rig.embedder, cost=lambda record: len(record.content)
+    )
+
+    result = await retriever.retrieve("猫の話", token_budget=1000, now=NOW)
+
+    assert result.degraded
+    assert record.id in {item.record.id for item in result.selected}
+
+
+async def test_a_broken_vector_index_still_leaves_the_keyword_hits(rig: Rig) -> None:
+    record = await rig.remember("ユーザーは AivisSpeech を使っている", subject="user.tools")
+    await rig.index_everything()
+
+    class NoVectors(MemoryIndex):
+        async def search(self, query: Any, k: int) -> list[Any]:
+            raise RuntimeError("vec0 is unhappy")
+
+    retriever = Retriever(
+        rig.store, NoVectors(rig.db), rig.embedder, cost=lambda record: len(record.content)
+    )
+
+    result = await retriever.retrieve("AivisSpeech の設定", token_budget=1000, now=NOW)
+
+    assert result.degraded
+    assert record.id in {item.record.id for item in result.selected}
+
+
+async def test_a_database_that_cannot_be_read_returns_nothing_rather_than_raising(
+    rig: Rig,
+) -> None:
+    """The one source that cannot degrade to "fewer": without the records there is nothing
+    to score. **It still does not raise** — the turn goes on without memories.
+    """
+    await rig.remember("ユーザーは猫を飼っている")
+    await rig.index_everything()
+
+    class Unreadable(MemoryStore):
+        async def get_many(self, memory_ids: Any) -> dict[str, Any]:
+            raise RuntimeError("the database is on fire")
+
+    retriever = Retriever(
+        Unreadable(rig.db), rig.index, rig.embedder, cost=lambda record: len(record.content)
+    )
+
+    result = await retriever.retrieve("猫", token_budget=1000, now=NOW)
+
+    assert result.degraded
+    assert result.selected == ()
+
+
+# ── The budget counts what the prompt will actually hold ─────
+
+
+async def test_the_budget_counts_the_rendered_line(rig: Rig) -> None:
+    """★ A memory reaches the prompt as a rendered line with its grounds spelled out
+    (`agent.recall`). Budgeting on the bare content **overflows by exactly the length of
+    the qualifiers** — which are longest on the memories Lumi should be most careful with.
+    """
+    guess = await rig.remember("ユーザーは猫を飼っている", mode=AssertionMode.SELF_GENERATED)
+
+    bare = len(guess.content)
+    rendered = cost_of(guess, len)
+
+    assert rendered > bare
+    retriever = Retriever(
+        rig.store, rig.index, rig.embedder, cost=lambda record: cost_of(record, len)
+    )
+    result = await retriever.retrieve("猫", token_budget=bare, now=NOW)
+
+    assert result.selected == ()
+    assert [item.record.id for item in result.dropped] == [guess.id]

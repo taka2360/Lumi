@@ -41,7 +41,7 @@ from lumi.agent.episodes import EpisodeRecorder
 from lumi.agent.latency import Speculation, TurnLatency, TurnTimer
 from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import ContextBlock, assemble
-from lumi.agent.recall import to_blocks
+from lumi.agent.recall import BLOCK_OVERHEAD_TOKENS, to_blocks
 from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
@@ -366,8 +366,13 @@ class ReactiveLoop:
         timer = timer or TurnTimer(new_correlation_id())
         turn_tts_speed = self._tts_speed
         await self._show_user_said(text)
-        # Phase 1 has no memory retrieval. **Recorded explicitly so the spans stay contiguous**
-        timer.record("retrieve_ms", 0)
+        if self._retriever is None:
+            # **Only when nothing will retrieve.** `begin()` ignores a span that is already
+            # recorded, so writing this unconditionally — as Phase 1 did, when there was no
+            # retrieval at all — made every turn report `retrieve_ms: 0` while the search
+            # ran unmeasured. A span that is always zero is worse than a missing one: it
+            # reads as "this costs nothing" rather than as "nobody looked".
+            timer.record("retrieve_ms", 0)
         proposal = ActivityProposal(
             kind=ActivityKind.CONVERSATION,
             actor=Actor.USER_INITIATED,
@@ -465,10 +470,16 @@ class ReactiveLoop:
         """
         if self._retriever is None:
             return ()
+        # **The span is the whole lookup**, not just the embedding: `RetrievalResult` also
+        # reports `embed_ms`, and the difference between them is what the two indexes cost.
         with timer.span("retrieve_ms"):
             try:
                 result = await self._retriever.retrieve(
-                    text, token_budget=MEMORY_BUDGET_TOKENS, now=self._clock()
+                    text,
+                    # **What the lines may spend**, with the block's own frame already
+                    # taken out — the budget is about the prompt, not about the records.
+                    token_budget=MEMORY_BUDGET_TOKENS - BLOCK_OVERHEAD_TOKENS,
+                    now=self._clock(),
                 )
             except Exception as error:
                 log.warning("memory.retrieve_failed", error=str(error))

@@ -32,6 +32,7 @@ from lumi.agent.episodes import EpisodeRecorder
 from lumi.agent.inspector import InspectorPublisher
 from lumi.agent.prompt import estimate_tokens
 from lumi.agent.reactive import ReactiveLoop
+from lumi.agent.recall import cost_of
 from lumi.agent.session import Session
 from lumi.agent.tasks import report_task_exit
 from lumi.agent.warmup import warm_all, warm_llm
@@ -227,9 +228,10 @@ class ConversationRuntime:
                 self._memories,
                 self._index,
                 self._embedder,
-                # **The estimator the prompt uses.** A second approximation here would let
-                # memories be packed against one budget and truncated against another.
-                estimate_tokens=estimate_tokens,
+                # **Costed as the prompt will render it** (`agent.recall`), with the
+                # estimator the prompt itself uses. Two approximations would mean packing
+                # against one budget and truncating against another.
+                cost=lambda record: cost_of(record, estimate_tokens),
             ),
         )
 

@@ -26,7 +26,7 @@ remains the last line of defence.
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Final
 
 from lumi.agent.prompt import ContextBlock
@@ -45,6 +45,22 @@ PRESENTATION: Final[Mapping[AssertionMode, str]] = {
     AssertionMode.SELF_GENERATED: "{content} (your own guess, nothing confirmed it)",
     AssertionMode.EXTERNAL: "{content} (from an external source)",
 }
+
+
+#: What the frame around the memories costs: the header, and the `--- source ---`
+#: wrapper `ContextBlock.render` adds. **Reserved rather than measured per turn** — it does
+#: not depend on which memories were chosen, and the budget has to be known before they are.
+BLOCK_OVERHEAD_TOKENS: Final = 40
+
+
+def cost_of(record: MemoryRecord, estimate: Callable[[str], int]) -> int:
+    """What one memory costs the prompt. **The rendered line, not the raw content.**
+
+    Budgeting on `content` alone under-counts by the qualifier that `present` adds — and
+    the qualifiers are longest on exactly the memories that are least certain, so the
+    overflow lands on the ones Lumi should be most careful about.
+    """
+    return estimate(present(record))
 
 
 def present(record: MemoryRecord) -> str:
