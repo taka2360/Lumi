@@ -149,6 +149,18 @@ function jsPackages() {
 }
 
 function refuse(packages, ecosystem) {
+	const unknown = packages.filter(
+		(pkg) => !pkg.license || !pkg.license.trim() || pkg.license === "Unknown" || pkg.license === "不明",
+	);
+	if (unknown.length > 0) {
+		const listed = unknown
+			.map((pkg) => `  ${pkg.name} ${pkg.version} — ${pkg.license || "(empty)"}`)
+			.join("\n");
+		throw new Error(
+			`${ecosystem} contains dependencies with unresolvable or missing licenses:\n${listed}`,
+		);
+	}
+
 	const bad = packages.filter((pkg) => REFUSED.some((pattern) => pattern.test(pkg.license)));
 	if (bad.length > 0) {
 		const listed = bad.map((pkg) => `  ${pkg.name} ${pkg.version} — ${pkg.license}`).join("\n");

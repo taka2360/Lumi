@@ -173,12 +173,14 @@ describe("the complete third-party list (generated)", () => {
     expect(all.length).toBe(THIRD_PARTY.total);
   });
 
-  it("nothing has an unknown license", () => {
+  it("nothing has an unknown license across all ecosystems", () => {
     // Unknown = obligations can't be determined. **Never ship something that can't be determined.**
-    for (const dep of all) {
-      expect(dep.license, dep.name).not.toBe("");
-      expect(dep.license, dep.name).not.toBe("不明");
-      expect(dep.license, dep.name).not.toBe("Unknown");
+    for (const ecosystem of THIRD_PARTY.ecosystems) {
+      for (const dep of ecosystem.packages) {
+        expect(dep.license, `${ecosystem.name}: ${dep.name}`).not.toBe("");
+        expect(dep.license, `${ecosystem.name}: ${dep.name}`).not.toBe("不明");
+        expect(dep.license, `${ecosystem.name}: ${dep.name}`).not.toBe("Unknown");
+      }
     }
   });
 
