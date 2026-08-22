@@ -36,6 +36,7 @@ log = lumi_logging.get_logger(__name__)
 #: (the most recent utterance is the valuable one; queuing forever only grows latency)
 EVENT_QUEUE_SIZE: Final = 32
 
+
 class AudioIO:
     """**Wiring only.** Decisions are made by the Reactive Loop (on the asyncio side)."""
 

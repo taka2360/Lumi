@@ -234,6 +234,16 @@ class TurnTimer:
         """When the user stopped talking. **The VAD wait starts here** (ADR-039 overlap)."""
         return self._started
 
+    def now(self) -> float:
+        """This turn's clock.
+
+        **One turn, one time source.** The overlap between `vad_ms` and `stt_ms` is computed
+        from timestamps taken in three places (here, the timer's start, and the STT runner);
+        if any of them read a different clock, the subtraction is meaningless — and under a
+        fake clock in a test, silently so.
+        """
+        return self._clock()
+
     # ── Closing ──────────────────────────────────────────────
 
     def complete(self) -> None:

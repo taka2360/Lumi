@@ -262,7 +262,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [x] **STT のデバッグ書き出しを撤去**（[contracts/privacy.md](contracts/privacy.md) §6 が録音経路を禁じている。
   Phase 1 の `lumi/audio/dump.py` は**ソースから実行すると既定で有効**だった → [architecture/audio.md](architecture/audio.md)）
 
-#### 2b — 投機 STT〔2026-08-22 実装完了。実測は残〕
+#### 2b — 投機 STT〔2026-08-22 実装完了。**実測が残っているので 2b は閉じていない**〕
 
 - [x] **投機 STT**（VAD の無音待ちと STT を重ねる → [ADR-039](decisions/ADR-039-speculative-stt.md)）。
   不変スナップショット + 世代 ID + 原子的な照合。**曖昧なら採用しない**（fail-closed）。

@@ -10,7 +10,7 @@
 |---|---|
 | Status | **承認済み（2026-08-15）** |
 | Revision | rev.17 |
-| 実装フェーズ | **Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）/ 2b（投機 STT）完了。** → [roadmap.md](roadmap.md) |
+| 実装フェーズ | **Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）完了。2b（投機 STT）は実装完了・実測は未取得。** → [roadmap.md](roadmap.md) |
 
 > **rev.17 の変更点**（Phase 2 を 2a〜2g に分け、暗号化の未検証を潰した）
 > 1. **暗号化 SQLite の実装方式が決まった** → [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md)。

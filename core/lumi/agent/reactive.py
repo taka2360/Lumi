@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import math
-import time
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Final, cast
@@ -244,7 +243,9 @@ class ReactiveLoop:
         """
         timer = TurnTimer(new_correlation_id(), started_at=ended_at)
         timer.since_start("vad_ms")
-        vad_ended_at = time.perf_counter()
+        # **The timer's clock, not `perf_counter` directly.** `overlap_ms` subtracts
+        # this from the STT runner's timestamps, so all three have to be one clock
+        vad_ended_at = timer.now()
         # **Measured before STT runs**, so a segment that makes STT fail outright still
         # says something about what went in. Peak and RMS separate "the audio was already
         # damaged" from "the model got clean audio and still got it wrong" — the 48 kHz →

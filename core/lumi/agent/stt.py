@@ -129,7 +129,6 @@ class SpeculativeStt:
         "_pending",
         "_speculations",
         "_task",
-        "_task_generation",
         "_transcribe",
     )
 
@@ -144,7 +143,6 @@ class SpeculativeStt:
         self._max_speculations = max_speculations_per_turn
         self._clock = clock
         self._task: asyncio.Task[_Execution] | None = None
-        self._task_generation: int | None = None
         #: The newest snapshot waiting for the worker. **At most one** — a newer generation
         #: replaces it, and the old audio is released rather than queued
         self._pending: tuple[int, Samples, float] | None = None
@@ -163,11 +161,15 @@ class SpeculativeStt:
 
         A run from the previous turn may still be in flight and cannot be stopped; it will
         simply fail to match any generation and be counted as discarded.
+
+        **The discard counters are deliberately not reset here.** A turn ends at
+        `SPEECH_ENDED`, but its `resolve` runs in a task, and the user can start the next
+        utterance while it is still waiting. Clearing the counters at that moment would
+        empty them out from under a turn that has not reported yet. They are cleared when
+        an outcome carries them away instead.
         """
         self._speculations = 0
         self._capped = False
-        self._discarded = 0
-        self._discarded_ms = 0
         self._release_pending()
 
     # ── Speculation ──────────────────────────────────────────────
@@ -227,7 +229,6 @@ class SpeculativeStt:
             # a speculation for the next turn must not start a second inference.
             task = asyncio.create_task(self._run(generation, audio, requested_at), name="stt")
             self._task = task
-            self._task_generation = generation
             try:
                 # No done-callback on this one. The awaiting caller *is* the consumer, and
                 # settling it into `_done` as well would leave a result nobody claims.
@@ -235,14 +236,12 @@ class SpeculativeStt:
             finally:
                 if self._task is task:
                     self._task = None
-                    self._task_generation = None
                     self._start_pending()
             return self._outcome(execution, speculative=False)
 
     # ── Internals ────────────────────────────────────────────────
 
     def _start(self, generation: int, audio: Samples, requested_at: float) -> None:
-        self._task_generation = generation
         task = asyncio.create_task(self._run(generation, audio, requested_at), name="stt")
         self._task = task
         task.add_done_callback(self._finished)
@@ -263,7 +262,6 @@ class SpeculativeStt:
         if self._task is not task:
             return
         self._task = None
-        self._task_generation = None
         if task.cancelled():
             return
         error = task.exception()
@@ -310,14 +308,22 @@ class SpeculativeStt:
         self._pending = None
 
     def _outcome(self, execution: _Execution, *, speculative: bool) -> SttOutcome:
+        """Build the outcome and **hand the discard counters over with it.**
+
+        Reporting is what clears them, so every discarded execution is counted exactly
+        once, against the transcription that was actually waiting when it happened.
+        """
+        discarded, discarded_ms = self._discarded, self._discarded_ms
+        self._discarded = 0
+        self._discarded_ms = 0
         return SttOutcome(
             transcription=execution.transcription,
             speculative=speculative,
             requested_at=execution.requested_at,
             started_at=execution.started_at,
             available_at=execution.finished_at,
-            discarded_ms=self._discarded_ms,
-            discarded=self._discarded,
+            discarded_ms=discarded_ms,
+            discarded=discarded,
             capped=self._capped,
         )
 

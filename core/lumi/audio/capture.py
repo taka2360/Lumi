@@ -307,9 +307,7 @@ class VadWorker:
                 # **A copy, not the buffer.** Frames keep arriving while the speculation runs,
                 # and draining the segment here would leave `SPEECH_ENDED` with only the tail
                 self._listener(
-                    VadNotification(
-                        event, _clamp(self._segmenter.snapshot()), audio_at, generation
-                    )
+                    VadNotification(event, _clamp(self._segmenter.snapshot()), audio_at, generation)
                 )
             elif event is VadEvent.SPEECH_ENDED:
                 audio = self._segmenter.take()

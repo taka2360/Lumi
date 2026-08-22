@@ -74,6 +74,25 @@ async def _local_models(model: OllamaLocalModel) -> tuple[OllamaLocalModel, ...]
 
 
 @pytest.fixture(autouse=True)
+def no_real_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
+    """**Never asks the developer's own Ollama what it has installed.**
+
+    `list_ollama_models` talks to a fixed local endpoint, so without this the prompt is
+    built from whatever models happen to be on the machine running the suite: on a
+    machine that already has the recommended model, it comes back as `installed: True`
+    with that machine's byte count, and the test asserting the catalog entry fails.
+
+    Same reason as `isolated_paths` below. A test that passes or fails depending on whose
+    laptop it runs on is not testing the code.
+    """
+
+    async def none() -> tuple[OllamaLocalModel, ...]:
+        return ()
+
+    monkeypatch.setattr(coordinator_module, "list_ollama_models", none)
+
+
+@pytest.fixture(autouse=True)
 def isolated_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setattr(paths_module, "engines_dir", lambda: tmp_path / "engines")
     # **Never reads the developer's real model directory.** Doing so makes the outcome

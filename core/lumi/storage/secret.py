@@ -21,6 +21,7 @@ import ctypes
 import os
 import secrets
 import sys
+from contextlib import suppress
 from pathlib import Path
 from typing import Final, Protocol
 
@@ -132,30 +133,24 @@ class DpapiSecretStore:
         except OSError as error:
             raise SecretStoreError(f"Cannot read the protected secret: {path}") from error
         if not blob:
-            # An empty file can only come from a `create` that died between making the
-            # file and writing it — which also means **no key was ever handed out under
-            # this name**, so no database exists that this file was supposed to open.
-            # **It is not cleared automatically.** Deleting a file that merely looks
-            # empty right now is how another process's freshly written key gets
-            # destroyed; see `create`.
-            raise SecretStoreError(
-                f"The protected secret is empty: {path}. A first run was interrupted "
-                f"between creating the file and writing the key. No database was "
-                f"created with it: delete this file and start again."
-            )
+            # **Nothing here guesses how it got this way.** Whatever produced an empty file
+            # at this name, it holds no key, and treating it as "probably safe to remove"
+            # would be exactly the assumption that loses somebody's memories.
+            raise SecretStoreError(f"The protected secret is empty and cannot be used: {path}")
         return _unprotect(blob, _entropy(name))
 
     def create(self, name: str, secret: bytes) -> bool:
-        """Exclusive create. **Never overwrites, and never deletes anyone else's file.**
+        """Claim `name` for `secret`. **Never overwrites, never touches another file.**
 
-        `O_EXCL` is what makes two processes racing on first run safe: exactly one of
-        them creates the file, and the other is told so.
+        The secret is written to a private temporary file first and only then linked into
+        place. `os.link` fails if the name is taken, so the claim is atomic and exclusive
+        without a lock — and, unlike creating the final file and filling it afterwards,
+        **the name never exists in a half-written state.**
 
-        **There is no reclaim path for an existing file, empty or not.** "It looked
-        empty, so I removed it" cannot be made safe without a lock: between the look
-        and the removal, the process that created it may have written the key and
-        opened a database with it. The only file this method ever unlinks is one that
-        this very call created and then failed to write.
+        That ordering is what makes cleanup safe. On failure the only thing unlinked is
+        this call's own uniquely-named temporary file; the final name is never removed
+        here, so a `delete` + `create` from elsewhere cannot have its new secret deleted
+        by our error path.
         """
         blob = _protect(secret, _entropy(name))
         path = self._path(name)
@@ -164,24 +159,29 @@ class DpapiSecretStore:
         except OSError as error:
             raise SecretStoreError(f"Cannot create the secrets directory: {path}") from error
 
+        # Unique per call: pid plus randomness, so two processes never pick the same one.
+        temporary = path.with_suffix(f".{os.getpid()}-{secrets.token_hex(8)}.tmp")
         try:
-            descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-        except FileExistsError:
-            return False
-        except OSError as error:
-            raise SecretStoreError(f"Cannot write the protected secret: {path}") from error
-
-        try:
+            descriptor = os.open(temporary, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
             with os.fdopen(descriptor, "wb") as sink:
                 sink.write(blob)
                 sink.flush()
+                # **Durable before it is visible.** A key that is linked into place but not
+                # on disk after a power loss is a database nobody can open again.
                 os.fsync(sink.fileno())
+
+            try:
+                os.link(temporary, path)
+            except FileExistsError:
+                # Someone else claimed it first. **Theirs counts**, and the caller is told.
+                return False
         except OSError as error:
-            # **Removing this one is safe**: `O_EXCL` succeeded, so no other process
-            # can have written to it. Leaving it would look like a corrupted key
-            # rather than a create that never finished.
-            path.unlink(missing_ok=True)
             raise SecretStoreError(f"Cannot write the protected secret: {path}") from error
+        finally:
+            # **Only ever our own temporary.** Failing to remove it leaves a stray file,
+            # which is not worth masking the real error for.
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
         return True
 
     def delete(self, name: str) -> None:
