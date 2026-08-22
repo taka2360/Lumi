@@ -1,6 +1,6 @@
 """Which device an inference Provider should run on.
 
-Strategy → DESIGN.md §7 "GPU / VRAM 戦略" / decision → ADR-025
+Strategy -> DESIGN.md §7 "GPU / VRAM strategy" / decision -> ADR-025
 
 ## Why detection lives here rather than in each Provider
 

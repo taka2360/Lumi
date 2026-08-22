@@ -1,6 +1,6 @@
 """The STT debug dump. **Off unless the env flag is set.**
 
-docs/architecture/audio.md §8 "音声入力のデバッグ"
+docs/architecture/audio.md §8 "Debugging audio input"
 """
 
 from __future__ import annotations

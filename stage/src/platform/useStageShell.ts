@@ -77,7 +77,7 @@ export function useHitRegionReporter(): (rects: CssRect[]) => void {
 }
 
 /**
- * Returns a function that quits Lumi. Used by the setup screen's [終了] (ADR-034).
+ * Returns a function that quits Lumi. Used by the setup screen's [Quit] (ADR-034)
  *
  * **Never wired to anything the character can reach.** The only caller is a button the
  * user presses on a screen that says Lumi has not started.

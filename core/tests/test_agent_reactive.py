@@ -630,7 +630,7 @@ async def test_an_interrupt_mutes_the_playback() -> None:
     # real test)
     spoken = rig.notifier.spoken()
     assert spoken[0] == "あ。"
-    assert len(spoken) < 3, "最後まで喋らずに止まった"
+    assert len(spoken) < 3, "stopped before speaking completely"
     assert playback.mute_flag.is_set()
     assert playback.queued == 0
 
@@ -689,7 +689,7 @@ async def test_a_failing_event_does_not_make_lumi_deaf(monkeypatch: pytest.Monke
 
     async def boom(self: AttentionArbiter, reason: str) -> None:
         # Exactly what the unstarted Arbiter raised in production
-        raise RuntimeError("Arbiter が start() されていない")
+        raise RuntimeError("Arbiter is not started")
 
     monkeypatch.setattr(AttentionArbiter, "interrupt", boom)
 
@@ -703,8 +703,8 @@ async def test_a_failing_event_does_not_make_lumi_deaf(monkeypatch: pytest.Monke
         await asyncio.wait({speaking, task}, timeout=5.0, return_when=asyncio.FIRST_COMPLETED)
         speaking.cancel()
 
-        assert not task.done(), "1つのイベントが失敗してもループは生き残る"
-        assert [t.text for t in rig.session.turns][:1] == ["おーい"], "次の発話を拾えている"
+        assert not task.done(), "loop must survive a single event failure"
+        assert [t.text for t in rig.session.turns][:1] == ["おーい"], "next utterance was picked up"
     finally:
         await _drain(task)
 

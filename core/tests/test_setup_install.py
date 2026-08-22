@@ -251,7 +251,7 @@ class TestInstall:
         assert executable.name == "run.exe"
         assert executable.is_file()
         assert (engines / "testengine-1.0.0").is_dir()
-        assert not list(engines.glob(".tmp-*")), "一時ディレクトリが残っている"
+        assert not list(engines.glob(".tmp-*")), "temporary directory was left behind"
 
     async def test_leaves_nothing_behind_when_the_download_fails(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -266,8 +266,8 @@ class TestInstall:
         with pytest.raises(SetupError):
             await install_engine(artifact_for(), engines)
 
-        assert not (engines / "testengine-1.0.0").exists(), "確定先が作られている"
-        assert not list(engines.glob(".tmp-*")), "一時ディレクトリが残っている"
+        assert not (engines / "testengine-1.0.0").exists(), "target destination was created"
+        assert not list(engines.glob(".tmp-*")), "temporary directory was left behind"
 
     async def test_a_dropped_connection_is_reported_as_a_network_failure(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -293,8 +293,8 @@ class TestInstall:
             await install_engine(artifact_for(), engines)
 
         assert raised.value.reason == "network_unreachable"
-        assert "ConnectError" in (raised.value.detail or ""), "何が起きたかが失われている"
-        assert not list(engines.glob(".tmp-*")), "一時ディレクトリが残っている"
+        assert "ConnectError" in (raised.value.detail or ""), "failure detail was lost"
+        assert not list(engines.glob(".tmp-*")), "temporary directory was left behind"
 
     @pytest.mark.parametrize(
         "error",
@@ -339,7 +339,7 @@ class TestInstall:
             await install_engine(artifact_for(), engines)
 
         assert raised.value.reason == "disk_error"
-        assert not list(engines.glob(".tmp-*")), "一時ディレクトリが残っている"
+        assert not list(engines.glob(".tmp-*")), "temporary directory was left behind"
 
     async def test_does_not_commit_when_the_executable_is_missing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -401,11 +401,11 @@ class TestNetworkOptional:
     #: Modules allowed to hold an HTTP client, and why.
     #: **When adding one, always write down "when and where it communicates."**
     ALLOWED_HTTP: ClassVar[dict[str, str]] = {
-        "setup/detect.py": "Ollama の再検出。127.0.0.1:11434/api/version のみ",
-        "setup/install.py": "エンジンの取得。ユーザーが選んだときだけ呼ばれる",
-        "setup/ollama.py": "同意済みモデルの取得依頼。127.0.0.1:11434/api/pull のみ",
-        "providers/tts/aivisspeech.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
-        "providers/llm/ollama.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
+        "setup/detect.py": "Ollama recheck. 127.0.0.1:11434/api/version only",
+        "setup/install.py": "Engine fetch. Called only when the user chooses to",
+        "setup/ollama.py": "Consented model fetch. 127.0.0.1:11434/api/pull only",
+        "providers/tts/aivisspeech.py": "External engine. 127.0.0.1 only (pinned in test below)",
+        "providers/llm/ollama.py": "External engine. 127.0.0.1 only (pinned in test below)",
     }
 
     def test_http_is_confined_to_known_modules(self) -> None:
@@ -416,8 +416,8 @@ class TestNetworkOptional:
             if "httpx" in path.read_text(encoding="utf-8")
         )
         assert offenders == sorted(self.ALLOWED_HTTP), (
-            "HTTP クライアントを持ってよいのは取得処理と外部エンジンのクライアントだけ。"
-            "他から使うと、ユーザーの選択より前に外部通信が起きうる"
+            "Only setup installer and external engine clients may hold an HTTP client. "
+            "Using it elsewhere risks network access before user choice"
         )
 
     def test_the_engine_client_only_talks_to_localhost(self) -> None:
@@ -428,7 +428,7 @@ class TestNetworkOptional:
         """
         module = Path(aivisspeech.__file__)
         urls = re.findall(r"https?://[^\"']*", module.read_text(encoding="utf-8"))
-        assert urls, "URL の組み立て方が変わった。このテストを見直すこと"
+        assert urls, "URL construction changed. Review this test"
         assert all(url.startswith("http://{HOST}:") for url in urls), urls
         assert aivisspeech.HOST == "127.0.0.1"
 
@@ -438,7 +438,7 @@ class TestNetworkOptional:
         """
         module = Path(ollama.__file__)
         urls = re.findall(r"https?://[^\"']*", module.read_text(encoding="utf-8"))
-        assert urls, "URL の組み立て方が変わった。このテストを見直すこと"
+        assert urls, "URL construction changed. Review this test"
         assert all(
             url.startswith(("http://{HOST}:", "https://github.com", "https://ollama.com"))
             for url in urls

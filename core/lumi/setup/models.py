@@ -110,19 +110,19 @@ FASTER_WHISPER_SMALL: Final = ModelArtifact(
     license_url="https://huggingface.co/Systran/faster-whisper-small",
 )
 
-#: faster-whisper large-v3-turbo 〔2026-08-17 採用 → ADR-027〕.
+#: faster-whisper large-v3-turbo [2026-08-17 adopted -> ADR-027]
 #:
-#: `small` の語彙混同が実用に耐えなかった。同一の発話区間で **CER 7.2% → 3.6%**、
-#: p95 100 → 149 ms（`stt_ms` 予算 220 ms の内側）、VRAM 0.4 → 1.0 GB
-#: (docs/measurements/phase1.md)。
+#: Vocabulary confusion in `small` was not practically usable. Over the same speech interval:
+#: **CER 7.2% -> 3.6%**, p95 100 -> 149 ms (within `stt_ms` budget of 220 ms), VRAM 0.4 -> 1.0 GB
+#: (docs/measurements/phase1.md)
 #:
-#: **repo 名は `dropbox-dash/...` を使う。** faster-whisper 内部の `_MODELS` は
-#: `mobiuslabsgmbh/...` を指しているが、**その組織は改名済み**で HuggingFace の API は
-#: どちらの名前でも同じ id (`dropbox-dash/...`) と同じ commit を返す〔2026-08-17 確認〕。
-#: 旧名は別名にすぎないので、**実在する方**を固定する。
+#: **Repo name uses `dropbox-dash/...`** faster-whisper's internal `_MODELS` points to
+#: `mobiuslabsgmbh/...`, but **that organization was renamed** and HuggingFace API returns
+#: the same id (`dropbox-dash/...`) and commit for both [confirmed 2026-08-17]
+#: The old name is just an alias, so we pin the **actual existing one**
 #:
-#: SHA-256 は取得した1回から計算した〔2026-08-17〕。**保証するのは「pin した時点の配布物と
-#: 同一であること」だけ**（docs/architecture/setup.md §3b）。
+#: SHA-256 was computed from a single fetch [2026-08-17]. **Only guarantees identity with
+#: the distribution at the time of pinning** (docs/architecture/setup.md §3b)
 FASTER_WHISPER_LARGE_V3_TURBO: Final = ModelArtifact(
     name="large-v3-turbo",
     repo="dropbox-dash/faster-whisper-large-v3-turbo",
@@ -138,8 +138,8 @@ FASTER_WHISPER_LARGE_V3_TURBO: Final = ModelArtifact(
             size=1_617_884_929,
             sha256="e76620f83d5f5b69efd3d87e3dc180c1bd21df9fbebacfd4335e5e1efcc018da",
         ),
-        # : `small` に無いファイル。**特徴抽出の設定**（mel フィルタ数）がここにあり、
-        # : 欠けると読み込みが失敗する
+        # File not present in `small`. **Mel filter config** lives here
+        # Loading fails if missing
         ModelFile(
             name="preprocessor_config.json",
             size=340,
@@ -150,7 +150,7 @@ FASTER_WHISPER_LARGE_V3_TURBO: Final = ModelArtifact(
             size=2_710_337,
             sha256="297b13372ac43916285644fb9687add3cc62ee2a1adb60da3dc25cc94c1871fd",
         ),
-        # **`.txt` ではなく `.json`。** `small` と配布の形が違う
+        # **`.json` rather than `.txt`** Distributed in a different format than `small`
         ModelFile(
             name="vocabulary.json",
             size=1_068_114,

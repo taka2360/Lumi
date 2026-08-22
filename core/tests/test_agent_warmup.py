@@ -35,7 +35,7 @@ from lumi.setup.state import EngineRuntime, SttSetupState
 class TestEverythingIsWarmed:
     """★ **Whatever is left cold is a bill handed to the first reply.**
 
-    docs/interfaces/provider.md（表 2d）. Observed 2026-08-18: the first answer took 7.5 s,
+    docs/interfaces/provider.md (Table 2d). Observed 2026-08-18: the first answer took 7.5 s,
     of which 3767 ms was the LLM's weights, 3092 ms the TTS voice model, and 2489 ms the STT
     model — **and the STT one was invisible**, because `stt_ms` times `transcribe` while the
     model was built just outside it (it surfaced only as `unaccounted_ms`).
@@ -59,7 +59,7 @@ class TestEverythingIsWarmed:
         await warm_all(providers, coordinator, "qwen3:8b")
 
         cold = [kind.value for kind, provider in registered.items() if not provider.is_loaded()]
-        assert not cold, f"起動時に温めていない Provider がある: {cold}"
+        assert not cold, f"Found un-warmed Provider on startup: {cold}"
         assert coordinator.state.stt.runtime is EngineRuntime.READY
         assert server.stt_runtimes[-2:] == ["starting", "ready"]
 
@@ -123,7 +123,7 @@ class TestEverythingIsWarmed:
 
         await warm_all(providers, coordinator, "qwen3:8b", on_ready=on_ready)
 
-        assert observed == [], "セットアップ未完了なのにマイクを開いている"
+        assert observed == [], "opened microphone while setup was incomplete"
         assert server.boots[-1] == "blocked"
 
     async def test_a_missing_speech_model_never_opens_the_microphone(
@@ -216,9 +216,9 @@ class TestWarmTts:
 
         await warm_tts(providers, coordinator)
 
-        assert provider.load_calls == 1, "最初の発話まで起動を先送りしていない"
+        assert provider.load_calls == 1, "did not postpone startup until first utterance"
         assert coordinator.state.tts.runtime is EngineRuntime.READY
-        assert server.boots[0] == "starting", "起動中であることを先に見せる"
+        assert server.boots[0] == "starting", "must show starting state first"
         assert server.boots[-1] == "ready"
 
     async def test_does_not_show_a_wait_that_leads_nowhere(
@@ -240,7 +240,7 @@ class TestWarmTts:
 
         await warm_tts(providers, coordinator)
 
-        assert "starting" not in server.boots, "揃わないと分かっているのに待たせている"
+        assert "starting" not in server.boots, "waiting when knowing setup is incomplete"
         assert set(server.boots) == {"blocked"}
 
     async def test_a_broken_engine_blocks_startup(

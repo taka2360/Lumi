@@ -94,7 +94,7 @@ async def test_a_child_that_outlives_its_parent_is_visible() -> None:
     accepted = await kernel.propose(conversation())
     activity = accepted.activity  # type: ignore[union-attr]
     activity.cancellables.append(
-        Cancellable(id="tts", label="TTS 再生", contract=Cancellation.COOPERATIVE)
+        Cancellable(id="tts", label="TTS playback", contract=Cancellation.COOPERATIVE)
     )
 
     view = snapshot(list(kernel.activities()), kernel.current().id, None)
@@ -102,7 +102,7 @@ async def test_a_child_that_outlives_its_parent_is_visible() -> None:
 
     assert foreground["state"] == ActivityState.RUNNING.value
     assert foreground["cancellables"] == [
-        {"label": "TTS 再生", "contract": "cooperative", "finished": False}
+        {"label": "TTS playback", "contract": "cooperative", "finished": False}
     ]
 
 

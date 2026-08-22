@@ -43,7 +43,7 @@ describe("mapping an intent onto a preset", () => {
     for (const emotion of EMOTIONS) {
       const weights = targetWeights(state({ emotion, intensity: 1 }), 0);
       const found = VRM_PRESETS.filter((preset) => weights[preset] > 0);
-      expect(found.length, `${emotion} が preset に落ちていない`).toBeLessThanOrEqual(1);
+      expect(found.length, `${emotion} did not resolve to a preset`).toBeLessThanOrEqual(1);
     }
   });
 

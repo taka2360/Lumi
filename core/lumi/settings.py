@@ -14,7 +14,7 @@ cannot survive a program rewriting the file anyway.
 | Rule | Why |
 |---|---|
 | A broken file falls back to defaults and is **never overwritten** | It stays recoverable |
-| A **newer schema** is treated the same way | この版としては読めず、書けば嘘の版が刻まれる |
+| A **newer schema** is treated the same way | Version unreadable; saving stamps a false version |
 | Unknown keys are **preserved** on save | A downgrade must not lose them |
 | One bad value **only costs that key** | One typo must not discard every other setting |
 | Environment overrides the file, **visibly** | "I changed it and nothing happened" otherwise |

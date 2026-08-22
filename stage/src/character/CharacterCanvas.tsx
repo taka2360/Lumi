@@ -78,7 +78,7 @@ export function CharacterCanvas({
     camera.position.set(0, 1.05, 2.6);
     camera.lookAt(0, 1.0, 0);
 
-    // アニメ調モデルの陰影を綺麗に出すため均一な白色の環境光と正面寄りの平行光を設定
+    // Set uniform white ambient light and frontal directional light to shade anime-style models cleanly
     scene.add(new AmbientLight(0xffffff, 0.8));
     const key = new DirectionalLight(0xffffff, 1.2);
     key.position.set(0.25, 1.0, 1.5).normalize();

@@ -98,10 +98,10 @@ def test_preemption_is_judged_from_the_proposal_not_a_number() -> None:
 
     With a bare `int` the caller supplies the priority, and nothing structurally stops a
     number nobody decided from reaching the comparison — the exact thing ADR-024 §3
-    ("priority を外部が提案できない") asks the boundary to make impossible.
+    ("priority cannot be proposed from the outside") asks the boundary to make impossible.
     """
     parameters = list(inspect.signature(can_preempt).parameters.values())
-    assert parameters[0].annotation == "ActivityProposal", "生の数値を受け取らない"
+    assert parameters[0].annotation == "ActivityProposal", "must not accept raw number"
 
 
 def test_idle_starts_running_without_being_proposed() -> None:

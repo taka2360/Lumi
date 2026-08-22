@@ -51,9 +51,9 @@ log = lumi_logging.get_logger(__name__)
 #: Measured 2026-08-16: **GPU 60 ms vs CPU 920 ms** for the same clip — 15x, for 0.4 GB
 #: (docs/measurements/phase1.md). The 0.22 s budget is unreachable on CPU.
 #:
-#: **`int8_float16` rather than `float16` for large-v3-turbo** 〔2026-08-17 実測 → ADR-027〕:
+#: **`int8_float16` rather than `float16` for large-v3-turbo** [2026-08-17 measured -> ADR-027]:
 #: identical CER (3.6%), slightly faster (p50 143 vs 150 ms), and **half the VRAM**
-#: (1.0 vs 1.9 GB). There is nothing to buy by keeping the weights in float16.
+#: (1.0 vs 1.9 GB). There is nothing to buy by keeping the weights in float16
 COMPUTE_TYPE: Final = {DeviceChoice.CUDA: "int8_float16", DeviceChoice.CPU: "int8"}
 
 #: VRAM per model on CUDA, measured (docs/measurements/phase1.md). **Not derived from the

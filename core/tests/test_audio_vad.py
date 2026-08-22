@@ -363,8 +363,8 @@ def test_a_crashing_vad_thread_never_leaves_playback_muted() -> None:
         vad=cast(SileroVad, vad),
     )
     worker.start()
-    assert vad.entered.wait(timeout=2.0), "VADスレッドが推論に到達しないまま停止した"
+    assert vad.entered.wait(timeout=2.0), "VAD thread stopped without reaching inference"
     worker.stop()
 
-    assert not mute_flag.is_set(), "落ちたスレッドがミュートを握ったままにしない"
+    assert not mute_flag.is_set(), "crashed thread must not hold mute flag indefinitely"
     assert events == []

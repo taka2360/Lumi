@@ -79,7 +79,7 @@ export interface PlatformShell {
   /**
    * Quits Lumi.
    *
-   * Exists for the [終了] button on the setup screen (ADR-034). Anyone stopped there
+   * Exists for the [Quit] button on the setup screen (ADR-034). Anyone stopped there
    * has not met Lumi yet and **does not know it lives in the tray**, which until now
    * was the only way out (docs/architecture/ui.md "Tray menu").
    *

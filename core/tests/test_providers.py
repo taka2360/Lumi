@@ -278,7 +278,7 @@ async def test_ollama_always_states_whether_to_think() -> None:
 
 
 class TestTtsSpeakerIsActuallyLoaded:
-    """★ **Deciding a speaker is not loading it** — docs/interfaces/provider.md（表 2c）.
+    """★ **Deciding a speaker is not loading it** — docs/interfaces/provider.md (Table 2c).
 
     The engine loads a voice model on its first `audio_query`, which put **3092 ms** inside
     `tts_first_audio_ms` on the first sentence (measured 2026-08-18) against a 200 ms budget.
@@ -319,7 +319,7 @@ class TestTtsSpeakerIsActuallyLoaded:
 
         await provider.load()
 
-        assert initialized == [888], "話者 ID を決めただけで、声を載せていない"
+        assert initialized == [888], "only selected speaker ID without loading voice"
 
     async def test_load_synthesizes_once_so_the_first_sentence_does_not(self) -> None:
         """★ **Loading the voice model is not running the engine.**
@@ -364,7 +364,7 @@ class TestTtsSpeakerIsActuallyLoaded:
 
         await provider.load()
 
-        assert provider.is_loaded(), "初期化に失敗しただけで喋れなくしてはいけない"
+        assert provider.is_loaded(), "init failure must not make provider unusable"
 
     async def test_a_warm_up_sentence_that_fails_is_not_fatal(self) -> None:
         """**Slow is not broken**, the same judgment as the line above.
@@ -387,7 +387,7 @@ class TestTtsSpeakerIsActuallyLoaded:
 
 
 class TestOllamaIsActuallyLoaded:
-    """★ **`load()` は接続確認ではない** — docs/interfaces/provider.md（表 2c）.
+    """★ **`load()` is not a connection check** — docs/interfaces/provider.md (Table 2c).
 
     Confirming that a model exists takes milliseconds while its weights are still on disk.
     A `load()` that stopped there reported success and **handed the first reply a 3767 ms
@@ -414,8 +414,8 @@ class TestOllamaIsActuallyLoaded:
 
         await provider.load()
 
-        assert sent, "load() が推論エンジンに何も要求していない = 重みは載っていない"
-        assert sent[0]["messages"] == [], "プリロードのつもりで生成させてはいけない"
+        assert sent, "load() requested nothing from inference engine = weights not loaded"
+        assert sent[0]["messages"] == [], "must not generate text when preloading"
 
     async def test_the_model_is_kept_resident(self) -> None:
         """★ Ollama evicts after 5 minutes by default. **A desktop character idles longer
@@ -444,7 +444,7 @@ class TestOllamaIsActuallyLoaded:
 
         await provider.unload()
 
-        assert sent[-1]["keep_alive"] == 0, "常駐を解放していない"
+        assert sent[-1]["keep_alive"] == 0, "residency was not released"
 
     async def test_the_http_client_is_reused(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """★ **Constructing an `AsyncClient` costs ~0.2 s** (SSL context + proxy env).
@@ -475,7 +475,7 @@ class TestOllamaIsActuallyLoaded:
             ):
                 pass
 
-        assert built == 1, f"ターンごとにクライアントを作り直している（{built} 個）"
+        assert built == 1, f"client reconstructed every turn ({built} clients)"
 
 
 async def test_ollama_separates_reasoning_from_text() -> None:
@@ -534,7 +534,7 @@ async def test_ollama_parses_tool_calls() -> None:
             [
                 ToolDescriptor(
                     name="character.set_expression",
-                    description="表情",
+                    description="expression",
                     input_schema={"type": "object"},
                     kind=ToolKind.CONTROL,
                 )

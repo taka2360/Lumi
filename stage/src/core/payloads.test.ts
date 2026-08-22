@@ -193,7 +193,7 @@ describe("which model to draw", () => {
 
   it("★ carries the reason when the pack ships no model", () => {
     // **A voice-only Content Pack is a legitimate pack.** The placeholder needs a reason,
-    // or it reads as a bug rather than as a state (docs/DESIGN.md「黙って劣化しない」).
+    // or it reads as a bug rather than as a state (docs/DESIGN.md "Never silently degrade").
     const model = toCharacterModel({ path: null, reason: "model_not_in_pack" });
 
     expect(model.path).toBeNull();

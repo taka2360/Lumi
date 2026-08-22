@@ -16,7 +16,7 @@
  * | when | screen |
  * |---|---|
  * | a question is on screen | **ask**: what would be fetched, and two equal buttons |
- * | `boot` is `blocked` | **incomplete**: everything still missing, how to fix it, and 終了 |
+ * | `boot` is `blocked` | **incomplete**: everything still missing, how to fix it, and quit |
  * | otherwise | a compact status strip |
  *
  * The compact strip is the fail-safe: once all three have to be usable for the character

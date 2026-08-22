@@ -91,7 +91,7 @@ async def test_two_stage_connects_start_exactly_one_conversation(
         await first.close()
         await second.close()
 
-        assert len(SlowRuntime.created) == 1, "接続のたびに会話が増えている"
+        assert len(SlowRuntime.created) == 1, "multiple conversation runtimes created on connect"
         assert SlowRuntime.created[0].starts == 1
     finally:
         core.cancel()

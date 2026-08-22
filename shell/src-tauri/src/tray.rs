@@ -93,7 +93,7 @@ pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
 
 /// Quits Lumi, from the Stage.
 ///
-/// **Exists for the setup screen's 終了 button** (ADR-034): someone stopped before Lumi
+/// **Exists for the setup screen's quit button** (ADR-034): someone stopped before Lumi
 /// has ever started has not met the tray, which was the only way out
 /// (docs/architecture/ui.md "Tray menu").
 ///

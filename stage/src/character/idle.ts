@@ -16,9 +16,9 @@ export interface IdlePose {
   breathScale: number;
 }
 
-/** 呼吸周期（秒） */
+/** Breath period (seconds) */
 const BREATH_PERIOD_S = 4.0;
-/** 体の揺れ周期（秒） */
+/** Body sway period (seconds) */
 const SWAY_PERIOD_S = 6.7;
 
 export function computeIdlePose(elapsedSeconds: number): IdlePose {
