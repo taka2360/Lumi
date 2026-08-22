@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -340,6 +341,100 @@ class TestStartupMaintenance:
             await runtime.start()
 
             assert swept_before_start == [True]
+        finally:
+            await runtime.stop()
+
+
+class TestReflection:
+    """**Memories are made while nobody is talking** (docs/architecture/memory.md §4).
+
+    The trigger is an idle period rather than a session end, and the tests drive it with
+    an injected clock: a test that waited five real minutes would be a test nobody runs.
+    """
+
+    async def _runtime(self, monkeypatch: pytest.MonkeyPatch) -> ConversationRuntime:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        return ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+
+    async def test_a_quiet_lumi_reflects(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """★ The idle pass covers the session that just ended too: at the next start,
+        **"no turn yet" is already an idle period**, so an unreflected transcript is picked
+        up without holding shutdown open for an inference.
+        """
+        runtime = await self._runtime(monkeypatch)
+        ran = asyncio.Event()
+
+        class Reflecting:
+            def __init__(self, **_kwargs: Any) -> None: ...
+
+            async def run(self) -> Any:
+                ran.set()
+                return type("Report", (), {"learned": 0})()
+
+        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(0))
+        # **Registered through the same seam startup uses.** Registering directly would be
+        # overwritten by `_register_providers`, which is exactly what happened first.
+        monkeypatch.setattr(
+            runtime_module, "OllamaProvider", lambda _model: FakeTts(kind=ProviderKind.LLM)
+        )
+        try:
+            await runtime.start()
+
+            async with asyncio.timeout(2):
+                await ran.wait()
+        finally:
+            await runtime.stop()
+
+    async def test_a_lumi_in_the_middle_of_a_conversation_does_not(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ **A pause for breath is not the end of a conversation.** Reflecting mid-turn
+        would put a second inference in front of the reply — the thing the lease exists to
+        prevent, arriving one step earlier.
+        """
+        runtime = await self._runtime(monkeypatch)
+        started: list[str] = []
+
+        class Reflecting:
+            def __init__(self, **_kwargs: Any) -> None: ...
+
+            async def run(self) -> Any:
+                started.append("ran")
+                return type("Report", (), {"learned": 0})()
+
+        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(minutes=5))
+        try:
+            await runtime.start()
+            await asyncio.sleep(0.05)
+
+            assert started == []
+        finally:
+            await runtime.stop()
+
+    async def test_an_engine_that_is_not_up_is_not_a_crash(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The LLM is warmed in the background; the first idle pass can easily land before
+        it. **The next one tries again**, and nothing was lost in between.
+        """
+        runtime = await self._runtime(monkeypatch)
+        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(0))
+        try:
+            await runtime.start()
+            await asyncio.sleep(0.05)
+
+            assert runtime._reflecting is not None
+            assert not runtime._reflecting.done()
         finally:
             await runtime.stop()
 

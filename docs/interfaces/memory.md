@@ -151,7 +151,9 @@ class VectorStore(Protocol):
 | `QdrantStore` | 将来。規模が問題になったら |
 
 > **〔2026-08-22 / 2e〕ベクトルとキーワードを別クラスに分けなかった。**
-> 検索は常に両方を union するので、片方だけ差し替えられる形にしても使い道が無い。
+> 埋め込みが使えるときは両方を union し、**使えないとき（`embedder=None`、または埋め込みの失敗）は
+> ベクトル検索を飛ばして keyword と recent で続ける**。
+> どちらの場合も片方だけ差し替えられる形にしても使い道が無い。
 > **どちらも「記憶を見つける手段」であって、記憶そのものではない**——
 > ここから行を消しても失われるのは findability だけで、信念は `memories` に残る。
 
@@ -189,8 +191,9 @@ class Retriever(Protocol):
 
 @dataclass(frozen=True)
 class RetrievalResult:
-    selected: tuple[ScoredMemory, ...]
-    dropped: tuple[ScoredMemory, ...]     # 予算に入らなかったもの
+    # **既定は空。** 候補が1件も無い経路は embed_ms と degraded だけを持って返る
+    selected: tuple[ScoredMemory, ...] = ()
+    dropped: tuple[ScoredMemory, ...] = ()   # 予算に入らなかったもの
     embed_ms: float = 0.0                 # クエリ埋め込みの実測。**クリティカルパス**
     degraded: bool = False                # 埋め込みが無い / どれかの検索が落ちた
 
@@ -272,10 +275,26 @@ Lumi では Phase 1 から `PromptAssembly` の経路に組み込み、**トー�
 
 ```python
 class ReflectionJob(Protocol):
-    async def run(self, episodes: list[Episode]) -> list[MemoryRecord]:
+    async def run(self) -> ReflectionReport:
         """LLM 抽出 → 重複統合 → 矛盾検出 → assertion_mode 検証
         → provenance 付与 → salience 補正 → 書き込み"""
+
+
+@dataclass(frozen=True)
+class ReflectionReport:
+    written: int = 0
+    superseded: int = 0
+    duplicates: int = 0
+    rejected: tuple[str, ...] = ()   # 受け付けなかった理由。**数だけでなく理由を残す**
+    interrupted: bool = False        # revoke / エンジン失敗。**watermark は動いていない**
+    episodes: int = 0
 ```
+
+> **〔2026-08-23 / 2f〕対象の Episode は引数ではなく Job が選ぶ。**
+> 「どこまで抽出したか」は `episodes.reflected_turns` にあり、
+> **呼び出し側がそれを知っていると2箇所が同じ状態を持つ**ことになる。
+> 戻り値がレコードの一覧でないのも同じ理由で、**書き込みは Job の中で完了している**——
+> 一覧を返すと「呼び出し側が保存するのか」が曖昧になる。
 
 ### 実行形態
 

@@ -23,7 +23,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from datetime import timedelta
 from pathlib import Path
+from typing import Final, cast
 
 from lumi import logging as lumi_logging
 from lumi import paths
@@ -47,6 +49,7 @@ from lumi.kernel.hooks import HookRegistry
 from lumi.kernel.ids import new_job_id
 from lumi.kernel.job import Job, JobKind
 from lumi.memory.indexing import Indexer
+from lumi.memory.reflection import ReflectionJob
 from lumi.memory.retrieval import Retriever
 from lumi.memory.store import MemoryStore
 from lumi.memory.vectors import MemoryIndex
@@ -54,9 +57,9 @@ from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
-from lumi.providers.base import ProviderKind
+from lumi.providers.base import ProviderError, ProviderKind
 from lumi.providers.embedding.harrier import HarrierEmbeddingProvider
-from lumi.providers.llm.base import LLMOptions
+from lumi.providers.llm.base import LLMOptions, LLMProvider
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
@@ -85,6 +88,15 @@ from lumi.transport.protocol import Role
 from lumi.transport.server import RequestRefused, WsServer
 
 log = lumi_logging.get_logger(__name__)
+
+#: How often the idle pass looks [Provisional]. **A poll, not a timer**: what it waits for
+#: is the absence of turns, and absence does not raise an event.
+REFLECTION_CHECK_SECONDS: Final = 60.0
+
+#: How quiet it has to be before Lumi thinks about what was said [Provisional]. Short
+#: enough that a session usually gets reflected on while it is still open; long enough that
+#: **a pause for breath is not mistaken for the end of a conversation.**
+REFLECTION_IDLE_AFTER: Final = timedelta(minutes=5)
 
 #: What is configurable, and each key's environment override and default, live in
 #: `lumi.settings.KEYS`. **Declared once** — a second copy here drifted the moment the
@@ -115,6 +127,7 @@ class ConversationRuntime:
         "_pack",
         "_providers",
         "_recorder",
+        "_reflecting",
         "_retention",
         "_server",
         "_settings",
@@ -133,6 +146,7 @@ class ConversationRuntime:
         self._model = self._settings.llm_model.value
         self._task: asyncio.Task[None] | None = None
         self._indexing: asyncio.Task[None] | None = None
+        self._reflecting: asyncio.Task[None] | None = None
         self._warmup: asyncio.Task[None] | None = None
         self._llm_retry: asyncio.Task[None] | None = None
         self._listening = False
@@ -297,6 +311,44 @@ class ConversationRuntime:
             return
         log.info("memory.archive_done", job=str(job.id), archived=len(faded))
 
+    async def _reflect_while_idle(self) -> None:
+        """Extract memories from what has been said, **while nobody is talking.**
+
+        docs/architecture/memory.md §4 lists three triggers: session end, a long idle, and
+        an explicit request. This implements the middle one, and **the other two fall out
+        of it**: a session that ends leaves its transcript for the next start, where "no
+        turn yet" is already an idle period. Holding shutdown open for an inference would
+        trade a clean exit for a chore.
+
+        The interval is a poll rather than a timer reset per turn, because what is being
+        waited for is the *absence* of turns — there is no event for that.
+        """
+        if self._loop is None:
+            return
+        while True:
+            await asyncio.sleep(REFLECTION_CHECK_SECONDS)
+            if self._loop.idle_for() < REFLECTION_IDLE_AFTER:
+                continue
+            try:
+                llm = cast(LLMProvider, await self._providers.get(ProviderKind.LLM))
+            except ProviderError as error:
+                # **Not an error worth a stack trace.** The engine is not up yet; the next
+                # idle period will try again, and nothing was lost.
+                log.info("reflection.llm_unavailable", reason=error.reason)
+                continue
+            job = ReflectionJob(
+                arbiter=self._arbiter,
+                llm=llm,
+                store=self._memories,
+                episodes=self._episodes,
+                options=LLMOptions(model=self._model),
+            )
+            report = await job.run()
+            if report.learned:
+                # **What was just learned should be findable.** Indexing is cheap and this
+                # is already the idle path, so it costs the user nothing.
+                await self._index_memories()
+
     async def _index_memories(self) -> None:
         """Embed anything unindexed, and re-embed after a model change.
 
@@ -394,6 +446,8 @@ class ConversationRuntime:
         # **Not awaited.** Indexing is the one maintenance job that can take seconds.
         self._indexing = asyncio.create_task(self._index_memories(), name="memory.index")
         self._indexing.add_done_callback(report_task_exit("memory.index_crashed"))
+        self._reflecting = asyncio.create_task(self._reflect_while_idle(), name="memory.reflect")
+        self._reflecting.add_done_callback(report_task_exit("memory.reflect_crashed"))
         # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
         # rest of the session (observed 2026-08-17).
@@ -550,7 +604,13 @@ class ConversationRuntime:
 
     async def stop(self) -> None:
         """**Only stops what Lumi itself started** (docs/architecture/core.md §6)."""
-        for task in (self._warmup, self._llm_retry, self._indexing, self._task):
+        for task in (
+            self._warmup,
+            self._llm_retry,
+            self._indexing,
+            self._reflecting,
+            self._task,
+        ):
             if task is None:
                 continue
             task.cancel()
@@ -566,6 +626,7 @@ class ConversationRuntime:
         self._warmup = None
         self._llm_retry = None
         self._indexing = None
+        self._reflecting = None
         self._task = None
         self._listening = False
         await self._inspector.stop()

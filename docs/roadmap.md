@@ -346,9 +346,21 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   取得経路そのものは実装済みで、足りないのは**同意 UI と進捗表示**であり、
   それは 2g のセットアップ/記憶 UI と同じ画面に属する
 
-#### 2f — Reflection Job
+#### 2f — Reflection Job〔2026-08-23 完了〕
 
-- [ ] **Reflection Job**（セッション終了時 / 長いアイドル時。**`Job` として実行し、`inference_lease` を取る**）
+- [x] **Reflection Job**（**`Job(kind=reflection, uses_inference=True)`。`inference_lease` を取る**）
+  〔`lumi/memory/reflection.py`。**revoke されたら進捗を捨てて watermark を動かさない**〕
+- [x] 起動タイミングを**アイドル1本に集約**（既定 5 分）。
+  **セッション終了時は次回起動のアイドル判定が拾う**——終了時に推論を待たせない
+- [x] どこまで抽出したかの watermark（`episodes.reflected_turns`。migration 4）
+  〔Episode はセッション中ずっと開いているので、真偽値では「毎回全部」か「一度きり」にしかならない〕
+- [x] 抽出結果の検証（`user_confirmed` を名乗れない / **存在しない根拠は拒否** /
+  trust は発話から join / salience は決定論的補正）
+- [x] **プロンプトを実機で調整**（`qwen3.5:9b`）。
+  **転写の後ろに問いを置かないと `[]` しか返さず**、
+  **subject 規則が弱いと全部が同じ subject になり、無関係な事実が supersede で消える**
+  → [measurements/phase2.md](measurements/phase2.md)
+- [ ] 「今の覚えておいて」の明示的な要求 → **2g**（記憶 UI と同じ画面に属する）
 
 #### 2g — ユーザーが見て直せること
 

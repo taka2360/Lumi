@@ -179,3 +179,44 @@ Phase 2b で [ADR-039](../decisions/ADR-039-speculative-stt.md) を実装した�
 
 **3文字未満は原理的に当たらない。** だからキーワード検索は補助であり、主役はベクトル側である
 （`lumi/memory/vectors.py` は3文字未満の語をそもそも送らない）。
+
+
+---
+
+## Reflection（記憶の抽出）〔2026-08-23 / Phase 2f〕
+
+`qwen3.5:9b`（Ollama / Q4_K_M / think 無効 / temperature 0.2）に、日本語10行の会話を渡した。
+**実装では出ない種類の数値であり、プロンプトの言い回しで壊れる。**
+
+### 抽出プロンプトで実際に壊れた2点
+
+| 症状 | 原因 | 直し方 |
+|---|---|---|
+| **常に `[]` を返す**（3/3） | 依頼が system プロンプトにしか無く、user メッセージが転写で終わっていた | **転写の後ろに問いを置く**（`TRANSCRIPT_CLOSING`）。→ 3/3 で正しく抽出 |
+| **全部が同じ subject**（`episode.move` に6件） | 「subject は topic を指す」規則が弱かった | subject 規則を明記（下記）。→ 4件が4つの subject に分かれた |
+
+**2つ目は静かな事故になる。** semantic な記憶が subject を共有すると `reconcile` は矛盾と見なし、
+**無関係な事実が別の事実を supersede して消える**。プロンプトの1文が記憶の消失に直結する例である。
+
+> 転写の後ろに問いを置くのは、**隔離の形としても正しい**——
+> 信頼された指示が最後に読まれ、データが Lumi 自身の言葉で挟まれる
+> （[../contracts/provenance.md](../contracts/provenance.md)）。
+
+### 直した後の1回（同じ会話・4.2 s）
+
+| subject | content | mode | salience |
+|---|---|---|---|
+| `user.work` | ユーザーは今日一日 Rust を書いていた。 | user_stated | 0.26 |
+| `episode.moving_plans` | 来月に引っ越す予定で、今の部屋では猫を飼えない。 | user_stated | 0.34 |
+| **`user.pet_preference`** | 三毛猫を飼いたがっており、名前を「ミケ」と考えている。 | inferred | **0.55** |
+| `episode.mars_joke` | 冗談で自分は火星人だと述べた。 | user_stated | 0.14 |
+
+- **「これ覚えておいて」と言われた記憶が最も高い**（0.55）。決定論的補正が効いている
+- **「冗談だけど、僕は火星人」は事実として保存されなかった。**
+  出来事として「冗談で述べた」と記録され、salience は最低（0.14）
+- 抽出 1 回あたり **4.2 s**。会話のクリティカルパスには乗らない（アイドル時の Job）
+
+### 残っている揺れ
+
+**subject の名前は実行ごとに揺れる**（`user.pet_preference` / `user.pet_name_plan`）。
+既存 subject をプロンプトに列挙して収束させる設計だが、**その効果はまだ測っていない。**

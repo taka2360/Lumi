@@ -41,7 +41,7 @@ from lumi.agent.episodes import EpisodeRecorder
 from lumi.agent.latency import Speculation, TurnLatency, TurnTimer
 from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import ContextBlock, assemble
-from lumi.agent.recall import BLOCK_OVERHEAD_TOKENS, to_blocks
+from lumi.agent.recall import BLOCK_OVERHEAD_TOKENS, MAX_MEMORY_BLOCKS, to_blocks
 from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
@@ -114,6 +114,7 @@ class ReactiveLoop:
         "_clock",
         "_episodes",
         "_last_latency",
+        "_last_turn_at",
         "_limits",
         "_notifier",
         "_options",
@@ -166,6 +167,10 @@ class ReactiveLoop:
         self._clock = clock
         self._tts_speed = _validate_tts_speed(tts_speed)
         self._last_latency: TurnLatency | None = None
+        #: When the last turn finished. **Starts at construction**, so a Lumi nobody has
+        #: spoken to yet counts as idle — which is what makes the first idle pass pick up
+        #: whatever the previous session left unreflected.
+        self._last_turn_at = self._clock()
         #: The turns currently running. **Held on the loop, not inside `run`**: shutdown
         #: has to be able to reach them, and a turn that outlives the databases writes an
         #: episode into a closed connection
@@ -178,6 +183,10 @@ class ReactiveLoop:
     @property
     def session(self) -> Session:
         return self._session
+
+    def idle_for(self) -> timedelta:
+        """How long since the last turn ended. **What decides that reflection may run.**"""
+        return self._clock() - self._last_turn_at
 
     @property
     def last_latency(self) -> TurnLatency | None:
@@ -401,6 +410,7 @@ class ReactiveLoop:
             # **An interrupted turn reports too.** Barge-in is the normal case, and how far
             # the turn got before being cut off is exactly what needs measuring
             self._last_latency = timer.emit()
+            self._last_turn_at = self._clock()
             if self._arbiter.current().id == activity.id:
                 # If it was interrupted, the Arbiter has already cleaned up. Don't double-transition
                 await self._arbiter.complete(activity.id, failed=failed)
@@ -476,9 +486,12 @@ class ReactiveLoop:
             try:
                 result = await self._retriever.retrieve(
                     text,
-                    # **What the lines may spend**, with the block's own frame already
-                    # taken out — the budget is about the prompt, not about the records.
-                    token_budget=MEMORY_BUDGET_TOKENS - BLOCK_OVERHEAD_TOKENS,
+                    # **What the lines may spend**, with the frames already taken out.
+                    # Two of them are reserved because `to_blocks` splits trusted from
+                    # tainted memories, and which blocks exist is not known until after
+                    # the search. **Over-reserving costs one memory; under-reserving
+                    # overflows into the budget the conversation turns are packed from.**
+                    token_budget=MEMORY_BUDGET_TOKENS - MAX_MEMORY_BLOCKS * BLOCK_OVERHEAD_TOKENS,
                     now=self._clock(),
                 )
             except Exception as error:

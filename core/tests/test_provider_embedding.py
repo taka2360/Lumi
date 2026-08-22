@@ -276,11 +276,21 @@ def test_the_expected_width_passes() -> None:
 
 
 def test_a_width_the_export_did_not_state_is_not_a_mismatch() -> None:
-    """A symbolic dimension is the export saying it does not know. **Nothing follows from
-    it** — refusing would reject a model that is actually fine.
+    """A symbolic width is the export saying it does not know. **Nothing follows from it**
+    — refusing would reject a model that is actually fine.
     """
     check_dimension(["batch_size", "hidden"])
-    check_dimension([DIMENSION])
+
+
+def test_an_output_that_is_not_one_row_per_input_is_refused() -> None:
+    """★ Everything downstream reads the output as one row per text. A shape that is not
+    `[batch, width]` surfaces as a numpy error **several layers from the model that caused
+    it**, so it is refused where the model is opened.
+    """
+    with pytest.raises(ProviderFailed) as raised:
+        check_dimension([DIMENSION])
+
+    assert raised.value.reason == "embedding_output_shape_invalid"
 
 
 def test_a_tokenizer_without_the_tokens_pooling_needs_is_refused() -> None:
