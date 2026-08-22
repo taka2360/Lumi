@@ -67,6 +67,10 @@ export function App() {
   // is required because `blocked` can only ever come from Core.
   const blocked = connected && setup.boot === "blocked";
   const showBootScreen = !showCharacter && !prompt && !blocked;
+  // Setup commands belong above any actionable setup card, including the blocked
+  // screen. Keeping this condition separate from `prompt` avoids hiding the
+  // settings/diagnostics entry points when setup is waiting for user action.
+  const controlsAbovePanel = prompt !== null || blocked;
 
   const [status, setStatus] = useState<CharacterStatus>({ kind: null, fallbackReason: null });
   const onStatus = useCallback((next: CharacterStatus) => setStatus(next), []);
@@ -151,7 +155,7 @@ export function App() {
         onPointerDown={gestures.onPointerDown}
         onWheel={gestures.onWheel}
       >
-        {prompt && (
+        {controlsAbovePanel && (
           <div
             ref={setInspector}
             className="inspect-anchor inspect-anchor--setup"
@@ -171,7 +175,7 @@ export function App() {
       {/* **A development view** (docs/architecture/ui.md §5). Inside the `stage` window
           because `WsServer` keeps one connection per role — a second window would take
           the character's connection. Shown on hover or when expanded. */}
-      {!prompt && (
+      {!controlsAbovePanel && (
         <div
           ref={setInspector}
           className={inspectVisible ? "inspect-anchor inspect-anchor--visible" : "inspect-anchor"}

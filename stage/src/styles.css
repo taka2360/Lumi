@@ -406,9 +406,12 @@ body {
   position: relative;
   left: auto;
   bottom: auto;
-  align-self: center;
-  width: max-content;
-  max-width: 100%;
+  /* The overlay is content-sized, so stretch this wrapper to the same width as
+     the setup card. This keeps the controls anchored to the card's left edge
+     instead of centering a narrow group above it. */
+  align-self: stretch;
+  width: 100%;
+  max-width: none;
   opacity: 1;
   pointer-events: auto;
   order: -1;
