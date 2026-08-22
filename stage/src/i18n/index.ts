@@ -104,11 +104,15 @@ const ja = {
   "setup.prompt.stt.note":
     "取得しなければ通信は発生しません。モデルは約 480MB です。取得したファイルは、あらかじめ決めてある大きさと内容（SHA-256）に一致するかを確認してから使います。",
   "setup.prompt.model.title": "推奨AIモデルをダウンロードしますか？",
+  "setup.prompt.model.chooseTitle": "使用するAIモデルを選択",
   "setup.prompt.model.body.before": "Lumi はローカルでの会話に ",
   "setup.prompt.model.body.after": " を推奨します。",
+  "setup.prompt.model.chooseBody":
+    "Ollamaで利用できるモデルを選択してください。PCにあるモデルは追加ダウンロードなしで使用できます。",
   "setup.prompt.model.downloadNote":
     "Ollamaを通して約 {size} をダウンロードします。通信量、ディスク容量、時間がかかります。",
   "setup.prompt.model.downloadNamed": "{model}（約 {size}）をダウンロード",
+  "setup.prompt.model.selectNamed": "{model}（約 {size}・ローカル）を使用",
   "setup.prompt.model.choose": "別のモデルを選ぶ",
   "setup.prompt.model.back": "推奨モデルに戻る",
   "setup.model.gb": "GB",
@@ -264,11 +268,15 @@ const en: Record<keyof typeof ja, string> = {
   "setup.prompt.stt.note":
     "Declining causes no network traffic. The model is about 480 MB. Lumi checks the downloaded file against its predetermined size and SHA-256 digest before using it.",
   "setup.prompt.model.title": "Download the recommended AI model?",
+  "setup.prompt.model.chooseTitle": "Choose an AI model",
   "setup.prompt.model.body.before": "Lumi recommends ",
   "setup.prompt.model.body.after": " for local conversations.",
+  "setup.prompt.model.chooseBody":
+    "Choose a model available to Ollama. Models already on this PC can be used without another download.",
   "setup.prompt.model.downloadNote":
     "This downloads about {size} through Ollama and will use network bandwidth, disk space, and time.",
   "setup.prompt.model.downloadNamed": "Download {model} (about {size})",
+  "setup.prompt.model.selectNamed": "Use {model} (about {size}, local)",
   "setup.prompt.model.choose": "Choose another model",
   "setup.prompt.model.back": "Back to recommended model",
   "setup.model.gb": "GB",

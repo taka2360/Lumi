@@ -399,6 +399,21 @@ body {
   pointer-events: auto;
 }
 
+/* Setup confirmation commands must remain reachable while the download question is open.
+   The anchor is rendered inside the overlay in this mode, so normal flow puts it above the
+   confirmation card instead of behind the transparent window's lower edge. */
+.inspect-anchor--setup {
+  position: relative;
+  left: auto;
+  bottom: auto;
+  align-self: center;
+  width: max-content;
+  max-width: 100%;
+  opacity: 1;
+  pointer-events: auto;
+  order: -1;
+}
+
 .stage--boot .inspect-anchor {
   position: relative;
   left: auto;

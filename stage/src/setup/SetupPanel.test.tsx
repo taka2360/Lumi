@@ -320,9 +320,19 @@ describe("the question", () => {
           component: "llm_model",
           retry: false,
           reason: null,
-          model: { model: "qwen3.5:9b", display_name: "Qwen 3.5 9B", size_bytes: 6_600_000_000 },
+          model: {
+            model: "qwen3.5:9b",
+            display_name: "Qwen 3.5 9B",
+            size_bytes: 6_600_000_000,
+            installed: false,
+          },
           alternatives: [
-            { model: "qwen3.5:4b", display_name: "Qwen 3.5 4B", size_bytes: 3_400_000_000 },
+            {
+              model: "qwen3.5:4b",
+              display_name: "Qwen 3.5 4B",
+              size_bytes: 3_400_000_000,
+              installed: false,
+            },
           ],
         },
       });
@@ -346,6 +356,58 @@ describe("the question", () => {
 
     act(() => container?.querySelector("button")?.click());
     expect(answerSetupPrompt).toHaveBeenCalledWith("install", "qwen3.5:4b");
+  });
+
+  it("shows local Ollama models and selects them without a download", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      useStageStore.setState({
+        setup: working(),
+        prompt: {
+          component: "llm_model",
+          retry: false,
+          reason: null,
+          model: {
+            model: "qwen3.5:9b",
+            display_name: "Qwen 3.5 9B",
+            size_bytes: 6_600_000_000,
+            installed: false,
+          },
+          alternatives: [
+            {
+              model: "llama3.1:8b",
+              display_name: "llama3.1:8b",
+              size_bytes: 4_200_000_000,
+              installed: true,
+            },
+          ],
+        },
+      });
+      root?.render(
+        <LocaleProvider>
+          <SetupPanel />
+        </LocaleProvider>,
+      );
+    });
+
+    act(() => {
+      [...(container?.querySelectorAll("button") ?? [])]
+        .find((button) => button.textContent === "別のモデルを選ぶ")
+        ?.click();
+    });
+
+    expect(container.textContent).toContain("使用するAIモデルを選択");
+    expect(container.textContent).toContain("Ollamaで利用できるモデルを選択してください");
+    expect(container.textContent).toContain("llama3.1:8b（約 4.2 GB・ローカル）を使用");
+
+    act(() => {
+      [...(container?.querySelectorAll("button") ?? [])]
+        .find((button) => button.textContent?.includes("ローカル"))
+        ?.click();
+    });
+    expect(answerSetupPrompt).toHaveBeenCalledWith("select", "llama3.1:8b");
   });
 
   it("offers to fetch, and to not fetch, as equals", () => {

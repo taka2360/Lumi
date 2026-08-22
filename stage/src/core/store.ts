@@ -142,6 +142,7 @@ export interface SetupModelOption {
   model: string;
   display_name: string;
   size_bytes: number;
+  installed: boolean;
 }
 
 /**

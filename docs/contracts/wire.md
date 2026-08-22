@@ -23,7 +23,7 @@ Lumi は Python（Core）・TypeScript（Stage）・Rust（Shell）の3言語で
 | WS の `method` 名、`PROTOCOL_VERSION` | タイムアウト・ポーリング間隔・再試行回数 |
 | Tauri のイベント名・コマンド名 | ウィンドウの大きさの上限下限、倍率のステップ |
 | 線に乗る enum の**値**（`installed` / `A` など） | 内部でしか使わない enum、Python 側の識別子名 |
-| 線に乗る固定の選択肢（`install` / `skip`） | 失敗理由の識別子（`hash_mismatch` など。**下記参照**） |
+| 線に乗る固定の選択肢（`install` / `skip` / `select`） | 失敗理由の識別子（`hash_mismatch` など。**下記参照**） |
 
 **片側だけで完結する値を契約に入れない。** 契約が大きくなるほど、
 「契約に載っているが実は片側にしかない」ものが混ざり、契約全体の信用が落ちる。

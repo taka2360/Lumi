@@ -7,10 +7,31 @@ import pytest
 
 from lumi.setup.ollama import (
     QWEN_35_9B,
+    OllamaLocalModel,
     OllamaModelArtifact,
     OllamaPullError,
+    list_ollama_models,
     pull_ollama_model,
 )
+
+
+async def test_lists_models_already_present_in_ollama() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url == "http://127.0.0.1:11434/api/tags"
+        return httpx.Response(
+            200,
+            json={"models": [{"name": "llama3.1:8b", "size": 4_200_000_000}]},
+        )
+
+    models = await list_ollama_models(transport=httpx.MockTransport(handler))
+
+    assert models == (
+        OllamaLocalModel(
+            name="llama3.1:8b",
+            display_name="llama3.1:8b",
+            size_bytes=4_200_000_000,
+        ),
+    )
 
 
 async def test_pull_uses_local_api_and_reports_progress() -> None:

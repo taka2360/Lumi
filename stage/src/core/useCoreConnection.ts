@@ -26,6 +26,7 @@ import { useEffect } from "react";
 import { type CoreConnection, connectToCore } from "./connection";
 import {
   type CHOICE_INSTALL,
+  type CHOICE_SELECT,
   type CHOICE_SKIP,
   METHOD_EXPRESSION,
   METHOD_INSPECTOR,
@@ -51,7 +52,7 @@ import {
 } from "./payloads";
 import { useStageStore } from "./store";
 
-type Answer = typeof CHOICE_INSTALL | typeof CHOICE_SKIP;
+type Answer = typeof CHOICE_INSTALL | typeof CHOICE_SELECT | typeof CHOICE_SKIP;
 type AnswerPayload = { choice: Answer; model?: string };
 
 /** The "function that returns an answer," populated only while being asked. Called by a UI button. */

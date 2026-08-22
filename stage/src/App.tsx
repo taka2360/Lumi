@@ -117,6 +117,14 @@ export function App() {
     reportHitRegion(rects);
   }, [characterRect, panelRect, inspectorRect, inspectVisible, reportHitRegion]);
 
+  const inspectorControls = (
+    <>
+      <AppActions />
+      <Inspector onOpenChange={setInspectorOpen} />
+      <Settings onOpenChange={setSettingsOpen} />
+    </>
+  );
+
   return (
     <div
       className={`${hover === "inside" ? "stage stage--hover" : "stage"}${
@@ -143,6 +151,16 @@ export function App() {
         onPointerDown={gestures.onPointerDown}
         onWheel={gestures.onWheel}
       >
+        {prompt && (
+          <div
+            ref={setInspector}
+            className="inspect-anchor inspect-anchor--setup"
+            onPointerEnter={() => setAnchorHovered(true)}
+            onPointerLeave={() => setAnchorHovered(false)}
+          >
+            {inspectorControls}
+          </div>
+        )}
         {/* While preparing, shows what's happening instead of the character.
             **Always shows exactly one thing** (docs/architecture/ui.md "Boot phases").
             Showing loading and the panel side by side would describe the same situation twice. */}
@@ -153,16 +171,16 @@ export function App() {
       {/* **A development view** (docs/architecture/ui.md §5). Inside the `stage` window
           because `WsServer` keeps one connection per role — a second window would take
           the character's connection. Shown on hover or when expanded. */}
-      <div
-        ref={setInspector}
-        className={inspectVisible ? "inspect-anchor inspect-anchor--visible" : "inspect-anchor"}
-        onPointerEnter={() => setAnchorHovered(true)}
-        onPointerLeave={() => setAnchorHovered(false)}
-      >
-        <AppActions />
-        <Inspector onOpenChange={setInspectorOpen} />
-        <Settings onOpenChange={setSettingsOpen} />
-      </div>
+      {!prompt && (
+        <div
+          ref={setInspector}
+          className={inspectVisible ? "inspect-anchor inspect-anchor--visible" : "inspect-anchor"}
+          onPointerEnter={() => setAnchorHovered(true)}
+          onPointerLeave={() => setAnchorHovered(false)}
+        >
+          {inspectorControls}
+        </div>
+      )}
     </div>
   );
 }

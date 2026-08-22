@@ -147,16 +147,27 @@ export function SetupPanel() {
       const model = prompt.model;
       return (
         <div className="panel panel--model-prompt">
-          <h1 className="panel__title">{translate(locale, "setup.prompt.model.title")}</h1>
+          <h1 className="panel__title">
+            {translate(
+              locale,
+              showModelAlternatives ? "setup.prompt.model.chooseTitle" : "setup.prompt.model.title",
+            )}
+          </h1>
           {prompt.retry && (
             <p className="panel__status panel__status--bad">{failureText(prompt.reason, locale)}</p>
           )}
           <p className="panel__body">
-            {translate(locale, "setup.prompt.model.body.before")}
-            <strong>{model?.display_name ?? "Qwen 3.5 9B"}</strong>
-            {translate(locale, "setup.prompt.model.body.after")}
+            {showModelAlternatives ? (
+              translate(locale, "setup.prompt.model.chooseBody")
+            ) : (
+              <>
+                {translate(locale, "setup.prompt.model.body.before")}
+                <strong>{model?.display_name ?? "Qwen 3.5 9B"}</strong>
+                {translate(locale, "setup.prompt.model.body.after")}
+              </>
+            )}
           </p>
-          {model && (
+          {model && !showModelAlternatives && (
             <p className="panel__note">
               {translate(locale, "setup.prompt.model.downloadNote", {
                 size: formatGigabytes(model.size_bytes, locale),
@@ -172,13 +183,19 @@ export function SetupPanel() {
                   key={option.model}
                   onClick={() => {
                     setShowModelAlternatives(false);
-                    answerSetupPrompt("install", option.model);
+                    answerSetupPrompt(option.installed ? "select" : "install", option.model);
                   }}
                 >
-                  {translate(locale, "setup.prompt.model.downloadNamed", {
-                    model: option.display_name,
-                    size: formatGigabytes(option.size_bytes, locale),
-                  })}
+                  {translate(
+                    locale,
+                    option.installed
+                      ? "setup.prompt.model.selectNamed"
+                      : "setup.prompt.model.downloadNamed",
+                    {
+                      model: option.display_name,
+                      size: formatGigabytes(option.size_bytes, locale),
+                    },
+                  )}
                 </button>
               ))}
               <button

@@ -89,15 +89,16 @@ INBOUND_METHODS: Final[tuple[str, ...]] = (
 
 # ── Payload values ────────────────────────────────────────────
 
-#: The choices the Stage returns in `result`. `CHOICE_SKIP` isn't used in any comparison
-#: (anything that isn't `CHOICE_INSTALL` means "not now"), but it's declared here so
-#: **only one side of the contract isn't documented**.
+#: The choices the Stage returns in `result`. `select` means an already-local model;
+#: `skip` isn't used in any comparison, but both are declared so **only one side of the
+#: contract isn't documented**.
 #:
 #: The Stage labels `CHOICE_INSTALL` "retry" after a failure — **same choice, and the
 #: retry count is deliberately unbounded** since the press always comes from the user
 #: (ADR-034).
 CHOICE_INSTALL: Final = "install"
 CHOICE_SKIP: Final = "skip"
+CHOICE_SELECT: Final = "select"
 
 #: Which component a question is about. **The panel has to say what it is fetching** —
 #: "may I download this?" without a subject is not consent.

@@ -59,8 +59,11 @@ from lumi.setup.models import FASTER_WHISPER_LARGE_V3_TURBO, STT_MODELS, ModelAr
 from lumi.setup.ollama import (
     OLLAMA_MODELS,
     QWEN_35_9B,
+    OllamaLocalModel,
     OllamaModelArtifact,
     OllamaPullError,
+    OllamaTagsError,
+    list_ollama_models,
     pull_ollama_model,
 )
 from lumi.setup.state import (
@@ -77,6 +80,7 @@ from lumi.setup.state import (
 )
 from lumi.transport.methods import (
     CHOICE_INSTALL,
+    CHOICE_SELECT,
     COMPONENT_LLM_MODEL,
     COMPONENT_STT,
     COMPONENT_TTS,
@@ -380,6 +384,8 @@ class SetupCoordinator:
         try:
             while True:
                 current = OLLAMA_MODELS.get(self._snapshot.llm.model or "", QWEN_35_9B)
+                local_models = await self._list_local_ollama_models()
+                local_by_name = {model.name: model for model in local_models}
                 self._awaiting_answer = True
                 await self._broadcast()
                 try:
@@ -390,12 +396,12 @@ class SetupCoordinator:
                             "component": COMPONENT_LLM_MODEL,
                             "retry": retry,
                             "reason": detail,
-                            "model": current.to_payload(),
-                            "alternatives": [
-                                artifact.to_payload()
-                                for artifact in OLLAMA_MODELS.values()
-                                if artifact.name != current.name
-                            ],
+                            "model": (
+                                local_by_name[current.name].to_payload()
+                                if current.name in local_by_name
+                                else current.to_payload()
+                            ),
+                            "alternatives": self._model_options_payload(current.name, local_models),
                         },
                         timeout=PROMPT_TIMEOUT_S,
                     )
@@ -405,9 +411,27 @@ class SetupCoordinator:
                     self._awaiting_answer = False
 
                 choice = result.payload.get("choice") if result.ok else None
+                selected_name = result.payload.get("model")
+                if choice == CHOICE_SELECT:
+                    local = local_by_name.get(
+                        selected_name if isinstance(selected_name, str) else ""
+                    )
+                    if local is None:
+                        await self._update(
+                            llm=LlmSetup(
+                                state=LlmSetupState.MODEL_FAILED,
+                                runtime=EngineRuntime.READY,
+                                model=current.name,
+                                reason="unknown_model",
+                            )
+                        )
+                        retry = True
+                        detail = "unknown_model"
+                        continue
+                    await self.select_local_llm_model(local)
+                    return
                 if choice != CHOICE_INSTALL:
                     return
-                selected_name = result.payload.get("model")
                 artifact = OLLAMA_MODELS.get(
                     selected_name if isinstance(selected_name, str) else current.name
                 )
@@ -430,6 +454,56 @@ class SetupCoordinator:
             self._model_prompting = False
             self._awaiting_answer = False
             await self._broadcast()
+
+    async def _list_local_ollama_models(self) -> tuple[OllamaLocalModel, ...]:
+        """Reads local models for the choice screen; a transient catalog error is non-fatal."""
+        try:
+            return await list_ollama_models()
+        except OllamaTagsError as error:
+            log.info("setup.ollama_model.catalog_unavailable", detail=str(error))
+            return ()
+
+    def _model_options_payload(
+        self, current_name: str, local_models: tuple[OllamaLocalModel, ...]
+    ) -> list[dict[str, object]]:
+        """Combines local models with the fixed download catalog without duplicates."""
+        options: list[dict[str, object]] = []
+        seen = {current_name}
+        for local in local_models:
+            if local.name in seen:
+                continue
+            seen.add(local.name)
+            options.append(local.to_payload())
+        for artifact in OLLAMA_MODELS.values():
+            if artifact.name in seen:
+                continue
+            seen.add(artifact.name)
+            options.append(artifact.to_payload())
+        return options
+
+    async def select_local_llm_model(self, model: OllamaLocalModel) -> None:
+        """Selects a model already present locally, without invoking `/api/pull`."""
+        if self._on_llm_model_selected is None:
+            await self._update(
+                llm=LlmSetup(
+                    state=LlmSetupState.MODEL_FAILED,
+                    runtime=EngineRuntime.READY,
+                    model=model.name,
+                    reason="model_selection_unavailable",
+                )
+            )
+            return
+        await self._on_llm_model_selected(model.name)
+        await self._update(
+            llm=LlmSetup(
+                state=LlmSetupState.DETECTED,
+                runtime=EngineRuntime.STARTING,
+                model=model.name,
+                reason="model_checking",
+            )
+        )
+        if self._on_ollama_detected is not None:
+            self._on_ollama_detected()
 
     async def set_stt_runtime(self, runtime: EngineRuntime) -> None:
         """The STT Provider's load state changed without changing acquisition state.

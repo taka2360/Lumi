@@ -17,6 +17,7 @@ from lumi.setup import coordinator as coordinator_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
 from lumi.setup.install import SetupError
+from lumi.setup.ollama import OllamaLocalModel
 from lumi.setup.state import (
     BootPhase,
     EngineRuntime,
@@ -63,6 +64,10 @@ class FakeServer:
 
     def as_server(self) -> WsServer:
         return cast(WsServer, self)
+
+
+async def _local_models(model: OllamaLocalModel) -> tuple[OllamaLocalModel, ...]:
+    return (model,)
 
 
 @pytest.fixture(autouse=True)
@@ -900,6 +905,7 @@ class TestLlm:
             "model": "qwen3.5:9b",
             "display_name": "Qwen 3.5 9B",
             "size_bytes": 6_600_000_000,
+            "installed": False,
         }
         assert pulled == ["qwen3.5:9b"]
         assert selected == ["qwen3.5:9b"]
@@ -931,6 +937,45 @@ class TestLlm:
         )
 
         assert coordinator.state.llm.state is LlmSetupState.MODEL_MISSING
+
+    async def test_existing_local_model_is_selectable_without_a_pull(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        one_engine(monkeypatch)
+        local = OllamaLocalModel("llama3.1:8b", "llama3.1:8b", 4_200_000_000)
+        monkeypatch.setattr(coordinator_module, "list_ollama_models", lambda: _local_models(local))
+
+        async def pull(*_args: Any, **_kwargs: Any) -> None:
+            pytest.fail("a local model selection must not download")
+
+        monkeypatch.setattr(coordinator_module, "pull_ollama_model", pull)
+        selected: list[str] = []
+        server = FakeServer([{"choice": "select", "model": local.name}])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        async def select(model: str) -> None:
+            selected.append(model)
+
+        coordinator.set_llm_model_selected_handler(select)
+        await coordinator.initialize()
+        await coordinator.report_llm(
+            LlmSetupState.MODEL_MISSING,
+            reason="model_missing",
+            model="qwen3.5:9b",
+        )
+
+        prompt = next(
+            payload for method, payload in server.invocations if method == "stage.setup.prompt"
+        )
+        assert {
+            "model": local.name,
+            "display_name": local.display_name,
+            "size_bytes": local.size_bytes,
+            "installed": True,
+        } in prompt["alternatives"]
+        assert selected == [local.name]
+        assert coordinator.state.llm.model == local.name
+        assert coordinator.state.llm.reason == "model_checking"
 
     async def test_a_missing_ollama_blocks_startup(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """★ **Reversed by ADR-034.** Lumi still neither fetches nor starts Ollama, but a

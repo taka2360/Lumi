@@ -34,6 +34,7 @@ from lumi.setup.state import (
 from lumi.transport.methods import (
     CHARACTER_MODEL_REASONS,
     CHOICE_INSTALL,
+    CHOICE_SELECT,
     CHOICE_SKIP,
     COMPONENT_LLM_MODEL,
     COMPONENT_STT,
@@ -107,7 +108,11 @@ class TestCoreMatchesTheContract:
         assert STAGE_METHODS == set(wire["methods"]["stage"])
 
     def test_setup_prompt_choices(self, wire: dict[str, Any]) -> None:
-        assert {"install": CHOICE_INSTALL, "skip": CHOICE_SKIP} == wire["setup_prompt_choices"]
+        assert {
+            "install": CHOICE_INSTALL,
+            "skip": CHOICE_SKIP,
+            "select": CHOICE_SELECT,
+        } == wire["setup_prompt_choices"]
 
     def test_inbound_methods(self, wire: dict[str, Any]) -> None:
         """★ **What the Stage may initiate** (ADR-028).

@@ -17,10 +17,28 @@ import httpx
 from lumi.providers.llm.ollama import DEFAULT_PORT, HOST
 
 PULL_TIMEOUT_S: Final = 60.0 * 60.0
+TAGS_TIMEOUT_S: Final = 2.0
 
 
 @dataclass(frozen=True, slots=True)
 class OllamaModelArtifact:
+    name: str
+    display_name: str
+    size_bytes: int
+
+    def to_payload(self, *, installed: bool = False) -> dict[str, object]:
+        return {
+            "model": self.name,
+            "display_name": self.display_name,
+            "size_bytes": self.size_bytes,
+            "installed": installed,
+        }
+
+
+@dataclass(frozen=True, slots=True)
+class OllamaLocalModel:
+    """A model already present in Ollama's local model store."""
+
     name: str
     display_name: str
     size_bytes: int
@@ -30,6 +48,7 @@ class OllamaModelArtifact:
             "model": self.name,
             "display_name": self.display_name,
             "size_bytes": self.size_bytes,
+            "installed": True,
         }
 
 
@@ -48,6 +67,44 @@ class OllamaPullError(Exception):
 
 
 PullProgress = Callable[[int, int], Awaitable[None]]
+
+
+class OllamaTagsError(Exception):
+    """The local model catalog could not be read."""
+
+
+async def list_ollama_models(
+    *,
+    port: int = DEFAULT_PORT,
+    transport: httpx.AsyncBaseTransport | None = None,
+) -> tuple[OllamaLocalModel, ...]:
+    """Reads the model catalog from Ollama's fixed local `/api/tags` endpoint."""
+    try:
+        async with httpx.AsyncClient(
+            timeout=TAGS_TIMEOUT_S,
+            transport=transport,
+            trust_env=False,
+        ) as client:
+            response = await client.get(f"http://{HOST}:{port}/api/tags")
+            response.raise_for_status()
+            payload = response.json()
+    except (httpx.HTTPError, ValueError) as error:
+        raise OllamaTagsError(str(error)) from error
+
+    raw_models = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(raw_models, list):
+        return ()
+
+    models: list[OllamaLocalModel] = []
+    for raw in raw_models:
+        if not isinstance(raw, dict):
+            continue
+        name = raw.get("name") or raw.get("model")
+        size = raw.get("size")
+        if not isinstance(name, str) or not name or not isinstance(size, int) or size <= 0:
+            continue
+        models.append(OllamaLocalModel(name=name, display_name=name, size_bytes=size))
+    return tuple(models)
 
 
 async def pull_ollama_model(

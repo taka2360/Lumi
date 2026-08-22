@@ -200,7 +200,12 @@ function setupModelOption(value: unknown): SetupModelOption | null {
   const displayName = asString(value.display_name);
   const sizeBytes = asNumber(value.size_bytes);
   if (!model || !displayName || sizeBytes === null || sizeBytes <= 0) return null;
-  return { model, display_name: displayName, size_bytes: sizeBytes };
+  return {
+    model,
+    display_name: displayName,
+    size_bytes: sizeBytes,
+    installed: value.installed === true,
+  };
 }
 
 /**

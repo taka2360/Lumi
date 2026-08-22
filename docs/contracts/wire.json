@@ -39,7 +39,8 @@
   ],
   "setup_prompt_choices": {
     "install": "install",
-    "skip": "skip"
+    "skip": "skip",
+    "select": "select"
   },
   "tauri_events": {
     "hover_state": "shell:hover:state",
