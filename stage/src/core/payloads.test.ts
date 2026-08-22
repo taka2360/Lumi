@@ -150,6 +150,24 @@ describe("the setup question", () => {
       component: "tts",
       retry: true,
       reason: "http_error",
+      model: null,
+      alternatives: [],
+    });
+  });
+
+  it("reads the model identity and byte size without guessing", () => {
+    expect(
+      toSetupPrompt({
+        component: "llm_model",
+        model: { model: "qwen3.5:9b", display_name: "Qwen 3.5 9B", size_bytes: 6_600_000_000 },
+        alternatives: [
+          { model: "qwen3.5:4b", display_name: "Qwen 3.5 4B", size_bytes: 3_400_000_000 },
+        ],
+      }),
+    ).toMatchObject({
+      component: "llm_model",
+      model: { model: "qwen3.5:9b", size_bytes: 6_600_000_000 },
+      alternatives: [{ model: "qwen3.5:4b", size_bytes: 3_400_000_000 }],
     });
   });
 

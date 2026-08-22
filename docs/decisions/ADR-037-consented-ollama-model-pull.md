@@ -1,0 +1,46 @@
+# ADR-037: Ollama の起動猶予と、同意に基づくモデル取得
+
+| | |
+|---|---|
+| Status | Accepted |
+| Date | 2026-08-22 |
+| Supersedes | [ADR-023](ADR-023-llm-runtime-and-model-acquisition.md) の「LLMモデルはLumiが触らない」部分 |
+| Related | [../architecture/setup.md](../architecture/setup.md), [ADR-034](ADR-034-gate-startup-on-complete-setup.md) |
+
+## Context
+
+Ollama の Windows インストーラは、インストール完了後に Ollama を自動起動する。
+したがって実行ファイルを初めて検出した直後に API が応答しなくても、
+「インストール済みだが未起動」とは限らず、**いま起動中である可能性が高い**。
+
+また、Ollama 本体と推論モデルは影響が大きく異なる。Ollama 本体はユーザーが公式配布元から
+導入する一方、`qwen3.5:9b` は公式タグで約 6.6 GB あり、通信量・ディスク・時間を伴う。
+曖昧な「AIをインストール」では両者への同意を区別できない。
+
+## Decision
+
+1. **Ollama 本体は引き続きLumiが取得・インストールしない。** 固定の公式サイトだけを案内する。
+2. Stage はOllama未準備画面の間、**1秒ごと**にCoreへローカル再検出を要求する。
+3. 実行ファイルを初めて検出してAPIが未応答なら、Coreは **15秒間**
+   `detected × starting` として待つ。画面は「Ollamaのセットアップを完了しています / 起動を待っています」とし、
+   ユーザー操作を要求しない。
+4. 15秒後もAPIが応答しない場合だけ `detected × stopped` とし、起動を促す。
+   その画面でも自動監視は続け、応答した瞬間に次へ進む。
+5. モデルが無い場合、**Ollama本体とは別の明示同意**を取る。
+   既定の提案は `qwen3.5:9b`（Qwen 3.5 9B、約6.6 GB）。軽量候補として
+   `qwen3.5:4b`（約3.4 GB）を選べる。サイズは
+   [Ollama公式タグ一覧](https://ollama.com/library/qwen3.5/tags) の2026-08-22確認値。
+6. 同意後はCLIを起動せず、固定ローカルAPI `POST /api/pull` を使う。
+   NDJSONの `completed / total` を `stage.setup.state` へ配信し、進捗とバイト数を表示する。
+7. 自動取得の対象は、名前・表示名・案内サイズをコードに固定した候補だけとする。
+   任意タグをStageから渡して取得する経路は作らない。
+8. 「今は取得しない」は永続化せず、セットアップは `blocked` に留まる。
+
+## Consequences
+
+- 通常のWindowsインストール経路は、インストール完了後に操作なしでモデル確認へ進む。
+- 数GBの取得は、対象と概算サイズを見たうえで明示的に開始される。
+- LumiはOllamaプロセスを起動・停止しないというADR-023の境界を維持する。
+- モデル取得中のキャンセルはHTTPストリームの切断で実装可能だが、初回実装では
+  アプリ終了によるキャンセルだけを保証する。画面上のキャンセル操作は別変更とする。
+

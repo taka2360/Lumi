@@ -11,6 +11,9 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager as _};
 
+/// Fixed by Shell: Stage never gets an arbitrary-URL capability.
+const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
+
 use crate::locale::Locale;
 
 /// The native tray icon is kept at the Windows notification-area size.
@@ -115,6 +118,26 @@ pub fn shell_app_quit(app: AppHandle) {
 pub fn shell_credits_open(app: AppHandle) {
     log::info!("shell.credits_open requested by stage");
     crate::open_credits(&app);
+}
+
+/// Opens Ollama's fixed official download page in the user's default browser.
+///
+/// The URL is not an argument, so a compromised Stage cannot redirect this command.
+#[tauri::command]
+pub fn shell_ollama_site_open() -> Result<(), String> {
+    log::info!("shell.ollama_site_open requested by stage");
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(OLLAMA_DOWNLOAD_URL)
+            .spawn()
+            .map(|_| ())
+            .map_err(|error| error.to_string())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("unsupported_platform".to_owned())
+    }
 }
 
 /// Updates native Shell-owned labels after Core accepted a locale setting.

@@ -40,7 +40,7 @@
 | **VOICEVOX Engine** | **✗** | ユーザーが別途インストール（**同梱は規約で禁止**） |
 | 音声合成モデル（ACML 等） | 条件付きで可 | §4.4。既定 Content Pack には**含めずに始める** |
 | VRM モデル | モデルの規約による | Content Pack。既定モデルは再配布可のものを選ぶ（**既定モデルは §4.5。再配布 OK**） |
-| **Ollama / LLM モデル** | **✗** | ユーザーが別途インストール。**Lumi は検出のみ**（取得もしない）→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) |
+| **Ollama / LLM モデル** | **✗** | Ollama はユーザーが別途インストール。モデルは明示同意後、Ollama に取得を依頼するが Lumi には同梱しない → [ADR-037](decisions/ADR-037-consented-ollama-model-pull.md) |
 | **Silero VAD（ONNX）** | **✓**〔Phase 1。**LICENSE 本文の確認が前提** → §7 未確認 #9〕 | 同梱。数 MB。**barge-in の critical path なので実行時取得にしない** |
 | **faster-whisper のモデル** | **✗** | 初回セットアップで**ユーザーの明示的な選択**に基づき取得（数百 MB〜。R1 に直撃する） |
 | **ASIO 版の PortAudio** | **✗** | Steinberg の ASIO SDK は非 OSS。`sounddevice` は ASIO 有り・無しの両方を同梱しており、**PyInstaller のフックが指定しなくても ASIO 版を入れてしまう**（2026-08-15 実測）。`core/lumi-core.spec` が除外し、**残っていたらビルドを失敗させる** |
@@ -268,6 +268,17 @@ MIT は著作権表示の保持を求めるが、**Silero Team の表示は依�
 **✓ 対応済み**〔2026-08-17 / Step G〕。生成スクリプトの `MANUAL` に追加した
 （CPython / SQLite / PortAudio / PyInstaller bootloader と同じ扱い）。
 
+### 4.7 推奨 LLM モデル〔2026-08-22 確認〕
+
+| モデル | 表示サイズ | ライセンス | 取得方法 |
+|---|---:|---|---|
+| `qwen3.5:9b` | 約 6.6 GB | Apache License 2.0 | 明示同意後に Ollama のローカル `/api/pull` |
+| `qwen3.5:4b` | 約 3.4 GB | Apache License 2.0 | 「別のモデルを選ぶ」で明示選択後に同じ経路 |
+
+モデル名・サイズ・ライセンスは [Ollama 公式タグ一覧](https://ollama.com/library/qwen3.5/tags)
+の 2026-08-22 確認値。Lumi の配布物やリポジトリにはモデルを含めない。
+取得を Ollama に依頼する前に、対象名・概算サイズ・通信量を伴うことを画面で示す。
+
 ---
 
 ## 5. ★ ACML 特例条項 — Lumi に直接適用される
@@ -388,13 +399,13 @@ Core = MIT の境界を、レビューではなくビルドで守るため。
 | 3 | ~~VOICEVOX Engine の OSS ライセンス~~ | VOICEVOX を代替として実装する場合 | **✓ 一部解消**〔2026-08-15〕LGPL-3.0 と非公開ライセンスの**デュアル**（README 記載）。同梱しないので配布物には影響しない |
 | ~~4~~ | ~~公式配布元の URL と、取得物の検証方法~~ | — | **✓ 解消**〔2026-08-15〕→ [architecture/setup.md](architecture/setup.md) §3-4。GitHub Releases をピン留めし、URL・サイズ・SHA-256 の3点で検証する |
 | ~~5~~ | ~~既定 VRM モデルの再配布可否~~ | — | **✓ 解消**〔2026-08-16〕→ §4.5。**再配布 OK / 改変 OK / クレジット不要**（VRM 0.0） |
-| 6 | LLM / STT / Embedding モデルのライセンス | モデル選定時 | **Phase 1**（LLM / STT）→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md) / Phase 2（Embedding） |
+| 6 | Embedding モデルのライセンス | モデル選定時 | LLM / STT は **✓ 解消** → §4.7 / §7 #10b。Embedding は Phase 2 |
 | 7 | Kokoro（英語 TTS）のライセンス | 英語対応時 | 未定 |
 | 8 | Live2D Cubism Core の配布形態ごとの条件 | Live2D 導入時 | Phase 9 |
 | ~~9~~ | ~~Silero VAD（ONNX モデルファイル本体）の LICENSE 本文~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**MIT**（Silero Team）。faster-whisper が同梱 |
 | ~~10~~ | ~~faster-whisper / CTranslate2 / onnxruntime のライセンス~~ | — | **✓ 解消**〔2026-08-16〕→ §4.6。**すべて MIT / BSD / Apache-2.0** |
 | ~~10b~~ | ~~**取得する STT モデル**のライセンス~~ | — | **✓ 解消**〔2026-08-17〕。ピン留めした2つとも **MIT**。`Systran/faster-whisper-small` / `dropbox-dash/faster-whisper-large-v3-turbo`（[ADR-027](decisions/ADR-027-stt-model-large-v3-turbo.md)）。**配布物には含めず、同意に基づいて取得する**ので再配布義務は生じない |
-| 11 | 案内する LLM モデルの利用条件（Qwen3 系 / Gemma3 系） | **配布はしないが、既定として案内する責任がある** | Phase 1（モデル選定時。未確定事項 #5 と同時） |
+| ~~11~~ | ~~案内する LLM モデルの利用条件（Qwen3 系 / Gemma3 系）~~ | — | **✓ 解消**〔2026-08-22〕→ §4.7。推奨を Qwen 3.5 9B、軽量候補を 4B に固定 |
 
 ---
 

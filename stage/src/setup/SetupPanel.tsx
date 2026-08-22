@@ -27,19 +27,29 @@
  * is the part worth testing**, and it is not testable from in here.
  */
 
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useEffect, useRef, useState } from "react";
 
 import { type SetupComponent, useStageStore } from "../core/store";
-import { answerSetupPrompt } from "../core/useCoreConnection";
+import { answerSetupPrompt, recheckOllama } from "../core/useCoreConnection";
 import { type Locale, translate } from "../i18n";
 import { useLocale } from "../i18n/provider";
-import { useQuit } from "../platform/useStageShell";
-import { failureText, type StatusLine, statusLines } from "./status";
+import { useOpenOllamaSite, useQuit } from "../platform/useStageShell";
+import { failureText, type StatusLine, statusLines, sttStatus, ttsStatus } from "./status";
+
+/** Short enough to notice an installation finishing, slow enough to stay negligible. */
+export const OLLAMA_RECHECK_INTERVAL_MS = 1_000;
+
+function formatGigabytes(bytes: number, locale: Locale): string {
+  return `${(bytes / 1_000_000_000).toFixed(1)} ${translate(locale, "setup.model.gb")}`;
+}
 
 /** What is being asked about. **The subject of consent is never left implicit.** */
 function prompts(
   locale: Locale,
-): Record<SetupComponent, { title: string; body: ReactNode; note: ReactNode }> {
+): Record<
+  Exclude<SetupComponent, "llm_model">,
+  { title: string; body: ReactNode; note: ReactNode }
+> {
   return {
     tts: {
       title: translate(locale, "setup.prompt.tts.title"),
@@ -98,8 +108,118 @@ export function SetupPanel() {
   const setup = useStageStore((state) => state.setup);
   const prompt = useStageStore((state) => state.prompt);
   const quit = useQuit();
+  const [ollamaActionError, setOllamaActionError] = useState(false);
+  const [showModelAlternatives, setShowModelAlternatives] = useState(false);
+  const ollamaCheckActive = useRef(false);
+  const openOllamaSite = useOpenOllamaSite(() => setOllamaActionError(true));
+  const ollamaStarting =
+    setup.llm.state === "detected" &&
+    setup.llm.runtime === "starting" &&
+    setup.llm.reason === "ollama_starting";
+  const ollamaWaiting =
+    setup.llm.state === "not_configured" ||
+    (setup.llm.state === "detected" && setup.llm.runtime === "stopped") ||
+    ollamaStarting;
+  const ollamaChecking =
+    setup.llm.state === "detected" && setup.llm.runtime === "starting" && !ollamaStarting;
+
+  const checkOllama = useCallback(async () => {
+    if (ollamaCheckActive.current) return;
+    ollamaCheckActive.current = true;
+    setOllamaActionError(false);
+    try {
+      await recheckOllama();
+    } catch {
+      setOllamaActionError(true);
+    } finally {
+      ollamaCheckActive.current = false;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (prompt || setup.boot !== "blocked" || !ollamaWaiting) return;
+    const timer = window.setInterval(() => void checkOllama(), OLLAMA_RECHECK_INTERVAL_MS);
+    return () => window.clearInterval(timer);
+  }, [checkOllama, ollamaWaiting, prompt, setup.boot]);
 
   if (prompt) {
+    if (prompt.component === "llm_model") {
+      const model = prompt.model;
+      return (
+        <div className="panel panel--model-prompt">
+          <h1 className="panel__title">{translate(locale, "setup.prompt.model.title")}</h1>
+          {prompt.retry && (
+            <p className="panel__status panel__status--bad">{failureText(prompt.reason, locale)}</p>
+          )}
+          <p className="panel__body">
+            {translate(locale, "setup.prompt.model.body.before")}
+            <strong>{model?.display_name ?? "Qwen 3.5 9B"}</strong>
+            {translate(locale, "setup.prompt.model.body.after")}
+          </p>
+          {model && (
+            <p className="panel__note">
+              {translate(locale, "setup.prompt.model.downloadNote", {
+                size: formatGigabytes(model.size_bytes, locale),
+              })}
+            </p>
+          )}
+          {showModelAlternatives ? (
+            <div className="panel__model-options">
+              {prompt.alternatives.map((option) => (
+                <button
+                  type="button"
+                  className="panel__button"
+                  key={option.model}
+                  onClick={() => {
+                    setShowModelAlternatives(false);
+                    answerSetupPrompt("install", option.model);
+                  }}
+                >
+                  {translate(locale, "setup.prompt.model.downloadNamed", {
+                    model: option.display_name,
+                    size: formatGigabytes(option.size_bytes, locale),
+                  })}
+                </button>
+              ))}
+              <button
+                type="button"
+                className="panel__button"
+                onClick={() => setShowModelAlternatives(false)}
+              >
+                {translate(locale, "setup.prompt.model.back")}
+              </button>
+            </div>
+          ) : (
+            <div className="panel__model-options">
+              <button
+                type="button"
+                className="panel__button"
+                onClick={() => answerSetupPrompt("install", model?.model)}
+              >
+                {translate(locale, "setup.prompt.model.downloadNamed", {
+                  model: model?.display_name ?? "Qwen 3.5 9B",
+                  size: model ? formatGigabytes(model.size_bytes, locale) : "6.6 GB",
+                })}
+              </button>
+              <button
+                type="button"
+                className="panel__button"
+                onClick={() => setShowModelAlternatives(true)}
+              >
+                {translate(locale, "setup.prompt.model.choose")}
+              </button>
+              <button
+                type="button"
+                className="panel__button"
+                onClick={() => answerSetupPrompt("skip")}
+              >
+                {translate(locale, "setup.skip")}
+              </button>
+            </div>
+          )}
+        </div>
+      );
+    }
     const { title, body, note } = prompts(locale)[prompt.component];
     return (
       <div className="panel">
@@ -128,6 +248,79 @@ export function SetupPanel() {
   }
 
   const lines = statusLines(setup, locale);
+
+  if (setup.boot === "blocked" && (ollamaWaiting || ollamaChecking)) {
+    const otherLines = [ttsStatus(setup.tts, locale), sttStatus(setup.stt, locale)].filter(
+      (line): line is StatusLine => line !== null,
+    );
+    const installedButStopped = setup.llm.state === "detected" && setup.llm.runtime === "stopped";
+    return (
+      <div className="panel panel--ollama" aria-live="polite">
+        <h1 className="panel__title">
+          {translate(
+            locale,
+            ollamaChecking
+              ? "setup.ollama.detected.title"
+              : ollamaStarting
+                ? "setup.ollama.starting.title"
+                : installedButStopped
+                  ? "setup.ollama.stopped.title"
+                  : "setup.ollama.missing.title",
+          )}
+        </h1>
+        {ollamaChecking || ollamaStarting ? (
+          <>
+            <div className="boot__spinner panel__ollama-spinner" aria-hidden="true" />
+            <p className="panel__body">
+              {translate(
+                locale,
+                ollamaStarting ? "setup.ollama.starting.body" : "setup.ollama.checkingModel",
+              )}
+            </p>
+            {ollamaStarting && (
+              <p className="panel__note">{translate(locale, "setup.ollama.autoCheck")}</p>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="panel__body">
+              {installedButStopped
+                ? translate(locale, "setup.ollama.stopped.body")
+                : translate(locale, "setup.ollama.missing.body")}
+            </p>
+            {!installedButStopped && (
+              <p className="panel__note panel__ollama-note">
+                <strong>{translate(locale, "setup.ollama.why.strong")}</strong>
+                <br />
+                {translate(locale, "setup.ollama.why.detail")}
+              </p>
+            )}
+            <p className="panel__note">{translate(locale, "setup.ollama.autoCheck")}</p>
+            {ollamaActionError && (
+              <p className="panel__status panel__status--bad">
+                {translate(locale, "setup.ollama.actionFailed")}
+              </p>
+            )}
+            {!installedButStopped && (
+              <div className="panel__actions panel__actions--single">
+                <button type="button" className="panel__button" onClick={openOllamaSite}>
+                  {translate(locale, "setup.ollama.openSite")}
+                </button>
+              </div>
+            )}
+          </>
+        )}
+        {otherLines.map((line) => (
+          <StatusText key={line.text} line={line} />
+        ))}
+        <div className="panel__actions panel__actions--single panel__quit-action">
+          <button type="button" className="panel__button" onClick={quit}>
+            {translate(locale, "setup.quit")}
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   if (setup.boot === "blocked") {
     // **Not a loading screen.** Nothing is in progress; what happens next is the user's

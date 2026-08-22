@@ -45,14 +45,20 @@ export type TtsSetupState =
   | "failed";
 
 /** Whether Ollama is there. **Lumi never fetches it** (ADR-023), so there is no `installing`. */
-export type LlmSetupState = "unknown" | "not_configured" | "detected" | "model_missing";
+export type LlmSetupState =
+  | "unknown"
+  | "not_configured"
+  | "detected"
+  | "model_missing"
+  | "model_installing"
+  | "model_failed";
 
 /** Whether the speech model is there. Same shape as TTS **minus `detected`** — there is no
  * such thing as an STT model the user installed separately (docs/architecture/setup.md §2b). */
 export type SttSetupState = "unknown" | "not_configured" | "installing" | "installed" | "failed";
 
 /** Which component a question is about. **A question with no subject is not consent.** */
-export type SetupComponent = "tts" | "stt";
+export type SetupComponent = "tts" | "stt" | "llm_model";
 
 /** Same shape as Core's `TtsSetup.to_payload()` (core/lumi/setup/state.py). */
 export interface TtsSetupSnapshot {
@@ -66,11 +72,14 @@ export interface TtsSetupSnapshot {
   runtime: EngineRuntime;
 }
 
-/** Same shape as Core's `LlmSetup.to_payload()`. **No progress** — nothing is ever fetched. */
+/** Same shape as Core's `LlmSetup.to_payload()`. */
 export interface LlmSetupSnapshot {
   state: LlmSetupState;
   model: string | null;
   reason: string | null;
+  progress: number | null;
+  completed_bytes: number | null;
+  total_bytes: number | null;
   runtime: EngineRuntime;
 }
 
@@ -125,6 +134,14 @@ export interface SetupPrompt {
   retry: boolean;
   /** The previous failure reason (only populated when `retry`). */
   reason: string | null;
+  model: SetupModelOption | null;
+  alternatives: SetupModelOption[];
+}
+
+export interface SetupModelOption {
+  model: string;
+  display_name: string;
+  size_bytes: number;
 }
 
 /**
@@ -230,6 +247,9 @@ const UNKNOWN_LLM: LlmSetupSnapshot = {
   state: "unknown",
   model: null,
   reason: null,
+  progress: null,
+  completed_bytes: null,
+  total_bytes: null,
   runtime: "stopped",
 };
 

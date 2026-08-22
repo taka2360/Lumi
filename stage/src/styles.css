@@ -180,6 +180,33 @@ body {
   background: rgba(255, 255, 255, 0.18);
 }
 
+.panel__button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.panel__ollama-spinner {
+  align-self: center;
+  margin: 4px 0;
+}
+
+.panel__ollama-note {
+  line-height: 1.65;
+}
+
+.panel__quit-action {
+  margin-top: 12px;
+}
+
+.panel__model-options {
+  display: grid;
+  gap: 8px;
+}
+
+.panel--model-prompt {
+  max-width: 360px;
+}
+
 /* Declared after `.panel__button` so the more specific rule is also the later one. */
 .panel__actions--single .panel__button {
   min-width: 96px;

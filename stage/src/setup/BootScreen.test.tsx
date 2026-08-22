@@ -43,4 +43,34 @@ describe("startup detail", () => {
     expect(container.textContent).toContain("音声認識モデルを読み込んでいます");
     expect(container.textContent).not.toContain("AivisSpeech を起動");
   });
+
+  it("shows Ollama model download progress and transferred bytes", () => {
+    const setup: SetupSnapshot = {
+      ...UNKNOWN_SETUP,
+      boot: "installing",
+      llm: {
+        ...UNKNOWN_SETUP.llm,
+        state: "model_installing",
+        model: "qwen3.5:9b",
+        progress: 0.68,
+        completed_bytes: 3_200_000_000,
+        total_bytes: 4_700_000_000,
+      },
+    };
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      root?.render(
+        <LocaleProvider>
+          <BootScreen setup={setup} connected />
+        </LocaleProvider>,
+      );
+    });
+
+    expect(container.textContent).toContain("Qwen 3.5 9B をダウンロード中");
+    expect(container.textContent).toContain("68%");
+    expect(container.textContent).toContain("3.2 GB / 4.7 GB");
+  });
 });

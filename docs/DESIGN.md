@@ -9,8 +9,13 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.13 |
+| Revision | rev.14 |
 | 実装フェーズ | **Phase 0 の完了条件を達成。Phase 1（MVP: Talking Desktop Character）着手。** セットアップ周りの検証手順 15〜18 が残る → [roadmap.md](roadmap.md) |
+
+> **rev.14 の変更点**（Ollamaの通常インストール経路を、未起動と誤判定しない）
+> 1. 実行ファイル初検出後、APIが立つまで15秒の起動猶予を設けた → [ADR-037](decisions/ADR-037-consented-ollama-model-pull.md)。
+> 2. Ollama本体は引き続き検出のみだが、推論モデルは対象・概算サイズを明示して同意を得た後、
+>    ローカル `/api/pull` から取得できるようにした。
 
 > **rev.13 の変更点**（STT のウォーム失敗を状態として表したら、導入状態と実行状態の混同が露出した）
 > 1. **STT にも runtime 軸を追加した** → [ADR-035](decisions/ADR-035-separate-stt-installation-and-runtime-state.md)。

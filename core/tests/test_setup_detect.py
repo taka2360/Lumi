@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import httpx
 import pytest
 
 from lumi import paths as paths_module
@@ -15,6 +16,7 @@ from lumi.setup.detect import (
     detect_engines,
     find_installed_by_lumi,
     is_port_open,
+    ollama_api_version,
 )
 from lumi.setup.engines import AIVISSPEECH_ENGINE
 
@@ -68,6 +70,26 @@ class TestPortProbe:
     async def test_reports_a_closed_port(self) -> None:
         # A high port unlikely to be in use. False if it isn't open.
         assert not await is_port_open(59_999)
+
+
+class TestOllamaApiProbe:
+    async def test_uses_the_version_endpoint(self) -> None:
+        seen: list[str] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request.url.path)
+            return httpx.Response(200, json={"version": "0.12.0"})
+
+        version = await ollama_api_version(transport=httpx.MockTransport(handler))
+
+        assert version == "0.12.0"
+        assert seen == ["/api/version"]
+
+    async def test_rejects_a_non_ollama_response(self) -> None:
+        def handler(_request: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"service": "something-else"})
+
+        assert await ollama_api_version(transport=httpx.MockTransport(handler)) is None
 
 
 class TestDetectEngines:

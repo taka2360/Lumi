@@ -401,7 +401,9 @@ class TestNetworkOptional:
     #: Modules allowed to hold an HTTP client, and why.
     #: **When adding one, always write down "when and where it communicates."**
     ALLOWED_HTTP: ClassVar[dict[str, str]] = {
+        "setup/detect.py": "Ollama の再検出。127.0.0.1:11434/api/version のみ",
         "setup/install.py": "エンジンの取得。ユーザーが選んだときだけ呼ばれる",
+        "setup/ollama.py": "同意済みモデルの取得依頼。127.0.0.1:11434/api/pull のみ",
         "providers/tts/aivisspeech.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
         "providers/llm/ollama.py": "外部エンジン。127.0.0.1 のみ（下のテストで固定）",
     }

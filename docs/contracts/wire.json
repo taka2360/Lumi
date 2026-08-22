@@ -24,11 +24,13 @@
   },
   "$comment_inbound": "Stage → Core の要求（ADR-028）。**ここに無い method は届かない**（WsServer.on_request の登録が allowlist そのもの）",
   "inbound_methods": [
-    "stage.settings.update"
+    "stage.settings.update",
+    "stage.setup.recheck_ollama"
   ],
   "setup_components": [
     "tts",
-    "stt"
+    "stt",
+    "llm_model"
   ],
   "$comment_reasons": "stage.character.model の reason（ADR-036）。**Core は表示文字列を送らない。** Stage が i18n の character.model.<reason> で訳す。知らないコードはそのまま表示する",
   "character_model_reasons": [
@@ -50,6 +52,7 @@
     "shell_window_scale",
     "shell_locale_set",
     "shell_credits_open",
+    "shell_ollama_site_open",
     "shell_app_quit"
   ],
   "window_labels": [
@@ -84,7 +87,9 @@
       "unknown",
       "not_configured",
       "detected",
-      "model_missing"
+      "model_missing",
+      "model_installing",
+      "model_failed"
     ],
     "stt_setup_state": [
       "unknown",

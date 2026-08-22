@@ -125,13 +125,41 @@ barge-in は中核機能であり、「取得するまで遮れない」状態�
 | `unknown` | まだ調べていない | — |
 | `not_configured` | **Ollama が見つからない** | 公式サイトからインストールしてもらう |
 | `detected` | Ollama が見つかった | — |
-| `model_missing` | **Ollama はあるが、設定されたモデルが無い** | `ollama pull <model>` を案内する |
+| `model_missing` | **Ollama はあるが、設定されたモデルが無い** | 名前・サイズを示して、Lumiから取得するか明示確認する |
+| `model_installing` | 同意済みモデルをOllamaが取得中 | 進捗を表示する |
+| `model_failed` | モデル取得に失敗した | 理由を示し、再試行 / 今は取得しない |
 
 | プロセスの状態 | 意味 |
 |---|---|
 | `stopped` | 127.0.0.1 の API が応答しない |
 | `ready` | 応答する。**推論できる** |
 | `failed` | 応答するが異常（バージョン不整合など） |
+
+### Ollama が見つからない間の再検出
+
+`not_configured` の画面は単なる行き止まりにしない。Stage は画面が表示されている間、
+**1 秒ごと**に `stage.setup.recheck_ollama` を Core へ要求する。Core は毎回
+`http://127.0.0.1:11434/api/version` を含む既存のローカル検出だけをやり直す。
+外部ネットワークへは接続しない。**[再チェック] は置かない**。画面が表示されている限り
+同じ経路が自動で動くため、手動操作を要求しない。
+
+実行ファイルを初めて検出したがAPIが未応答なら、**15秒間は `detected × starting`** とする。
+文言は「Ollamaのセットアップを完了しています / Ollamaの起動を待っています」。
+猶予が切れて初めて `detected × stopped` とし、ユーザーに起動を促す。停止案内の画面でも
+1秒監視を続けるため、ユーザーが起動すれば操作なしで次へ進む。
+
+応答を検出したら `detected × starting` を配信し、画面を
+**「Ollama を検出しました」→「モデルを確認しています」**へ切り替える。その後の
+モデル有無とロード可否の確認は、初回起動と同じ `OllamaProvider.load()` の経路を通す。
+モデルがあれば `detected × ready`、無ければモデル取得の同意画面になる。
+推奨 `qwen3.5:9b` は約6.6 GB、軽量候補 `qwen3.5:4b` は約3.4 GB と明示する。
+同意後はローカル `POST /api/pull` のNDJSON進捗を表示し、成功後にモデル確認をやり直す。
+3つの推論要素が
+すべて `ready` なら、そのままセットアップを抜けて会話を開始する。Lumi の再起動は要求しない。
+
+**ポーリングの生存期間は画面に一致させる。** `not_configured` または
+`detected × stopped` でなくなったら Stage はタイマーを止める。Core は要求を直列化し、
+前回のローカル API 確認が終わる前に次のタイマーが発火しても、モデル確認を二重起動しない。
 
 > **「入っているのに動かない」を1つの enum で潰さない。** `detected × stopped`（入っているが起動していない）と
 > `not_configured`（そもそも入っていない）では、ユーザーに求める行動がまったく違う。
@@ -240,7 +268,7 @@ Phase 0 の `boot` は TTS だけを見ていた。**LLM / STT / TTS の3つか�
 | | 導入の状態 | プロセスの状態 |
 |---|---|---|
 | TTS | `tts_setup_state` | `engine_runtime`（4値） |
-| LLM | `llm_setup_state` | `engine_runtime` を**共用**。ただし **`starting` は起こらない**（Lumi が起動しないので「起動中」という状態が存在しない） |
+| LLM | `llm_setup_state`（モデル取得中・失敗を含む） | `engine_runtime` を**共用**。`starting` は Ollama 起動猶予、API応答後のモデル確認・ロード中 |
 | STT | `stt_setup_state` | `engine_runtime` を**共用**。外部プロセスではないが、CTranslate2 のモデルロードに `starting` / `ready` / `failed` がある〔ADR-035〕 |
 
 **enum を1つに統合しない。** `detected`（ユーザーが自分で入れた）は TTS にしか無く、
@@ -519,3 +547,8 @@ sqlite-vec / FTS5 / PortAudio / TLS 証明書を、**実際に読み込んで**�
 | 28 | **起動中のエンジンは `blocked` の画面に並ばない**。ただし**起動に失敗すれば並ぶ**（裏では起動を試みている）〔2026-08-20〕 |
 | 29 | **STT のロード失敗は `installed × runtime: failed` になり、取得失敗の `state: failed` と区別される**〔ADR-035〕 |
 | 30 | **STT は `installed × runtime: ready` のときだけ使える**。ロード中は `starting`、失敗後は `blocked` になり音声入力を開かない〔ADR-035〕 |
+| 31 | **Ollama 未準備画面では1秒ごとに自動再検出し、[再チェック] は置かない**。画面を離れたらポーリングを止める |
+| 32 | **`127.0.0.1:11434/api/version` の応答後は `detected × starting` を配信してモデル確認へ進み、モデルがあれば再起動なしで `ready` になる** |
+| 33 | **実行ファイル初検出後15秒は `detected × starting` でAPIを待ち、猶予後だけ `detected × stopped` を出す** |
+| 34 | **モデル名・概算サイズを示して明示同意を得るまで `/api/pull` を呼ばない** |
+| 35 | **モデル取得の `completed / total` を表示し、成功後は再起動なしでモデル確認へ戻る** |

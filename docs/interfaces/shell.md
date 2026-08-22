@@ -31,6 +31,7 @@ interface PlatformShell {
   // ── ウィンドウ ─────────────────────────────
   createWindow(spec: WindowSpec): Promise<WindowHandle>
   openCredits(): Promise<void>                         // 静的な credits ウィンドウを開く / 前面へ出す
+  openOllamaSite(): Promise<void>                      // 固定の Ollama 公式ダウンロードページを既定ブラウザで開く
   setTransparent(w: WindowHandle, on: boolean): Promise<void>
   setAlwaysOnTop(w: WindowHandle, on: boolean): Promise<void>
   setClickThrough(w: WindowHandle, on: boolean): Promise<void>
@@ -116,7 +117,7 @@ Rust 側で ~60Hz でカーソル位置を取得（GetCursorPos 相当）
 
 | 分類 | 呼ぶ主体 | 経路 |
 |---|---|---|
-| `setHitRegion` / `onHoverState` / ウィンドウ操作 / `openCredits` / `quit` | Stage | `shell.*`（Tauri IPC） |
+| `setHitRegion` / `onHoverState` / ウィンドウ操作 / `openCredits` / `openOllamaSite` / `quit` | Stage | `shell.*`（Tauri IPC） |
 | `toAssetUrl` | Stage | PlatformShell adapter（Tauri asset protocol） |
 | `captureScreen` / `injectInput` / `launchProcess` / `spawnSidecar` | **Core** | `os.*`（WS） |
 
@@ -150,6 +151,13 @@ Stage から渡せないため、外部通信や任意ウィンドウ生成の�
 Tauri 実装では `shell_credits_open` を**非同期コマンド**としてスレッドプールで実行する。
 同期 IPC ハンドラから `WebviewWindowBuilder::build()` を呼ぶと、Windows のメインイベントループが
 ウィンドウ生成の完了待ちと循環し、アプリ全体のイベント処理が停止するためである。
+
+#### `openOllamaSite` を Stage に露出してよい理由〔Phase 1〕
+
+初回セットアップから Ollama の公式配布元へ移動するために要る。
+Stage から URL を受け取らず、Shell に固定した公式ダウンロードページだけを既定ブラウザで開く。
+したがって、侵害された Stage が得るのは同じ公式ページを繰り返し開く能力までであり、
+任意サイトへの誘導や任意プロセス引数の指定には広がらない。
 
 #### `scaleWindow` に「大きさ」ではなく「倍率」を渡す理由〔Phase 0〕
 

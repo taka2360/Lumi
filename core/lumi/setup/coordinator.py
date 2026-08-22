@@ -39,6 +39,7 @@ pressing "retry" on a failure.
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
 from typing import TypeVar
@@ -55,6 +56,13 @@ from lumi.setup.install import (
     is_model_installed,
 )
 from lumi.setup.models import FASTER_WHISPER_LARGE_V3_TURBO, STT_MODELS, ModelArtifact
+from lumi.setup.ollama import (
+    OLLAMA_MODELS,
+    QWEN_35_9B,
+    OllamaModelArtifact,
+    OllamaPullError,
+    pull_ollama_model,
+)
 from lumi.setup.state import (
     BootPhase,
     EngineRuntime,
@@ -69,9 +77,11 @@ from lumi.setup.state import (
 )
 from lumi.transport.methods import (
     CHOICE_INSTALL,
+    COMPONENT_LLM_MODEL,
     COMPONENT_STT,
     COMPONENT_TTS,
     METHOD_SETUP_PROMPT,
+    METHOD_SETUP_RECHECK_OLLAMA,
     METHOD_SETUP_STATE,
 )
 from lumi.transport.protocol import Role
@@ -85,6 +95,7 @@ T = TypeVar("T")
 
 #: How long to wait for the user's choice. **Human time**, so it's long.
 PROMPT_TIMEOUT_S = 600.0
+OLLAMA_START_GRACE_S = 15.0
 
 #: What `stt_model` resolves to when nothing selects another one. **Pinned**
 #: (docs/architecture/setup.md §3b)
@@ -111,7 +122,13 @@ def selected_stt_artifact(env: Mapping[str, str]) -> ModelArtifact | None:
 
 
 class SetupCoordinator:
-    def __init__(self, server: WsServer, env: Mapping[str, str]) -> None:
+    def __init__(
+        self,
+        server: WsServer,
+        env: Mapping[str, str],
+        *,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
         self._server = server
         self._env = env
         self._snapshot = SetupSnapshot()
@@ -126,6 +143,17 @@ class SetupCoordinator:
         # first in practice (2026-08-15). Deciding whether to prompt while state is
         # still unknown would skip asking when it should.
         self._initialized = asyncio.Event()
+        # Automatic polling can overlap a slow local API probe. Detection and the transition
+        # into model warm-up are one serialized operation, never two warm-ups.
+        self._ollama_recheck_lock = asyncio.Lock()
+        self._clock = clock
+        self._ollama_start_deadline: float | None = None
+        self._on_ollama_detected: Callable[[], None] | None = None
+        self._on_llm_model_selected: Callable[[str], Awaitable[None]] | None = None
+        self._model_prompting = False
+        # Registering is the inbound allowlist (ADR-028). This route can only re-check
+        # the fixed local Ollama endpoint; no host or URL comes from Stage.
+        server.on_request(METHOD_SETUP_RECHECK_OLLAMA, self._recheck_ollama)
 
     @property
     def state(self) -> SetupSnapshot:
@@ -183,13 +211,92 @@ class SetupCoordinator:
         """
         found = await detect_ollama(self._env)
         if found is None:
+            self._ollama_start_deadline = None
             return LlmSetup(
                 state=LlmSetupState.NOT_CONFIGURED, reason="Ollama not found", model=None
             )
+        if not found.running:
+            self._ollama_start_deadline = self._clock() + OLLAMA_START_GRACE_S
+            return LlmSetup(
+                state=LlmSetupState.DETECTED,
+                runtime=EngineRuntime.STARTING,
+                reason="ollama_starting",
+            )
+        self._ollama_start_deadline = None
         return LlmSetup(
             state=LlmSetupState.DETECTED,
-            runtime=EngineRuntime.READY if found.running else EngineRuntime.STOPPED,
+            runtime=EngineRuntime.READY,
         )
+
+    def set_ollama_detected_handler(self, handler: Callable[[], None]) -> None:
+        """Registers the runtime's model-check trigger.
+
+        Detection owns only the transition to ``detected × starting``. The Provider
+        remains the single place that checks model presence and loads it.
+        """
+        self._on_ollama_detected = handler
+
+    def set_llm_model_selected_handler(self, handler: Callable[[str], Awaitable[None]]) -> None:
+        """Registers the runtime update needed when setup selects a different model."""
+        self._on_llm_model_selected = handler
+
+    async def _recheck_ollama(self, _payload: dict[str, object]) -> dict[str, object]:
+        """Re-checks Ollama on the local machine and starts model confirmation.
+
+        The one-second UI timer calls this method. There is deliberately no manual button.
+        The destination stays fixed in ``detect_ollama`` (filesystem + 127.0.0.1:11434).
+        """
+        async with self._ollama_recheck_lock:
+            found = await detect_ollama(self._env)
+            if found is None:
+                self._ollama_start_deadline = None
+                await self._update(
+                    llm=LlmSetup(
+                        state=LlmSetupState.NOT_CONFIGURED,
+                        reason="Ollama not found",
+                        model=self._snapshot.llm.model,
+                    )
+                )
+                return {"detected": False, "running": False}
+
+            if not found.running:
+                now = self._clock()
+                if self._ollama_start_deadline is None:
+                    self._ollama_start_deadline = now + OLLAMA_START_GRACE_S
+                starting = now < self._ollama_start_deadline
+                await self._update(
+                    llm=LlmSetup(
+                        state=LlmSetupState.DETECTED,
+                        runtime=(EngineRuntime.STARTING if starting else EngineRuntime.STOPPED),
+                        model=self._snapshot.llm.model,
+                        reason="ollama_starting" if starting else "ollama_not_running",
+                    )
+                )
+                return {"detected": True, "running": False, "starting": starting}
+
+            self._ollama_start_deadline = None
+
+            if self._snapshot.llm.state in (
+                LlmSetupState.MODEL_INSTALLING,
+                LlmSetupState.MODEL_FAILED,
+            ):
+                return {"detected": True, "running": True}
+
+            # An untrusted Stage may still send this request after the panel is gone.
+            # Re-checking must never downgrade a working conversation to `starting`.
+            if self._snapshot.llm.ready:
+                return {"detected": True, "running": True}
+            await self._update(
+                llm=LlmSetup(
+                    state=LlmSetupState.DETECTED,
+                    runtime=EngineRuntime.STARTING,
+                    model=self._snapshot.llm.model,
+                    reason="model_checking",
+                )
+            )
+            if self._on_ollama_detected is not None:
+                self._on_ollama_detected()
+            return {"detected": True, "running": True}
 
     def _detect_stt(self) -> SttSetup:
         """A file check, not a process check. **Never touches the network** — a half-fetched
@@ -260,6 +367,69 @@ class SetupCoordinator:
             else EngineRuntime.STOPPED
         )
         await self._update(llm=LlmSetup(state=state, model=model, reason=reason, runtime=runtime))
+        if state is LlmSetupState.MODEL_MISSING:
+            await self._ask_for_llm_model()
+
+    async def _ask_for_llm_model(self) -> None:
+        """Separately asks consent for a pinned, size-labelled Ollama model pull."""
+        if self._model_prompting:
+            return
+        self._model_prompting = True
+        retry = self._snapshot.llm.state is LlmSetupState.MODEL_FAILED
+        detail = self._snapshot.llm.reason if retry else None
+        try:
+            while True:
+                current = OLLAMA_MODELS.get(self._snapshot.llm.model or "", QWEN_35_9B)
+                self._awaiting_answer = True
+                await self._broadcast()
+                try:
+                    result = await self._server.invoke(
+                        Role.STAGE,
+                        METHOD_SETUP_PROMPT,
+                        {
+                            "component": COMPONENT_LLM_MODEL,
+                            "retry": retry,
+                            "reason": detail,
+                            "model": current.to_payload(),
+                            "alternatives": [
+                                artifact.to_payload()
+                                for artifact in OLLAMA_MODELS.values()
+                                if artifact.name != current.name
+                            ],
+                        },
+                        timeout=PROMPT_TIMEOUT_S,
+                    )
+                except (NotConnectedError, TimeoutError):
+                    return
+                finally:
+                    self._awaiting_answer = False
+
+                choice = result.payload.get("choice") if result.ok else None
+                if choice != CHOICE_INSTALL:
+                    return
+                selected_name = result.payload.get("model")
+                artifact = OLLAMA_MODELS.get(
+                    selected_name if isinstance(selected_name, str) else current.name
+                )
+                if artifact is None:
+                    await self._update(
+                        llm=LlmSetup(
+                            state=LlmSetupState.MODEL_FAILED,
+                            runtime=EngineRuntime.READY,
+                            model=current.name,
+                            reason="unknown_model",
+                        )
+                    )
+                else:
+                    await self.install_llm_model(artifact)
+                if self._snapshot.llm.state is not LlmSetupState.MODEL_FAILED:
+                    return
+                retry = True
+                detail = self._snapshot.llm.reason
+        finally:
+            self._model_prompting = False
+            self._awaiting_answer = False
+            await self._broadcast()
 
     async def set_stt_runtime(self, runtime: EngineRuntime) -> None:
         """The STT Provider's load state changed without changing acquisition state.
@@ -495,6 +665,97 @@ class SetupCoordinator:
                 executable=str(executable),
             )
         )
+
+    async def install_llm_model(self, artifact: OllamaModelArtifact) -> None:
+        """Asks Ollama's fixed local API to pull one consented, allowlisted model."""
+        if self._on_llm_model_selected is None:
+            await self._update(
+                llm=LlmSetup(
+                    state=LlmSetupState.MODEL_FAILED,
+                    runtime=EngineRuntime.READY,
+                    model=artifact.name,
+                    reason="model_selection_unavailable",
+                )
+            )
+            return
+
+        await self._on_llm_model_selected(artifact.name)
+        await self._update(
+            llm=LlmSetup(
+                state=LlmSetupState.MODEL_INSTALLING,
+                runtime=EngineRuntime.READY,
+                model=artifact.name,
+                progress=0.0,
+                completed_bytes=0,
+                total_bytes=artifact.size_bytes,
+            )
+        )
+
+        last_sent = -1.0
+        tracked_total = 0
+
+        async def progress(completed: int, total: int) -> None:
+            nonlocal last_sent, tracked_total
+            # Ollama reports each layer separately. Ignore completed metadata layers once a
+            # larger model layer appears; otherwise the bar reaches 100%, then freezes while
+            # the multi-gigabyte layer downloads.
+            if total < tracked_total:
+                return
+            if total > tracked_total:
+                tracked_total = total
+                last_sent = -1.0
+            fraction = min(1.0, max(0.0, completed / total))
+            if fraction - last_sent < 0.01 and fraction < 1.0:
+                return
+            last_sent = fraction
+            await self._update(
+                llm=replace(
+                    self._snapshot.llm,
+                    progress=fraction,
+                    completed_bytes=completed,
+                    total_bytes=total,
+                )
+            )
+
+        try:
+            await pull_ollama_model(artifact, progress=progress)
+        except OllamaPullError as error:
+            log.warning(
+                "setup.ollama_model.failed",
+                model=artifact.name,
+                reason=error.reason,
+                detail=error.detail,
+            )
+            await self._update(
+                llm=LlmSetup(
+                    state=LlmSetupState.MODEL_FAILED,
+                    runtime=EngineRuntime.READY,
+                    model=artifact.name,
+                    reason=error.reason,
+                )
+            )
+            return
+        except asyncio.CancelledError:
+            await self._update(
+                llm=LlmSetup(
+                    state=LlmSetupState.MODEL_FAILED,
+                    runtime=EngineRuntime.READY,
+                    model=artifact.name,
+                    reason="cancelled",
+                )
+            )
+            raise
+
+        await self._update(
+            llm=LlmSetup(
+                state=LlmSetupState.DETECTED,
+                runtime=EngineRuntime.STARTING,
+                model=artifact.name,
+                reason="model_checking",
+            )
+        )
+        if self._on_ollama_detected is not None:
+            self._on_ollama_detected()
 
     async def install_speech_model(self) -> None:
         """Fetches the speech-recognition model. **The same rules as the engine**

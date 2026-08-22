@@ -38,6 +38,7 @@ from lumi.kernel.activity import ActivityKind, ActivityState
 from lumi.providers.base import (
     ProviderKind,
 )
+from lumi.setup.state import BootPhase, EngineRuntime, LlmSetup, LlmSetupState, SetupSnapshot
 from lumi.transport.server import RequestRefused
 
 
@@ -151,6 +152,44 @@ class TestAssembly:
         finally:
             server.release_ready.set()
             await runtime.stop()
+
+    async def test_a_successful_model_pull_is_warmed_again_before_continuing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The prompt/pull can finish inside the current warm-up task, so it must loop."""
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+
+        class PullingSetup:
+            boot = BootPhase.BLOCKED
+            state = SetupSnapshot()
+
+        setup = PullingSetup()
+        runtime._setup = cast(Any, setup)
+        calls = 0
+
+        async def model_warmup(*_args: Any) -> None:
+            nonlocal calls
+            calls += 1
+            setup.state = SetupSnapshot(
+                llm=LlmSetup(
+                    state=LlmSetupState.DETECTED,
+                    runtime=EngineRuntime.STARTING if calls == 1 else EngineRuntime.READY,
+                    reason="model_checking" if calls == 1 else None,
+                )
+            )
+
+        monkeypatch.setattr(runtime_module, "warm_llm", model_warmup)
+
+        await runtime._warm_llm_after_detection()
+
+        assert calls == 2
+        await runtime.stop()
 
 
 class TestShutdown:

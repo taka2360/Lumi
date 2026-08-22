@@ -27,6 +27,8 @@ export const METHOD_SETTINGS = "stage.settings.state";
 
 /** Stage → Core (ADR-028). **The only inbound method in Phase 1.** */
 export const METHOD_SETTINGS_UPDATE = "stage.settings.update";
+/** Re-runs the fixed local Ollama detection; no URL or host is supplied by Stage. */
+export const METHOD_SETUP_RECHECK_OLLAMA = "stage.setup.recheck_ollama";
 
 /**
  * The answer to whether to fetch. Core only compares against `CHOICE_INSTALL`

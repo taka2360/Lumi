@@ -33,6 +33,7 @@ import {
   METHOD_SETTINGS,
   METHOD_SETTINGS_UPDATE,
   METHOD_SETUP_PROMPT,
+  METHOD_SETUP_RECHECK_OLLAMA,
   METHOD_SETUP_STATE,
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
@@ -51,9 +52,10 @@ import {
 import { useStageStore } from "./store";
 
 type Answer = typeof CHOICE_INSTALL | typeof CHOICE_SKIP;
+type AnswerPayload = { choice: Answer; model?: string };
 
 /** The "function that returns an answer," populated only while being asked. Called by a UI button. */
-let pendingAnswer: ((answer: Answer) => void) | null = null;
+let pendingAnswer: ((answer: AnswerPayload) => void) | null = null;
 
 /**
  * The live connection's `request`, for UI that asks Core to change something (ADR-028).
@@ -72,12 +74,20 @@ export async function updateSettings(changes: Record<string, string>): Promise<v
   await requestToCore(METHOD_SETTINGS_UPDATE, { changes });
 }
 
+/** Re-checks the fixed local Ollama endpoint from the setup screen's timer. */
+export async function recheckOllama(): Promise<void> {
+  if (!requestToCore) {
+    throw new Error("not_connected");
+  }
+  await requestToCore(METHOD_SETUP_RECHECK_OLLAMA);
+}
+
 /** Returns the user's choice to Core. **Core waits until answered** (there is a timeout). */
-export function answerSetupPrompt(answer: Answer): void {
+export function answerSetupPrompt(answer: Answer, model?: string): void {
   const resolve = pendingAnswer;
   pendingAnswer = null;
   useStageStore.getState().setPrompt(null);
-  resolve?.(answer);
+  resolve?.({ choice: answer, ...(model ? { model } : {}) });
 }
 
 export function useCoreConnection(): void {
@@ -113,7 +123,7 @@ export function useCoreConnection(): void {
         [METHOD_SETUP_PROMPT]: (payload) => {
           store.setPrompt(toSetupPrompt(payload));
           return new Promise((resolve) => {
-            pendingAnswer = (answer) => resolve({ choice: answer });
+            pendingAnswer = (answer) => resolve(answer);
           });
         },
       },

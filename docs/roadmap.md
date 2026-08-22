@@ -415,7 +415,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 2 | ~~Python サイドカーのパッケージング（PyInstaller vs uv 同梱）~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-021](decisions/ADR-021-sidecar-packaging.md)。**PyInstaller の onedir** |
 | ~~3~~ | ~~Ollama を同梱するかユーザーに別途インストールさせるか~~ | **✓ 解消**〔2026-08-16〕→ [ADR-023](decisions/ADR-023-llm-runtime-and-model-acquisition.md)。**Ollama は検出のみ**（取得もしない）/ Silero VAD は同梱 / STT モデルは同意に基づく実行時取得 |
 | 4 | ~~入出力が別デバイスのときの duplex stream の扱い~~ | **✓ 解消**〔2026-08-15 実測〕→ [ADR-020](decisions/ADR-020-split-audio-streams.md)。**duplex を使わない**（別ストリーム + Core が持つ reference） |
-| 5 | LLM モデル選定（Qwen3系 / Gemma3系）— 日本語会話品質と Tool Calling 品質。**利用条件の記録も同時に**（[licensing.md](licensing.md) §7 未確認 #11） | Phase 1（実測） |
+| 5 | **✓ 推奨モデルを Qwen 3.5 9B、軽量候補を 4B に固定。** 日本語会話品質と Tool Calling 品質の継続実測 | Phase 1（利用条件は [licensing.md](licensing.md) §4.7 に記録済み） |
 | 6 | 🔴 **プライバシーとデータ保存の方針**（`contracts/privacy.md` を書く） | **Phase 2 着手前** |
 | 7 | Embedding モデル（Ruri v3系 vs bge-m3）— 日本語検索品質 | Phase 2（実測） |
 | 8 | **DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる） | Phase 3 着手前 |

@@ -22,6 +22,7 @@ const noopShell: PlatformShell = {
   startWindowDrag: async () => {},
   scaleWindow: async () => {},
   openCredits: async () => {},
+  openOllamaSite: async () => {},
   // Outside Tauri there is no process to end. **Left as a no-op rather than closing the
   // tab**: a browser-opened Stage is a development view, and taking the window away from
   // whoever opened it would be a surprise, not a service.
@@ -97,6 +98,14 @@ export function useOpenCredits(onError?: (error: unknown) => void): () => void {
       // here prevents a rejected Tauri invoke from becoming an unhandled rejection.
       onError?.(error);
     });
+  }, [onError, shell]);
+}
+
+/** Opens the fixed official Ollama download page. No URL crosses the Stage/Shell boundary. */
+export function useOpenOllamaSite(onError?: (error: unknown) => void): () => void {
+  const shell = useMemo(getPlatformShell, []);
+  return useCallback(() => {
+    void shell.openOllamaSite().catch((error: unknown) => onError?.(error));
   }, [onError, shell]);
 }
 

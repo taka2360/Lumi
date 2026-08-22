@@ -773,10 +773,11 @@ async def test_detect_returns_none_when_ollama_is_absent(monkeypatch: pytest.Mon
     happens to be running on the dev machine).
     """
 
-    async def closed(port: int, *, host: str = "127.0.0.1") -> bool:
-        return False
+    async def closed(port: int = 11434, *, transport: object = None) -> None:
+        del port, transport
+        return None
 
-    monkeypatch.setattr(detect_module, "is_port_open", closed)
+    monkeypatch.setattr(detect_module, "ollama_api_version", closed)
     assert await detect_ollama({"PATH": ""}) is None
 
 

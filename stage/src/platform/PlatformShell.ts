@@ -73,6 +73,9 @@ export interface PlatformShell {
   /** Opens the bundled static credits and licenses window, or brings it forward. */
   openCredits(): Promise<void>;
 
+  /** Opens the fixed Ollama official download page in the default browser. */
+  openOllamaSite(): Promise<void>;
+
   /**
    * Quits Lumi.
    *

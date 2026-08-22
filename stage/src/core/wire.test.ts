@@ -22,6 +22,7 @@ import { VISEMES } from "../character/lipsync";
 import {
   CMD_DRAG_START,
   CMD_OPEN_CREDITS,
+  CMD_OPEN_OLLAMA_SITE,
   CMD_QUIT,
   CMD_SCALE,
   CMD_SET_HIT_REGION,
@@ -39,6 +40,7 @@ import {
   METHOD_SETTINGS,
   METHOD_SETTINGS_UPDATE,
   METHOD_SETUP_PROMPT,
+  METHOD_SETUP_RECHECK_OLLAMA,
   METHOD_SETUP_STATE,
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
@@ -127,7 +129,7 @@ describe("wire contract", () => {
     // ★ **The Stage → Core direction** (ADR-028). The real allowlist is Core's registry;
     // this pins the Stage's constant against the same contract, so a rename on one side
     // fails here instead of turning into a silent `unknown_method` at runtime.
-    expect([METHOD_SETTINGS_UPDATE]).toEqual(wire.inbound_methods);
+    expect([METHOD_SETTINGS_UPDATE, METHOD_SETUP_RECHECK_OLLAMA]).toEqual(wire.inbound_methods);
   });
 
   it("what a fetch question can be about", () => {
@@ -165,6 +167,7 @@ describe("wire contract", () => {
         CMD_SCALE,
         CMD_SET_LOCALE,
         CMD_OPEN_CREDITS,
+        CMD_OPEN_OLLAMA_SITE,
         CMD_QUIT,
       ]),
     ).toEqual(new Set(wire.tauri_commands));

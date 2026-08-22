@@ -157,6 +157,15 @@ class ReactiveLoop:
         """Uses a new Core-owned speed for the next scheduler that is created."""
         self._tts_speed = _validate_tts_speed(speed)
 
+    def set_llm_model(self, model: str) -> None:
+        """Uses a setup-selected model for subsequent turns without rebuilding the loop."""
+        self._options = LLMOptions(
+            model=model,
+            temperature=self._options.temperature,
+            max_tokens=self._options.max_tokens,
+            think=self._options.think,
+        )
+
     # ── Entry point ──────────────────────────────────────────────
 
     async def run(self) -> None:

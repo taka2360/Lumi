@@ -35,6 +35,7 @@ from lumi.transport.methods import (
     CHARACTER_MODEL_REASONS,
     CHOICE_INSTALL,
     CHOICE_SKIP,
+    COMPONENT_LLM_MODEL,
     COMPONENT_STT,
     COMPONENT_TTS,
     INBOUND_METHODS,
@@ -135,7 +136,7 @@ class TestCoreMatchesTheContract:
     def test_setup_components(self, wire: dict[str, Any]) -> None:
         # **What is being asked about has to be on the contract too.** The panel picks its
         # wording from this value; a drift would ask permission to fetch the wrong thing.
-        assert [COMPONENT_TTS, COMPONENT_STT] == wire["setup_components"]
+        assert [COMPONENT_TTS, COMPONENT_STT, COMPONENT_LLM_MODEL] == wire["setup_components"]
 
     @pytest.mark.parametrize(
         ("enum", "key"),

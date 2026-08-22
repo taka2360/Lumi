@@ -117,7 +117,11 @@ class TestEverythingIsWarmed:
         async def on_ready() -> None:
             observed.append(server.boots[-1])
 
-        await warm_all(ProviderRegistry(), coordinator, "qwen3:8b", on_ready=on_ready)
+        providers = ProviderRegistry()
+        for kind in (ProviderKind.LLM, ProviderKind.STT):
+            providers.register(FakeTts(kind=kind))
+
+        await warm_all(providers, coordinator, "qwen3:8b", on_ready=on_ready)
 
         assert observed == [], "セットアップ未完了なのにマイクを開いている"
         assert server.boots[-1] == "blocked"

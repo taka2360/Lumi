@@ -77,8 +77,15 @@ STAGE_METHODS: Final[frozenset[str]] = frozenset(
 #: The Stage asks; Core validates, decides, writes, and broadcasts the result (ADR-028).
 METHOD_SETTINGS_UPDATE: Final = "stage.settings.update"
 
+#: Re-runs Ollama's local-only detection from the setup screen. The automatic timer and
+#: the visible button use the same route, so there is only one decision path.
+METHOD_SETUP_RECHECK_OLLAMA: Final = "stage.setup.recheck_ollama"
+
 #: What the Stage may initiate. **A tuple, because the contract's order is checked too.**
-INBOUND_METHODS: Final[tuple[str, ...]] = (METHOD_SETTINGS_UPDATE,)
+INBOUND_METHODS: Final[tuple[str, ...]] = (
+    METHOD_SETTINGS_UPDATE,
+    METHOD_SETUP_RECHECK_OLLAMA,
+)
 
 # ── Payload values ────────────────────────────────────────────
 
@@ -96,6 +103,7 @@ CHOICE_SKIP: Final = "skip"
 #: "may I download this?" without a subject is not consent.
 COMPONENT_TTS: Final = "tts"
 COMPONENT_STT: Final = "stt"
+COMPONENT_LLM_MODEL: Final = "llm_model"
 
 #: Why there is no character model to draw (ADR-036). **A code, never a sentence** —
 #: Core does not know the Stage's locale, and a display string sent from here is the one
