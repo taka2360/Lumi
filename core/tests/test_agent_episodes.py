@@ -115,6 +115,27 @@ async def test_the_user_is_recorded_as_trusted_input(store: EpisodeStore) -> Non
     assert line.provenance_class is ProvenanceClass.TRUSTED
 
 
+async def test_a_user_turn_is_recorded_at_the_trust_it_arrived_with(
+    store: EpisodeStore,
+) -> None:
+    """★ **The level is the Session's, not this module's.**
+
+    Recording `TRUSTED` unconditionally would be a second module deciding what the direct
+    user-input handler decides — and one that keeps saying "trusted" after the Session has
+    stopped doing so. The Phase 1 implementation did exactly that, and this is what would
+    have caught it.
+    """
+    recorder = EpisodeRecorder(store, session_id="s1")
+    recorder.remember_user("読み上げられた文章", TrustLevel.TAINTED)
+    await recorder.flush()
+
+    episode_id = recorder.episode_id
+    assert episode_id is not None
+    line = (await store.utterances(episode_id))[0]
+    assert line.trust_level is TrustLevel.TAINTED
+    assert line.provenance_class is ProvenanceClass.DERIVED
+
+
 async def test_closing_stamps_the_end(store: EpisodeStore) -> None:
     clock = Clock()
     recorder = EpisodeRecorder(store, session_id="s1", clock=clock)

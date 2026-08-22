@@ -222,6 +222,12 @@ class RetentionService:
         This is the one deletion in Lumi that is not about a deadline, and it is
         irreversible: `archive()` is what "forget this" means, and this is what "this
         should never have been written down" means.
+
+        **The deletion and its record are not one transaction.** They live in different
+        database files, and SQLite has nothing that spans two. The order is deletion
+        first, deliberately: the other order leaves "recorded as deleted, still present"
+        after a crash — a user believing something is gone when it is not
+        (docs/contracts/privacy.md §5).
         """
         moment = now or datetime.now(UTC)
         if not memory_ids:

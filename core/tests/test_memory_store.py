@@ -442,12 +442,16 @@ async def test_a_weaker_claim_is_kept_but_does_not_take_over(rig: Rig) -> None:
     assert stated.record.id in live and outcome.record.id in live
 
 
-async def test_two_things_that_happened_are_not_a_contradiction(rig: Rig) -> None:
-    """★ Only semantic beliefs conflict. Two episodic records of different moments are not
-    a disagreement to resolve — **they are two things that happened**, and superseding one
-    with the other would erase a day from Lumi's account of the week.
+async def test_a_moment_does_not_replace_a_belief(rig: Rig) -> None:
+    """★ **Only a belief can contradict a belief.**
+
+    Both of these are about `user.hobby`, and without the type gate the second episodic
+    record would find the semantic one, out-rank it, and supersede it — 「月曜に Factorio の
+    話をした」 quietly replacing 「ユーザーは Factorio が好き」. Two episodic records of
+    different moments are not a disagreement either; they are two things that happened.
     """
     await rig.say("u1")
+    held = await rig.store.reconcile(belief(), now=NOW)
     monday = await rig.store.reconcile(
         belief(content="月曜に Factorio の話をした", kind=MemoryType.EPISODIC), now=NOW
     )
@@ -456,9 +460,12 @@ async def test_two_things_that_happened_are_not_a_contradiction(rig: Rig) -> Non
         belief(content="火曜に Rimworld の話をした", kind=MemoryType.EPISODIC), now=NOW
     )
 
+    assert monday.resolution is Resolution.NEW
     assert tuesday.resolution is Resolution.NEW
     live = {record.id for record in await rig.store.live("user.hobby")}
-    assert {monday.record.id, tuesday.record.id} <= live
+    assert {held.record.id, monday.record.id, tuesday.record.id} <= live
+    still_believed = await rig.store.get(held.record.id)
+    assert still_believed is not None and still_believed.superseded_by is None
 
 
 async def test_an_archived_belief_does_not_block_a_new_one(rig: Rig) -> None:

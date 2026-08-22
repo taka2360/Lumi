@@ -243,7 +243,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 | **2a** | 暗号化ストレージ基盤（spike / DB 鍵 / `Database` / selfcheck） | **他の全部の前提。** ここが通らなければ ADR-038 を書き直すことになる |
 | **2b** | 投機 STT + 計測 | **記憶検索を配線する前**（[ADR-039](decisions/ADR-039-speculative-stt.md)）。逆順だとその期間だけ予算の 88% で走る |
 | **2c** | 記憶 DB のスキーマ / Episode 記録 / **保持期間ジョブと削除の記録** | **永続化を始める変更と、消す手段を同じ単位に入れる。** 消せないまま書き始めない |
-| **2d** | MemoryStore（write / supersede / archive / purge / confirm）/ salience / 減衰 / 矛盾 | 検索の前に、**書かれるものの形**を確定させる |
+| **2d** | MemoryStore（write / supersede / archive / confirm）/ salience / 減衰 / 矛盾 / **物理削除は `storage/retention.py` 側** | 検索の前に、**書かれるものの形**を確定させる |
 | **2e** | Embedding Provider / `SqliteVecStore` / ハイブリッド検索 / プロンプト配線 | ここで初めて「思い出す」が成立する |
 | **2f** | Reflection Job（LLM 抽出・`inference_lease`・provenance 伝播） | 検索が動いてから。**抽出の質は検索で確かめるしかない** |
 | **2g** | 記憶 UI / 全消去 / エクスポート / マイク表示とミュート / Inspector | ユーザーが**見て直せる**ようになって Phase 2 が閉じる |

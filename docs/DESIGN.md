@@ -17,7 +17,9 @@
 >    物理削除は `storage/retention.py` に置く。**記憶 UI の削除だけが別のクラスにあれば、
 >    「ユーザーデータを消す `DELETE` は1ファイルにしかない」が検査できなくなる**
 >    （[contracts/privacy.md](contracts/privacy.md) §5）。記憶ストアが持つのは `archive()` までで、
->    個別削除も `deletion_log` に残る
+>    個別削除も `deletion_log` に残る。**ただし削除と記録は別 DB ファイルであり、
+>    同一トランザクションではない**——順序は削除 → 記録に固定し、
+>    「消したと記録されているのにまだある」側に倒さない（privacy.md §5 に明記した）
 > 2. **記憶レコードのスキーマを入れた**（2d）。`memories` / `memory_evidence` / `memory_sources`。
 >    **根拠は外部キーにしない**——Episode は既定 90 日で消えるが記憶は残るため、
 >    外部キーにすると「Episode を消せない」か「Episode と一緒に信念が消える」のどちらかになる

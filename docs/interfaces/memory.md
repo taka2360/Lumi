@@ -62,21 +62,46 @@ USER_CONFIRMED > USER_STATED > INFERRED > SELF_GENERATED > EXTERNAL
 
 ```python
 class MemoryStore(Protocol):
-    async def write(self, candidate: MemoryCandidate) -> MemoryRecord: ...
+    async def write(self, candidate: MemoryCandidate, *, now: datetime) -> MemoryRecord: ...
 
-    async def supersede(self, old_id: MemoryId, new: MemoryCandidate) -> MemoryRecord:
-        """既存を上書きせず、superseded_by で繋ぐ。"""
+    async def supersede(self, old_id: MemoryId, new: MemoryCandidate, *,
+                        now: datetime) -> Reconciled:
+        """既存を上書きせず、superseded_by で繋ぐ。矛盾の episodic 記録を同じ
+        トランザクションで書くので、戻り値は新レコード単体ではない。"""
 
-    async def archive(self, id: MemoryId) -> None:
+    async def reconcile(self, candidate: MemoryCandidate, *, now: datetime) -> Reconciled:
+        """重複・矛盾を見たうえで書く。判定は contradiction.resolve（純粋関数）。"""
+
+    async def archive(self, id: MemoryId, *, now: datetime) -> None:
         """物理削除しない。"""
 
-    async def confirm(self, id: MemoryId) -> MemoryRecord:
+    async def archive_faded(self, *, now: datetime) -> Sequence[MemoryId]:
+        """floor を下回ったものを archive する。**起動ごとに1回**。"""
+
+    async def touch(self, ids: Sequence[MemoryId], *, now: datetime) -> None:
+        """検索でヒットしたことを記録する（access_boost の入力）。**内容は記録しない。**"""
+
+    async def confirm(self, id: MemoryId, *, now: datetime) -> MemoryRecord:
         """assertion_mode を USER_CONFIRMED に、trust_level を TRUSTED に昇格。
         Invariant 7 の唯一の昇格経路。記憶UIのハンドラからのみ呼ばれる。"""
 
     async def get(self, id: MemoryId) -> MemoryRecord | None: ...
-    async def find_conflicts(self, subject: str, content: str) -> list[MemoryRecord]: ...
+    async def live(self, subject: str) -> Sequence[MemoryRecord]: ...
+    async def find_conflicts(self, subject: str, content: str) -> Sequence[MemoryRecord]:
+        """同一 subject で内容の違う **semantic** な信念。**出来事は信念と矛盾しない。**"""
+
+
+@dataclass(frozen=True)
+class Reconciled:
+    record: MemoryRecord
+    resolution: Resolution          # new | duplicate | supersede | keep_weak
+    superseded_id: MemoryId | None = None
+    note: MemoryRecord | None = None   # 矛盾があったことの episodic 記録
 ```
+
+> **〔2026-08-22 / 2d〕この節を実装に合わせて書き直した。** `supersede()` の戻り値が
+> `Reconciled` になり、`reconcile()` / `touch()` / `live()` / `archive_faded()` が加わり、
+> `purge()` が外れた（下記）。**時刻は必ず引数で渡す**（`.claude/rules/tests.md`）。
 
 ### `purge()` はここに無い〔2026-08-22 / 2d〕
 

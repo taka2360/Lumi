@@ -155,11 +155,19 @@ class MemoryStore:
                     assert refreshed is not None  # touched in this transaction
                     return Reconciled(record=refreshed, resolution=Resolution.DUPLICATE)
 
-            conflicts = [
-                record
-                for record in self._live_rows(conn, candidate.subject, MemoryType.SEMANTIC)
-                if normalize(record.content) != content
-            ]
+            # **Only a belief can contradict a belief.** An episodic record about the same
+            # subject is a thing that happened, and letting one into this comparison would
+            # let 「月曜に Factorio の話をした」 supersede 「ユーザーは Factorio が好き」 —
+            # a moment quietly replacing what Lumi knows.
+            conflicts = (
+                [
+                    record
+                    for record in self._live_rows(conn, candidate.subject, MemoryType.SEMANTIC)
+                    if normalize(record.content) != content
+                ]
+                if candidate.type is MemoryType.SEMANTIC
+                else []
+            )
             if not conflicts:
                 return Reconciled(
                     record=self._insert(conn, candidate, now), resolution=Resolution.NEW

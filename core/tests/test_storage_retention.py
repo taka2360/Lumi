@@ -431,3 +431,32 @@ async def test_deleting_nothing_writes_no_record(rig: Rig) -> None:
 
     assert deletion.count == 0
     assert rig.deletion_records() == []
+
+
+async def test_deleting_the_current_belief_leaves_its_predecessor_readable(rig: Rig) -> None:
+    """★ The other direction of the same rule.
+
+    Purging the successor must not leave the older row pointing at an id that is gone:
+    a `superseded_by` naming nothing would be a belief that is neither live nor
+    superseded by anything — **invisible to retrieval, with no successor to find instead.**
+    """
+    old = await rig.add_memory("ユーザーは Factorio が好き")
+    outcome = await rig.memories.supersede(
+        old,
+        MemoryCandidate(
+            type=MemoryType.SEMANTIC,
+            subject="user.hobby",
+            content="最近は Rimworld をやっている",
+            assertion_mode=AssertionMode.SELF_GENERATED,
+            provenance_class=ProvenanceClass.TRUSTED,
+            trust_level=TrustLevel.TRUSTED,
+        ),
+        now=NOW,
+    )
+
+    await rig.service.purge_memories((outcome.record.id,), now=NOW)
+
+    predecessor = await rig.memories.get(old)
+    assert predecessor is not None
+    assert predecessor.superseded_by is None
+    assert predecessor.is_live
