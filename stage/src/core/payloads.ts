@@ -217,9 +217,9 @@ export function toUserSaid(payload: Record<string, unknown>, startedAtMs: number
  * legitimate pack, and saying so is what keeps the placeholder from looking like a bug.
  * A pack that declares a model it doesn't ship never reaches here — Core refuses to load it.
  *
- * **The payload also carries the model's credit, and this deliberately ignores it.** The
+ * The payload also carries the model's credit, and this deliberately ignores it. The
  * credits window is static and doesn't connect to Core by design (docs/architecture/ui.md
- * "`credits` を Core に繋がない理由"), so the credit obligation is met there, not here.
+ * "Why credits is not connected to Core"), so the credit obligation is met there, not here.
  * Parsing a field nothing renders would be an abstraction waiting for a use.
  */
 export function toCharacterModel(payload: Record<string, unknown>): CharacterModel {
