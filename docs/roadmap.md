@@ -244,9 +244,11 @@ Phase 2 の「やること」にある。
 - [ ] **投機 STT**（VAD の無音待ちと STT を重ねる → [ADR-039](decisions/ADR-039-speculative-stt.md)）。
   不変スナップショット + 世代 ID + 原子的な照合。**曖昧なら採用しない**（fail-closed）。
   **single-flight + 1ターンあたりの上限**（STT の推論はキャンセルできないので、有界性は起動を絞って作る）。
+  **`SILENCE_STARTED` イベントと非破壊スナップショットの追加**（現在は `SPEECH_ENDED` しか出ない）。
+  **STT の実行経路は1本**（`SPEECH_ENDED` から直接呼ばない）。
   **記憶検索を配線する前に入れる**（逆順だと、その期間だけ 88% の状態で走ることになる）
-- [ ] `critical_path_ms` / `stt_speculative` / `stt_overlap_ms` の計測（[architecture/audio.md](architecture/audio.md) §7）。
-  **寄与は `stt_ms - stt_overlap_ms`。定数 0 で埋めない**
+- [ ] `critical_path_ms` / `stt_speculative` / `stt_overlap_ms` / `stt_wait_ms` / `stt_discarded_ms` の計測
+  （[architecture/audio.md](architecture/audio.md) §7）。**寄与は `stt_ms - stt_overlap_ms`。定数 0 で埋めない**
 - [ ] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f）
 - [ ] Episode 記録（会話の生ログ）
 - [ ] **Reflection Job**（セッション終了時 / 長いアイドル時。**`Job` として実行し、`inference_lease` を取る**）
