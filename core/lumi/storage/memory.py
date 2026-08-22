@@ -37,12 +37,15 @@ The row-to-record mapping is `lumi.memory.store`; what lives here is the schema,
 **one file's schema has one version**, and splitting the DDL across modules is how a file
 ends up half-migrated by whichever module happened to open it.
 
-## Not here yet
+## Vectors and keyword search
 
-Vectors and the FTS index are Phase 2e. The vector table in particular **cannot be created
-before the embedding model is chosen**: `vec0` fixes the dimension at creation, and picking
-768 or 1024 now would be inventing the answer to a question docs/architecture/memory.md §2
-leaves open until it has been measured.
+Migration 3 adds them, now that the embedding model — and therefore the width — is decided
+(ADR-041). **Open this database through `open_memory`**: `vec0` is a table type that comes
+from an extension, so the extension has to be loaded before the migration that creates it.
+
+**A missing sqlite-vec is a broken installation, not a degraded mode.** It ships inside the
+distributable and `--self-check` proves it loads, so the honest response to its absence is
+to fail at open rather than to run with memory silently switched off.
 """
 
 from __future__ import annotations
@@ -51,11 +54,17 @@ import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Final
 
 from lumi import logging as lumi_logging
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.storage.sqlite import Database, Schema, one
+
+#: The embedding width the vector table is created with (ADR-041). **Declared here rather
+#: than imported from the Provider**: the schema is what fixed it, and `lumi.storage` does
+#: not depend on `lumi.providers`. The Provider asserts the two agree at load time.
+EMBEDDING_DIMENSION: Final = 640
 
 log = lumi_logging.get_logger(__name__)
 
@@ -136,8 +145,40 @@ MEMORY_SCHEMA: Schema = Schema(
             )
             """,
         ),
+        (
+            # **640 is Harrier-OSS-v1 270M's width** (ADR-041). `vec0` fixes it at creation,
+            # which is why 2c deliberately did not create this table before the model was
+            # chosen. Changing models means dropping and rebuilding, not altering.
+            # **`distance_metric=cosine`, matching what the model produces.** The vectors
+            # are unit length, so L2 would rank identically — but the number that comes back
+            # would then need converting everywhere it is read, and one place forgetting is
+            # a silently mis-scored search.
+            f"CREATE VIRTUAL TABLE memory_vectors USING vec0("
+            f" memory_id TEXT PRIMARY KEY,"
+            f" embedding float[{EMBEDDING_DIMENSION}] distance_metric=cosine)",
+            # **`trigram`, not `unicode61`.** The default tokenizer splits on non-alphanumeric
+            # boundaries, and Japanese has none — a whole sentence would become one token and
+            # match nothing but itself. Trigram costs a limitation of its own: **queries
+            # shorter than three characters never match** ("猫" finds nothing), which is why
+            # keyword search is a supplement to the vector search and not the other way round.
+            "CREATE VIRTUAL TABLE memory_fts USING fts5("
+            " content, memory_id UNINDEXED, tokenize='trigram')",
+        ),
     ),
 )
+
+
+def open_memory(path: Path | str, *, key: str | None = None) -> Database:
+    """Opens the memory database with sqlite-vec loaded. **The only way it is opened.**
+
+    The extension has to be in place before `migrate()` runs, because migration 3 creates a
+    `vec0` table. Every caller going through here is what keeps "it worked on an existing
+    database and failed on a fresh one" from being possible.
+    """
+    import sqlite_vec
+
+    return Database.open(path, MEMORY_SCHEMA, key=key, extensions=(sqlite_vec.loadable_path(),))
+
 
 #: Who said it. **Not an identity**: STT cannot tell the user from someone else in
 #: the room, and Lumi does not pretend otherwise (docs/contracts/privacy.md §6).

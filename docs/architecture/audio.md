@@ -397,7 +397,7 @@ Scheduler を `audio/` に置くと `audio → providers → audio` のパッケ
 |---|---|---|---|---|
 | VAD 発話終端の確定 | `vad_ms` | **§5 の `min_silence_duration_ms` + フレーム境界**（現在 0.43 s） | 0.43 s | **ここに独立した数値を書かない**（下記） |
 | STT | `stt_ms` | 0.22 s | **0**（`max(0, stt_ms - vad_ms)`。予算では 0.22 ≤ 0.43） | faster-whisper int8。**GPU 0.06 s / CPU 0.92 s**（実測）。投機実行（下記） |
-| 記憶検索 | `retrieve_ms` | 0.05 s | 0.05 s | Phase 2 以降。Phase 1 は 0 |
+| 記憶検索 | `retrieve_ms` | 0.05 s | 0.05 s | Phase 2e で配線。**実測 0.021〜0.023 s**（うち埋め込み 0.022 s。CPU / q4）→ [../measurements/phase2.md](../measurements/phase2.md) |
 | プロンプト組み立て | `assemble_ms` | 0.03 s | 0.03 s | 予算計算・切り落とし・provenance 付与 |
 | LLM 初トークン | `llm_first_token_ms` | 0.28 s | 0.28 s | |
 | **第1セグメントの完成** | `llm_first_segment_ms` | **0.07 s** | 0.07 s | 初トークンから**TTS に渡せる単位が揃うまで**〔Phase 1 追加。下記〕 |

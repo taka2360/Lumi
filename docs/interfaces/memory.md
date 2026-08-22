@@ -147,8 +147,13 @@ class VectorStore(Protocol):
 
 | 実装 | 状態 |
 |---|---|
-| `SqliteVecStore` | **Phase 2 で実装** |
+| **`MemoryIndex`**（`lumi/memory/vectors.py`） | **2e で実装済み。** vec0（640 / cosine）と FTS5（trigram）を1つのクラスが持つ |
 | `QdrantStore` | 将来。規模が問題になったら |
+
+> **〔2026-08-22 / 2e〕ベクトルとキーワードを別クラスに分けなかった。**
+> 検索は常に両方を union するので、片方だけ差し替えられる形にしても使い道が無い。
+> **どちらも「記憶を見つける手段」であって、記憶そのものではない**——
+> ここから行を消しても失われるのは findability だけで、信念は `memories` に残る。
 
 **この interface があることで、sqlite-vec の選択が可逆になっている。**
 
@@ -172,16 +177,28 @@ class Retriever(Protocol):
     async def retrieve(
         self,
         query: str,
+        *,
         token_budget: int,
         now: datetime,
     ) -> RetrievalResult: ...
 
+    async def record_use(self, result: RetrievalResult, *, now: datetime) -> None:
+        """選ばれた記憶を「思い出した」として数える（access_boost の入力）。
+        **返事の後に呼ぶ。** 書き込みをターンの待ち時間に載せない。"""
+
 
 @dataclass(frozen=True)
 class RetrievalResult:
-    selected: list[ScoredMemory]
-    dropped: list[ScoredMemory]      # 予算に入らなかったもの
-    breakdown: dict[MemoryId, ScoreBreakdown]   # Inspector 用
+    selected: tuple[ScoredMemory, ...]
+    dropped: tuple[ScoredMemory, ...]     # 予算に入らなかったもの
+    embed_ms: float = 0.0                 # クエリ埋め込みの実測。**クリティカルパス**
+    degraded: bool = False                # 埋め込みが無い / どれかの検索が落ちた
+
+
+@dataclass(frozen=True)
+class ScoredMemory:
+    record: MemoryRecord
+    breakdown: ScoreBreakdown             # **1件ごとに持つ**（Inspector 用）
 
 
 @dataclass(frozen=True)
@@ -191,13 +208,32 @@ class ScoreBreakdown:
     effective_salience: float
     assertion_weight: float
     total: float
+    sources: tuple[str, ...] = ()         # vector / keyword / recent
 ```
+
+> **〔2026-08-22 / 2e〕`breakdown` は `ScoredMemory` が持つ。**
+> `dict[MemoryId, ScoreBreakdown]` を別に返すと、**選ばれた記憶と内訳が別々に運ばれる**——
+> 片方だけ絞り込んだコードが、対応の取れない2つのリストを作る。
 
 ### `dropped` と `breakdown` を返す理由
 
 **「なぜこの記憶が使われたのか / 使われなかったのか」を Inspector で見られるようにする。**
 
 自律エージェントで最も重要なデバッグ機能。これが無いと Phase 6 でチューニング不能になる。
+
+### 実装〔2026-08-22 / 2e〕
+
+**`record_use` が別メソッドなのは、書き込みを返事の前に置かないため。**
+「候補に挙がった」と「実際に使われた」も別物で、予算で落ちたものは強化しない。
+
+**`degraded = True` は「埋め込みが無い / どれかの検索が落ちた」。**
+**source ごとに独立して失敗する**——FTS5 が落ちても、既に手元にあるベクトルの結果は捨てない。
+検索は残った source だけで続き、**ターンは失敗しない**。
+
+**予算はレコード単位のコスト関数で測る**（`cost: Callable[[MemoryRecord], int]`）。
+プロンプトに載るのは根拠付きで整形された行であり（`agent.recall`）、
+本文だけで見積もると**根拠の文言のぶんだけ確実に溢れる**。
+どう整形するかは prompt 側の関心なので、**memory は関数を受け取るだけで、整形は知らない**。
 
 ### スコアリング
 

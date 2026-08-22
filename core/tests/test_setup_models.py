@@ -14,7 +14,7 @@ import httpx
 import pytest
 
 from lumi import paths as paths_module
-from lumi.setup.install import SetupError, install_stt_model, is_model_installed
+from lumi.setup.install import SetupError, install_model, is_model_installed
 from lumi.setup.models import (
     ALLOWED_ORIGIN_PREFIX,
     STT_MODELS,
@@ -273,7 +273,7 @@ async def _install(
     **kwargs: object,
 ) -> Path:
     """Runs the real install path over a mock transport instead of the network."""
-    return await install_stt_model(
+    return await install_model(
         model,
         models_dir,
         transport=httpx.MockTransport(handler),

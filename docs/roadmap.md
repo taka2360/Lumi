@@ -244,7 +244,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 | **2b** | 投機 STT + 計測 | **記憶検索を配線する前**（[ADR-039](decisions/ADR-039-speculative-stt.md)）。逆順だとその期間だけ予算の 88% で走る |
 | **2c** | 記憶 DB のスキーマ / Episode 記録 / **保持期間ジョブと削除の記録** | **永続化を始める変更と、消す手段を同じ単位に入れる。** 消せないまま書き始めない |
 | **2d** | MemoryStore（write / supersede / archive / confirm）/ salience / 減衰 / 矛盾 / **物理削除は `storage/retention.py` 側** | 検索の前に、**書かれるものの形**を確定させる |
-| **2e** | Embedding Provider / `SqliteVecStore` / ハイブリッド検索 / プロンプト配線 | ここで初めて「思い出す」が成立する |
+| **2e** | Embedding Provider / `MemoryIndex`（vec0 + FTS5）/ ハイブリッド検索 / プロンプト配線 | ここで初めて「思い出す」が成立する |
 | **2f** | Reflection Job（LLM 抽出・`inference_lease`・provenance 伝播） | 検索が動いてから。**抽出の質は検索で確かめるしかない** |
 | **2g** | 記憶 UI / 全消去 / エクスポート / マイク表示とミュート / Inspector | ユーザーが**見て直せる**ようになって Phase 2 が閉じる |
 
@@ -323,9 +323,28 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 #### 2e — 検索
 
-- [ ] Embedding Provider（ONNX / CPU）
-- [ ] ハイブリッド検索（vector + FTS5 + recency + salience + assertion_mode）+ トークン予算
-- [ ] プロンプトへの配線（**assertion_mode ごとの提示のしかたを含む**）
+- [x] **埋め込みモデルの決定** → [ADR-041](decisions/ADR-041-embedding-model-harrier-oss.md)
+  〔`microsoft/harrier-oss-v1-270m` / ONNX q4 / **640 次元** / MIT / 実行時取得 196 MiB。
+  **クエリにだけ指示文を付ける**ので `EmbeddingProvider` を非対称にした〕
+- [x] Embedding Provider（ONNX / CPU）
+  〔`lumi/providers/embedding/`。**`embed_query` / `embed_documents` の2本**——
+  このモデルはクエリにだけ指示文を要求し、**間違えても例外は出ず検索品質だけが落ちる**。
+  取得は STT モデルと同じ pin + SHA-256 の経路（`install_model`）〕
+- [x] ベクトル表と FTS5（migration 3。**640 次元 / `distance_metric=cosine` / `trigram`**）
+  〔`lumi/memory/vectors.py`。**3文字未満は FTS に送らない**——trigram の原理的限界。
+  `open_memory()` が sqlite-vec を読んでから migrate する（**拡張が無ければ open で落とす**）〕
+- [x] ハイブリッド検索（vector + FTS5 + recency + salience + assertion_mode）+ トークン予算
+  〔`lumi/memory/retrieval.py`。式・切り落としは純粋関数、`ScoreBreakdown` が全項を返す。
+  **実測 21〜23 ms**（予算 0.05 s）→ [measurements/phase2.md](measurements/phase2.md)〕
+- [x] インデックス作成と再埋め込み（`embedding_model_id` の不一致で検出）
+  〔`lumi/memory/indexing.py`。起動ごとの `Job(kind=maintenance)`。**会話は待たない**〕
+- [x] プロンプトへの配線（**assertion_mode ごとの提示のしかたを含む**）
+  〔`lumi/agent/recall.py`。**根拠は行ごとに付ける**——見出しに1回だけ書くと、
+  LLM は好きな行を事実として引く。**tainted な記憶は隔離ブロックへ**（Invariant 7）〕
+- [ ] **埋め込みモデルの取得 UI**（同意して取得する導線）→ **2g に送った**
+  **現状、モデルが無いユーザーは意味検索を使えない**（キーワードと recency だけで動く）。
+  取得経路そのものは実装済みで、足りないのは**同意 UI と進捗表示**であり、
+  それは 2g のセットアップ/記憶 UI と同じ画面に属する
 
 #### 2f — Reflection Job
 

@@ -14,12 +14,14 @@ import math
 import time
 import wave
 from collections.abc import AsyncIterator, Sequence
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pytest
 
+from lumi.agent.latency import TurnTimer
 from lumi.agent.reactive import LoopLimits, ReactiveLoop
 from lumi.agent.session import Session
 from lumi.audio.devices import AudioPlan, Device, StreamPlan
@@ -30,11 +32,14 @@ from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.cancellation import CancelToken
 from lumi.kernel.event import EventBus
 from lumi.kernel.hooks import HookRegistry
+from lumi.kernel.ids import new_correlation_id
+from lumi.memory.records import AssertionMode, MemoryRecord, MemoryType
+from lumi.memory.retrieval import RetrievalResult, ScoredMemory, score
 from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
-from lumi.provenance import TrustLevel
+from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.providers.base import (
     Attribution,
     DevicePref,
@@ -213,6 +218,7 @@ class Rig:
         stt_text: str = "やあ",
         limits: LoopLimits | None = None,
         tts_speed: float = 1.2,
+        retriever: Any = None,
     ):
         self.database = Database.open(IN_MEMORY, EVENTS_SCHEMA)
         self.database.migrate()
@@ -254,6 +260,7 @@ class Rig:
             limits=limits,
             audio=self.audio,
             tts_speed=tts_speed,
+            retriever=retriever,
         )
 
     async def start(self) -> None:
@@ -857,3 +864,152 @@ async def _drain(loop_task: asyncio.Task[None]) -> None:
         # The loop's own exception, if any, was already reported by the assertions above
         with contextlib.suppress(BaseException):
             await task
+
+
+# ── What Lumi remembers reaches the prompt ─────────────────────────
+
+
+class FakeRetriever:
+    """Answers with fixed memories, and records that it was asked."""
+
+    def __init__(self, records: list[Any], *, fails: bool = False) -> None:
+        self._records = records
+        self._fails = fails
+        self.queries: list[str] = []
+        self.used: list[str] = []
+        self.recorded = asyncio.Event()
+        #: Held closed to prove the recording is **not** on the turn's path: if it were,
+        #: the turn would block here and the reply would never reach the Stage.
+        self.release = asyncio.Event()
+        self.release.set()
+
+    async def retrieve(self, query: str, *, token_budget: int, now: Any) -> Any:
+        self.queries.append(query)
+        if self._fails:
+            raise RuntimeError("the index is on fire")
+        return RetrievalResult(
+            selected=tuple(
+                ScoredMemory(record=record, breakdown=score(record, 0.9, now))
+                for record in self._records
+            )
+        )
+
+    async def record_use(self, result: Any, *, now: Any) -> None:
+        await self.release.wait()
+        self.used.extend(item.record.id for item in result.selected)
+        self.recorded.set()
+
+
+def _memory(content: str, *, identifier: str = "m1") -> MemoryRecord:
+    when = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
+    return MemoryRecord(
+        id=identifier,
+        type=MemoryType.SEMANTIC,
+        subject="user.pet",
+        content=content,
+        assertion_mode=AssertionMode.USER_STATED,
+        evidence_ref=(),
+        confidence=0.9,
+        provenance_class=ProvenanceClass.TRUSTED,
+        trust_level=TrustLevel.TRUSTED,
+        base_salience=0.7,
+        created_at=when,
+        last_accessed=when,
+        access_count=0,
+        archived_at=None,
+        valid_from=when,
+        superseded_by=None,
+    )
+
+
+async def test_a_remembered_thing_is_in_the_prompt() -> None:
+    """★ The whole point of Phase 2: **what the user said last week reaches this turn.**"""
+    retriever = FakeRetriever([_memory("ユーザーは猫を飼っている")])
+    rig = Rig(FakeLlm([text("元気だよ。")]), retriever=retriever)
+    await rig.start()
+
+    await rig.loop.handle_text("うちの子、元気にしてる?")
+
+    system = rig.llm.prompts[0][0].content
+    assert "ユーザーは猫を飼っている" in system
+    assert retriever.queries == ["うちの子、元気にしてる?"]
+
+
+async def test_being_recalled_is_recorded_off_the_turn() -> None:
+    """★ `access_boost` counts recalls, and **the write must not delay the reply.**
+
+    The recording is held closed until after the reply has reached the Stage. If it were
+    on the turn's path, `handle_text` would still be waiting here — which is exactly the
+    failure this shape is meant to make impossible.
+    """
+    retriever = FakeRetriever([_memory("ユーザーは猫を飼っている")])
+    retriever.release.clear()
+    rig = Rig(FakeLlm([text("元気だよ。")]), retriever=retriever)
+    await rig.start()
+
+    await rig.loop.handle_text("うちの子、元気?")
+
+    assert rig.notifier.spoken() == ["元気だよ。"]
+    assert retriever.used == []  # still blocked, and the turn finished anyway
+
+    retriever.release.set()
+    await retriever.recorded.wait()
+    assert retriever.used == ["m1"]
+
+
+async def test_a_failing_search_costs_the_memory_not_the_reply() -> None:
+    """★ **Answering without a memory is a worse answer; not answering is a broken
+    product.** The turn completes and the failure is logged, not raised.
+    """
+    retriever = FakeRetriever([], fails=True)
+    rig = Rig(FakeLlm([text("やあ。")]), retriever=retriever)
+    await rig.start()
+
+    await rig.loop.handle_text("やあ")
+
+    assert rig.notifier.spoken() == ["やあ。"]
+
+
+async def test_a_turn_without_memory_still_happens() -> None:
+    """`retriever=None` is the typed test path and any session with no embedding model."""
+    rig = Rig(FakeLlm([text("やあ。")]))
+    await rig.start()
+
+    await rig.loop.handle_text("やあ")
+
+    assert rig.notifier.spoken() == ["やあ。"]
+
+
+async def test_the_time_spent_remembering_is_measured() -> None:
+    """★ Regression: `handle_text` recorded `retrieve_ms` as 0 before the search ran, and
+    `begin()` ignores a span that is already recorded — so **every turn reported zero while
+    the lookup went unmeasured.** A span that is always zero reads as "this is free".
+    """
+    ticks = iter([0.0, 1.000, 1.250, *[9.0] * 40])  # start, span open, span close, rest
+    retriever = FakeRetriever([_memory("ユーザーは猫を飼っている")])
+    rig = Rig(FakeLlm([text("元気だよ。")]), retriever=retriever)
+    await rig.start()
+
+    await rig.loop.handle_text(
+        "うちの子、元気?",
+        timer=TurnTimer(new_correlation_id(), clock=lambda: next(ticks)),
+    )
+
+    latency = rig.loop.last_latency
+    assert latency is not None
+    # **250 ms of clock passed inside the span**, and that is what has to be reported.
+    assert latency.spans["retrieve_ms"] == 250
+
+
+async def test_a_turn_that_cannot_remember_reports_no_time_spent() -> None:
+    """Zero, not absent: **the spans stay contiguous** so `unaccounted_ms` keeps its
+    meaning (docs/architecture/audio.md §7).
+    """
+    rig = Rig(FakeLlm([text("やあ。")]))
+    await rig.start()
+
+    await rig.loop.handle_text("やあ")
+
+    latency = rig.loop.last_latency
+    assert latency is not None
+    assert latency.spans["retrieve_ms"] == 0

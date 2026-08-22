@@ -341,9 +341,11 @@ dependencies = [
     { name = "faster-whisper" },
     { name = "httpx" },
     { name = "numpy" },
+    { name = "onnxruntime" },
     { name = "sounddevice" },
     { name = "sqlite-vec" },
     { name = "structlog" },
+    { name = "tokenizers" },
     { name = "websockets" },
 ]
 
@@ -362,9 +364,11 @@ requires-dist = [
     { name = "faster-whisper", specifier = ">=1.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "numpy", specifier = ">=2.1" },
+    { name = "onnxruntime", specifier = ">=1.20" },
     { name = "sounddevice", specifier = ">=0.5.5" },
     { name = "sqlite-vec", specifier = ">=0.1.9" },
     { name = "structlog", specifier = ">=24.4.0" },
+    { name = "tokenizers", specifier = ">=0.20" },
     { name = "websockets", specifier = ">=13.0" },
 ]
 

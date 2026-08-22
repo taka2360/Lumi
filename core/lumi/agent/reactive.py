@@ -29,6 +29,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import math
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Final, cast
@@ -40,6 +41,7 @@ from lumi.agent.episodes import EpisodeRecorder
 from lumi.agent.latency import Speculation, TurnLatency, TurnTimer
 from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import ContextBlock, assemble
+from lumi.agent.recall import BLOCK_OVERHEAD_TOKENS, to_blocks
 from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
@@ -54,6 +56,7 @@ from lumi.kernel.activity import Activity, ActivityKind, ActivityProposal, Actor
 from lumi.kernel.arbiter import Accepted, AttentionArbiter
 from lumi.kernel.cancellation import Cancellable, Cancellation, CancelToken
 from lumi.kernel.ids import new_correlation_id
+from lumi.memory.retrieval import Retriever
 from lumi.providers.base import ProviderError, ProviderKind
 from lumi.providers.llm.base import (
     Finish,
@@ -74,6 +77,11 @@ from lumi.transport.methods import METHOD_USER_SAID
 from lumi.transport.protocol import Role
 
 log = lumi_logging.get_logger(__name__)
+
+#: What memories may spend of the prompt [Provisional]. **A fraction of the whole budget**
+#: (`prompt.PROMPT_BUDGET_TOKENS`): remembering must not crowd out the conversation that is
+#: happening now, and what does not fit comes back as `dropped` rather than disappearing.
+MEMORY_BUDGET_TOKENS: Final = 400
 
 #: Language passed to STT. Fixed to Japanese in Phase 1 [Provisional]
 LANGUAGE: Final = "ja"
@@ -103,6 +111,7 @@ class ReactiveLoop:
     __slots__ = (
         "_arbiter",
         "_audio",
+        "_clock",
         "_episodes",
         "_last_latency",
         "_limits",
@@ -110,6 +119,7 @@ class ReactiveLoop:
         "_options",
         "_pack",
         "_providers",
+        "_retriever",
         "_session",
         "_stt",
         "_tools",
@@ -131,6 +141,8 @@ class ReactiveLoop:
         audio: AudioIO | None = None,
         tts_speed: float = 1.2,
         episodes: EpisodeRecorder | None = None,
+        retriever: Retriever | None = None,
+        clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._arbiter = arbiter
         self._providers = providers
@@ -145,6 +157,13 @@ class ReactiveLoop:
         #: test path and anything without a memory database still hold a conversation,
         #: they just leave nothing behind
         self._episodes = episodes
+        #: Memory search. **`None` means the turn runs without remembering anything** —
+        #: the typed test path, and any session whose embedding model was never fetched
+        self._retriever = retriever
+        #: Wall clock, for the things that are dated rather than timed. `TurnTimer.now()`
+        #: is monotonic — right for spans, **meaningless as a date**, and decay and recency
+        #: are both functions of a date.
+        self._clock = clock
         self._tts_speed = _validate_tts_speed(tts_speed)
         self._last_latency: TurnLatency | None = None
         #: The turns currently running. **Held on the loop, not inside `run`**: shutdown
@@ -347,8 +366,13 @@ class ReactiveLoop:
         timer = timer or TurnTimer(new_correlation_id())
         turn_tts_speed = self._tts_speed
         await self._show_user_said(text)
-        # Phase 1 has no memory retrieval. **Recorded explicitly so the spans stay contiguous**
-        timer.record("retrieve_ms", 0)
+        if self._retriever is None:
+            # **Only when nothing will retrieve.** `begin()` ignores a span that is already
+            # recorded, so writing this unconditionally — as Phase 1 did, when there was no
+            # retrieval at all — made every turn report `retrieve_ms: 0` while the search
+            # ran unmeasured. A span that is always zero is worse than a missing one: it
+            # reads as "this costs nothing" rather than as "nobody looked".
+            timer.record("retrieve_ms", 0)
         proposal = ActivityProposal(
             kind=ActivityKind.CONVERSATION,
             actor=Actor.USER_INITIATED,
@@ -419,7 +443,7 @@ class ReactiveLoop:
         )
         activity.cancellables.append(speech)
 
-        blocks: list[ContextBlock] = []
+        blocks: list[ContextBlock] = list(await self._recall(text, timer))
         try:
             for step in range(self._limits.max_steps):
                 if activity.cancel_token.is_set:
@@ -432,6 +456,42 @@ class ReactiveLoop:
             await scheduler.finish()
         finally:
             speech.mark_finished()
+
+    async def _recall(self, text: str, timer: TurnTimer) -> Sequence[ContextBlock]:
+        """Memories worth having in front of this turn. **On the critical path.**
+
+        Measured at ~20 ms for the query embedding plus the two index lookups
+        (docs/measurements/phase2.md), which is why it is a span of its own rather than
+        being absorbed into `assemble_ms`.
+
+        **Failure costs the memories, not the turn.** Answering without a memory is a worse
+        answer; not answering is a broken product. Counting what was recalled is a write,
+        so it happens after the fact, off this path.
+        """
+        if self._retriever is None:
+            return ()
+        # **The span is the whole lookup**, not just the embedding: `RetrievalResult` also
+        # reports `embed_ms`, and the difference between them is what the two indexes cost.
+        with timer.span("retrieve_ms"):
+            try:
+                result = await self._retriever.retrieve(
+                    text,
+                    # **What the lines may spend**, with the block's own frame already
+                    # taken out — the budget is about the prompt, not about the records.
+                    token_budget=MEMORY_BUDGET_TOKENS - BLOCK_OVERHEAD_TOKENS,
+                    now=self._clock(),
+                )
+            except Exception as error:
+                log.warning("memory.retrieve_failed", error=str(error))
+                return ()
+        if result.selected:
+            task = asyncio.create_task(
+                self._retriever.record_use(result, now=self._clock()), name="memory.record_use"
+            )
+            self._turns.add(task)
+            task.add_done_callback(self._turns.discard)
+            task.add_done_callback(report_task_exit("memory.record_use_failed"))
+        return to_blocks(result.records)
 
     async def _one_step(
         self,

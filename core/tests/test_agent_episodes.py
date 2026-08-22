@@ -15,8 +15,8 @@ import pytest
 
 from lumi.agent.episodes import EpisodeRecorder
 from lumi.provenance import ProvenanceClass, TrustLevel
-from lumi.storage.memory import MEMORY_SCHEMA, SPEAKER_LUMI, SPEAKER_USER, Episode, EpisodeStore
-from lumi.storage.sqlite import IN_MEMORY, Database
+from lumi.storage.memory import SPEAKER_LUMI, SPEAKER_USER, Episode, EpisodeStore, open_memory
+from lumi.storage.sqlite import IN_MEMORY
 
 START = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
 
@@ -34,7 +34,7 @@ class Clock:
 
 @pytest.fixture
 def store() -> EpisodeStore:
-    return EpisodeStore(Database.open(IN_MEMORY, MEMORY_SCHEMA))
+    return EpisodeStore(open_memory(IN_MEMORY))
 
 
 async def test_a_turn_is_written_down(store: EpisodeStore) -> None:
@@ -164,7 +164,7 @@ async def test_an_utterance_is_never_written_before_its_episode(store: EpisodeSt
             await asyncio.sleep(0.02)
             await super().open_episode(episode)
 
-    slow_store = SlowToOpen(Database.open(IN_MEMORY, MEMORY_SCHEMA))
+    slow_store = SlowToOpen(open_memory(IN_MEMORY))
     recorder = EpisodeRecorder(slow_store, session_id="s1")
     recorder.remember_user("おはよう", TrustLevel.TRUSTED)
     recorder.remember_lumi("おはよう。", TrustLevel.TRUSTED)
@@ -186,7 +186,7 @@ async def test_a_failing_database_does_not_break_the_turn(store: EpisodeStore) -
         async def open_episode(self, episode: Episode) -> None:
             raise RuntimeError("disk is on fire")
 
-    recorder = EpisodeRecorder(Broken(Database.open(IN_MEMORY, MEMORY_SCHEMA)), session_id="s1")
+    recorder = EpisodeRecorder(Broken(open_memory(IN_MEMORY)), session_id="s1")
     recorder.remember_user("おはよう", TrustLevel.TRUSTED)
 
     await recorder.flush()  # **raises nothing**

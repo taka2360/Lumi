@@ -30,7 +30,9 @@ from lumi import paths
 from lumi import settings as settings_module
 from lumi.agent.episodes import EpisodeRecorder
 from lumi.agent.inspector import InspectorPublisher
+from lumi.agent.prompt import estimate_tokens
 from lumi.agent.reactive import ReactiveLoop
+from lumi.agent.recall import cost_of
 from lumi.agent.session import Session
 from lumi.agent.tasks import report_task_exit
 from lumi.agent.warmup import warm_all, warm_llm
@@ -44,22 +46,28 @@ from lumi.kernel.event import EventBus
 from lumi.kernel.hooks import HookRegistry
 from lumi.kernel.ids import new_job_id
 from lumi.kernel.job import Job, JobKind
+from lumi.memory.indexing import Indexer
+from lumi.memory.retrieval import Retriever
 from lumi.memory.store import MemoryStore
+from lumi.memory.vectors import MemoryIndex
 from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
 from lumi.providers.base import ProviderKind
+from lumi.providers.embedding.harrier import HarrierEmbeddingProvider
 from lumi.providers.llm.base import LLMOptions
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
+from lumi.setup.install import is_model_installed
+from lumi.setup.models import HARRIER_OSS_V1_270M
 from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState
 from lumi.storage.audit import AUDIT_SCHEMA, SqliteAuditLog
 from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
-from lumi.storage.memory import MEMORY_SCHEMA, EpisodeStore
+from lumi.storage.memory import EpisodeStore, open_memory
 from lumi.storage.retention import RetentionPolicy, RetentionService
 from lumi.storage.secret import DpapiSecretStore, get_or_create_db_key
 from lumi.storage.sqlite import Database
@@ -92,8 +100,11 @@ class ConversationRuntime:
         "_arbiter",
         "_audio",
         "_audit_db",
+        "_embedder",
         "_episodes",
         "_events_db",
+        "_index",
+        "_indexing",
         "_inspector",
         "_listening",
         "_llm_retry",
@@ -121,6 +132,7 @@ class ConversationRuntime:
         self._settings = settings_module.load(paths.settings_file())
         self._model = self._settings.llm_model.value
         self._task: asyncio.Task[None] | None = None
+        self._indexing: asyncio.Task[None] | None = None
         self._warmup: asyncio.Task[None] | None = None
         self._llm_retry: asyncio.Task[None] | None = None
         self._listening = False
@@ -130,13 +142,18 @@ class ConversationRuntime:
         key = get_or_create_db_key(DpapiSecretStore(paths.secrets_dir()))
         self._events_db = Database.open(paths.event_db_file(), EVENTS_SCHEMA, key=key)
         self._audit_db = Database.open(paths.audit_db_file(), AUDIT_SCHEMA, key=key)
-        self._memory_db = Database.open(paths.memory_db_file(), MEMORY_SCHEMA, key=key)
+        self._memory_db = open_memory(paths.memory_db_file(), key=key)
         self._episodes = EpisodeStore(self._memory_db)
         #: **Nothing writes to it until the Reflection Job (2f).** It is built here, and
         #: the sweep below runs from the first release that can hold a memory at all —
         #: the same rule as 2c: do not become able to keep something without the
         #: mechanism that lets go of it.
         self._memories = MemoryStore(self._memory_db)
+        self._index = MemoryIndex(self._memory_db)
+        #: **`None` when the model was never fetched.** It is 196 MiB acquired at runtime
+        #: (ADR-041), and a Lumi that refused to talk without it would be trading the
+        #: product for one of its features. Retrieval degrades to keywords and recency.
+        self._embedder = self._build_embedder()
         self._retention = RetentionService(
             memory=self._memory_db, events=self._events_db, audit=self._audit_db
         )
@@ -207,7 +224,27 @@ class ConversationRuntime:
             audio=self._audio,
             tts_speed=float(self._settings.tts_speed.value),
             episodes=self._recorder,
+            retriever=Retriever(
+                self._memories,
+                self._index,
+                self._embedder,
+                # **Costed as the prompt will render it** (`agent.recall`), with the
+                # estimator the prompt itself uses. Two approximations would mean packing
+                # against one budget and truncating against another.
+                cost=lambda record: cost_of(record, estimate_tokens),
+            ),
         )
+
+    def _build_embedder(self) -> HarrierEmbeddingProvider | None:
+        """The embedding Provider, if its model is on disk.
+
+        **Not loaded here** — `load()` opens an ONNX session, which belongs off the
+        constructor. This only decides whether there is one to load.
+        """
+        if not is_model_installed(HARRIER_OSS_V1_270M, paths.embedding_models_dir()):
+            log.info("memory.embedding_absent", model=HARRIER_OSS_V1_270M.name)
+            return None
+        return HarrierEmbeddingProvider(paths.embedding_models_dir())
 
     async def _expire_old_records(self) -> None:
         """Delete what is past its deadline. **Every start, before anything is written.**
@@ -259,6 +296,27 @@ class ConversationRuntime:
             log.exception("memory.archive_failed", job=str(job.id))
             return
         log.info("memory.archive_done", job=str(job.id), archived=len(faded))
+
+    async def _index_memories(self) -> None:
+        """Embed anything unindexed, and re-embed after a model change.
+
+        A `Job` like the other two, and **not awaited by startup**: the first run against a
+        long history is seconds of CPU, and what shares that CPU is capture, VAD and
+        barge-in. Retrieval works throughout — an unindexed memory is reachable through
+        recency and keywords, just not by similarity.
+        """
+        if self._embedder is None:
+            return
+        job = Job(id=new_job_id(), kind=JobKind.MAINTENANCE, cancellation=Cancellation.COOPERATIVE)
+        try:
+            await self._embedder.load()
+            report = await Indexer(self._memories, self._index, self._embedder).run_until_done()
+        except Exception:
+            # **The conversation does not depend on this.** Memory search stays degraded
+            # until the next start, and the reason is in the log rather than in a silence.
+            log.exception("memory.index_failed", job=str(job.id))
+            return
+        log.info("memory.index_done", job=str(job.id), embedded=report.embedded)
 
     async def _update_settings(self, payload: dict[str, object]) -> dict[str, object]:
         """The Stage asked to change a setting. **Core validates and decides** (ADR-028).
@@ -333,6 +391,9 @@ class ConversationRuntime:
         # record in before deciding what is too old to keep
         await self._expire_old_records()
         await self._forget_faded_memories()
+        # **Not awaited.** Indexing is the one maintenance job that can take seconds.
+        self._indexing = asyncio.create_task(self._index_memories(), name="memory.index")
+        self._indexing.add_done_callback(report_task_exit("memory.index_crashed"))
         # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
         # rest of the session (observed 2026-08-17).
@@ -489,7 +550,7 @@ class ConversationRuntime:
 
     async def stop(self) -> None:
         """**Only stops what Lumi itself started** (docs/architecture/core.md §6)."""
-        for task in (self._warmup, self._llm_retry, self._task):
+        for task in (self._warmup, self._llm_retry, self._indexing, self._task):
             if task is None:
                 continue
             task.cancel()
@@ -504,6 +565,7 @@ class ConversationRuntime:
                 log.exception("conversation.task_failed_on_stop", task=task.get_name())
         self._warmup = None
         self._llm_retry = None
+        self._indexing = None
         self._task = None
         self._listening = False
         await self._inspector.stop()

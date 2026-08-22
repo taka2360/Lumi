@@ -273,19 +273,36 @@ AivisSpeech / VOICEVOX Engine は LGPL-3.0 系。**HTTP 越しの別プロセス
 
 ```python
 class EmbeddingProvider(Provider, Protocol):
-    async def embed(self, texts: list[str]) -> list[Vector]: ...
+    async def embed_query(self, text: str) -> Vector: ...
+    async def embed_documents(self, texts: Sequence[str]) -> list[Vector]: ...
     def dimension(self) -> int: ...
     def model_id(self) -> str: ...
 ```
 
-### 実装候補〔Provisional。Phase 2 で日本語検索品質を実測〕
+### なぜ `embed(texts)` 一本ではないのか〔2026-08-22 / [ADR-041](../decisions/ADR-041-embedding-model-harrier-oss.md)〕
 
-| Provider | 備考 |
-|---|---|
-| `RuriProvider` | 日本語特化 |
-| `BgeM3Provider` | 多言語 |
+**採用したモデルは、クエリにだけ指示文を付けることを要求する。**
 
-**ONNX / CPU 実行。** VRAM を使わない。
+```text
+クエリ: "Instruct: {task}\nQuery: {text}"
+文書:   "{text}"        ← 付けない
+```
+
+対称な API のままだと、**間違えても例外は出ない。** ベクトルは出るし、検索も動くし、
+それらしい結果も返る。気づく手段が「なんとなく検索の質が悪い」しかない。
+**呼び分けを型で強制するのが、いちばん安い防御である。**
+
+### 実装〔2026-08-22 確定〕
+
+| Provider | モデル | 次元 | 備考 |
+|---|---|---|---|
+| **`HarrierEmbeddingProvider`** | `microsoft/harrier-oss-v1-270m`（ONNX q4） | **640** | MIT。**プーリングと L2 正規化はグラフの中**。実行時取得 196 MiB |
+
+**ONNX / CPU 実行。** VRAM を使わない。**torch も transformers も要らない**
+（`onnxruntime` + `tokenizers`。どちらも Phase 1 から入っている）。
+
+**右詰めパディングのみ正しい。** last-token pooling がグラフ内で `attention_mask` を見るため、
+左詰めにすると別のベクトルが返る（実測 cos 0.22。**エラーにはならない**）。
 
 ### `model_id` と `dimension` が必要な理由
 

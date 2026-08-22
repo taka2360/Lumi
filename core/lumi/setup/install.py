@@ -259,14 +259,18 @@ async def install_engine(
         await asyncio.to_thread(shutil.rmtree, work_dir, ignore_errors=True)
 
 
-async def install_stt_model(
+async def install_model(
     artifact: ModelArtifact,
     models_dir: Path,
     *,
     progress: ProgressCallback | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> Path:
-    """Fetches and installs an STT model, returning the directory it landed in.
+    """Fetches and installs a pinned model, returning the directory it landed in.
+
+    **Not STT-specific** (it was named `install_stt_model` until the embedding model
+    arrived in 2e). What makes a model a model here is the shape — a set of pinned files
+    that get placed as-is — not what the weights are for.
 
     Design → docs/architecture/setup.md §3b / decision → ADR-023
 
@@ -303,12 +307,17 @@ async def install_stt_model(
             timeout=TIMEOUT, follow_redirects=False, transport=transport
         ) as client:
             for file in artifact.files:
+                # **A pinned name may contain a directory** (`onnx/model_q4.onnx`). The
+                # layout is kept as the repository has it, because ONNX external data is
+                # resolved by a name relative to the graph file.
+                destination = work_dir / file.name
+                await asyncio.to_thread(destination.parent.mkdir, parents=True, exist_ok=True)
                 await _download(
                     client,
                     artifact.url_for(file),
                     size=file.size,
                     sha256=file.sha256,
-                    destination=work_dir / file.name,
+                    destination=destination,
                     progress=_scaled(progress, fetched, file.size, artifact.size),
                     allow_origin=models.is_allowed_origin,
                     allow_redirect=models.is_allowed_redirect,

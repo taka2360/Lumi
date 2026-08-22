@@ -16,7 +16,7 @@ import pytest
 import sqlite_vec
 
 from lumi.storage.events import EVENTS_SCHEMA
-from lumi.storage.memory import MEMORY_SCHEMA
+from lumi.storage.memory import MEMORY_SCHEMA, open_memory
 from lumi.storage.sqlite import IN_MEMORY, Database, Schema, StorageError, one
 
 KEY = "ab" * 32
@@ -136,7 +136,7 @@ def test_the_extension_loads_inside_an_encrypted_database(tmp_path: Path) -> Non
     """The encrypted build is a different SQLite library. **sqlite-vec working against
     the stdlib one says nothing about this**, and the whole of memory rides on it.
     """
-    db = Database.open(tmp_path / "memory.db", MEMORY_SCHEMA, key=KEY)
+    db = open_memory(tmp_path / "memory.db", key=KEY)
     try:
         db.load_extension(sqlite_vec.loadable_path())
         with db.transaction() as conn:
@@ -153,7 +153,7 @@ def test_the_extension_loads_inside_an_encrypted_database(tmp_path: Path) -> Non
 
 
 def test_fts5_works_inside_an_encrypted_database(tmp_path: Path) -> None:
-    db = Database.open(tmp_path / "memory.db", MEMORY_SCHEMA, key=KEY)
+    db = open_memory(tmp_path / "memory.db", key=KEY)
     try:
         with db.transaction() as conn:
             conn.execute("CREATE VIRTUAL TABLE f USING fts5(body)")
@@ -168,7 +168,7 @@ def test_loading_an_extension_leaves_extension_loading_off(tmp_path: Path) -> No
     """**Enabled only for the duration of the load.** Left on, any SQL reaching this
     connection could load a DLL.
     """
-    db = Database.open(tmp_path / "memory.db", MEMORY_SCHEMA, key=KEY)
+    db = open_memory(tmp_path / "memory.db", key=KEY)
     try:
         db.load_extension(sqlite_vec.loadable_path())
         with pytest.raises(Exception, match="not authorized"):
@@ -192,11 +192,11 @@ def test_a_file_refuses_to_become_a_different_database(tmp_path: Path) -> None:
     Database.open(path, EVENTS_SCHEMA, key=KEY).close()
 
     with pytest.raises(StorageError, match=re.escape("storage.events")):
-        Database.open(path, MEMORY_SCHEMA, key=KEY)
+        open_memory(path, key=KEY)
 
 
 def test_the_component_is_recorded_with_the_version(tmp_path: Path) -> None:
-    db = Database.open(tmp_path / "memory.db", MEMORY_SCHEMA, key=KEY)
+    db = open_memory(tmp_path / "memory.db", key=KEY)
     try:
         with db.transaction() as conn:
             row = one(conn.execute("SELECT component, version FROM _schema_version"))

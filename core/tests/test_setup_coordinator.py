@@ -582,7 +582,7 @@ class TestSpeechModel:
             await progress(1.0)
             return Path("C:/models/small")
 
-        monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
+        monkeypatch.setattr(coordinator_module, "install_model", fake_install)
         server = FakeServer(["install"])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -614,7 +614,7 @@ class TestSpeechModel:
             await progress(1.0)
             return Path("C:/models/small")
 
-        monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
+        monkeypatch.setattr(coordinator_module, "install_model", fake_install)
         server = FakeServer(["install"])
         coordinator = SetupCoordinator(server.as_server(), {"LUMI_STT_MODEL": "small"})
 
@@ -676,7 +676,7 @@ class TestSpeechModel:
         async def fake_install(*_args: Any, **_kwargs: Any) -> Path:
             raise SetupError("hash_mismatch", "Corrupted")
 
-        monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
+        monkeypatch.setattr(coordinator_module, "install_model", fake_install)
         server = FakeServer(["install", "skip"])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -700,7 +700,7 @@ class TestSpeechModel:
         async def failing_install(*_args: Any, **_kwargs: Any) -> Path:
             raise exception_type("download failed")
 
-        monkeypatch.setattr(coordinator_module, "install_stt_model", failing_install)
+        monkeypatch.setattr(coordinator_module, "install_model", failing_install)
         coordinator = SetupCoordinator(FakeServer([]).as_server(), {})
 
         if exception_type is asyncio.CancelledError:
@@ -723,7 +723,7 @@ class TestSpeechModel:
             del artifact, models_dir, progress
             return Path("C:/models/small")
 
-        monkeypatch.setattr(coordinator_module, "install_stt_model", fake_install)
+        monkeypatch.setattr(coordinator_module, "install_model", fake_install)
         server = FakeServer(["install"])
         coordinator = SetupCoordinator(server.as_server(), {})
 
