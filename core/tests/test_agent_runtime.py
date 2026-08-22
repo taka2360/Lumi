@@ -69,9 +69,9 @@ class TestAssembly:
 
             foreground = runtime.arbiter.current()
             assert foreground.kind is ActivityKind.IDLE
-            assert (
-                foreground.state is ActivityState.RUNNING
-            ), "idle must be created with running state"
+            assert foreground.state is ActivityState.RUNNING, (
+                "idle must be created with running state"
+            )
         finally:
             await runtime.stop()
 
