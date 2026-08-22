@@ -18,9 +18,19 @@ from wherever the previous span ended — is tempting because it can't leave gap
 exactly what makes it useless: **every scheduling delay, event publish and await gets folded
 into whichever span happens to come next**, and `unaccounted_ms` is always zero by construction.
 
-The gaps are the point. `unaccounted_ms` is the reserve's warning light (0.23 s of the 1.50 s
+The gaps are the point. `unaccounted_ms` is the reserve's warning light (0.40 s of the 1.50 s
 p50 budget covers DomainEvent persistence, provenance joins, GC, scheduling). It can only warn if
 unattributed work actually shows up in it.
+
+## Why the spans no longer simply add up
+
+`stt_ms` runs *inside* `vad_ms` (speculative STT, ADR-039), so the sum of the spans is no
+longer the length of the critical path. `critical_path_ms` subtracts the measured overlap,
+and `unaccounted_ms` is measured against that.
+
+**The overlap is measured, never assumed.** On CPU, STT takes longer than the VAD wait and
+the excess really is on the critical path; writing STT's contribution as a constant 0 would
+push that time out of `critical_path_ms` and make `unaccounted_ms` go negative.
 
 ## Why the clock is injected
 
@@ -58,6 +68,36 @@ SPANS: Final = (
 
 
 @dataclass(frozen=True, slots=True)
+class Speculation:
+    """What speculative STT did this turn (ADR-039). **Facts, not spans.**
+
+    None of these are added to the span sum: `overlap_ms` is subtracted from it, and the
+    other two describe work that either happened inside `stt_ms` or was thrown away.
+    """
+
+    #: Whether the adopted transcription came from a speculation
+    speculative: bool = False
+    #: How much of `stt_ms` ran inside `vad_ms`. **Measured from both spans' timestamps**
+    overlap_ms: int = 0
+    #: Of `stt_ms`, time spent waiting for an uncancellable predecessor rather than inferring
+    wait_ms: int = 0
+    #: Inference time of executions that were thrown away. **Never added to the critical
+    #: path** — whatever part of it delayed this turn is already inside `wait_ms`
+    discarded_ms: int = 0
+    #: How many executions were thrown away
+    discarded: int = 0
+
+    def to_payload(self) -> dict[str, object]:
+        return {
+            "stt_speculative": self.speculative,
+            "stt_overlap_ms": self.overlap_ms,
+            "stt_wait_ms": self.wait_ms,
+            "stt_discarded_ms": self.discarded_ms,
+            "stt_discarded": self.discarded,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class TurnLatency:
     """One turn's measurement. **Plain data** — reporting is someone else's job."""
 
@@ -67,28 +107,41 @@ class TurnLatency:
     total_ms: int
     #: Whether the turn reached the first sound at all. `False` means it was cut off
     completed: bool
+    speculation: Speculation = Speculation()
 
     @property
     def measured_sum_ms(self) -> int:
         return sum(self.spans.values())
 
     @property
+    def critical_path_ms(self) -> int:
+        """The span sum minus the part that ran inside another span.
+
+        **This, not the sum, is what the p50 budget is compared against**
+        (docs/architecture/audio.md §7).
+        """
+        return self.measured_sum_ms - self.speculation.overlap_ms
+
+    @property
     def unaccounted_ms(self) -> int:
         """Work inside the interval that no span claimed. **The reserve's warning light.**
 
-        **Can go negative** if a span was recorded outside the interval. Not clamped to zero:
-        clamping would hide the bug that produced it.
+        **Can go negative** if a span was recorded outside the interval, or if an overlap
+        was declared that did not happen. Not clamped to zero: clamping would hide the bug
+        that produced it.
         """
-        return self.total_ms - self.measured_sum_ms
+        return self.total_ms - self.critical_path_ms
 
     def to_payload(self) -> dict[str, object]:
         return {
             "correlation_id": str(self.correlation_id),
             **self.spans,
             "measured_sum_ms": self.measured_sum_ms,
+            "critical_path_ms": self.critical_path_ms,
             "total_ms": self.total_ms,
             "unaccounted_ms": self.unaccounted_ms,
             "completed": self.completed,
+            **self.speculation.to_payload(),
         }
 
 
@@ -99,7 +152,15 @@ class TurnTimer:
     "how far did we get before being cut off" is exactly what needs measuring.
     """
 
-    __slots__ = ("_clock", "_completed_at", "_correlation_id", "_open", "_spans", "_started")
+    __slots__ = (
+        "_clock",
+        "_completed_at",
+        "_correlation_id",
+        "_open",
+        "_spans",
+        "_speculation",
+        "_started",
+    )
 
     def __init__(
         self,
@@ -115,6 +176,7 @@ class TurnTimer:
         self._started = self._clock() if started_at is None else started_at
         self._spans: dict[str, int] = {}
         self._open: dict[str, float] = {}
+        self._speculation = Speculation()
         self._completed_at: float | None = None
 
     # ── Recording ────────────────────────────────────────────
@@ -163,6 +225,15 @@ class TurnTimer:
         _check(span)
         self._spans.setdefault(span, _ms(self._clock() - self._started))
 
+    def record_speculation(self, speculation: Speculation) -> None:
+        """Attach what speculative STT did. **Does not touch any span.**"""
+        self._speculation = speculation
+
+    @property
+    def started_at(self) -> float:
+        """When the user stopped talking. **The VAD wait starts here** (ADR-039 overlap)."""
+        return self._started
+
     # ── Closing ──────────────────────────────────────────────
 
     def complete(self) -> None:
@@ -182,6 +253,7 @@ class TurnTimer:
             spans={span: self._spans[span] for span in SPANS if span in self._spans},
             total_ms=_ms(ended - self._started),
             completed=self._completed_at is not None,
+            speculation=self._speculation,
         )
 
     def emit(self) -> TurnLatency:

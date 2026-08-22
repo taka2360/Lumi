@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import math
+import time
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Final, cast
@@ -35,12 +36,13 @@ from typing import Final, cast
 import numpy as np
 
 from lumi import logging as lumi_logging
-from lumi.agent.latency import TurnLatency, TurnTimer
+from lumi.agent.latency import Speculation, TurnLatency, TurnTimer
 from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import ContextBlock, assemble
 from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
+from lumi.agent.stt import SpeculativeStt, SttOutcome
 from lumi.agent.tasks import report_task_exit
 from lumi.audio.io import AudioIO
 from lumi.audio.playback import SpeakerPlayback
@@ -62,7 +64,7 @@ from lumi.providers.llm.base import (
     ToolCall,
 )
 from lumi.providers.registry import ProviderRegistry
-from lumi.providers.stt.base import AudioBuffer, STTProvider
+from lumi.providers.stt.base import AudioBuffer, STTProvider, Transcription
 from lumi.providers.tts.base import TTSProvider, VoiceConfig
 from lumi.settings import TTS_SPEED_MAX, TTS_SPEED_MIN
 from lumi.tools.base import ToolContext, ToolResult
@@ -107,6 +109,7 @@ class ReactiveLoop:
         "_pack",
         "_providers",
         "_session",
+        "_stt",
         "_tools",
         "_tts_speed",
     )
@@ -136,6 +139,10 @@ class ReactiveLoop:
         self._audio = audio
         self._tts_speed = _validate_tts_speed(tts_speed)
         self._last_latency: TurnLatency | None = None
+        #: **The only place STT is started** (ADR-039). Speculations begin while VAD is
+        #: still waiting out the silence, and `SPEECH_ENDED` adopts one instead of starting
+        #: its own — two entry points would mean two inferences in flight
+        self._stt = SpeculativeStt(self._transcribe)
 
     @property
     def session(self) -> Session:
@@ -177,14 +184,27 @@ class ReactiveLoop:
             return
 
         turns: set[asyncio.Task[None]] = set()
-        async for event, audio, audio_at in self._audio.events():
+        async for notification in self._audio.events():
+            event = notification.event
             if event is VadEvent.SPEECH_STARTED:
+                self._stt.begin_turn()
                 try:
                     await self.on_speech_started()
                 except Exception:
                     log.exception("reactive.interrupt_failed")
-            elif event is VadEvent.SPEECH_ENDED and audio is not None:
-                task = asyncio.create_task(self.on_speech_ended(audio, audio_at), name="turn")
+            elif event is VadEvent.SILENCE_STARTED and notification.audio is not None:
+                # **Never awaited.** The mute decision and the next VAD event must not queue
+                # behind an inference (docs/architecture/audio.md §2)
+                self._stt.speculate(notification.generation, notification.audio)
+            elif event is VadEvent.SPEECH_ENDED and notification.audio is not None:
+                task = asyncio.create_task(
+                    self.on_speech_ended(
+                        notification.audio,
+                        notification.audio_at,
+                        generation=notification.generation,
+                    ),
+                    name="turn",
+                )
                 turns.add(task)
                 task.add_done_callback(turns.discard)
                 task.add_done_callback(report_task_exit("reactive.turn_crashed"))
@@ -210,8 +230,10 @@ class ReactiveLoop:
             abandoned=result.abandoned,
         )
 
-    async def on_speech_ended(self, audio: AudioBuffer, ended_at: float | None = None) -> None:
-        """A speech segment was confirmed. **Run STT before proposing an Activity.**
+    async def on_speech_ended(
+        self, audio: AudioBuffer, ended_at: float | None = None, *, generation: int = 0
+    ) -> None:
+        """A speech segment was confirmed. **Adopt or run STT before proposing an Activity.**
 
         STT happens before the proposal so that **no Activity gets created if nothing was
         actually said**. An empty conversation Activity needlessly preempts idle and
@@ -220,9 +242,14 @@ class ReactiveLoop:
         `ended_at` is when the user actually stopped talking, not when this was called.
         **The gap between the two is `vad_ms`** and it is the largest fixed cost in the
         budget (docs/architecture/audio.md §7), so it must not be measured from here.
+
+        `generation` decides whether a speculation started during that gap describes *this*
+        audio. **A mismatch is not an error** — it means the user carried on talking, and the
+        confirmed buffer is transcribed instead (ADR-039).
         """
         timer = TurnTimer(new_correlation_id(), started_at=ended_at)
         timer.since_start("vad_ms")
+        vad_ended_at = time.perf_counter()
         # **Measured before STT runs**, so a segment that makes STT fail outright still
         # says something about what went in. Peak and RMS separate "the audio was already
         # damaged" from "the model got clean audio and still got it wrong" — the 48 kHz →
@@ -236,19 +263,56 @@ class ReactiveLoop:
             rms=round(float(np.sqrt(np.mean(audio**2))) if len(audio) else 0.0, 4),
         )
         try:
-            stt: STTProvider = await self._get(ProviderKind.STT)
-            with timer.span("stt_ms"):
-                transcription = await stt.transcribe(audio, LANGUAGE, CancelToken())
+            outcome = await self._stt.resolve(generation, audio)
         except ProviderError as error:
             # **Don't silently ignore it.** What's missing is tracked by setup state
             log.warning("reactive.stt_failed", error=str(error))
             return
 
-        text = transcription.text.strip()
+        self._record_stt(timer, outcome, vad_ended_at=vad_ended_at)
+        text = outcome.transcription.text.strip()
         if not text:
             log.info("reactive.empty_transcription")
             return
         await self.handle_text(text, timer=timer)
+
+    async def _transcribe(self, audio: AudioBuffer) -> Transcription:
+        """One STT execution. **The Provider is resolved per execution**, so a speculation
+        started before STT finished warming up still waits for the same provider everything
+        else uses.
+        """
+        stt: STTProvider = await self._get(ProviderKind.STT)
+        # `CancelToken` is passed for the interface's sake. **STT is `non_cancellable`**:
+        # the inference runs in a thread and finishes regardless (ADR-039)
+        return await stt.transcribe(audio, LANGUAGE, CancelToken())
+
+    def _record_stt(self, timer: TurnTimer, outcome: SttOutcome, *, vad_ended_at: float) -> None:
+        """Write `stt_ms` and what speculation did with it.
+
+        **The overlap is measured**, not assumed to be the whole span: on CPU, STT is longer
+        than the VAD wait and the remainder is genuinely on the critical path
+        (docs/architecture/audio.md §7).
+        """
+        timer.record("stt_ms", outcome.stt_ms)
+        overlap = outcome.overlap_ms(vad_started_at=timer.started_at, vad_ended_at=vad_ended_at)
+        timer.record_speculation(
+            Speculation(
+                speculative=outcome.speculative,
+                overlap_ms=overlap,
+                wait_ms=outcome.wait_ms,
+                discarded_ms=outcome.discarded_ms,
+                discarded=outcome.discarded,
+            )
+        )
+        log.info(
+            "reactive.stt",
+            speculative=outcome.speculative,
+            capped=outcome.capped,
+            stt_ms=outcome.stt_ms,
+            overlap_ms=overlap,
+            wait_ms=outcome.wait_ms,
+            discarded=outcome.discarded,
+        )
 
     async def handle_text(self, text: str, *, timer: TurnTimer | None = None) -> None:
         """One turn from text input. **Takes the same path as the voice route.**

@@ -10,7 +10,7 @@
 |---|---|
 | Status | **承認済み（2026-08-15）** |
 | Revision | rev.17 |
-| 実装フェーズ | **Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）完了。** → [roadmap.md](roadmap.md) |
+| 実装フェーズ | **Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）/ 2b（投機 STT）完了。** → [roadmap.md](roadmap.md) |
 
 > **rev.17 の変更点**（Phase 2 を 2a〜2g に分け、暗号化の未検証を潰した）
 > 1. **暗号化 SQLite の実装方式が決まった** → [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md)。
@@ -21,6 +21,10 @@
 > 2. **Phase 2 を 2a〜2g に分けた** → [roadmap.md](roadmap.md)。軸は
 >    「単体で検証でき、次に進む前提を1つだけ確定させる単位」。
 >    **永続化を始める変更と、消す手段（保持期間ジョブ）を同じ単位に入れる**
+> 4. **投機 STT を実装した**（2b。[ADR-039](decisions/ADR-039-speculative-stt.md) のまま。設計変更なし）。
+>    `SILENCE_STARTED` と世代 ID、single-flight の所有者、`critical_path_ms`。
+>    **`unaccounted_ms` の基準が `measured_sum_ms` から `critical_path_ms` に変わった**。
+>    **1.10 s は予算であって実測値ではない** → [measurements/phase2.md](measurements/phase2.md)
 > 3. **STT のデバッグ書き出しを撤去した** → [architecture/audio.md](architecture/audio.md)。
 >    [contracts/privacy.md](contracts/privacy.md) §6 が録音経路を禁じており、
 >    Phase 1 の実装は**ソースから実行すると既定で有効**だった。

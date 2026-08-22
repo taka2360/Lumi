@@ -359,7 +359,7 @@ def test_a_crashing_vad_thread_never_leaves_playback_muted() -> None:
         ring,
         SAMPLE_RATE,
         mute_flag,
-        lambda event, _audio, _at: events.append(event),
+        lambda notification: events.append(notification.event),
         vad=cast(SileroVad, vad),
     )
     worker.start()
@@ -368,3 +368,103 @@ def test_a_crashing_vad_thread_never_leaves_playback_muted() -> None:
 
     assert not mute_flag.is_set(), "crashed thread must not hold mute flag indefinitely"
     assert events == []
+
+
+# ── Silence start and buffer generations (ADR-039) ─────────
+
+
+def _speaking(segmenter: SpeechSegmenter) -> list[VadEvent]:
+    """Get the segmenter into a confirmed speech segment."""
+    return feed(segmenter, [0.9] * frames_for(VadParams().min_speech_duration_ms))
+
+
+def test_silence_start_is_announced_before_the_segment_ends() -> None:
+    """**Speculative STT has to know when the wait began** (ADR-039).
+
+    Before this event existed, the only thing observable was `SPEECH_ENDED`, 400 ms later —
+    the moment worth starting work at could not be seen from outside at all.
+    """
+    segmenter = SpeechSegmenter()
+    assert _speaking(segmenter) == [VadEvent.SPEECH_STARTED]
+
+    assert feed(segmenter, [0.05]) == [VadEvent.SILENCE_STARTED]
+
+
+def test_silence_start_fires_once_per_silence() -> None:
+    """It marks the transition, not the state. **Every frame would restart the speculation.**"""
+    segmenter = SpeechSegmenter()
+    _speaking(segmenter)
+
+    events = feed(segmenter, [0.05, 0.05, 0.05])
+    assert events == [VadEvent.SILENCE_STARTED]
+
+
+def test_speech_resuming_advances_the_generation() -> None:
+    """**This is what makes a running speculation unusable**, and it has to happen the moment
+    the buffer stops being what the speculation was given.
+    """
+    segmenter = SpeechSegmenter()
+    _speaking(segmenter)
+    before = segmenter.generation
+
+    feed(segmenter, [0.05])
+    assert segmenter.generation == before, "waiting out silence does not change the audio"
+
+    feed(segmenter, [0.9])
+    assert segmenter.generation == before + 1
+
+
+def test_a_generation_survives_silence_that_is_never_broken() -> None:
+    """The trailing silence frames are still appended, but **they are not a different
+    utterance**: a speculation taken at the start of the silence is still valid at the end.
+    """
+    segmenter = SpeechSegmenter()
+    _speaking(segmenter)
+    feed(segmenter, [0.05])
+    generation = segmenter.generation
+
+    events = feed(segmenter, [0.05] * frames_for(VadParams().min_silence_duration_ms))
+    assert VadEvent.SPEECH_ENDED in events
+    assert segmenter.generation == generation
+
+
+def test_a_new_segment_is_a_new_generation() -> None:
+    segmenter = SpeechSegmenter()
+    _speaking(segmenter)
+    first = segmenter.generation
+    feed(segmenter, [0.05] * frames_for(VadParams().min_silence_duration_ms))
+    segmenter.take()
+
+    _speaking(segmenter)
+    assert segmenter.generation > first
+
+
+def test_the_snapshot_does_not_drain_the_segment() -> None:
+    """★ **The speculation must not eat the utterance it is trying to get ahead of.**
+
+    `take()` empties the buffer. If speculation used it, `SPEECH_ENDED` would hand STT only
+    the frames that arrived during the silence — Lumi would answer a fragment.
+    """
+    segmenter = SpeechSegmenter()
+    _speaking(segmenter)
+    feed(segmenter, [0.05])
+
+    snapshot = segmenter.snapshot()
+    assert len(snapshot) > 0
+
+    feed(segmenter, [0.05] * frames_for(VadParams().min_silence_duration_ms))
+    confirmed = segmenter.take()
+    assert len(confirmed) >= len(snapshot)
+
+
+def test_the_snapshot_is_a_copy() -> None:
+    """Frames keep arriving while the speculation runs. **It must not see them.**"""
+    segmenter = SpeechSegmenter()
+    _speaking(segmenter)
+    feed(segmenter, [0.05])
+
+    snapshot = segmenter.snapshot()
+    length = len(snapshot)
+    feed(segmenter, [0.05, 0.05])
+
+    assert len(snapshot) == length

@@ -79,6 +79,18 @@ function Latency({ latency }: { latency: InspectorLatency }) {
             <td>{value}</td>
           </tr>
         ))}
+        {latency.speculation.overlap_ms > 0 && (
+          <tr className="inspect__lat-hidden">
+            {/* **How much of STT ran inside the VAD wait** (ADR-039). What is left of
+                `stt_ms` after this is what the turn actually paid for it. */}
+            <th>stt_overlap_ms</th>
+            <td>-{latency.speculation.overlap_ms}</td>
+          </tr>
+        )}
+        <tr className="inspect__lat-sum">
+          <th>critical_path_ms</th>
+          <td>{latency.critical_path_ms}</td>
+        </tr>
         <tr className="inspect__lat-sum">
           <th>total_ms</th>
           <td>{latency.total_ms}</td>
@@ -88,6 +100,16 @@ function Latency({ latency }: { latency: InspectorLatency }) {
           <th>unaccounted_ms</th>
           <td>{latency.unaccounted_ms}</td>
         </tr>
+        {latency.speculation.discarded > 0 && (
+          <tr className="inspect__lat-note">
+            {/* **Not a failure.** It means the user carried on talking, and the result of
+                work already started stopped describing what they said. */}
+            <th>{translate(locale, "inspector.discarded")}</th>
+            <td>
+              {latency.speculation.discarded} / {latency.speculation.discarded_ms}ms
+            </td>
+          </tr>
+        )}
         {!latency.completed && (
           <tr className="inspect__lat-cut">
             {/* Barge-in is the normal case, and **how far the turn got is the measurement.** */}

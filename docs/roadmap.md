@@ -262,16 +262,21 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [x] **STT のデバッグ書き出しを撤去**（[contracts/privacy.md](contracts/privacy.md) §6 が録音経路を禁じている。
   Phase 1 の `lumi/audio/dump.py` は**ソースから実行すると既定で有効**だった → [architecture/audio.md](architecture/audio.md)）
 
-#### 2b — 投機 STT
+#### 2b — 投機 STT〔2026-08-22 実装完了。実測は残〕
 
-- [ ] **投機 STT**（VAD の無音待ちと STT を重ねる → [ADR-039](decisions/ADR-039-speculative-stt.md)）。
+- [x] **投機 STT**（VAD の無音待ちと STT を重ねる → [ADR-039](decisions/ADR-039-speculative-stt.md)）。
   不変スナップショット + 世代 ID + 原子的な照合。**曖昧なら採用しない**（fail-closed）。
   **single-flight + 1ターンあたりの上限**（STT の推論はキャンセルできないので、有界性は起動を絞って作る）。
   **`SILENCE_STARTED` イベントと非破壊スナップショットの追加**（現在は `SPEECH_ENDED` しか出ない）。
   **STT の実行経路は1本**（`SPEECH_ENDED` から直接呼ばない）
-- [ ] `critical_path_ms` / `stt_speculative` / `stt_overlap_ms` / `stt_wait_ms` / `stt_discarded_ms` の計測
+  〔`lumi/agent/stt.py`（`SpeculativeStt`）/ `lumi/audio/vad.py`（`SILENCE_STARTED` / `generation` / `snapshot()`）。
+  ADR-039 のテスト表を `tests/test_agent_stt.py` に実装〕
+- [x] `critical_path_ms` / `stt_speculative` / `stt_overlap_ms` / `stt_wait_ms` / `stt_discarded_ms` の計測
   （[architecture/audio.md](architecture/audio.md) §7）。**寄与は `stt_ms - stt_overlap_ms`。定数 0 で埋めない**
+  〔`unaccounted_ms` の基準を `critical_path_ms` に変更。**Inspector 側も更新した**——
+  Stage は「summary に無い数値キーは区間」として扱うので、放置すると新しいキーが**偽の区間**として並ぶ〕
 - [ ] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f）
+  **実際に喋らないと出ない数値であり、実装では埋まらない。** → [measurements/phase2.md](measurements/phase2.md)
 
 #### 2c — Episode と保持期間
 

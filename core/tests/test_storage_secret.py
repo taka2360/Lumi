@@ -88,18 +88,21 @@ def test_a_second_creator_does_not_overwrite(tmp_path: Path) -> None:
     assert get_or_create_db_key(store) == first
 
 
-def test_an_interrupted_create_is_reclaimed(tmp_path: Path) -> None:
+def test_an_empty_key_file_fails_loudly_and_is_left_alone(tmp_path: Path) -> None:
     """A create that died between making the file and writing it leaves an empty file.
 
-    **It holds no key**, so it must not brick the install: the next start reclaims it.
+    **Nothing removes it automatically.** "It looked empty, so I deleted it" cannot be
+    made safe: the process that created it may write the key an instant later and open
+    a database with it. The error message says what to delete instead.
     """
     store = DpapiSecretStore(tmp_path)
-    (tmp_path / "db-key.dpapi").write_bytes(b"")
+    empty = tmp_path / "db-key.dpapi"
+    empty.write_bytes(b"")
 
-    key = get_or_create_db_key(store)
+    with pytest.raises(SecretStoreError):
+        get_or_create_db_key(store)
 
-    assert len(bytes.fromhex(key)) == KEY_SIZE
-    assert get_or_create_db_key(store) == key
+    assert empty.exists()
 
 
 def test_a_corrupted_blob_fails_loudly(tmp_path: Path) -> None:

@@ -167,10 +167,30 @@ export interface InspectorLatency {
   correlation_id: string;
   spans: Record<string, number>;
   measured_sum_ms: number;
+  /**
+   * The span sum **minus the part that ran inside another span** (speculative STT).
+   * This, not the sum, is what the p50 budget is compared against.
+   */
+  critical_path_ms: number;
   total_ms: number;
   /** **The reserve's warning light.** Can be negative, and is not clamped. */
   unaccounted_ms: number;
   completed: boolean;
+  /** What speculative STT did this turn (ADR-039). **Facts, not spans.** */
+  speculation: InspectorSpeculation;
+}
+
+/** @see docs/decisions/ADR-039-speculative-stt.md */
+export interface InspectorSpeculation {
+  /** Whether the transcription came from work started before the utterance was confirmed. */
+  speculative: boolean;
+  /** How much of `stt_ms` ran inside `vad_ms`. Subtracted from the critical path. */
+  overlap_ms: number;
+  /** Of `stt_ms`, time spent waiting for an uncancellable predecessor. */
+  wait_ms: number;
+  /** Inference time thrown away because the user carried on talking. */
+  discarded_ms: number;
+  discarded: number;
 }
 
 export interface InspectorSnapshot {

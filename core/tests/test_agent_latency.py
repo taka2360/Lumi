@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import pytest
 
-from lumi.agent.latency import SPANS, TurnTimer
+from lumi.agent.latency import SPANS, Speculation, TurnTimer
 from lumi.kernel.ids import CorrelationId
 
 
@@ -193,3 +193,70 @@ def test_the_payload_keeps_the_span_order(clock: FakeClock) -> None:
 def test_the_payload_carries_the_correlation_id(clock: FakeClock) -> None:
     """Without it, a measurement can't be tied back to the turn that produced it."""
     assert timer(clock).finish().to_payload()["correlation_id"] == "turn-1"
+
+
+# ── Overlapping spans (ADR-039) ──────────────────────────────
+
+
+def test_the_critical_path_subtracts_the_overlap(clock: FakeClock) -> None:
+    """**The span sum is no longer the critical path.** `stt_ms` runs inside `vad_ms`."""
+    turn = timer(clock)
+    turn.record("vad_ms", 430)
+    turn.record("stt_ms", 220)
+    turn.record_speculation(Speculation(speculative=True, overlap_ms=220))
+
+    latency = turn.finish()
+    assert latency.measured_sum_ms == 650
+    assert latency.critical_path_ms == 430, "a fully hidden STT contributes nothing"
+
+
+def test_an_overlap_that_does_not_hide_everything_still_counts(clock: FakeClock) -> None:
+    """On CPU, STT is longer than the VAD wait. **The excess is on the critical path**, and
+    writing the contribution as a constant 0 would lose it.
+    """
+    turn = timer(clock)
+    turn.record("vad_ms", 430)
+    turn.record("stt_ms", 920)
+    turn.record_speculation(Speculation(speculative=True, overlap_ms=430))
+
+    assert turn.finish().critical_path_ms == 920, "430 hidden, 490 not"
+
+
+def test_unaccounted_is_measured_against_the_critical_path(clock: FakeClock) -> None:
+    """Otherwise the hidden time shows up as a negative reserve every single turn."""
+    turn = timer(clock)
+    turn.record("vad_ms", 430)
+    turn.record("stt_ms", 220)
+    turn.record_speculation(Speculation(speculative=True, overlap_ms=220))
+    clock.advance(0.5)
+    turn.complete()
+
+    assert turn.finish().unaccounted_ms == 70
+
+
+def test_a_turn_without_speculation_is_unchanged(clock: FakeClock) -> None:
+    """**No overlap declared means the old arithmetic**, so nothing about the typed path moves."""
+    turn = timer(clock)
+    turn.record("vad_ms", 430)
+    turn.record("stt_ms", 220)
+
+    latency = turn.finish()
+    assert latency.critical_path_ms == latency.measured_sum_ms
+
+
+def test_the_payload_reports_what_speculation_did(clock: FakeClock) -> None:
+    """The measurement keys of ADR-039. **Renaming one silently loses a series.**"""
+    turn = timer(clock)
+    turn.record("vad_ms", 430)
+    turn.record("stt_ms", 250)
+    turn.record_speculation(
+        Speculation(speculative=True, overlap_ms=200, wait_ms=30, discarded_ms=900, discarded=2)
+    )
+
+    payload = turn.finish().to_payload()
+    assert payload["stt_speculative"] is True
+    assert payload["stt_overlap_ms"] == 200
+    assert payload["stt_wait_ms"] == 30
+    assert payload["stt_discarded_ms"] == 900
+    assert payload["stt_discarded"] == 2
+    assert payload["critical_path_ms"] == 480, "discarded time is never added to the path"

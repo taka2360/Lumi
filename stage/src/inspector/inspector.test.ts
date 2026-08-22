@@ -83,6 +83,47 @@ describe("the latency breakdown", () => {
     expect(view.latency?.completed).toBe(true);
   });
 
+  it("the speculation fields are summary, not spans", () => {
+    // ★ **A summary field this side does not know about becomes a fake span**, listed
+    // among the stages of a turn as if the turn had passed through it (ADR-039).
+    const view = toInspectorSnapshot({
+      activities: [],
+      latency: {
+        correlation_id: "c1",
+        vad_ms: 430,
+        stt_ms: 220,
+        measured_sum_ms: 650,
+        critical_path_ms: 430,
+        total_ms: 700,
+        unaccounted_ms: 270,
+        completed: true,
+        stt_speculative: true,
+        stt_overlap_ms: 220,
+        stt_wait_ms: 0,
+        stt_discarded_ms: 900,
+        stt_discarded: 1,
+      },
+    });
+    expect(view.latency?.spans).toEqual({ vad_ms: 430, stt_ms: 220 });
+    expect(view.latency?.critical_path_ms).toBe(430);
+    expect(view.latency?.speculation).toEqual({
+      speculative: true,
+      overlap_ms: 220,
+      wait_ms: 0,
+      discarded_ms: 900,
+      discarded: 1,
+    });
+  });
+
+  it("a turn with no speculation has a critical path equal to the span sum", () => {
+    // **The typed path did not change.** Core sends no overlap, and nothing is subtracted.
+    const view = toInspectorSnapshot({
+      latency: { correlation_id: "c1", assemble_ms: 30, measured_sum_ms: 30, total_ms: 30 },
+    });
+    expect(view.latency?.critical_path_ms).toBe(30);
+    expect(view.latency?.speculation.speculative).toBe(false);
+  });
+
   it("a span Core added but the Stage does not know is still carried", () => {
     // **Silently dropping it would hide the measurement someone just added.**
     const view = toInspectorSnapshot({ latency: { brand_new_ms: 12 } });

@@ -33,6 +33,7 @@ from lumi.audio.vad import (
     SileroVad,
     SpeechSegmenter,
     VadEvent,
+    VadNotification,
     VadParams,
 )
 
@@ -60,10 +61,9 @@ class CaptureUnavailable(RuntimeError):
     """
 
 
-#: Notification from VAD. `audio` is only populated for SPEECH_ENDED; the `float` is the
-#: `perf_counter` timestamp of when the event's audio actually happened (docs/architecture/audio.md
-#: §7). **Passing "now" instead would hide the ring backlog from every latency measurement.**
-VadListener = Callable[[VadEvent, Samples | None, float], None]
+#: Where VAD notifications go. **Called on the VAD thread**, so it must not block:
+#: everything it hands over is already immutable (`VadNotification`).
+VadListener = Callable[[VadNotification], None]
 
 
 class MicrophoneCapture:
@@ -279,6 +279,7 @@ class VadWorker:
         probability = self._vad.probability(window)
         events = self._segmenter.feed(probability, window, playing=self._is_playing())
 
+        generation = self._segmenter.generation
         for event in events:
             if event is VadEvent.MUTE_REQUESTED:
                 # * **critical path.** Sound stops here (synchronous, bypasses the Arbiter)
@@ -295,21 +296,29 @@ class VadWorker:
                     perceived_ms=round((muted_at - speech_at) * 1000, 2),
                     probability=round(probability, 3),
                 )
-                self._listener(event, None, speech_at)
+                self._listener(VadNotification(event, None, speech_at, generation))
             elif event is VadEvent.FALSE_TRIGGER:
                 # **It was a false trigger. Revert.** This is what lets the mute threshold be pushed
                 # aggressively
                 self._mute_flag.clear()
                 log.info("vad.false_trigger")
-                self._listener(event, None, audio_at)
+                self._listener(VadNotification(event, None, audio_at, generation))
+            elif event is VadEvent.SILENCE_STARTED:
+                # **A copy, not the buffer.** Frames keep arriving while the speculation runs,
+                # and draining the segment here would leave `SPEECH_ENDED` with only the tail
+                self._listener(
+                    VadNotification(
+                        event, _clamp(self._segmenter.snapshot()), audio_at, generation
+                    )
+                )
             elif event is VadEvent.SPEECH_ENDED:
                 audio = self._segmenter.take()
                 # The user actually stopped talking `min_silence_duration_ms` ago — that is
                 # where the turn's clock starts, **not when Core noticed** (audio.md §7)
                 ended_at = audio_at - self._segmenter.params.min_silence_duration_ms / 1000.0
-                self._listener(event, _clamp(audio), ended_at)
+                self._listener(VadNotification(event, _clamp(audio), ended_at, generation))
             else:
-                self._listener(event, None, audio_at)
+                self._listener(VadNotification(event, None, audio_at, generation))
 
 
 def _clamp(audio: Samples) -> Samples:

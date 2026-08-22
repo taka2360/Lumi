@@ -84,3 +84,32 @@
 ### 判定
 
 **[ADR-038](../decisions/ADR-038-privacy-and-data-retention.md) を修正する必要は無い。** 方針どおりに実装できる。
+
+---
+
+## 投機 STT〔2026-08-22 実装。**実測は未取得**〕
+
+Phase 2b で [ADR-039](../decisions/ADR-039-speculative-stt.md) を実装した。**ここに載せる数値はまだ無い。**
+
+| 取るべき値 | 状態 |
+|---|---|
+| 投機の破棄率（`stt.speculation_discarded` / `stt.speculation_started`） | **未取得** |
+| `stt_overlap_ms` の分布（どれだけ実際に隠れたか） | **未取得** |
+| `stt.speculation_capped` の発生率 | **未取得** |
+| `critical_path_ms` の p50 / p95 | **未取得** |
+
+**実装では埋まらない種類の数値である。** 破棄率は「人が文中でどれくらい間を置くか」で決まり、
+`stt_overlap_ms` は STT が GPU か CPU かで決まる。**どちらもテストからは出てこない。**
+
+予算上のクリティカルパス 1.10 s は**予算であって実測値ではない**
+（[ADR-039](../decisions/ADR-039-speculative-stt.md) / [../architecture/audio.md](../architecture/audio.md) §7）。
+実際に喋って `turn_latency` を集めるまで、**1.10 s を達成値として書かない。**
+
+### 実装で確定したこと（数値ではない）
+
+| | |
+|---|---|
+| 同時に走る STT | **常にたかだか1つ**（single-flight。世代を N 回進めても増えない） |
+| 上限に達したターン | 投機を止め、終端確定後に1回だけ実行する（`stt_speculative: false` / `stt_overlap_ms: 0`） |
+| 採用の判定 | 世代の一致のみ。**速さでは決めない**（不一致・失敗・世代不明はすべて確定バッファで再実行） |
+| `unaccounted_ms` の基準 | `total_ms - critical_path_ms` に変更（`measured_sum_ms` ではない） |
