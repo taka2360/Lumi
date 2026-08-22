@@ -28,18 +28,13 @@ from lumi import logging as lumi_logging
 from lumi.audio.capture import MicrophoneCapture, VadWorker
 from lumi.audio.devices import AudioPlan
 from lumi.audio.playback import SpeakerPlayback
-from lumi.audio.ring import Samples
-from lumi.audio.vad import SileroVad, VadEvent, VadParams
+from lumi.audio.vad import SileroVad, VadNotification, VadParams
 
 log = lumi_logging.get_logger(__name__)
 
 #: Cap on how much to buffer when the asyncio side is backed up. **Drop the oldest on overflow**
 #: (the most recent utterance is the valuable one; queuing forever only grows latency)
 EVENT_QUEUE_SIZE: Final = 32
-
-#: `(event, audio, audio_at)`. `audio_at` is the `perf_counter` timestamp of the event's audio,
-#: which is where a turn's latency clock starts (docs/architecture/audio.md §7)
-VadNotification = tuple[VadEvent, Samples | None, float]
 
 
 class AudioIO:
@@ -125,16 +120,16 @@ class AudioIO:
         """**Input to EchoGuard L1.** Raises the threshold during playback (never suppresses)."""
         return self._playback is not None and self._playback.is_active()
 
-    def _notify(self, event: VadEvent, audio: Samples | None, audio_at: float) -> None:
+    def _notify(self, notification: VadNotification) -> None:
         """**Called from the VAD thread.** Just hands off to asyncio; nothing is awaited here."""
         loop = self._loop
         if loop is None:
             return
-        loop.call_soon_threadsafe(self._offer, event, audio, audio_at)
+        loop.call_soon_threadsafe(self._offer, notification)
 
-    def _offer(self, event: VadEvent, audio: Samples | None, audio_at: float) -> None:
+    def _offer(self, notification: VadNotification) -> None:
         try:
-            self._events.put_nowait((event, audio, audio_at))
+            self._events.put_nowait(notification)
         except asyncio.QueueFull:
             # **Prioritize the latest.** Drop the old notification to let the current utterance
             # through
@@ -142,7 +137,7 @@ class AudioIO:
             with suppress(asyncio.QueueEmpty):
                 self._events.get_nowait()
             with suppress(asyncio.QueueFull):
-                self._events.put_nowait((event, audio, audio_at))
+                self._events.put_nowait(notification)
 
     async def events(self) -> AsyncIterator[VadNotification]:
         """The entry point on the asyncio side. **Corresponds to `_drain_events`

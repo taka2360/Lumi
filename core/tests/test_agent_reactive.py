@@ -11,6 +11,7 @@ import asyncio
 import contextlib
 import io
 import math
+import time
 import wave
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
@@ -23,7 +24,7 @@ from lumi.agent.reactive import LoopLimits, ReactiveLoop
 from lumi.agent.session import Session
 from lumi.audio.devices import AudioPlan, Device, StreamPlan
 from lumi.audio.io import AudioIO
-from lumi.audio.vad import VadEvent
+from lumi.audio.vad import VadEvent, VadNotification
 from lumi.content.pack import CharacterPack, Credit, VoiceSettings
 from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.cancellation import CancelToken
@@ -141,11 +142,14 @@ class FakeStt(_Base):
     def __init__(self, text: str) -> None:
         super().__init__()
         self.text = text
+        #: Sample counts of every execution. **How a test tells "adopted" from "re-ran"**
+        self.calls: list[int] = []
 
     async def transcribe(
         self, audio: Any, language: str | None, cancel_token: CancelToken
     ) -> Transcription:
-        del audio, language, cancel_token
+        del language, cancel_token
+        self.calls.append(len(audio))
         return Transcription(text=self.text, language="ja")
 
 
@@ -234,7 +238,8 @@ class Rig:
         providers = ProviderRegistry()
         providers.register(llm)
         providers.register(self.tts)
-        providers.register(FakeStt(stt_text))
+        self.stt = FakeStt(stt_text)
+        providers.register(self.stt)
 
         self.session = Session()
         self.audio = _audio()
@@ -714,8 +719,10 @@ async def test_a_failing_event_does_not_make_lumi_deaf(monkeypatch: pytest.Monke
 
     task = asyncio.create_task(rig.loop.run())
     try:
-        rig.audio._offer(VadEvent.SPEECH_STARTED, None, 0.0)
-        rig.audio._offer(VadEvent.SPEECH_ENDED, np.zeros(1600, dtype=np.float32), 0.0)
+        rig.audio._offer(VadNotification(VadEvent.SPEECH_STARTED, None, 0.0, 1))
+        rig.audio._offer(
+            VadNotification(VadEvent.SPEECH_ENDED, np.zeros(1600, dtype=np.float32), 0.0, 1)
+        )
         # The turn runs in its own task. **Raced against the loop itself** so a dead loop
         # fails immediately with the right message instead of timing out
         speaking = asyncio.create_task(rig.notifier.wait_for_speech())
@@ -726,6 +733,82 @@ async def test_a_failing_event_does_not_make_lumi_deaf(monkeypatch: pytest.Monke
         assert [t.text for t in rig.session.turns][:1] == ["おーい"], "next utterance was picked up"
     finally:
         await _drain(task)
+
+
+async def test_the_loop_adopts_a_speculation_started_during_the_silence() -> None:
+    """★ **The wiring, end to end** (ADR-039).
+
+    `SILENCE_STARTED` starts the transcription while VAD is still waiting out the silence,
+    and `SPEECH_ENDED` adopts it. **One inference, not two** — a second entry point into STT
+    is exactly what single-flight exists to prevent.
+    """
+    rig = Rig(FakeLlm([text("うん。")]), stt_text="おはよう")
+    await rig.start()
+
+    task = asyncio.create_task(rig.loop.run())
+    try:
+        started = time.perf_counter()
+        rig.audio._offer(VadNotification(VadEvent.SPEECH_STARTED, None, started, 1))
+        rig.audio._offer(
+            VadNotification(VadEvent.SILENCE_STARTED, np.zeros(1600, dtype=np.float32), started, 1)
+        )
+        # Let the speculation run before the end is confirmed
+        for _ in range(6):
+            await asyncio.sleep(0)
+        assert rig.stt.calls == [1600], "the speculation starts without waiting for the end"
+
+        rig.audio._offer(
+            VadNotification(VadEvent.SPEECH_ENDED, np.zeros(2400, dtype=np.float32), started, 1)
+        )
+        await asyncio.wait_for(rig.notifier.wait_for_speech(), timeout=5.0)
+        await _finish_turns()
+
+        assert rig.stt.calls == [1600], "the confirmed buffer must not be transcribed again"
+        latency = rig.loop.last_latency
+        assert latency is not None
+        assert latency.speculation.speculative is True
+    finally:
+        await _drain(task)
+
+
+async def test_the_loop_re_runs_when_the_user_kept_talking() -> None:
+    """The generation moved on. **The confirmed buffer wins, however fast the speculation was.**"""
+    rig = Rig(FakeLlm([text("うん。")]), stt_text="おはよう")
+    await rig.start()
+
+    task = asyncio.create_task(rig.loop.run())
+    try:
+        started = time.perf_counter()
+        rig.audio._offer(VadNotification(VadEvent.SPEECH_STARTED, None, started, 1))
+        rig.audio._offer(
+            VadNotification(VadEvent.SILENCE_STARTED, np.zeros(1600, dtype=np.float32), started, 1)
+        )
+        for _ in range(6):
+            await asyncio.sleep(0)
+
+        # Speech resumed, so VAD advanced the generation before confirming the end
+        rig.audio._offer(
+            VadNotification(VadEvent.SPEECH_ENDED, np.zeros(4800, dtype=np.float32), started, 2)
+        )
+        await asyncio.wait_for(rig.notifier.wait_for_speech(), timeout=5.0)
+        await _finish_turns()
+
+        assert rig.stt.calls == [1600, 4800], "the longer, confirmed buffer was transcribed"
+        latency = rig.loop.last_latency
+        assert latency is not None
+        assert latency.speculation.speculative is False
+        assert latency.speculation.discarded == 1
+    finally:
+        await _drain(task)
+
+
+async def _finish_turns() -> None:
+    """Wait for the spawned turn tasks. **`wait_for_speech` returns before the turn closes**,
+    and the latency is only recorded once it does.
+    """
+    turns = [t for t in asyncio.all_tasks() if t.get_name() == "turn"]
+    if turns:
+        await asyncio.wait(turns, timeout=5.0)
 
 
 async def _drain(loop_task: asyncio.Task[None]) -> None:

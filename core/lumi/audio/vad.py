@@ -80,8 +80,32 @@ class VadEvent(StrEnum):
     FALSE_TRIGGER = "false_trigger"
     #: Speech segment confirmed → asyncio → `arbiter.interrupt()`
     SPEECH_STARTED = "speech_started"
+    #: Silence began inside speech. **Not the end of the segment** — `min_silence_duration_ms`
+    #: has not elapsed yet, and speech may resume. Speculative STT starts here (ADR-039)
+    SILENCE_STARTED = "silence_started"
     #: Speech ended → asyncio → STT
     SPEECH_ENDED = "speech_ended"
+
+
+@dataclass(frozen=True, slots=True)
+class VadNotification:
+    """One VAD event on its way to the asyncio side. **Immutable.**
+
+    `audio` is a buffer the VAD thread will not touch again: the confirmed segment for
+    `SPEECH_ENDED`, a non-destructive copy for `SILENCE_STARTED`, and `None` otherwise.
+    Handing over anything the VAD thread still writes to is how a speculation ends up
+    transcribing a buffer that changed underneath it (ADR-039).
+    """
+
+    event: VadEvent
+    audio: Samples | None
+    #: `perf_counter` timestamp of when this event's audio actually happened
+    #: (docs/architecture/audio.md §7). **"now" would hide the ring backlog** from every
+    #: latency measurement.
+    audio_at: float
+    #: Which buffer generation `audio` belongs to. **The only thing that decides whether a
+    #: speculative result may be adopted** — see `SpeechSegmenter.generation`.
+    generation: int = 0
 
 
 class SpeechSegmenter:
@@ -94,6 +118,7 @@ class SpeechSegmenter:
     __slots__ = (
         "_candidate",
         "_confirmed_since_mute",
+        "_generation",
         "_muted_frames",
         "_params",
         "_preroll",
@@ -119,12 +144,23 @@ class SpeechSegmenter:
         # : Whether a speech segment was confirmed since this mute. **If confirmed, it wasn't a
         # false trigger**
         self._confirmed_since_mute = False
+        #: Which version of the buffer the current audio is. **Speculative STT results carry
+        #: this and are only adopted when it still matches** (ADR-039). It advances when a new
+        #: segment starts, and again whenever speech resumes after a silence had begun —
+        #: those are exactly the moments when "what the user said" changed underneath a
+        #: speculation that is already running.
+        self._generation = 0
         self.muted = False
         self.in_speech = False
 
     @property
     def params(self) -> VadParams:
         return self._params
+
+    @property
+    def generation(self) -> int:
+        """The current buffer generation. **Monotonic for the life of the segmenter.**"""
+        return self._generation
 
     def feed(self, probability: float, frame: Samples, *, playing: bool) -> tuple[VadEvent, ...]:
         """Consume one frame's worth and return what happened."""
@@ -157,6 +193,9 @@ class SpeechSegmenter:
             if self._speech_frames * FRAME_MS >= params.min_speech_duration_ms:
                 self.in_speech = True
                 self._silence_frames = 0
+                # **A new segment is a new generation.** Anything still running for the
+                # previous one describes a different utterance.
+                self._generation += 1
                 # Prepend **preroll (before speech) + candidate (up to confirmation)**
                 self._segment = [*self._preroll, *self._candidate]
                 self._preroll.clear()
@@ -168,7 +207,16 @@ class SpeechSegmenter:
             self._segment.append(frame)
             if probability < params.exit_threshold:
                 self._silence_frames += 1
+                if self._silence_frames == 1:
+                    # **The utterance body is already complete here** — everything after this
+                    # is the wait to find out whether the user is actually done. Speculative
+                    # STT starts now instead of watching that wait go by (ADR-039)
+                    events.append(VadEvent.SILENCE_STARTED)
             else:
+                if self._silence_frames > 0:
+                    # Speech resumed. **What is in the buffer is no longer what any running
+                    # speculation was given**, so its result must not be adopted.
+                    self._generation += 1
                 self._silence_frames = 0
             if self._silence_frames * FRAME_MS >= params.min_silence_duration_ms:
                 self.in_speech = False
@@ -199,6 +247,20 @@ class SpeechSegmenter:
         audio = np.concatenate(self._segment).astype(np.float32)
         self._segment = []
         return audio
+
+    def snapshot(self) -> Samples:
+        """A copy of what is in the buffer right now. **Non-destructive.**
+
+        This is what speculative STT is handed (ADR-039). It cannot be `take()`: the segment
+        is still being appended to, and draining it would mean the confirmed `SPEECH_ENDED`
+        later returns only the tail — **the speculation would eat the utterance it was
+        supposed to get ahead of.**
+
+        The copy is what makes the speculation safe to run while frames keep arriving.
+        """
+        if not self._segment:
+            return np.zeros(0, dtype=np.float32)
+        return np.concatenate(self._segment).astype(np.float32)
 
     def unmute(self) -> None:
         """Clear the mute state from outside.
