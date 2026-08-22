@@ -684,16 +684,22 @@ class TestSttIsActuallyWarm:
 
     def build(
         self, model_dir: Path, monkeypatch: pytest.MonkeyPatch, *, fail: bool = False
-    ) -> tuple[FasterWhisperProvider, list[object]]:
+    ) -> tuple[FasterWhisperProvider, list[object], list[bool]]:
         """A model that records what it was asked to transcribe. **Nothing is built.**"""
         transcribed: list[object] = []
+        drained: list[bool] = []
 
         class FakeModel:
             def transcribe(self, audio: object, **_kwargs: object) -> object:
                 transcribed.append(audio)
                 if fail:
                     raise RuntimeError("CUDA out of memory")
-                return iter(()), SimpleNamespace(language="ja", language_probability=1.0)
+
+                def segments() -> Iterator[object]:
+                    drained.append(True)
+                    yield from ()
+
+                return segments(), SimpleNamespace(language="ja", language_probability=1.0)
 
         class Installed(FasterWhisperProvider):
             def _resolve(self) -> Path:
@@ -702,17 +708,18 @@ class TestSttIsActuallyWarm:
         monkeypatch.setitem(
             sys.modules, "faster_whisper", SimpleNamespace(WhisperModel=lambda *a, **k: FakeModel())
         )
-        return Installed("small", model_dir, device="cpu"), transcribed
+        return Installed("small", model_dir, device="cpu"), transcribed, drained
 
     async def test_load_transcribes_once_so_the_first_utterance_does_not(
         self, empty_model_dir: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        provider, transcribed = self.build(empty_model_dir, monkeypatch)
+        provider, transcribed, drained = self.build(empty_model_dir, monkeypatch)
 
         await provider.load()
 
         assert len(transcribed) == 1, "重みを載せただけで、一度も推論していない"
         assert len(transcribed[0]) == WARM_SAMPLES  # type: ignore[arg-type]
+        assert drained == [True], "遅延評価の segments を消費していない"
 
     async def test_a_warm_up_that_fails_is_not_fatal(
         self, empty_model_dir: Path, monkeypatch: pytest.MonkeyPatch
@@ -722,7 +729,7 @@ class TestSttIsActuallyWarm:
         Raising here would make `warm_stt` report `failed` and hold the boot phase at
         `blocked` — no character and no microphone — over an inference nobody asked for.
         """
-        provider, _ = self.build(empty_model_dir, monkeypatch, fail=True)
+        provider, _, _ = self.build(empty_model_dir, monkeypatch, fail=True)
 
         await provider.load()
 

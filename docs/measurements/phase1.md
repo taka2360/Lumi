@@ -345,7 +345,7 @@ llm_first_token = [644, 421, 432, 418, 392]  中央値 421 ms
 
 ユーザー報告「また初回起動時に応答が遅くなってる（2回目以降は正常）」。実機のログ:
 
-```
+```text
 vad_ms 401 / stt_ms 1789 / llm_first_token_ms 421 / llm_first_segment_ms 58
 tts_first_audio_ms 1584 / playback_ms 26 / total_ms 4282 / unaccounted_ms 3
 ```
