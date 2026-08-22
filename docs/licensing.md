@@ -43,6 +43,7 @@
 | **Ollama / LLM モデル** | **✗** | Ollama はユーザーが別途インストール。モデルは明示同意後、Ollama に取得を依頼するが Lumi には同梱しない → [ADR-037](decisions/ADR-037-consented-ollama-model-pull.md) |
 | **Silero VAD（ONNX）** | **✓**〔Phase 1。**LICENSE 本文の確認が前提** → §7 未確認 #9〕 | 同梱。数 MB。**barge-in の critical path なので実行時取得にしない** |
 | **faster-whisper のモデル** | **✗** | 初回セットアップで**ユーザーの明示的な選択**に基づき取得（数百 MB〜。R1 に直撃する） |
+| **埋め込みモデル（Harrier-OSS-v1 270M）** | **✗** | 同上（196 MiB）。**取得しなくても会話は動く**（記憶検索だけが止まる） → §4.9 |
 | **ASIO 版の PortAudio** | **✗** | Steinberg の ASIO SDK は非 OSS。`sounddevice` は ASIO 有り・無しの両方を同梱しており、**PyInstaller のフックが指定しなくても ASIO 版を入れてしまう**（2026-08-15 実測）。`core/lumi-core.spec` が除外し、**残っていたらビルドを失敗させる** |
 
 **「含めない」は「ユーザーに丸投げする」という意味ではない。** 初回セットアップから、ユーザーが選べば自動で取得・セットアップできる経路を用意する。取得する/しないの選択を同等に提示し、取得しない選択でも Lumi は起動する（TTS 未セットアップ状態として明示する）。
@@ -291,6 +292,20 @@ MIT は著作権表示の保持を求めるが、**Silero Team の表示は依�
    Silero VAD と同じ扱いで `MANUAL` に足した
 
 **依存を1つ足すと、クレジットが2つ増えることがある。** 依存グラフは配布物の中身と一致しない。
+
+### 4.9 埋め込みモデル（Phase 2e で追加）〔2026-08-22 確認〕
+
+記憶の意味検索に使う（→ [ADR-041](decisions/ADR-041-embedding-model-harrier-oss.md)）。**配布物に入らない。**
+
+| コンポーネント | ライセンス | 取得方法 |
+|---|---|---|
+| `microsoft/harrier-oss-v1-270m`（重み） | **MIT** | 実行時取得。revision と**ファイルごとの SHA-256 を pin** |
+| `onnx-community/harrier-oss-v1-270m-ONNX`（ONNX 変換） | **MIT** | 同上。実際に取得するのはこちら |
+
+**クレジット表記の義務は無い**（MIT）。ただし `attribution()` は返す——
+**表示するかどうかと、出所を追跡できるかどうかは別**である。
+
+**GPL / AGPL は含まれない。**
 
 ### 4.8 推奨 LLM モデル〔2026-08-22 確認〕
 

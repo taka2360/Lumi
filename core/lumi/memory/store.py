@@ -251,6 +251,82 @@ class MemoryStore:
         target = normalize(content)
         return [record for record in records if normalize(record.content) != target]
 
+    async def recent(self, limit: int) -> Sequence[MemoryRecord]:
+        """The newest live beliefs, regardless of what was asked.
+
+        Retrieval unions this with the two indexes: **something said five minutes ago is
+        relevant in a way no similarity score captures**, and a brand-new memory that has
+        not been embedded yet would otherwise be invisible until the next index pass.
+        """
+        if limit <= 0:
+            return []
+        return await asyncio.to_thread(self._recent_blocking, limit)
+
+    def _recent_blocking(self, limit: int) -> list[MemoryRecord]:
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {_COLUMNS} FROM memories"
+                " WHERE superseded_by IS NULL AND archived_at IS NULL"
+                " ORDER BY valid_from DESC, created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [self._hydrate(conn, row) for row in rows]
+
+    async def get_many(self, memory_ids: Sequence[str]) -> dict[str, MemoryRecord]:
+        """Several records at once, **by id, in no particular order.**"""
+        if not memory_ids:
+            return {}
+        return await asyncio.to_thread(self._get_many_blocking, tuple(dict.fromkeys(memory_ids)))
+
+    def _get_many_blocking(self, memory_ids: tuple[str, ...]) -> dict[str, MemoryRecord]:
+        placeholders = ", ".join("?" * len(memory_ids))
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {_COLUMNS} FROM memories WHERE id IN ({placeholders})", memory_ids
+            ).fetchall()
+            records = [self._hydrate(conn, row) for row in rows]
+        return {record.id: record for record in records}
+
+    async def needing_embedding(self, model_id: str, *, limit: int) -> Sequence[MemoryRecord]:
+        """Records whose vector is missing or was made by a different model.
+
+        **This is the re-embedding trigger** (docs/interfaces/memory.md): a changed
+        `embedding_model_id` is how a model swap is detected, rather than by search quality
+        slowly getting worse for reasons nobody can point at.
+
+        Superseded beliefs are skipped — nothing searches them, so embedding them would be
+        work done to make a row nobody reads slightly more findable.
+        """
+        if limit <= 0:
+            return []
+        return await asyncio.to_thread(self._needing_blocking, model_id, limit)
+
+    def _needing_blocking(self, model_id: str, limit: int) -> list[MemoryRecord]:
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {_COLUMNS} FROM memories"
+                " WHERE superseded_by IS NULL AND embedding_model_id != ?"
+                " ORDER BY created_at LIMIT ?",
+                (model_id, limit),
+            ).fetchall()
+            return [self._hydrate(conn, row) for row in rows]
+
+    async def mark_embedded(self, memory_ids: Sequence[str], model_id: str) -> None:
+        """Record which model produced these vectors. **Written after the index, never
+        before** — the other order claims an embedding that may not exist.
+        """
+        if not memory_ids:
+            return
+        await asyncio.to_thread(self._mark_blocking, tuple(memory_ids), model_id)
+
+    def _mark_blocking(self, memory_ids: tuple[str, ...], model_id: str) -> None:
+        with self._db.transaction() as conn:
+            for memory_id in memory_ids:
+                conn.execute(
+                    "UPDATE memories SET embedding_model_id = ? WHERE id = ?",
+                    (model_id, memory_id),
+                )
+
     def _live_blocking(self, subject: str, kind: MemoryType | None) -> list[MemoryRecord]:
         with self._db.transaction() as conn:
             return self._live_rows(conn, subject, kind)

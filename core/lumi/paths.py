@@ -80,6 +80,16 @@ def stt_models_dir() -> Path:
     return models_dir() / "whisper"
 
 
+def embedding_models_dir() -> Path:
+    """Where the memory-search embedding model lives (ADR-041).
+
+    Its own subdirectory for the reason above: **models are removed per kind.** Replacing
+    the speech model has nothing to do with the one that indexes memories, and a shared
+    directory makes "delete the model you are not using" impossible to offer.
+    """
+    return models_dir() / "embedding"
+
+
 def event_db_file() -> Path:
     """Kernel facts (DomainEvent). **Encrypted; kept 30 days** → docs/contracts/privacy.md §2.
 

@@ -161,6 +161,47 @@ FASTER_WHISPER_LARGE_V3_TURBO: Final = ModelArtifact(
     license_url="https://huggingface.co/dropbox-dash/faster-whisper-large-v3-turbo",
 )
 
+#: The embedding model for memory search [2026-08-22 -> ADR-041].
+#:
+#: **q4, not int8.** On ONNX Runtime's CPU provider the int8 path measured 187 ms/query
+#: against q4's 52 ms — 3.6x slower for the same top-1 results — while q4 is 196 MiB against
+#: int8's 328 MiB (docs/measurements/phase2.md). "Quantized is faster" does not hold here.
+#:
+#: **The `.onnx_data` file is not optional.** The graph is a 234 KB stub whose weights live
+#: beside it; ONNX Runtime resolves that name relative to the model file, which is why both
+#: keep the layout they have in the repository.
+#:
+#: SHA-256 computed here from one fetch [2026-08-22]. **All this guarantees is "identical to
+#: the distributable at the time it was pinned"** (docs/architecture/setup.md §3b).
+HARRIER_OSS_V1_270M: Final = ModelArtifact(
+    name="harrier-oss-v1-270m",
+    repo="onnx-community/harrier-oss-v1-270m-ONNX",
+    revision="d59c919d0159aea2c19ed7d04288fcdd048d0f9c",
+    files=(
+        ModelFile(
+            name="onnx/model_q4.onnx",
+            size=239_762,
+            sha256="228dca2603b907d673dd99cf89c309c0ca68baeed127416a5e027a48e62b0f49",
+        ),
+        ModelFile(
+            name="onnx/model_q4.onnx_data",
+            size=205_492_736,
+            sha256="b5a15487360f5341659480ae4b5ad60028d5f865bd329196ec8d5708bbed3118",
+        ),
+        ModelFile(
+            name="tokenizer.json",
+            size=20_323_311,
+            sha256="ec95be298bea26f90370854faa650744c9fb0a04ca5e5ff95dd3913393ac5e45",
+        ),
+    ),
+    license_name="MIT",
+    license_url="https://huggingface.co/microsoft/harrier-oss-v1-270m",
+)
+
+#: The graph to open. **Named, not "the first file"** — the order of a tuple is not a contract.
+EMBEDDING_MODEL_FILE: Final = "onnx/model_q4.onnx"
+
+
 #: Fetchable models, by name. **Not configurable** — a user-supplied URL would turn this into
 #: "a feature where Lumi downloads arbitrary files"
 #:

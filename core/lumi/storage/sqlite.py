@@ -40,7 +40,7 @@ holding.
 from __future__ import annotations
 
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -123,13 +123,25 @@ class Database:
         return self._schema
 
     @classmethod
-    def open(cls, path: Path | str, schema: Schema, *, key: str | None = None) -> Database:
+    def open(
+        cls,
+        path: Path | str,
+        schema: Schema,
+        *,
+        key: str | None = None,
+        extensions: Sequence[str] = (),
+    ) -> Database:
         """Opens the connection, unlocks it, and applies `schema`'s migrations.
 
         `key` is the hex database key from `lumi.storage.secret`. It is **required for
         any on-disk path**: a database Lumi writes to disk is encrypted, with no way to
         ask for otherwise. Pass `IN_MEMORY` (with no key) for tests and for state that is
         deliberately not persisted.
+
+        `extensions` are loaded **before the migrations run**, because a migration can
+        create a table the extension provides (`vec0`). Loading them afterwards would fail
+        on a fresh database and succeed on an existing one — the worst kind of difference,
+        since only new users would ever see it.
         """
         on_disk = str(path) != IN_MEMORY
         if on_disk and not key:
@@ -148,6 +160,8 @@ class Database:
         try:
             if key:
                 database._unlock(key, path)
+            for extension in extensions:
+                database.load_extension(extension)
             connection.pragma("foreign_keys", "ON")
             if on_disk:
                 # WAL has no effect on an in-memory database (and raises no error either).

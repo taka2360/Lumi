@@ -147,8 +147,13 @@ class VectorStore(Protocol):
 
 | 実装 | 状態 |
 |---|---|
-| `SqliteVecStore` | **Phase 2 で実装** |
+| **`MemoryIndex`**（`lumi/memory/vectors.py`） | **2e で実装済み。** vec0（640 / cosine）と FTS5（trigram）を1つのクラスが持つ |
 | `QdrantStore` | 将来。規模が問題になったら |
+
+> **〔2026-08-22 / 2e〕ベクトルとキーワードを別クラスに分けなかった。**
+> 検索は常に両方を union するので、片方だけ差し替えられる形にしても使い道が無い。
+> **どちらも「記憶を見つける手段」であって、記憶そのものではない**——
+> ここから行を消しても失われるのは findability だけで、信念は `memories` に残る。
 
 **この interface があることで、sqlite-vec の選択が可逆になっている。**
 
@@ -198,6 +203,20 @@ class ScoreBreakdown:
 **「なぜこの記憶が使われたのか / 使われなかったのか」を Inspector で見られるようにする。**
 
 自律エージェントで最も重要なデバッグ機能。これが無いと Phase 6 でチューニング不能になる。
+
+### 実装〔2026-08-22 / 2e〕
+
+```python
+async def retrieve(self, query: str, *, token_budget: int, now: datetime) -> RetrievalResult
+async def record_use(self, result: RetrievalResult, *, now: datetime) -> None
+```
+
+**`record_use` が別メソッドなのは、書き込みを返事の前に置かないため。**
+「候補に挙がった」と「実際に使われた」も別物で、予算で落ちたものは強化しない。
+
+`RetrievalResult` は `embed_ms` と `degraded` も返す。
+**`degraded = True` は「埋め込みモデルが無いか、失敗した」**——
+検索はキーワードと recency だけで続き、**ターンは失敗しない**。
 
 ### スコアリング
 

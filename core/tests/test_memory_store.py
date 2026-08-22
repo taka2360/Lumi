@@ -25,7 +25,7 @@ from lumi.memory.decay import FLOOR
 from lumi.memory.records import AssertionMode, MemoryCandidate, MemoryType
 from lumi.memory.store import MemoryRejected, MemoryStore
 from lumi.provenance import ProvenanceClass, TrustLevel
-from lumi.storage.memory import MEMORY_SCHEMA, Episode, EpisodeStore, Utterance
+from lumi.storage.memory import MEMORY_SCHEMA, Episode, EpisodeStore, Utterance, open_memory
 from lumi.storage.sqlite import IN_MEMORY, Database, Schema, one
 
 NOW = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
@@ -36,7 +36,7 @@ class Rig:
     """A memory database with a conversation already in it to cite."""
 
     def __init__(self) -> None:
-        self.db = Database.open(IN_MEMORY, MEMORY_SCHEMA)
+        self.db = open_memory(IN_MEMORY)
         self.store = MemoryStore(self.db)
         self.episodes = EpisodeStore(self.db)
 
@@ -482,6 +482,12 @@ async def test_an_archived_belief_does_not_block_a_new_one(rig: Rig) -> None:
 # ── The store does not delete ────────────────────────────────
 
 
+#: Tables that hold nothing a user would call a memory. **Derived from `memories` and
+#: rebuildable from it** (`lumi.memory.indexing`), so removing a row loses findability, not
+#: a belief — which is why the deletion boundary below does not extend to them.
+INDEX_TABLES = ("memory_vectors", "memory_fts")
+
+
 def test_only_one_file_in_core_deletes_user_data() -> None:
     """★ **privacy.md §5**, as a check rather than an intention.
 
@@ -489,11 +495,21 @@ def test_only_one_file_in_core_deletes_user_data() -> None:
     and from erase-everything, and nowhere else" — and a boundary spread across modules
     is one nobody can verify. A `purge()` on the store would have been the second place,
     which is why the memory UI's delete lives in the retention service instead.
+
+    **The index is excluded, deliberately and narrowly**: `memory_vectors` and `memory_fts`
+    are derived from `memories`, and an index pass puts back anything removed from them.
+    The exclusion is by table name, so a `DELETE FROM memories` anywhere else still fails
+    this test.
     """
     offenders = sorted(
-        path.relative_to(CORE).as_posix()
-        for path in CORE.joinpath("lumi").rglob("*.py")
-        if re.search(r"DELETE\s+FROM", path.read_text(encoding="utf-8"))
+        {
+            path.relative_to(CORE).as_posix()
+            for path in CORE.joinpath("lumi").rglob("*.py")
+            # `\S+` rather than `\w+`, so an f-string table name (`DELETE FROM {table}`)
+            # counts as a deletion instead of slipping past the pattern.
+            for table in re.findall(r"DELETE\s+FROM\s+(\S+)", path.read_text(encoding="utf-8"))
+            if table not in INDEX_TABLES
+        }
     )
 
     assert offenders == ["lumi/storage/retention.py"]
@@ -532,7 +548,7 @@ async def test_a_2c_memory_database_gains_memories_without_losing_a_word(tmp_pat
     finally:
         old.close()
 
-    upgraded = Database.open(path, MEMORY_SCHEMA, key=key)
+    upgraded = open_memory(path, key=key)
     try:
         lines = await EpisodeStore(upgraded).utterances("e1")
         assert [line.text for line in lines] == ["おはよう"]
@@ -540,6 +556,10 @@ async def test_a_2c_memory_database_gains_memories_without_losing_a_word(tmp_pat
         record = await MemoryStore(upgraded).write(belief(), now=NOW)
         assert record.evidence_ref == ("u1",)
         with upgraded.transaction() as conn:
-            assert one(conn.execute("SELECT version FROM _schema_version"))[0] == 2
+            version = int(str(one(conn.execute("SELECT version FROM _schema_version"))[0]))
+            # Every migration after the one 2c shipped has been applied — the point is that
+            # **the log survived them**, not which number it stopped at.
+            assert version == MEMORY_SCHEMA.version > 1
+            assert one(conn.execute("SELECT COUNT(*) FROM memory_vectors"))[0] == 0
     finally:
         upgraded.close()

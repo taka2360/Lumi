@@ -20,7 +20,7 @@ from lumi.memory.store import MemoryStore
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.storage.audit import AUDIT_SCHEMA
 from lumi.storage.events import EVENTS_SCHEMA
-from lumi.storage.memory import MEMORY_SCHEMA, Episode, EpisodeStore, Utterance
+from lumi.storage.memory import Episode, EpisodeStore, Utterance, open_memory
 from lumi.storage.retention import RetentionPolicy, RetentionService, Target, Trigger
 from lumi.storage.sqlite import IN_MEMORY, Database, one
 
@@ -35,7 +35,7 @@ class Rig:
     """The three databases, plus the shortest way to put a dated row in each."""
 
     def __init__(self) -> None:
-        self.memory = Database.open(IN_MEMORY, MEMORY_SCHEMA)
+        self.memory = open_memory(IN_MEMORY)
         self.events = Database.open(IN_MEMORY, EVENTS_SCHEMA)
         self.audit = Database.open(IN_MEMORY, AUDIT_SCHEMA)
         self.service = RetentionService(memory=self.memory, events=self.events, audit=self.audit)

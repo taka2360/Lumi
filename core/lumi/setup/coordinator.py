@@ -52,7 +52,7 @@ from lumi.setup.install import (
     ProgressCallback,
     SetupError,
     install_engine,
-    install_stt_model,
+    install_model,
     is_model_installed,
 )
 from lumi.setup.models import FASTER_WHISPER_LARGE_V3_TURBO, STT_MODELS, ModelArtifact
@@ -900,9 +900,9 @@ class SetupCoordinator:
             )
 
         # **Returns the name rather than `None`.** `_install` reports failure as `None`, and
-        # `install_stt_model` returning nothing on success would make the two indistinguishable.
+        # `install_model` returning nothing on success would make the two indistinguishable.
         async def fetch() -> str:
-            await install_stt_model(
+            await install_model(
                 artifact, paths.stt_models_dir(), progress=self._throttled(progress)
             )
             return artifact.name

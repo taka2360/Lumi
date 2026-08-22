@@ -15,14 +15,14 @@ import pytest
 
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.storage.memory import (
-    MEMORY_SCHEMA,
     SPEAKER_LUMI,
     SPEAKER_USER,
     Episode,
     EpisodeStore,
     Utterance,
+    open_memory,
 )
-from lumi.storage.sqlite import IN_MEMORY, Database
+from lumi.storage.sqlite import IN_MEMORY
 
 KEY = "ab" * 32
 
@@ -33,7 +33,7 @@ def at(minute: int) -> datetime:
 
 @pytest.fixture
 def store() -> EpisodeStore:
-    return EpisodeStore(Database.open(IN_MEMORY, MEMORY_SCHEMA))
+    return EpisodeStore(open_memory(IN_MEMORY))
 
 
 def utterance(
@@ -140,13 +140,13 @@ async def test_closing_an_episode_that_was_never_opened_is_not_an_error(
 async def test_the_log_survives_a_restart(tmp_path: Path) -> None:
     """**This is the whole point of Phase 2.** Up to Phase 1 it did not."""
     path = tmp_path / "memory.db"
-    first = Database.open(path, MEMORY_SCHEMA, key=KEY)
+    first = open_memory(path, key=KEY)
     store = EpisodeStore(first)
     await store.open_episode(Episode(id="e1", session_id="s1", started_at=at(0)))
     await store.append(utterance("e1", 0, "Factorio が好き"))
     first.close()
 
-    second = Database.open(path, MEMORY_SCHEMA, key=KEY)
+    second = open_memory(path, key=KEY)
     try:
         reopened = EpisodeStore(second)
         assert [line.text for line in await reopened.utterances("e1")] == ["Factorio が好き"]

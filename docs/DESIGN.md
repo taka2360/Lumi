@@ -9,8 +9,24 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.18 |
-| 実装フェーズ | **Phase 2（Memory）。2a / 2c / 2d 完了。2b は実装完了・実測は未取得。次は 2e（検索）。** → [roadmap.md](roadmap.md) |
+| Revision | rev.19 |
+| 実装フェーズ | **Phase 2（Memory）。2a / 2c / 2d / 2e 完了（取得 UI は 2g）。2b は実装完了・実測は未取得。次は 2f（Reflection Job）。** → [roadmap.md](roadmap.md) |
+
+> **rev.19 の変更点**（思い出せるようになった。埋め込みモデルが決まり、次元が確定した）
+> 1. **埋め込みモデルを決めた** → [ADR-041](decisions/ADR-041-embedding-model-harrier-oss.md)。
+>    `microsoft/harrier-oss-v1-270m`（ONNX q4 / **640 次元** / MIT / 実行時取得 196 MiB）。
+>    **`vec0` の次元がこれで確定**し、2c から保留していたベクトル表を作れるようになった
+> 2. **`EmbeddingProvider` を非対称にした**（`embed_query` / `embed_documents`）。
+>    このモデルはクエリにだけ指示文を要求し、**付け忘れても例外は出ない**——
+>    検索品質だけが静かに落ちる。**型で呼び分けを強制する**のがいちばん安い防御である
+> 3. **ハイブリッド検索を入れた**（vector + FTS5 trigram + recency）。
+>    式・重み・切り落としは純粋関数で、`ScoreBreakdown` が全項を返す。
+>    **実測 21〜23 ms**（予算 0.05 s）→ [measurements/phase2.md](measurements/phase2.md)
+> 4. **記憶の提示は行ごとに根拠を書く**（[architecture/memory.md](architecture/memory.md) §3）。
+>    見出しに1回だけ書くと LLM は好きな行を事実として引く。
+>    **tainted な記憶は隔離ブロックに入る**——信念に要約しても汚染は消えない（Invariant 7）
+> 5. **「量子化すれば速い」が成り立たなかった。** int8 は fp32 の 3.6 倍遅く（ORT の CPU 経路）、
+>    q4 は fp32 と同じ速さで 1/7 のサイズだった。**測らなければ int8 を選んでいた**
 
 > **rev.18 の変更点**（記憶レコードを実装したら、削除の置き場所が1つ動いた）
 > 1. **`MemoryStore` から `purge()` を外した** → [interfaces/memory.md](interfaces/memory.md)。

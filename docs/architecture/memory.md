@@ -47,11 +47,24 @@ Memory         覚えていること   高い / curated / 減衰する
 
 `VectorStore` インターフェースで隔離し、将来の差し替えを妨げない → [../interfaces/memory.md](../interfaces/memory.md)
 
-### Embedding
+### Embedding〔2026-08-22 確定 → [ADR-041](../decisions/ADR-041-embedding-model-harrier-oss.md)〕
 
-**Ruri v3系 または bge-m3 を ONNX / CPU 実行**〔Provisional。Phase 2 で日本語検索品質を実測〕
+**`microsoft/harrier-oss-v1-270m` を ONNX（q4）/ CPU 実行。次元 640。MIT。**
+実行時取得（STT モデルと同じ仕組み。配布物に含めない）。
 
 **CPU 実行が重要。** VRAM を LLM に全振りするため（[DESIGN.md](../DESIGN.md) の GPU 戦略）。
+
+> **クエリと文書で入力が違う。** クエリにだけ指示文を付ける。
+>
+> ```text
+> クエリ: "Instruct: {task}\nQuery: {text}"
+> 文書:   "{subject}: {content}"      ← 指示文は付けない
+> ```
+>
+> **付け忘れても例外は出ず、検索品質だけが静かに落ちる。**
+> そのため `EmbeddingProvider` を `embed_query` / `embed_documents` に分け、型で強制する
+> （[../interfaces/provider.md](../interfaces/provider.md)）。実測値 →
+> [../measurements/phase2.md](../measurements/phase2.md)
 
 ### Episode と記憶レコードは別のもの〔2026-08-22 / Phase 2c 実装〕
 
@@ -82,6 +95,7 @@ _schema_version (component, version, applied_at)
 
 **ベクトル表と FTS5 は、埋め込みモデルを決めてから作る**（2e）。
 `vec0` は作成時に次元を固定するため、先に作ると**測る前に次元を発明する**ことになる。
+**次元は 640 で確定した**（[ADR-041](../decisions/ADR-041-embedding-model-harrier-oss.md)）。
 
 ---
 
@@ -375,6 +389,25 @@ selected = pack_into_budget(sorted(scored, reverse=True), token_budget)
 | `external` | 0.7 |
 
 〔Provisional。Phase 2 で調整〕
+
+### 実装〔2026-08-22 / 2e〕
+
+`core/lumi/memory/retrieval.py`。**式・重み・切り落としはすべて純粋関数**で、
+`ScoreBreakdown` が全項を返す（Inspector で「なぜ選ばれた / 選ばれなかった」が見えるため）。
+
+| | 値〔Provisional〕 |
+|---|---|
+| 重み | similarity 0.6 / recency 0.15 / effective_salience 0.25 |
+| recency の τ | **30 日**。減衰（忘却）とは別物で、こちらは**話題としての近さ**を測る |
+| 候補数 | vector 8 / keyword 8 / recent 4 |
+| 記憶のプロンプト予算 | 400 トークン（`PROMPT_BUDGET_TOKENS` 3000 の一部） |
+
+- **recency は `valid_from` から測る。** 去年の話を今日書き留めた記憶は「新しい」ではない
+- **`recent` を候補に混ぜる。** 書かれたばかりの記憶はまだ埋め込みが無く、
+  これが無いと**次のインデックス作成まで見えない**——ユーザーが最も参照しそうな瞬間に
+- **キーワード検索は3文字未満を送らない**（FTS5 trigram の原理的限界 →
+  [../measurements/phase2.md](../measurements/phase2.md)）
+- **ユーザーの発話は FTS5 のクエリ構文ではない。** 引用して渡す（Invariant 3 の小さい版）
 
 ---
 
