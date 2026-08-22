@@ -1,0 +1,529 @@
+"""Memory records on disk. **The only writer of what Lumi believes.**
+
+Design → docs/architecture/memory.md §3 / §5 / §6 · Interface → docs/interfaces/memory.md
+
+## It does not take the candidate's word for anything
+
+A candidate comes out of an LLM. This class checks it before any of it becomes something
+Lumi believes:
+
+| Checked | Why |
+|---|---|
+| `user_confirmed` is refused | `confirm()` is the **only** escalation path (Invariant 7);
+  a candidate allowed to claim it would be a second one |
+| Evidence must exist | "assertion_mode の検証" (§4). A belief citing an utterance
+  nobody said is not weakly grounded, it is invented |
+| Trust is **joined** with the evidence's | Trust comes from where the sentence came
+  from, and **no automatic step may raise it** (Invariant 7) |
+| Empty subject/content is refused | A memory with nothing in it is a row, not a memory |
+
+The join can only move toward taint, so it is propagation and not escalation. The one
+place in this file that writes `TrustLevel.TRUSTED` is `confirm()`.
+
+## Nothing here deletes
+
+`archive()` is an `UPDATE`. Physical deletion lives in `lumi.storage.retention` with every
+other `DELETE` against user data, because the boundary in docs/contracts/privacy.md §5 has
+to be checkable by reading one file.
+
+## Superseding writes two rows and edits one column
+
+The new belief is inserted, the old row's `superseded_by` is pointed at it, and **an
+episodic note about the disagreement is written in the same transaction** — not by the
+caller, because a rule that depends on every caller remembering it is one that eventually
+produces a silent overwrite (docs/architecture/memory.md §6).
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime
+from typing import Any, Final
+from uuid import uuid4
+
+import apsw
+
+from lumi import logging as lumi_logging
+from lumi.memory import decay
+from lumi.memory.contradiction import (
+    WEAK_CONFIDENCE_FACTOR,
+    Resolution,
+    contradiction_note,
+    normalize,
+    resolve,
+)
+from lumi.memory.records import AssertionMode, MemoryCandidate, MemoryRecord, MemoryType
+from lumi.provenance import (
+    ProvenanceClass,
+    TrustLevel,
+    join,
+    join_all,
+    propagate_from_trust,
+    taint,
+)
+from lumi.storage.sqlite import Database
+
+log = lumi_logging.get_logger(__name__)
+
+#: Assertion modes that claim the conversation as their source, and therefore have to name
+#: at least one utterance. `self_generated` and `external` did not come from one.
+GROUNDED_IN_CONVERSATION: Final = (AssertionMode.USER_STATED, AssertionMode.INFERRED)
+
+_COLUMNS: Final = (
+    "id, type, subject, content, assertion_mode, confidence, provenance_class,"
+    " trust_level, base_salience, created_at, last_accessed, access_count,"
+    " archived_at, valid_from, superseded_by, embedding_model_id"
+)
+
+
+class MemoryRejected(ValueError):
+    """The candidate is not something that may be believed. **Refused, not repaired.**"""
+
+
+@dataclass(frozen=True, slots=True)
+class Reconciled:
+    """What happened to a candidate that met an existing belief about the same subject."""
+
+    record: MemoryRecord
+    resolution: Resolution
+    #: The belief that now has a successor, if any.
+    superseded_id: str | None = None
+    #: The episodic record of the disagreement, if one was written.
+    note: MemoryRecord | None = None
+
+
+class MemoryStore:
+    """Reads and writes memory records. **Blocking I/O runs off the event loop.**"""
+
+    __slots__ = ("_db",)
+
+    def __init__(self, database: Database) -> None:
+        self._db = database
+
+    # ── writing ────────────────────────────────────────────────────────────
+
+    async def write(
+        self, candidate: MemoryCandidate, *, now: datetime | None = None
+    ) -> MemoryRecord:
+        """Believe this. Raises `MemoryRejected` if the candidate does not check out."""
+        moment = now or datetime.now(UTC)
+        return await asyncio.to_thread(self._write_blocking, candidate, moment)
+
+    def _write_blocking(self, candidate: MemoryCandidate, now: datetime) -> MemoryRecord:
+        with self._db.transaction() as conn:
+            return self._insert(conn, candidate, now)
+
+    async def supersede(
+        self, old_id: str, candidate: MemoryCandidate, *, now: datetime | None = None
+    ) -> Reconciled:
+        """Replace a belief **without overwriting it.** The old row stays as it was."""
+        moment = now or datetime.now(UTC)
+        return await asyncio.to_thread(self._supersede_blocking, old_id, candidate, moment)
+
+    def _supersede_blocking(
+        self, old_id: str, candidate: MemoryCandidate, now: datetime
+    ) -> Reconciled:
+        with self._db.transaction() as conn:
+            existing = self._read(conn, old_id)
+            if existing is None:
+                raise MemoryRejected(f"No such memory to supersede: {old_id}")
+            return self._supersede_in(conn, existing, candidate, now)
+
+    async def reconcile(
+        self, candidate: MemoryCandidate, *, now: datetime | None = None
+    ) -> Reconciled:
+        """Write the candidate, taking existing beliefs about the same subject into account.
+
+        **The decision is `contradiction.resolve`**, a pure function — this only carries it
+        out, in **one transaction**, so that two passes cannot each read "no conflict" and
+        then both write a live belief about the same subject.
+        """
+        moment = now or datetime.now(UTC)
+        return await asyncio.to_thread(self._reconcile_blocking, candidate, moment)
+
+    def _reconcile_blocking(self, candidate: MemoryCandidate, now: datetime) -> Reconciled:
+        content = normalize(candidate.content)
+        with self._db.transaction() as conn:
+            for record in self._live_rows(conn, candidate.subject, candidate.type):
+                if normalize(record.content) == content:
+                    # **Saying it again is not a second belief.** It is a reason to hold
+                    # the one already there a little more firmly.
+                    self._touch_in(conn, (record.id,), now)
+                    refreshed = self._read(conn, record.id)
+                    assert refreshed is not None  # touched in this transaction
+                    return Reconciled(record=refreshed, resolution=Resolution.DUPLICATE)
+
+            # **Only a belief can contradict a belief.** An episodic record about the same
+            # subject is a thing that happened, and letting one into this comparison would
+            # let 「月曜に Factorio の話をした」 supersede 「ユーザーは Factorio が好き」 —
+            # a moment quietly replacing what Lumi knows.
+            conflicts = (
+                [
+                    record
+                    for record in self._live_rows(conn, candidate.subject, MemoryType.SEMANTIC)
+                    if normalize(record.content) != content
+                ]
+                if candidate.type is MemoryType.SEMANTIC
+                else []
+            )
+            if not conflicts:
+                return Reconciled(
+                    record=self._insert(conn, candidate, now), resolution=Resolution.NEW
+                )
+
+            existing = conflicts[0]
+            if resolve(existing, candidate) is Resolution.SUPERSEDE:
+                return self._supersede_in(conn, existing, candidate, now)
+            # **Kept, not dropped.** A weaker claim that turns out to be right should still
+            # be findable; it just does not get to outrank what the user said.
+            weakened = replace(candidate, confidence=candidate.confidence * WEAK_CONFIDENCE_FACTOR)
+            return Reconciled(
+                record=self._insert(conn, weakened, now), resolution=Resolution.KEEP_WEAK
+            )
+
+    def _supersede_in(
+        self,
+        conn: apsw.Connection,
+        existing: MemoryRecord,
+        candidate: MemoryCandidate,
+        now: datetime,
+    ) -> Reconciled:
+        record = self._insert(conn, candidate, now)
+        conn.execute("UPDATE memories SET superseded_by = ? WHERE id = ?", (record.id, existing.id))
+        note = self._insert(
+            conn,
+            MemoryCandidate(
+                type=MemoryType.EPISODIC,
+                subject=existing.subject,
+                content=contradiction_note(existing, candidate.content),
+                # **Not `user_stated`.** The user did not say "I changed my mind"; Lumi
+                # noticed it by comparing two of its own records.
+                assertion_mode=AssertionMode.INFERRED,
+                # The note is no more trustworthy than the beliefs it is about.
+                provenance_class=existing.provenance_class,
+                trust_level=join(existing.trust_level, candidate.trust_level),
+                evidence_ref=existing.evidence_ref + candidate.evidence_ref,
+                confidence=1.0,
+                base_salience=max(existing.base_salience, candidate.base_salience),
+                source_episode_ids=existing.source_episode_ids + candidate.source_episode_ids,
+            ),
+            now,
+            # The older belief may cite utterances that have since expired. **A note is
+            # not refused because the conversation it descends from is past its retention.**
+            require_evidence=False,
+        )
+        log.info(
+            "memory.superseded", subject=existing.subject, old_id=existing.id, new_id=record.id
+        )
+        return Reconciled(
+            record=record,
+            resolution=Resolution.SUPERSEDE,
+            superseded_id=existing.id,
+            note=note,
+        )
+
+    # ── reading ────────────────────────────────────────────────────────────
+
+    async def get(self, memory_id: str) -> MemoryRecord | None:
+        return await asyncio.to_thread(self._get_blocking, memory_id)
+
+    def _get_blocking(self, memory_id: str) -> MemoryRecord | None:
+        with self._db.transaction() as conn:
+            return self._read(conn, memory_id)
+
+    async def live(self, subject: str) -> Sequence[MemoryRecord]:
+        """Beliefs about `subject` that are neither superseded nor archived."""
+        return await asyncio.to_thread(self._live_blocking, subject, None)
+
+    async def find_conflicts(self, subject: str, content: str) -> Sequence[MemoryRecord]:
+        """Live semantic beliefs about the same subject that say something else.
+
+        **Only semantic memories conflict.** Two episodic records of different moments are
+        not a disagreement; they are two things that happened.
+
+        Whether two *differently worded* sentences mean the same thing needs embeddings
+        (2e). Until then this compares text: it **cannot** tell, as opposed to having
+        checked and found nothing.
+        """
+        records = await asyncio.to_thread(self._live_blocking, subject, MemoryType.SEMANTIC)
+        target = normalize(content)
+        return [record for record in records if normalize(record.content) != target]
+
+    def _live_blocking(self, subject: str, kind: MemoryType | None) -> list[MemoryRecord]:
+        with self._db.transaction() as conn:
+            return self._live_rows(conn, subject, kind)
+
+    def _live_rows(
+        self, conn: apsw.Connection, subject: str, kind: MemoryType | None
+    ) -> list[MemoryRecord]:
+        sql = (
+            f"SELECT {_COLUMNS} FROM memories"
+            " WHERE subject = ? AND superseded_by IS NULL AND archived_at IS NULL"
+        )
+        parameters: list[Any] = [subject]
+        if kind is not None:
+            sql += " AND type = ?"
+            parameters.append(kind.value)
+        sql += " ORDER BY valid_from DESC, created_at DESC"
+        rows = conn.execute(sql, tuple(parameters)).fetchall()
+        return [self._hydrate(conn, row) for row in rows]
+
+    # ── decay, recall and confirmation ─────────────────────────────────────
+
+    async def touch(self, memory_ids: Sequence[str], *, now: datetime | None = None) -> None:
+        """Record that these were recalled. **Feeds `access_boost`, not the content.**"""
+        if not memory_ids:
+            return
+        moment = now or datetime.now(UTC)
+        await asyncio.to_thread(self._touch_blocking, tuple(memory_ids), moment)
+
+    def _touch_blocking(self, memory_ids: tuple[str, ...], now: datetime) -> None:
+        with self._db.transaction() as conn:
+            self._touch_in(conn, memory_ids, now)
+
+    def _touch_in(self, conn: apsw.Connection, memory_ids: tuple[str, ...], now: datetime) -> None:
+        for memory_id in memory_ids:
+            conn.execute(
+                "UPDATE memories SET last_accessed = ?, access_count = access_count + 1"
+                " WHERE id = ?",
+                (now.isoformat(), memory_id),
+            )
+
+    async def archive(self, memory_id: str, *, now: datetime | None = None) -> None:
+        """Stop recalling it. **Nothing is deleted** (docs/architecture/memory.md §5)."""
+        moment = now or datetime.now(UTC)
+        await asyncio.to_thread(self._archive_blocking, (memory_id,), moment)
+
+    def _archive_blocking(self, memory_ids: tuple[str, ...], now: datetime) -> None:
+        with self._db.transaction() as conn:
+            for memory_id in memory_ids:
+                conn.execute(
+                    "UPDATE memories SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
+                    (now.isoformat(), memory_id),
+                )
+
+    async def archive_faded(self, *, now: datetime | None = None) -> Sequence[str]:
+        """Archive everything that has decayed below the floor. **Returns what faded.**
+
+        The decision is `decay.is_faded` in Python rather than arithmetic in SQL: the curve
+        is the thing being tested, and a second copy of it written in SQL would be a second
+        thing to keep in agreement with the design doc.
+        """
+        moment = now or datetime.now(UTC)
+        return await asyncio.to_thread(self._archive_faded_blocking, moment)
+
+    def _archive_faded_blocking(self, now: datetime) -> Sequence[str]:
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {_COLUMNS} FROM memories"
+                " WHERE archived_at IS NULL AND superseded_by IS NULL"
+            ).fetchall()
+            faded = [
+                record.id
+                for record in (self._hydrate(conn, row, evidence=False) for row in rows)
+                if decay.is_faded(record, now)
+            ]
+            for memory_id in faded:
+                conn.execute(
+                    "UPDATE memories SET archived_at = ? WHERE id = ?", (now.isoformat(), memory_id)
+                )
+        if faded:
+            log.info("memory.archived", count=len(faded))
+        return faded
+
+    async def confirm(self, memory_id: str, *, now: datetime | None = None) -> MemoryRecord:
+        """**The only path from `tainted` to `trusted`** (Invariant 7).
+
+        Called from the memory UI's handler and nowhere else: the user looked at this
+        record and said it is right. Being confirmed also brings it back from archived —
+        something the user just vouched for is not something Lumi has stopped recalling.
+        """
+        moment = now or datetime.now(UTC)
+        return await asyncio.to_thread(self._confirm_blocking, memory_id, moment)
+
+    def _confirm_blocking(self, memory_id: str, now: datetime) -> MemoryRecord:
+        with self._db.transaction() as conn:
+            existing = self._read(conn, memory_id)
+            if existing is None:
+                raise MemoryRejected(f"No such memory to confirm: {memory_id}")
+            conn.execute(
+                "UPDATE memories SET assertion_mode = ?, trust_level = ?, provenance_class = ?,"
+                " archived_at = NULL, last_accessed = ? WHERE id = ?",
+                (
+                    AssertionMode.USER_CONFIRMED.value,
+                    # **One of the two places in Lumi that may write this** (the other is
+                    # the handler for direct user input). docs/contracts/provenance.md.
+                    TrustLevel.TRUSTED.value,
+                    ProvenanceClass.TRUSTED.value,
+                    now.isoformat(),
+                    memory_id,
+                ),
+            )
+            confirmed = self._read(conn, memory_id)
+        assert confirmed is not None  # read back inside the same transaction
+        log.info("memory.confirmed", memory_id=memory_id, subject=confirmed.subject)
+        return confirmed
+
+    # ── internals ──────────────────────────────────────────────────────────
+
+    def _insert(
+        self,
+        conn: apsw.Connection,
+        candidate: MemoryCandidate,
+        now: datetime,
+        *,
+        require_evidence: bool = True,
+    ) -> MemoryRecord:
+        """Validate, resolve trust from the evidence, and write the row."""
+        subject = candidate.subject.strip()
+        content = candidate.content.strip()
+        if not subject or not content:
+            raise MemoryRejected("A memory needs both a subject and content")
+        if candidate.assertion_mode is AssertionMode.USER_CONFIRMED:
+            raise MemoryRejected(
+                "user_confirmed is set by MemoryStore.confirm() only (Invariant 7)"
+            )
+        if (
+            require_evidence
+            and candidate.assertion_mode in GROUNDED_IN_CONVERSATION
+            and not candidate.evidence_ref
+        ):
+            raise MemoryRejected(
+                f"{candidate.assertion_mode.value} must cite at least one utterance"
+            )
+
+        trust, provenance = self._resolve_trust(conn, candidate, require_evidence=require_evidence)
+        record = MemoryRecord(
+            id=uuid4().hex,
+            type=candidate.type,
+            subject=subject,
+            content=content,
+            assertion_mode=candidate.assertion_mode,
+            evidence_ref=candidate.evidence_ref,
+            confidence=decay.clamp01(candidate.confidence, name="confidence"),
+            provenance_class=provenance,
+            trust_level=trust,
+            base_salience=decay.clamp01(candidate.base_salience, name="base_salience"),
+            created_at=now,
+            last_accessed=now,
+            access_count=0,
+            archived_at=None,
+            valid_from=candidate.valid_from or now,
+            superseded_by=None,
+            source_episode_ids=candidate.source_episode_ids,
+        )
+        conn.execute(
+            f"INSERT INTO memories ({_COLUMNS}) VALUES ({', '.join('?' * 16)})",
+            (
+                record.id,
+                record.type.value,
+                record.subject,
+                record.content,
+                record.assertion_mode.value,
+                record.confidence,
+                record.provenance_class.value,
+                record.trust_level.value,
+                record.base_salience,
+                record.created_at.isoformat(),
+                record.last_accessed.isoformat(),
+                record.access_count,
+                None,
+                record.valid_from.isoformat(),
+                None,
+                record.embedding_model_id,
+            ),
+        )
+        for utterance_id in dict.fromkeys(record.evidence_ref):
+            conn.execute(
+                "INSERT INTO memory_evidence (memory_id, utterance_id) VALUES (?, ?)",
+                (record.id, utterance_id),
+            )
+        for episode_id in dict.fromkeys(record.source_episode_ids):
+            conn.execute(
+                "INSERT INTO memory_sources (memory_id, episode_id) VALUES (?, ?)",
+                (record.id, episode_id),
+            )
+        return record
+
+    def _resolve_trust(
+        self, conn: apsw.Connection, candidate: MemoryCandidate, *, require_evidence: bool
+    ) -> tuple[TrustLevel, ProvenanceClass]:
+        """The trust the record is stored with. **Joined, so it can only move toward taint.**
+
+        Evidence that does not exist is refused rather than ignored: a candidate citing
+        utterances nobody said is not weakly grounded, it is ungrounded (§4, "assertion_mode
+        の検証"). Once written, the citation is allowed to dangle — the episode expires and
+        the belief does not.
+        """
+        levels = [candidate.trust_level, taint(candidate.provenance_class)]
+        if candidate.evidence_ref:
+            wanted = tuple(dict.fromkeys(candidate.evidence_ref))
+            placeholders = ", ".join("?" * len(wanted))
+            rows = conn.execute(
+                f"SELECT id, trust_level FROM utterances WHERE id IN ({placeholders})", wanted
+            ).fetchall()
+            found = {str(row[0]): TrustLevel(str(row[1])) for row in rows}
+            missing = [utterance_id for utterance_id in wanted if utterance_id not in found]
+            if missing and require_evidence:
+                raise MemoryRejected(f"Evidence does not exist: {', '.join(missing)}")
+            levels.extend(found.values())
+
+        trust = join_all(levels)
+        provenance = (
+            ProvenanceClass.UNTRUSTED
+            if candidate.provenance_class is ProvenanceClass.UNTRUSTED
+            # **Never `is_raw_external` here.** A memory is a function of what Lumi was
+            # told, not an observation of the outside world (docs/contracts/provenance.md).
+            else propagate_from_trust(trust, is_raw_external=False)
+        )
+        return trust, provenance
+
+    def _read(self, conn: apsw.Connection, memory_id: str) -> MemoryRecord | None:
+        row = conn.execute(f"SELECT {_COLUMNS} FROM memories WHERE id = ?", (memory_id,)).fetchone()
+        return None if row is None else self._hydrate(conn, row)
+
+    def _hydrate(self, conn: apsw.Connection, row: Any, *, evidence: bool = True) -> MemoryRecord:
+        """One row as a record. **Converted explicitly** — SQLite columns are typed by
+        whoever last wrote them, not by the schema.
+        """
+        memory_id = str(row[0])
+        evidence_ref: tuple[str, ...] = ()
+        sources: tuple[str, ...] = ()
+        if evidence:
+            evidence_ref = tuple(
+                str(item[0])
+                for item in conn.execute(
+                    "SELECT utterance_id FROM memory_evidence WHERE memory_id = ?"
+                    " ORDER BY utterance_id",
+                    (memory_id,),
+                ).fetchall()
+            )
+            sources = tuple(
+                str(item[0])
+                for item in conn.execute(
+                    "SELECT episode_id FROM memory_sources WHERE memory_id = ? ORDER BY episode_id",
+                    (memory_id,),
+                ).fetchall()
+            )
+        return MemoryRecord(
+            id=memory_id,
+            type=MemoryType(str(row[1])),
+            subject=str(row[2]),
+            content=str(row[3]),
+            assertion_mode=AssertionMode(str(row[4])),
+            evidence_ref=evidence_ref,
+            confidence=float(row[5]),
+            provenance_class=ProvenanceClass(str(row[6])),
+            trust_level=TrustLevel(str(row[7])),
+            base_salience=float(row[8]),
+            created_at=datetime.fromisoformat(str(row[9])),
+            last_accessed=datetime.fromisoformat(str(row[10])),
+            access_count=int(str(row[11])),
+            archived_at=None if row[12] is None else datetime.fromisoformat(str(row[12])),
+            valid_from=datetime.fromisoformat(str(row[13])),
+            superseded_by=None if row[14] is None else str(row[14]),
+            source_episode_ids=sources,
+            embedding_model_id=str(row[15]),
+        )

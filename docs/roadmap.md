@@ -243,7 +243,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 | **2a** | 暗号化ストレージ基盤（spike / DB 鍵 / `Database` / selfcheck） | **他の全部の前提。** ここが通らなければ ADR-038 を書き直すことになる |
 | **2b** | 投機 STT + 計測 | **記憶検索を配線する前**（[ADR-039](decisions/ADR-039-speculative-stt.md)）。逆順だとその期間だけ予算の 88% で走る |
 | **2c** | 記憶 DB のスキーマ / Episode 記録 / **保持期間ジョブと削除の記録** | **永続化を始める変更と、消す手段を同じ単位に入れる。** 消せないまま書き始めない |
-| **2d** | MemoryStore（write / supersede / archive / purge / confirm）/ salience / 減衰 / 矛盾 | 検索の前に、**書かれるものの形**を確定させる |
+| **2d** | MemoryStore（write / supersede / archive / confirm）/ salience / 減衰 / 矛盾 / **物理削除は `storage/retention.py` 側** | 検索の前に、**書かれるものの形**を確定させる |
 | **2e** | Embedding Provider / `SqliteVecStore` / ハイブリッド検索 / プロンプト配線 | ここで初めて「思い出す」が成立する |
 | **2f** | Reflection Job（LLM 抽出・`inference_lease`・provenance 伝播） | 検索が動いてから。**抽出の質は検索で確かめるしかない** |
 | **2g** | 記憶 UI / 全消去 / エクスポート / マイク表示とミュート / Inspector | ユーザーが**見て直せる**ようになって Phase 2 が閉じる |
@@ -302,12 +302,24 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 > privacy.md §5 の境界（Tool 経路からは到達不能、保持期間ジョブと全消去だけが例外）は、
 > **4つのモジュールに散らばっていたら誰も検査できない**。全消去（2g）も同じファイルに足す。
 
-#### 2d — 記憶コア
+#### 2d — 記憶コア〔2026-08-22 完了〕
 
-- [ ] **assertion_mode / evidence / provenance の実装**
-- [ ] salience の決定論的補正（感情強度・新規性・明示・反復・参照回数）
-- [ ] 減衰とアーカイブ（物理削除しない）
-- [ ] 矛盾の supersede（`valid_from` / `superseded_by`）
+- [x] **assertion_mode / evidence / provenance の実装**
+  〔`lumi/memory/records.py` / `lumi/memory/store.py`。**候補の申告をそのまま採らない**——
+  `evidence_ref` の発話を実際に読んで trust を join し、**存在しない根拠は拒否する**。
+  `write()` は `user_confirmed` を受け付けない（**昇格経路を2本にしない**）〕
+- [x] salience の決定論的補正（感情強度・新規性・明示・反復・参照回数）
+  〔`lumi/memory/decay.py` の純粋関数。**LLM の数値は範囲外で来る前提で丸める**〕
+- [x] 減衰とアーカイブ（物理削除しない）
+  〔τ と floor に具体値を置いた（[architecture/memory.md](architecture/memory.md) §5、Provisional）。
+  起動ごとに `Job(kind=maintenance)` で 1 回掃く。**まだ何も書かないが、
+  「忘れる手段が無いまま覚えられる状態にしない」**——2c と同じ規則〕
+- [x] 矛盾の supersede（`valid_from` / `superseded_by`）
+  〔判定は `lumi/memory/contradiction.py` の純粋関数。**同等なら新しい方が勝つ**（人は考えを変える）。
+  矛盾の episodic 記録は `supersede()` と同じトランザクションで書く〕
+- [x] **物理削除（`purge`）を `storage/retention.py` に置いた**
+  〔`MemoryStore` に削除経路は無い。privacy.md §5 の境界を1ファイルに保つため。
+  `lumi/` 配下で `DELETE FROM` を含むファイルが1つだけであることをテストで検査する〕
 
 #### 2e — 検索
 

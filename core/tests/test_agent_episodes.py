@@ -39,7 +39,7 @@ def store() -> EpisodeStore:
 
 async def test_a_turn_is_written_down(store: EpisodeStore) -> None:
     recorder = EpisodeRecorder(store, session_id="s1")
-    recorder.remember_user("おはよう")
+    recorder.remember_user("おはよう", TrustLevel.TRUSTED)
     recorder.remember_lumi("おはよう。", TrustLevel.TRUSTED)
     await recorder.flush()
 
@@ -75,7 +75,7 @@ async def test_the_order_survives_the_writes_landing_out_of_order(store: Episode
     """
     recorder = EpisodeRecorder(store, session_id="s1")
     for index in range(6):
-        recorder.remember_user(f"line {index}")
+        recorder.remember_user(f"line {index}", TrustLevel.TRUSTED)
     await recorder.flush()
 
     episode_id = recorder.episode_id
@@ -101,8 +101,11 @@ async def test_lumi_keeps_the_trust_it_was_given(store: EpisodeStore) -> None:
 
 
 async def test_the_user_is_recorded_as_trusted_input(store: EpisodeStore) -> None:
+    """The level comes from the Session, which is **the one handler** that grants it
+    (docs/contracts/provenance.md). This records what it granted.
+    """
     recorder = EpisodeRecorder(store, session_id="s1")
-    recorder.remember_user("おはよう")
+    recorder.remember_user("おはよう", TrustLevel.TRUSTED)
     await recorder.flush()
 
     episode_id = recorder.episode_id
@@ -112,10 +115,31 @@ async def test_the_user_is_recorded_as_trusted_input(store: EpisodeStore) -> Non
     assert line.provenance_class is ProvenanceClass.TRUSTED
 
 
+async def test_a_user_turn_is_recorded_at_the_trust_it_arrived_with(
+    store: EpisodeStore,
+) -> None:
+    """★ **The level is the Session's, not this module's.**
+
+    Recording `TRUSTED` unconditionally would be a second module deciding what the direct
+    user-input handler decides — and one that keeps saying "trusted" after the Session has
+    stopped doing so. The Phase 1 implementation did exactly that, and this is what would
+    have caught it.
+    """
+    recorder = EpisodeRecorder(store, session_id="s1")
+    recorder.remember_user("読み上げられた文章", TrustLevel.TAINTED)
+    await recorder.flush()
+
+    episode_id = recorder.episode_id
+    assert episode_id is not None
+    line = (await store.utterances(episode_id))[0]
+    assert line.trust_level is TrustLevel.TAINTED
+    assert line.provenance_class is ProvenanceClass.DERIVED
+
+
 async def test_closing_stamps_the_end(store: EpisodeStore) -> None:
     clock = Clock()
     recorder = EpisodeRecorder(store, session_id="s1", clock=clock)
-    recorder.remember_user("おはよう")
+    recorder.remember_user("おはよう", TrustLevel.TRUSTED)
     clock.advance(30)
     await recorder.close()
 
@@ -142,7 +166,7 @@ async def test_an_utterance_is_never_written_before_its_episode(store: EpisodeSt
 
     slow_store = SlowToOpen(Database.open(IN_MEMORY, MEMORY_SCHEMA))
     recorder = EpisodeRecorder(slow_store, session_id="s1")
-    recorder.remember_user("おはよう")
+    recorder.remember_user("おはよう", TrustLevel.TRUSTED)
     recorder.remember_lumi("おはよう。", TrustLevel.TRUSTED)
     await recorder.flush()
 
@@ -163,7 +187,7 @@ async def test_a_failing_database_does_not_break_the_turn(store: EpisodeStore) -
             raise RuntimeError("disk is on fire")
 
     recorder = EpisodeRecorder(Broken(Database.open(IN_MEMORY, MEMORY_SCHEMA)), session_id="s1")
-    recorder.remember_user("おはよう")
+    recorder.remember_user("おはよう", TrustLevel.TRUSTED)
 
     await recorder.flush()  # **raises nothing**
     await recorder.close()
@@ -172,7 +196,7 @@ async def test_a_failing_database_does_not_break_the_turn(store: EpisodeStore) -
 async def test_flush_waits_for_what_was_started(store: EpisodeStore) -> None:
     """Without it, a test — or the shutdown path — reads a log that has not landed yet."""
     recorder = EpisodeRecorder(store, session_id="s1")
-    recorder.remember_user("おはよう")
+    recorder.remember_user("おはよう", TrustLevel.TRUSTED)
 
     episode_id = recorder.episode_id
     assert episode_id is not None

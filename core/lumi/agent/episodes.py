@@ -81,15 +81,22 @@ class EpisodeRecorder:
         """`None` until something has actually been said."""
         return self._episode_id
 
-    def remember_user(self, text: str, *, correlation_id: str | None = None) -> None:
-        """What the user said. **Trusted as input, which is not the same as verified.**
+    def remember_user(
+        self, text: str, trust_level: TrustLevel, *, correlation_id: str | None = None
+    ) -> None:
+        """What the user said, **carrying the trust the Session granted it.**
 
-        Trust here means "it came in through the user's own microphone or keyboard"
-        (docs/contracts/provenance.md). It does not mean the voice was the user's: STT
-        transcribes whoever is in the room, and privacy.md §6 says so out loud rather than
-        implying an identity check that does not exist.
+        The level is passed in rather than restated here. `Session.record_user_utterance`
+        is *the* direct user-input handler (docs/contracts/provenance.md), and a second
+        module deciding the same thing would be a second place to audit — one that could
+        drift into disagreeing with what Lumi actually acted on.
+
+        Trust means "it came in through the user's own microphone or keyboard". It does
+        **not** mean the voice was the user's: STT transcribes whoever is in the room, and
+        privacy.md §6 says so out loud rather than implying an identity check that does
+        not exist.
         """
-        self._remember(SPEAKER_USER, text, TrustLevel.TRUSTED, correlation_id)
+        self._remember(SPEAKER_USER, text, trust_level, correlation_id)
 
     def remember_lumi(
         self, text: str, trust_level: TrustLevel, *, correlation_id: str | None = None

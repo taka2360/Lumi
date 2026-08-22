@@ -141,6 +141,11 @@ class MemoryCandidate:
 | 3 | `user_confirmed` への昇格は、ユーザーが記憶 UI で確認した時のみ |
 | 4 | **`user_confirmed` は `trust_level` が `trusted` に昇格する唯一の経路**（Invariant 7） |
 | 5 | 矛盾検出時は `assertion_mode` の強い方を優先 |
+| 6 | **`MemoryCandidate` の `provenance_class` / `trust_level` に既定値を置かない**〔2d〕。既定を置くと、書き忘れた候補が黙って trusted で入る |
+
+**`trust_level = TRUSTED` を渡す場所は静的検査で列挙する**（`core/tests/test_kernel_boundaries.py`）。
+検査は AST で見る。`trust_level=` という書き方を文字列で探す実装では、
+**`confirm()` が SQL のパラメータとして渡している昇格を取りこぼす**。
 
 ### プロンプトへの反映
 
@@ -231,6 +236,11 @@ salience = clamp(
 
 さらに事後的に `access_boost`（検索でヒットした回数）が加算される。
 
+**実装は `core/lumi/memory/decay.py` の純粋関数**〔2026-08-22 / 2d〕。
+LLM が出す `llm_salience` / `emotional_intensity` / `novelty` は **範囲外の値が来る前提で丸める**
+（捨てると「抽出できたのに記録が落ちる」になる）。`repetition` は上限で頭打ちにする——
+同じ話を 50 回したことと 5 回したことの差を、他の項を潰すほど大きく扱わない。
+
 ---
 
 ## 5. 忘却
@@ -253,15 +263,28 @@ def effective_salience(m: MemoryRecord, now: datetime) -> float:
 - **記憶レコードは保持期間の対象ではない**（Episode の生ログとは別扱い → [../contracts/privacy.md](../contracts/privacy.md) §4）
 - 「あれ、なんだっけ…」と言ったあとで、関連する強い手がかりがあれば思い出せる余地を残す
 
-### τ の目安〔Provisional〕
+### 物理削除は `MemoryStore` に無い〔2026-08-22 / 2d〕
 
-| type | τ | 意味 |
-|---|---|---|
-| episodic | 数日〜数週間 | 「先週こんな話をした」は薄れる |
-| semantic | 数ヶ月〜 | 「Factorio が好き」は長く残る |
-| procedural | 長い | 手順は忘れにくい |
+**`purge()` の実装は `core/lumi/storage/retention.py` に置く。**
+ユーザーデータを消す `DELETE` を1ファイルに閉じるという境界（[../contracts/privacy.md](../contracts/privacy.md) §5）は、
+**記憶 UI の削除だけが別の場所にあった時点で検査できなくなる**。
+記憶ストア側には削除経路が無く、`archive()`（`UPDATE`）だけがある。
 
-Phase 2 で実際に使いながら調整する。
+**根拠（`evidence_ref` / `source_episode_ids`）は外部キーにしない。**
+Episode は既定 90 日で消えるが記憶は残るため、外部キーにすると
+「Episode を消せない」か「Episode と一緒に信念が消える」のどちらかになる。
+**参照が切れることは想定内**であり、切れても記憶は読める。
+
+### τ と floor〔Provisional。2026-08-22 に具体値を置いた〕
+
+| type | τ | floor を割るまで（無参照・base 1.0） | 意味 |
+|---|---|---|---|
+| episodic | **14 日** | 約 42 日 | 「先週こんな話をした」は薄れる |
+| semantic | **180 日** | 約 1.5 年 | 「Factorio が好き」は長く残る |
+| procedural | **730 日** | 約 6 年 | 手順は忘れにくい |
+
+`floor = 0.05` / `access_boost` は上限 0.2。**数値は目安であり、Phase 2 で使いながら調整する。**
+表を動かすときは `core/lumi/memory/decay.py` の定数も同じ変更で動かす。
 
 ---
 
@@ -300,6 +323,19 @@ assertion_mode を比較
 ```
 
 最後の1行が重要。**Lumi が「あれ、前と言ってること違うね」と気づける**ようにする。
+
+### 実装〔2026-08-22 / 2d〕
+
+- 判定は `core/lumi/memory/contradiction.py` の**純粋関数**。**LLM に決めさせない**
+- **矛盾の episodic 記録は `supersede()` と同じトランザクションで書く。**
+  呼び出し側の作法にすると、いつか忘れられて「静かに上書きされたのと同じ」状態になる
+- その記録の `assertion_mode` は **`inferred`**。ユーザーが「前は違うことを言った」と述べたわけではなく、
+  Lumi が自分の記録2件から気づいた事実だから（プロンプトでは「〜と思われる」として出る）
+- 同一 subject かどうかで探す。**内容の意味的な近さは 2e**（埋め込みが無いうちは、
+  近いと**判定できない**のであって、判定を省いているのではない）
+- **矛盾するのは semantic 同士だけ。** 候補が episodic / procedural なら比較に入れない——
+  「月曜に Factorio の話をした」が「ユーザーは Factorio が好き」を supersede してしまい、
+  **出来事が信念を静かに置き換える**（重複の統合は type ごとに行うので、こちらは全 type 対象）
 
 ---
 

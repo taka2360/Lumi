@@ -22,6 +22,11 @@ days is not forgetting, it is destruction: forgetting is decay and archiving, an
 recoverable (docs/architecture/memory.md §5). The Episode the belief came from expires;
 the belief does not.
 
+They can still be deleted **by the user**, one at a time, from the memory UI — and that
+path is here rather than on `MemoryStore` for the same reason as everything else in this
+file. A store that could delete would put a second `DELETE` against user data in a second
+module, and the boundary above stops being something one file answers.
+
 ## The record of deletion outlives what it deleted
 
 Each pass writes how many rows went, against which target, and why. **Never what they
@@ -54,15 +59,20 @@ class Target(StrEnum):
     #: DomainEvent, and the deletion record is read by people, not by SQL.
     EVENTS = "domain_events"
     AUDIT = "audit_log"
+    #: Row 2 of the table. **Never expires** — memory records are only ever deleted
+    #: because the user deleted them.
+    MEMORIES = "memory_records"
 
 
 class Trigger(StrEnum):
-    """Why something was deleted. **Both are the user's own doing** — one is the policy
-    they left in place, the other is a button they pressed.
+    """Why something was deleted. **All of these are the user's own doing** — one is the
+    policy they left in place, the others are something they pressed.
     """
 
     RETENTION = "retention"
     ERASE = "erase"
+    #: The user deleted particular memories from the memory UI.
+    PURGE = "purge"
 
 
 #: Defaults from docs/contracts/privacy.md §2. **That table is the definition**; these are
@@ -202,6 +212,57 @@ class RetentionService:
             conn.execute(delete_sql, (boundary,))
             after = int(one(conn.execute(count_sql))[0])
         return Deletion(target=target, count=before - after, trigger=Trigger.RETENTION)
+
+    async def purge_memories(
+        self, memory_ids: Sequence[str], *, now: datetime | None = None
+    ) -> Deletion:
+        """Delete memory records outright. **Only ever from an explicit user action**
+        (docs/contracts/privacy.md §5, "個別の削除").
+
+        This is the one deletion in Lumi that is not about a deadline, and it is
+        irreversible: `archive()` is what "forget this" means, and this is what "this
+        should never have been written down" means.
+
+        **The deletion and its record are not one transaction.** They live in different
+        database files, and SQLite has nothing that spans two. The order is deletion
+        first, deliberately: the other order leaves "recorded as deleted, still present"
+        after a crash — a user believing something is gone when it is not
+        (docs/contracts/privacy.md §5).
+        """
+        moment = now or datetime.now(UTC)
+        if not memory_ids:
+            return Deletion(target=Target.MEMORIES, count=0, trigger=Trigger.PURGE)
+        return await asyncio.to_thread(self._purge_blocking, tuple(memory_ids), moment)
+
+    def _purge_blocking(self, memory_ids: tuple[str, ...], now: datetime) -> Deletion:
+        placeholders = ", ".join("?" * len(memory_ids))
+        with self._memory.transaction() as conn:
+            before = int(one(conn.execute("SELECT COUNT(*) FROM memories"))[0])
+            # **The chain of succession is cut, not followed.** A record whose successor
+            # the user deleted is still a belief they hold; deleting it too would turn
+            # "delete this one" into "delete the history it happens to be part of".
+            conn.execute(
+                f"UPDATE memories SET superseded_by = NULL WHERE superseded_by IN ({placeholders})",
+                memory_ids,
+            )
+            # Deleted explicitly rather than by `ON DELETE CASCADE`, for the reason given
+            # in `_run_blocking`: a pragma that silently fails to apply would leave rows
+            # nobody can reach but which are still on disk.
+            conn.execute(
+                f"DELETE FROM memory_evidence WHERE memory_id IN ({placeholders})", memory_ids
+            )
+            conn.execute(
+                f"DELETE FROM memory_sources WHERE memory_id IN ({placeholders})", memory_ids
+            )
+            conn.execute(f"DELETE FROM memories WHERE id IN ({placeholders})", memory_ids)
+            after = int(one(conn.execute("SELECT COUNT(*) FROM memories"))[0])
+
+        deletion = Deletion(target=Target.MEMORIES, count=before - after, trigger=Trigger.PURGE)
+        try:
+            self._record((deletion,), now)
+        except Exception:
+            log.exception("retention.record_failed", removed=deletion.count)
+        return deletion
 
     def _record(self, deletions: Sequence[Deletion], now: datetime) -> None:
         """Write what was removed into the audit database.

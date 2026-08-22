@@ -159,6 +159,11 @@ class TestAssembly:
             server.release_ready.set()
             await runtime.stop()
 
+        # **Stopping the runtime tears the loop down, it does not just drop it.** Cancelling
+        # the loop task leaves the turns it spawned running, and one of those writing an
+        # episode into a database that has already closed loses the last thing that was said
+        assert timeline == ["audio.start", "reactive.run", "reactive.shutdown"]
+
     async def test_a_successful_model_pull_is_warmed_again_before_continuing(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -253,6 +258,88 @@ class TestAssembly:
 
             assert previous.unloaded
             assert runtime._providers.peek(ProviderKind.LLM).id == "ollama:new"
+        finally:
+            await runtime.stop()
+
+
+class TestStartupMaintenance:
+    """**Housekeeping must not be able to stop Lumi from starting.**
+
+    Retention and the fade sweep both run at startup, before a session can begin. Neither
+    is what the user opened the app for, and **refusing to start because old records could
+    not be tidied would trade the whole product for a chore.**
+    """
+
+    async def _runtime(self, monkeypatch: pytest.MonkeyPatch) -> ConversationRuntime:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        return ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+
+    async def test_startup_survives_a_failing_retention_pass(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        runtime = await self._runtime(monkeypatch)
+
+        class Broken:
+            async def run(self, *_args: Any, **_kwargs: Any) -> list[Any]:
+                raise RuntimeError("the disk is on fire")
+
+        runtime._retention = cast(Any, Broken())
+        try:
+            await runtime.start()
+
+            assert runtime.arbiter.current().kind is ActivityKind.IDLE
+        finally:
+            await runtime.stop()
+
+    async def test_startup_survives_a_failing_fade_sweep(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ Failing to forget is a stale memory. **Failing to start is no Lumi at all.**"""
+        runtime = await self._runtime(monkeypatch)
+
+        class Broken:
+            async def archive_faded(self, **_kwargs: Any) -> list[str]:
+                raise RuntimeError("the disk is on fire")
+
+        runtime._memories = cast(Any, Broken())
+        try:
+            await runtime.start()
+
+            assert runtime.arbiter.current().kind is ActivityKind.IDLE
+        finally:
+            await runtime.stop()
+
+    async def test_the_sweep_runs_before_a_session_can_begin(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Decay is a function of elapsed time, so the sweep is what "faded while Lumi was
+        off" means. **It has to happen before the first turn can retrieve anything**, and
+        the Arbiter starting is the moment a turn becomes possible.
+        """
+        runtime = await self._runtime(monkeypatch)
+        swept_before_start: list[bool] = []
+        real = runtime._memories
+
+        class Watched:
+            async def archive_faded(self, **kwargs: Any) -> Any:
+                try:
+                    runtime.arbiter.current()
+                except RuntimeError:
+                    swept_before_start.append(True)
+                else:
+                    swept_before_start.append(False)
+                return await real.archive_faded(**kwargs)
+
+        runtime._memories = cast(Any, Watched())
+        try:
+            await runtime.start()
+
+            assert swept_before_start == [True]
         finally:
             await runtime.stop()
 

@@ -25,12 +25,24 @@ it** (Invariant 7). Storing `trust_level` next to the text is what lets a Reflec
 in a week's time still know that a given line came from a web page rather than from the
 user. Recomputing it at read time would mean guessing.
 
+## Memory records live here too, and outlive the log
+
+Migration 2 adds `memories` and the two tables naming what a record was made from. The
+rows a record points at **are not foreign keys**: episodes expire, records do not, and a
+foreign key would force one of the two wrong outcomes — an episode that cannot be deleted,
+or a belief deleted along with the conversation it came from. A dangling reference here is
+expected, and reading a record does not depend on resolving it.
+
+The row-to-record mapping is `lumi.memory.store`; what lives here is the schema, because
+**one file's schema has one version**, and splitting the DDL across modules is how a file
+ends up half-migrated by whichever module happened to open it.
+
 ## Not here yet
 
-Memory records, vectors and the FTS index are Phase 2d/2e. The vector table in particular
-**cannot be created before the embedding model is chosen**: `vec0` fixes the dimension at
-creation, and picking 768 or 1024 now would be inventing the answer to a question
-docs/architecture/memory.md §2 leaves open until it has been measured.
+Vectors and the FTS index are Phase 2e. The vector table in particular **cannot be created
+before the embedding model is chosen**: `vec0` fixes the dimension at creation, and picking
+768 or 1024 now would be inventing the answer to a question docs/architecture/memory.md §2
+leaves open until it has been measured.
 """
 
 from __future__ import annotations
@@ -78,6 +90,51 @@ MEMORY_SCHEMA: Schema = Schema(
             )
             """,
             "CREATE INDEX utterances_by_episode ON utterances (episode_id, turn_index)",
+        ),
+        (
+            # **What Lumi took from the conversation**, as opposed to what was said.
+            # `superseded_by` is what makes a belief versioned rather than overwritten
+            # (docs/architecture/memory.md §6): the old row stays exactly as it was.
+            """
+            CREATE TABLE memories (
+                id                 TEXT    PRIMARY KEY,
+                type               TEXT    NOT NULL,
+                subject            TEXT    NOT NULL,
+                content            TEXT    NOT NULL,
+                assertion_mode     TEXT    NOT NULL,
+                confidence         REAL    NOT NULL,
+                provenance_class   TEXT    NOT NULL,
+                trust_level        TEXT    NOT NULL,
+                base_salience      REAL    NOT NULL,
+                created_at         TEXT    NOT NULL,
+                last_accessed      TEXT    NOT NULL,
+                access_count       INTEGER NOT NULL DEFAULT 0,
+                archived_at        TEXT,
+                valid_from         TEXT    NOT NULL,
+                superseded_by      TEXT    REFERENCES memories (id),
+                embedding_model_id TEXT    NOT NULL DEFAULT ''
+            )
+            """,
+            # Conflict detection asks for the live beliefs about one subject, which is
+            # every read on the write path.
+            "CREATE INDEX memories_by_subject ON memories (subject, valid_from)",
+            "CREATE INDEX memories_by_superseded ON memories (superseded_by)",
+            # **No foreign key to `utterances`.** See the module docstring: the evidence
+            # expires with the episode and the belief stays.
+            """
+            CREATE TABLE memory_evidence (
+                memory_id    TEXT NOT NULL REFERENCES memories (id) ON DELETE CASCADE,
+                utterance_id TEXT NOT NULL,
+                PRIMARY KEY (memory_id, utterance_id)
+            )
+            """,
+            """
+            CREATE TABLE memory_sources (
+                memory_id  TEXT NOT NULL REFERENCES memories (id) ON DELETE CASCADE,
+                episode_id TEXT NOT NULL,
+                PRIMARY KEY (memory_id, episode_id)
+            )
+            """,
         ),
     ),
 )

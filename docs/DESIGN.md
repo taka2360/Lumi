@@ -9,8 +9,27 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.17 |
-| 実装フェーズ | **Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）/ 2c（Episode と保持期間）完了。2b（投機 STT）は実装完了・実測は未取得。** → [roadmap.md](roadmap.md) |
+| Revision | rev.18 |
+| 実装フェーズ | **Phase 2（Memory）。2a / 2c / 2d 完了。2b は実装完了・実測は未取得。次は 2e（検索）。** → [roadmap.md](roadmap.md) |
+
+> **rev.18 の変更点**（記憶レコードを実装したら、削除の置き場所が1つ動いた）
+> 1. **`MemoryStore` から `purge()` を外した** → [interfaces/memory.md](interfaces/memory.md)。
+>    物理削除は `storage/retention.py` に置く。**記憶 UI の削除だけが別のクラスにあれば、
+>    「ユーザーデータを消す `DELETE` は1ファイルにしかない」が検査できなくなる**
+>    （[contracts/privacy.md](contracts/privacy.md) §5）。記憶ストアが持つのは `archive()` までで、
+>    個別削除も `deletion_log` に残る。**ただし削除と記録は別 DB ファイルであり、
+>    同一トランザクションではない**——順序は削除 → 記録に固定し、
+>    「消したと記録されているのにまだある」側に倒さない（privacy.md §5 に明記した）
+> 2. **記憶レコードのスキーマを入れた**（2d）。`memories` / `memory_evidence` / `memory_sources`。
+>    **根拠は外部キーにしない**——Episode は既定 90 日で消えるが記憶は残るため、
+>    外部キーにすると「Episode を消せない」か「Episode と一緒に信念が消える」のどちらかになる
+> 3. **τ と floor に具体値を置いた**〔Provisional〕 → [architecture/memory.md](architecture/memory.md) §5。
+>    episodic 14 日 / semantic 180 日 / procedural 730 日、`floor = 0.05`。
+>    **使いながら調整する数値**であり、動かすときはコードの定数も同じ変更で動かす
+> 4. **矛盾の episodic 記録を `supersede()` と同じトランザクションに入れた**。
+>    呼び出し側の作法にすると、いつか忘れられて**静かな上書きと区別がつかなくなる**。
+>    その記録の `assertion_mode` は `inferred`——ユーザーが「前と違うことを言った」と
+>    述べたのではなく、Lumi が自分の記録2件から気づいた事実だから
 
 > **rev.17 の変更点**（Phase 2 を 2a〜2g に分け、暗号化の未検証を潰した）
 > 1. **暗号化 SQLite の実装方式が決まった** → [ADR-040](decisions/ADR-040-encrypted-sqlite-driver.md)。
