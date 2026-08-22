@@ -55,7 +55,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from lumi import logging as lumi_logging
 from lumi.provenance import ProvenanceClass, TrustLevel
@@ -164,6 +164,13 @@ MEMORY_SCHEMA: Schema = Schema(
             "CREATE VIRTUAL TABLE memory_fts USING fts5("
             " content, memory_id UNINDEXED, tokenize='trigram')",
         ),
+        (
+            # **How far reflection has read** (2f). Not "was this episode reflected on":
+            # an episode stays open for the whole session, so the question is always
+            # "what has been said since last time" — and a boolean would either re-extract
+            # the entire conversation every pass or stop after the first one.
+            "ALTER TABLE episodes ADD COLUMN reflected_turns INTEGER NOT NULL DEFAULT 0",
+        ),
     ),
 )
 
@@ -213,6 +220,26 @@ class Episode:
     session_id: str
     started_at: datetime
     ended_at: datetime | None = None
+
+
+def _utterance(row: Any) -> Utterance:
+    """One row as an `Utterance`.
+
+    **Converted explicitly.** SQLite columns are dynamically typed, so a value is only
+    `str` because the writer put one there; saying so is cheaper than being surprised by it
+    in a `datetime.fromisoformat` two weeks from now.
+    """
+    return Utterance(
+        id=str(row[0]),
+        episode_id=str(row[1]),
+        turn_index=int(str(row[2])),
+        speaker=str(row[3]),
+        text=str(row[4]),
+        provenance_class=ProvenanceClass(str(row[5])),
+        trust_level=TrustLevel(str(row[6])),
+        occurred_at=datetime.fromisoformat(str(row[7])),
+        correlation_id=None if row[8] is None else str(row[8]),
+    )
 
 
 class EpisodeStore:
@@ -304,23 +331,56 @@ class EpisodeStore:
                 " FROM utterances WHERE episode_id = ? ORDER BY turn_index",
                 (episode_id,),
             ).fetchall()
-        # **Converted explicitly.** SQLite columns are dynamically typed, so a row is
-        # only `str` because the writer put one there; saying so is cheaper than being
-        # surprised by it in a `datetime.fromisoformat` two weeks from now.
-        return [
-            Utterance(
-                id=str(row[0]),
-                episode_id=str(row[1]),
-                turn_index=int(str(row[2])),
-                speaker=str(row[3]),
-                text=str(row[4]),
-                provenance_class=ProvenanceClass(str(row[5])),
-                trust_level=TrustLevel(str(row[6])),
-                occurred_at=datetime.fromisoformat(str(row[7])),
-                correlation_id=None if row[8] is None else str(row[8]),
+        return [_utterance(row) for row in rows]
+
+    async def unreflected(self, limit: int) -> Sequence[tuple[str, int]]:
+        """Episodes with utterances nobody has extracted memories from yet.
+
+        Returns `(episode_id, reflected_turns)` oldest first: **the order they were said
+        in**, so a belief formed on Monday is superseded by Tuesday's rather than the
+        reverse.
+        """
+        return await asyncio.to_thread(self._unreflected_blocking, limit)
+
+    def _unreflected_blocking(self, limit: int) -> list[tuple[str, int]]:
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT e.id, e.reflected_turns FROM episodes e"
+                " WHERE EXISTS ("
+                "   SELECT 1 FROM utterances u"
+                "   WHERE u.episode_id = e.id AND u.turn_index >= e.reflected_turns)"
+                " ORDER BY e.started_at LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [(str(row[0]), int(str(row[1]))) for row in rows]
+
+    async def utterances_from(self, episode_id: str, turn_index: int) -> Sequence[Utterance]:
+        """Everything said in this episode from `turn_index` onwards."""
+        return await asyncio.to_thread(self._utterances_from_blocking, episode_id, turn_index)
+
+    def _utterances_from_blocking(self, episode_id: str, turn_index: int) -> Sequence[Utterance]:
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT id, episode_id, turn_index, speaker, text, provenance_class,"
+                " trust_level, occurred_at, correlation_id"
+                " FROM utterances WHERE episode_id = ? AND turn_index >= ?"
+                " ORDER BY turn_index",
+                (episode_id, turn_index),
+            ).fetchall()
+        return [_utterance(row) for row in rows]
+
+    async def mark_reflected(self, episode_id: str, upto_turn: int) -> None:
+        """Move the watermark. **Never backwards** — a later pass that read less than an
+        earlier one must not make the earlier work look undone.
+        """
+        await asyncio.to_thread(self._mark_reflected_blocking, episode_id, upto_turn)
+
+    def _mark_reflected_blocking(self, episode_id: str, upto_turn: int) -> None:
+        with self._db.transaction() as conn:
+            conn.execute(
+                "UPDATE episodes SET reflected_turns = MAX(reflected_turns, ?) WHERE id = ?",
+                (upto_turn, episode_id),
             )
-            for row in rows
-        ]
 
     async def count(self) -> int:
         return await asyncio.to_thread(self._count_blocking)

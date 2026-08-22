@@ -9,8 +9,22 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.19 |
-| 実装フェーズ | **Phase 2（Memory）。2a / 2c / 2d / 2e 完了（取得 UI は 2g）。2b は実装完了・実測は未取得。次は 2f（Reflection Job）。** → [roadmap.md](roadmap.md) |
+| Revision | rev.20 |
+| 実装フェーズ | **Phase 2（Memory）。2a / 2c / 2d / 2e / 2f 完了。2b は実装完了・実測は未取得。次は 2g（記憶 UI・全消去・取得 UI）で Phase 2 が閉じる。** → [roadmap.md](roadmap.md) |
+
+> **rev.20 の変更点**（覚えるようになった。プロンプトが2回壊れ、どちらも実機でしか出なかった）
+> 1. **Reflection Job を実装した**（2f）。`Job(kind=reflection, uses_inference=True)` として
+>    `inference_lease` を取り、**revoke されたら進捗を捨てて watermark を動かさない**
+> 2. **起動タイミングをアイドル1本に集約した** → [architecture/memory.md](architecture/memory.md) §4。
+>    **セッション終了時は次回起動のアイドル判定が拾う**——終了時に推論を待たせない
+> 3. **どこまで抽出したかを `episodes.reflected_turns` で持つ**（migration 4）。
+>    Episode はセッション中ずっと開いているので、真偽値では「毎回全部読む」か
+>    「一度きりで止まる」かのどちらかにしかならない
+> 4. **抽出プロンプトは実機で2回壊れた** → [measurements/phase2.md](measurements/phase2.md)。
+>    **転写の後ろに問いを置かないと `[]` しか返さない**（3/3 再現）。
+>    **subject 規則が弱いと全部が同じ subject になり**、semantic なら
+>    `reconcile` が矛盾と見なして**無関係な事実が別の事実を消す**。
+>    プロンプトの1文が記憶の消失に直結する
 
 > **rev.19 の変更点**（思い出せるようになった。埋め込みモデルが決まり、次元が確定した）
 > 1. **埋め込みモデルを決めた** → [ADR-041](decisions/ADR-041-embedding-model-harrier-oss.md)。

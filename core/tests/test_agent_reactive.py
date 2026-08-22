@@ -22,6 +22,7 @@ import numpy as np
 import pytest
 
 from lumi.agent.latency import TurnTimer
+from lumi.agent.prompt import ISOLATION_HEADER
 from lumi.agent.reactive import LoopLimits, ReactiveLoop
 from lumi.agent.session import Session
 from lumi.audio.devices import AudioPlan, Device, StreamPlan
@@ -900,7 +901,13 @@ class FakeRetriever:
         self.recorded.set()
 
 
-def _memory(content: str, *, identifier: str = "m1") -> MemoryRecord:
+def _memory(
+    content: str,
+    *,
+    identifier: str = "m1",
+    trust: TrustLevel = TrustLevel.TRUSTED,
+    provenance: ProvenanceClass = ProvenanceClass.TRUSTED,
+) -> MemoryRecord:
     when = datetime(2026, 8, 22, 12, 0, tzinfo=UTC)
     return MemoryRecord(
         id=identifier,
@@ -910,8 +917,8 @@ def _memory(content: str, *, identifier: str = "m1") -> MemoryRecord:
         assertion_mode=AssertionMode.USER_STATED,
         evidence_ref=(),
         confidence=0.9,
-        provenance_class=ProvenanceClass.TRUSTED,
-        trust_level=TrustLevel.TRUSTED,
+        provenance_class=provenance,
+        trust_level=trust,
         base_salience=0.7,
         created_at=when,
         last_accessed=when,
@@ -1013,3 +1020,30 @@ async def test_a_turn_that_cannot_remember_reports_no_time_spent() -> None:
     latency = rig.loop.last_latency
     assert latency is not None
     assert latency.spans["retrieve_ms"] == 0
+
+
+async def test_a_tainted_memory_reaches_the_turn_isolated() -> None:
+    """★ Both blocks can exist at once — what Lumi may state, and what it may not. The
+    prompt budget reserves a frame for each, and **the tainted one taints the turn**
+    (Invariant 7): summarizing a web page into a belief did not clean it.
+    """
+    retriever = FakeRetriever(
+        [
+            _memory("ユーザーは猫を飼っている"),
+            _memory(
+                "ページによると新版が出た",
+                identifier="m2",
+                trust=TrustLevel.TAINTED,
+                provenance=ProvenanceClass.UNTRUSTED,
+            ),
+        ]
+    )
+    rig = Rig(FakeLlm([text("そうなんだ。")]), retriever=retriever)
+    await rig.start()
+
+    await rig.loop.handle_text("なにか知ってる?")
+
+    system = rig.llm.prompts[0][0].content
+    assert "ユーザーは猫を飼っている" in system
+    assert system.index("ページによると") > system.index(ISOLATION_HEADER)
+    assert rig.session.context().effective_trust is TrustLevel.TAINTED

@@ -117,11 +117,16 @@ def check_dimension(shape: Sequence[object], *, expected: int = DIMENSION) -> No
     creation (ADR-041); a 768-wide vector reaching it fails as a blob-length error from
     inside SQLite, which names the storage layer for a problem that belongs to the model.
 
-    A symbolic dimension (`"batch_size"`, `None`) is not a mismatch — it is the export
-    saying it does not know, and nothing can be concluded from it.
+    A symbolic *width* (`"batch_size"`, `None`) is not a mismatch — that is the export
+    saying it does not know, and nothing follows from it. **A rank other than 2 is
+    different**: everything downstream reads the output as one row per input, so a shape
+    that is not `[batch, width]` is a model this code cannot consume, and it would surface
+    as a numpy error several layers away from the model that caused it.
     """
     if len(shape) != 2:
-        return
+        raise ProviderFailed(
+            "embedding_output_shape_invalid", f"expected [batch, {expected}], got {list(shape)}"
+        )
     width = shape[1]
     if isinstance(width, int) and width != expected:
         raise ProviderFailed("embedding_dimension_mismatch", f"model={width} expected={expected}")

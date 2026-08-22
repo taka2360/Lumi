@@ -47,10 +47,16 @@ PRESENTATION: Final[Mapping[AssertionMode, str]] = {
 }
 
 
-#: What the frame around the memories costs: the header, and the `--- source ---`
-#: wrapper `ContextBlock.render` adds. **Reserved rather than measured per turn** — it does
-#: not depend on which memories were chosen, and the budget has to be known before they are.
+#: What the frame around one block of memories costs: the header, and the
+#: `--- source ---` wrapper `ContextBlock.render` adds. **Reserved rather than measured per
+#: turn** — it does not depend on which memories were chosen, and the budget has to be
+#: known before they are.
 BLOCK_OVERHEAD_TOKENS: Final = 40
+
+#: How many blocks `to_blocks` can produce: **one for what Lumi may state, one for what it
+#: may not.** Both frames are reserved because which of them will exist is only known after
+#: the search has already been budgeted.
+MAX_MEMORY_BLOCKS: Final = 2
 
 
 def cost_of(record: MemoryRecord, estimate: Callable[[str], int]) -> int:
