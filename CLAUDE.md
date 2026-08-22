@@ -6,7 +6,7 @@
 
 ## 現在の状態
 
-**Phase 1 着手中。** 設計は rev.11 まで完了し承認済み。
+**Phase 1 完了。Phase 2（Memory）着手準備。** 設計は rev.16 まで完了し承認済み。
 コードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
 
 Phase 1 の進捗と実測値 → [docs/measurements/phase1.md](docs/measurements/phase1.md) / [docs/roadmap.md](docs/roadmap.md)
@@ -54,6 +54,7 @@ Lumi/
 | 信頼レベル・プロンプトインジェクション対策 | [contracts/provenance.md](docs/contracts/provenance.md) |
 | イベント・Command・Hook | [contracts/event-model.md](docs/contracts/event-model.md) |
 | 記憶 | [architecture/memory.md](docs/architecture/memory.md), [interfaces/memory.md](docs/interfaces/memory.md) |
+| **永続化・暗号化・保持期間・削除** | [contracts/privacy.md](docs/contracts/privacy.md) |
 | 音声・VAD・TTS・SLO | [architecture/audio.md](docs/architecture/audio.md) |
 | 自律行動 | [architecture/autonomy.md](docs/architecture/autonomy.md) |
 | World / Internal State | [architecture/world-state.md](docs/architecture/world-state.md) |
@@ -94,7 +95,7 @@ Lumi/
 
 **必要なもの**: Rust（MSVC ツールチェイン）/ Node 24+ / pnpm 11 / uv。Python 3.12 は uv が取得する。
 
-- [ ] 静的検査（[authority-matrix.md](docs/contracts/authority-matrix.md) の16項目）— **未実装**
+- [ ] 静的検査（[authority-matrix.md](docs/contracts/authority-matrix.md) の19項目）— **未実装**
 
 ## 進め方の原則
 

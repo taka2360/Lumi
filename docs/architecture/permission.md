@@ -253,6 +253,11 @@ Policy は将来変わる（例: 2026-08 は L3=ask、2027-02 は L3=deny）。
 
 正規化前と後の両方を残すことで、「正規化が正しかったか」を後から検証できる。ダイジェストにするのは、機密情報をログに残さないため。
 
+### 保持期間
+
+**既定 180 日。** 唯一の定義場所は [../contracts/privacy.md](../contracts/privacy.md) §2。
+append-only であることと、無限に貯め続けることは別である。
+
 ### append-only の正確な意味
 
 **定義と Phase ごとの実装は [../contracts/security-boundaries.md](../contracts/security-boundaries.md) が唯一の定義場所。**

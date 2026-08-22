@@ -118,6 +118,9 @@ screenshot / input injection / window create / process launch。
 | 14 | **Class A の lane を out-of-process Extension が提供していない** | Core |
 | 15 | **Policy 判断が `decide()` 以外の場所で行われていない**（`Decision` を返す関数が1つだけ） | Core |
 | 16 | **オーディオコールバック内で推論・メモリ確保・ロック取得をしていない** | Core |
+| 17 | **永続化先が [privacy.md](privacy.md) §2 の表に無い場所を書いていない** | Core |
+| 18 | **`DomainEvent` の payload に発話本文が入っていない** | Core |
+| 19 | **音声バッファを扱うモジュールにファイル書き込み経路が無い**（生波形を残さない） | Core |
 
 ---
 
