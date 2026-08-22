@@ -22,8 +22,11 @@ device) shouldn't have to pay that cost.
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any, Final
+
+import numpy as np
 
 from lumi import logging as lumi_logging
 from lumi.kernel.cancellation import CancelToken
@@ -70,6 +73,10 @@ DEFAULT_VRAM_ESTIMATE_MB: Final = 1280
 #: Tuned after measurement [Provisional]. SLO is p50 0.22 s (docs/architecture/audio.md §7)
 DEFAULT_BEAM_SIZE: Final = 1
 
+#: How much silence `_warm` transcribes. **Any length costs the same** — Whisper pads its
+#: input to 30 s — so this is only long enough to be a real request.
+WARM_SAMPLES: Final = 16_000
+
 
 class FasterWhisperProvider:
     """Implementation of `STTProvider`."""
@@ -100,6 +107,11 @@ class FasterWhisperProvider:
     async def load(self) -> None:
         """**Idempotent.** Raises `ProviderNotConfigured` if the model is missing (never fetches
         it).
+
+        **Building the model is not the same as being able to transcribe.** The weights are
+        in VRAM once `_build` returns, but the CUDA kernels the inference needs are loaded
+        on their first use, and that bill lands on the first utterance
+        (`_warm` — 1486 ms observed 2026-08-22).
         """
         if self._model is not None:
             return
@@ -107,7 +119,43 @@ class FasterWhisperProvider:
         import asyncio
 
         self._model = await asyncio.to_thread(self._build)
+        await asyncio.to_thread(self._warm)
         log.info("stt.loaded", provider=self.id, device=self._device.value)
+
+    def _warm(self) -> None:
+        """Runs one throwaway transcription, so **the next one runs at production latency.**
+
+        Measured 2026-08-22 (large-v3-turbo / CUDA, 1.86 s of speech): the first
+        `transcribe` after `_build` took **1486 ms against a 151 ms steady state**, and the
+        difference is CUDA's lazy module loading plus cuBLAS' first-call setup — paid once
+        per process, by whoever calls first. Warming here moves it onto startup, where
+        nobody is waiting → docs/interfaces/provider.md "`load()` は接続確認ではない"
+
+        **Silence is enough.** Whisper pads every input to 30 s, so the encoder runs the
+        same work it will run for real speech; the decode loop is what silence cuts short.
+        Measured: the following turn is indistinguishable from a warm one.
+
+        **No language is passed.** Which one the caller will ask for is not the Provider's
+        to assume, and detection is one more path that gets warmed by not assuming it.
+
+        **A failed warm-up is not a broken model** — it is the same judgment `provider.py`
+        makes about `initialize_speaker`. What is lost is the head start, and the first
+        utterance pays what it used to; refusing to load (and blocking the boot phase over
+        it) would turn a slow start into no character at all.
+        """
+        assert self._model is not None
+        started = time.perf_counter()
+        try:
+            segments, _info = self._model.transcribe(
+                np.zeros(WARM_SAMPLES, dtype=np.float32), beam_size=self._beam_size
+            )
+            # faster-whisper is lazy: **nothing runs until the generator is drained**
+            for _ in segments:
+                pass
+        except Exception as error:
+            log.warning("stt.warmup_inference_failed", provider=self.id, error=str(error))
+            return
+        log.info("stt.warmed", provider=self.id, ms=round((time.perf_counter() - started) * 1000))
 
     def _build(self) -> Any:
         try:
