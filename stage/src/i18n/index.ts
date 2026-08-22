@@ -164,6 +164,7 @@ const ja = {
   "status.failure.ollama_pull_incomplete": "AIモデルのダウンロードが途中で終了しました",
   "status.failure.ollama_pull_unreachable": "モデル取得中にOllamaへ接続できなくなりました",
   "status.failure.model_selection_unavailable": "選択したモデルを適用できませんでした",
+  "status.failure.settings_save_failed": "モデル設定を保存できませんでした",
   "status.tts.failed": "{engine} を起動できませんでした（入ってはいますが、動いていません）",
   "status.tts.installing": "{engine} を取得中… {percent}%",
   "status.tts.missing": "音声合成エンジンがセットアップされていません（Lumi は喋れません）",
@@ -329,6 +330,7 @@ const en: Record<keyof typeof ja, string> = {
   "status.failure.ollama_pull_unreachable":
     "Lumi lost its connection to Ollama during the model download",
   "status.failure.model_selection_unavailable": "Could not apply the selected model",
+  "status.failure.settings_save_failed": "Could not save the selected model setting",
   "status.tts.failed": "Could not start {engine} (it is installed, but not running)",
   "status.tts.installing": "Downloading {engine}… {percent}%",
   "status.tts.missing": "The speech synthesis engine is not set up (Lumi cannot speak)",

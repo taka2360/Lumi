@@ -44,6 +44,7 @@ from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
+from lumi.providers.base import ProviderKind
 from lumi.providers.llm.base import LLMOptions
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.registry import ProviderRegistry
@@ -330,6 +331,10 @@ class ConversationRuntime:
             {"llm_model": model},
         )
         self._model = model
+        if self._providers.has(ProviderKind.LLM):
+            # Registering a replacement does not unload the previous provider. Release its
+            # HTTP client and Ollama residency before the new model becomes selected.
+            await self._providers.peek(ProviderKind.LLM).unload()
         self._providers.register(OllamaProvider(model))
         if self._loop is not None:
             self._loop.set_llm_model(model)
@@ -345,7 +350,14 @@ class ConversationRuntime:
         if self._listening:
             return
         self._listening = True
-        await self._audio.start()
+        try:
+            await self._audio.start()
+        except asyncio.CancelledError:
+            self._listening = False
+            raise
+        except Exception:
+            self._listening = False
+            raise
 
         if self._loop is None:
             log.warning("conversation.disabled", reason="content pack")

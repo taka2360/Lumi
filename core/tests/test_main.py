@@ -75,7 +75,13 @@ async def test_two_stage_connects_start_exactly_one_conversation(
         await asyncio.sleep(0.05)
         return []
 
+    async def detect_ollama(_env: Any) -> None:
+        # Keep this wiring test independent of a real local Ollama/API timeout. The race
+        # under test is the Stage connection, not the provider's one-second probe.
+        return None
+
     monkeypatch.setattr(coordinator_module, "detect_engines", detect)
+    monkeypatch.setattr(coordinator_module, "detect_ollama", detect_ollama)
     monkeypatch.setattr(main_module, "ConversationRuntime", SlowRuntime)
     monkeypatch.setattr(
         main_module, "_audio_plan", lambda: AudioPlan(capture=None, playback=None, warnings=())

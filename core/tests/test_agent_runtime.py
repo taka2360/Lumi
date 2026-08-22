@@ -188,10 +188,69 @@ class TestAssembly:
 
         monkeypatch.setattr(runtime_module, "warm_llm", model_warmup)
 
-        await runtime._warm_llm_after_detection()
+        try:
+            await runtime._warm_llm_after_detection()
 
-        assert calls == 2
-        await runtime.stop()
+            assert calls == 2
+        finally:
+            await runtime.stop()
+
+    async def test_listening_stays_false_when_audio_start_fails(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+
+        class BrokenAudio:
+            async def start(self) -> None:
+                raise OSError("capture unavailable")
+
+            async def stop(self) -> None:
+                pass
+
+        runtime._audio = cast(Any, BrokenAudio())
+        try:
+            with pytest.raises(OSError, match="capture unavailable"):
+                await runtime._start_listening()
+            assert not runtime._listening
+        finally:
+            await runtime.stop()
+
+    async def test_model_selection_unloads_the_previous_llm_provider(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+
+        class TrackedLlm(FakeTts):
+            def __init__(self) -> None:
+                super().__init__(kind=ProviderKind.LLM)
+                self.unloaded = False
+
+            async def unload(self) -> None:
+                self.unloaded = True
+                await super().unload()
+
+        previous = TrackedLlm()
+        runtime._model = "old"
+        runtime._providers.register(previous)
+        try:
+            await runtime._select_llm_model("new")
+
+            assert previous.unloaded
+            assert runtime._providers.peek(ProviderKind.LLM).id == "ollama:new"
+        finally:
+            await runtime.stop()
 
 
 class TestShutdown:

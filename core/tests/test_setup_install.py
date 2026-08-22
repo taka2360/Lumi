@@ -403,7 +403,7 @@ class TestNetworkOptional:
     ALLOWED_HTTP: ClassVar[dict[str, str]] = {
         "setup/detect.py": "Ollama recheck. 127.0.0.1:11434/api/version only",
         "setup/install.py": "Engine fetch. Called only when the user chooses to",
-        "setup/ollama.py": "Consented model fetch. 127.0.0.1:11434/api/pull only",
+        "setup/ollama.py": "Local GET /api/tags catalog; only POST /api/pull requires consent",
         "providers/tts/aivisspeech.py": "External engine. 127.0.0.1 only (pinned in test below)",
         "providers/llm/ollama.py": "External engine. 127.0.0.1 only (pinned in test below)",
     }

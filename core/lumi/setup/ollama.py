@@ -17,6 +17,8 @@ import httpx
 from lumi.providers.llm.ollama import DEFAULT_PORT, HOST
 
 PULL_TIMEOUT_S: Final = 60.0 * 60.0
+PULL_CONNECT_TIMEOUT_S: Final = 2.0
+PULL_READ_TIMEOUT_S: Final = 60.0
 TAGS_TIMEOUT_S: Final = 2.0
 
 
@@ -120,7 +122,11 @@ async def pull_ollama_model(
 
     try:
         async with httpx.AsyncClient(
-            timeout=PULL_TIMEOUT_S,
+            timeout=httpx.Timeout(
+                PULL_TIMEOUT_S,
+                connect=PULL_CONNECT_TIMEOUT_S,
+                read=PULL_READ_TIMEOUT_S,
+            ),
             transport=transport,
             trust_env=False,
         ) as client:

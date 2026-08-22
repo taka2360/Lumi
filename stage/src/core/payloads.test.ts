@@ -171,6 +171,15 @@ describe("the setup question", () => {
     });
   });
 
+  it("rejects an LLM prompt whose primary model is malformed", () => {
+    expect(() =>
+      toSetupPrompt({
+        component: "llm_model",
+        model: { model: "qwen3.5:9b", display_name: "Qwen 3.5 9B", size_bytes: 0 },
+      }),
+    ).toThrow("invalid_llm_model");
+  });
+
   it("names a component even when the payload does not", () => {
     // **A consent dialog with no subject is worse than one naming the likely subject.**
     expect(toSetupPrompt({}).component).toBe("tts");

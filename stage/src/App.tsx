@@ -93,6 +93,18 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [anchorHovered, setAnchorHovered] = useState(false);
 
+  // Prompt/setup and normal character mode render the controls in different hosts. Their
+  // child components are remounted when that host changes, so clear parent-owned flags that
+  // otherwise keep the hidden normal-mode anchor visible after an open panel disappears.
+  useEffect(() => {
+    if (controlsAbovePanel) {
+      return;
+    }
+    setInspectorOpen(false);
+    setSettingsOpen(false);
+    setAnchorHovered(false);
+  }, [controlsAbovePanel]);
+
   const isActivelyHovered = hover === "inside" || anchorHovered || inspectorOpen || settingsOpen;
   const [inspectVisible, setInspectVisible] = useState(false);
 

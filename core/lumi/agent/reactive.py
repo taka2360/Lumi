@@ -29,7 +29,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Final, cast
 
@@ -159,12 +159,7 @@ class ReactiveLoop:
 
     def set_llm_model(self, model: str) -> None:
         """Uses a setup-selected model for subsequent turns without rebuilding the loop."""
-        self._options = LLMOptions(
-            model=model,
-            temperature=self._options.temperature,
-            max_tokens=self._options.max_tokens,
-            think=self._options.think,
-        )
+        self._options = replace(self._options, model=model)
 
     # ── Entry point ──────────────────────────────────────────────
 

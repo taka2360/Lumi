@@ -283,6 +283,8 @@ class SetupCoordinator:
             if self._snapshot.llm.state in (
                 LlmSetupState.MODEL_INSTALLING,
                 LlmSetupState.MODEL_FAILED,
+            ) or (
+                self._snapshot.llm.state is LlmSetupState.MODEL_MISSING and self._model_prompting
             ):
                 return {"detected": True, "running": True}
 
@@ -429,7 +431,11 @@ class SetupCoordinator:
                         detail = "unknown_model"
                         continue
                     await self.select_local_llm_model(local)
-                    return
+                    if self._snapshot.llm.state is not LlmSetupState.MODEL_FAILED:
+                        return
+                    retry = True
+                    detail = self._snapshot.llm.reason
+                    continue
                 if choice != CHOICE_INSTALL:
                     return
                 artifact = OLLAMA_MODELS.get(
@@ -493,7 +499,23 @@ class SetupCoordinator:
                 )
             )
             return
-        await self._on_llm_model_selected(model.name)
+        try:
+            await self._on_llm_model_selected(model.name)
+        except (settings.SettingsError, OSError) as error:
+            log.warning(
+                "setup.ollama_model.selection_failed",
+                model=model.name,
+                reason=type(error).__name__,
+            )
+            await self._update(
+                llm=LlmSetup(
+                    state=LlmSetupState.MODEL_FAILED,
+                    runtime=EngineRuntime.READY,
+                    model=model.name,
+                    reason="settings_save_failed",
+                )
+            )
+            return
         await self._update(
             llm=LlmSetup(
                 state=LlmSetupState.DETECTED,
@@ -753,7 +775,23 @@ class SetupCoordinator:
             )
             return
 
-        await self._on_llm_model_selected(artifact.name)
+        try:
+            await self._on_llm_model_selected(artifact.name)
+        except (settings.SettingsError, OSError) as error:
+            log.warning(
+                "setup.ollama_model.selection_failed",
+                model=artifact.name,
+                reason=type(error).__name__,
+            )
+            await self._update(
+                llm=LlmSetup(
+                    state=LlmSetupState.MODEL_FAILED,
+                    runtime=EngineRuntime.READY,
+                    model=artifact.name,
+                    reason="settings_save_failed",
+                )
+            )
+            return
         await self._update(
             llm=LlmSetup(
                 state=LlmSetupState.MODEL_INSTALLING,
@@ -767,9 +805,10 @@ class SetupCoordinator:
 
         last_sent = -1.0
         tracked_total = 0
+        last_completed = -1
 
         async def progress(completed: int, total: int) -> None:
-            nonlocal last_sent, tracked_total
+            nonlocal last_completed, last_sent, tracked_total
             # Ollama reports each layer separately. Ignore completed metadata layers once a
             # larger model layer appears; otherwise the bar reaches 100%, then freezes while
             # the multi-gigabyte layer downloads.
@@ -778,6 +817,13 @@ class SetupCoordinator:
             if total > tracked_total:
                 tracked_total = total
                 last_sent = -1.0
+                last_completed = -1
+            # A new Ollama layer can reuse the same total and restart its completed byte
+            # count. Let that first update through instead of comparing it with the previous
+            # layer's fraction forever.
+            if completed < last_completed:
+                last_sent = -1.0
+            last_completed = completed
             fraction = min(1.0, max(0.0, completed / total))
             if fraction - last_sent < 0.01 and fraction < 1.0:
                 return
