@@ -1,0 +1,236 @@
+"""Retention — **the only code that deletes what the user said.**
+
+Policy → docs/contracts/privacy.md §4 and §5 / Decision → ADR-038
+
+Every `DELETE` against a table holding user data lives in this file. That is not tidiness:
+docs/contracts/privacy.md §5 draws the boundary for the audit log as "unreachable from
+every Tool path, reachable from retention and from erase-everything, and nowhere else,"
+and a boundary spread across four modules is one nobody can check.
+
+## Why there is a deadline at all
+
+"We never delete anything; the user can if they want to" sounds like the respectful
+choice, and **in practice nobody ever does.** Three years of conversation nobody has read,
+whose contents the user could not describe, is not a promise kept — it is an accident
+built out of one. So the default is a deadline, and **unlimited is something the user
+chooses**, which is what makes it mean anything.
+
+## What a deadline does not apply to
+
+**Memory records are not on any deadline.** Deleting "the user likes Factorio" after 90
+days is not forgetting, it is destruction: forgetting is decay and archiving, and it is
+recoverable (docs/architecture/memory.md §5). The Episode the belief came from expires;
+the belief does not.
+
+## The record of deletion outlives what it deleted
+
+Each pass writes how many rows went, against which target, and why. **Never what they
+contained** — not the text, and not a digest of it, because a digest of a deleted
+utterance is still a fact about that utterance and would make "erase everything" a lie.
+The record itself is kept forever and is **not** part of erase-everything: if the record
+went too, there would be no way to tell that anything had been removed at all.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
+from enum import StrEnum
+from typing import Final
+
+from lumi import logging as lumi_logging
+from lumi.storage.sqlite import Database, one
+
+log = lumi_logging.get_logger(__name__)
+
+
+class Target(StrEnum):
+    """A row of the table in docs/contracts/privacy.md §2. **The names are the record.**"""
+
+    EPISODES = "episodes"
+    #: The `events` table. **Named for the record, not the table**: privacy.md calls it a
+    #: DomainEvent, and the deletion record is read by people, not by SQL.
+    EVENTS = "domain_events"
+    AUDIT = "audit_log"
+
+
+class Trigger(StrEnum):
+    """Why something was deleted. **Both are the user's own doing** — one is the policy
+    they left in place, the other is a button they pressed.
+    """
+
+    RETENTION = "retention"
+    ERASE = "erase"
+
+
+#: Defaults from docs/contracts/privacy.md §2. **That table is the definition**; these are
+#: it in code, and a change belongs there first.
+DEFAULT_EPISODE_DAYS: Final = 90
+DEFAULT_AUDIT_DAYS: Final = 180
+DEFAULT_EVENT_DAYS: Final = 30
+
+#: What the user chooses when they want no deadline at all.
+UNLIMITED: Final = None
+
+
+@dataclass(frozen=True, slots=True)
+class RetentionPolicy:
+    """How long each kind of record is kept, in days. `None` means no deadline.
+
+    **Unlimited is a setting, not a default.** See the module docstring for why.
+    """
+
+    episode_days: int | None = DEFAULT_EPISODE_DAYS
+    audit_days: int | None = DEFAULT_AUDIT_DAYS
+    event_days: int | None = DEFAULT_EVENT_DAYS
+
+    def __post_init__(self) -> None:
+        """**Refused at the door.** A negative period is a cutoff in the future, which
+        deletes everything; finding that out halfway through a pass means some targets
+        are already gone and the rest are not.
+        """
+        for name in ("episode_days", "audit_days", "event_days"):
+            days = getattr(self, name)
+            if days is not None and days < 0:
+                raise ValueError(f"Retention in days cannot be negative: {name}={days}")
+
+    def cutoff(self, days: int | None, now: datetime) -> datetime | None:
+        """The timestamp before which records of that kind expire, or `None` if never."""
+        if days is None:
+            return None
+        if days < 0:
+            raise ValueError(f"Retention in days cannot be negative: {days}")
+        return now - timedelta(days=days)
+
+
+@dataclass(frozen=True, slots=True)
+class Deletion:
+    """One target's result. **Reported even when it is zero** — "nothing expired" and
+    "the pass never ran" are different facts, and only one of them is fine.
+    """
+
+    target: Target
+    count: int
+    trigger: Trigger
+
+
+class RetentionService:
+    """Applies the policy across the three databases.
+
+    **The clock is injected.** A retention job that can only be tested by waiting 90 days
+    is one that will ship untested; every test here sets `now` and asserts exactly which
+    rows went (docs/contracts/privacy.md §7).
+    """
+
+    __slots__ = ("_audit", "_events", "_memory")
+
+    def __init__(self, *, memory: Database, events: Database, audit: Database) -> None:
+        self._memory = memory
+        self._events = events
+        self._audit = audit
+
+    async def run(self, policy: RetentionPolicy, *, now: datetime | None = None) -> list[Deletion]:
+        """Delete everything past its deadline. **Returns what went, per target.**"""
+        moment = now or datetime.now(UTC)
+        return await asyncio.to_thread(self._run_blocking, policy, moment)
+
+    def _run_blocking(self, policy: RetentionPolicy, now: datetime) -> list[Deletion]:
+        deletions = [
+            self._expire(
+                self._memory,
+                Target.EPISODES,
+                table="episodes",
+                where="started_at < ?",
+                # **Deleted explicitly, not by `ON DELETE CASCADE`.** The cascade needs
+                # `PRAGMA foreign_keys` to be on, and a pragma that silently fails to
+                # apply leaves utterances of episodes nobody can see — deleted from the
+                # user's point of view, still on disk in fact.
+                cascade=(
+                    "DELETE FROM utterances WHERE episode_id IN"
+                    " (SELECT id FROM episodes WHERE started_at < ?)"
+                ),
+                cutoff=policy.cutoff(policy.episode_days, now),
+            ),
+            self._expire(
+                self._events,
+                Target.EVENTS,
+                table="events",
+                where="occurred_at < ?",
+                cutoff=policy.cutoff(policy.event_days, now),
+            ),
+            self._expire(
+                self._audit,
+                Target.AUDIT,
+                table="audit_log",
+                where="ts < ?",
+                cutoff=policy.cutoff(policy.audit_days, now),
+            ),
+        ]
+        try:
+            self._record(deletions, now)
+        except Exception:
+            log.exception("retention.record_failed", removed=sum(d.count for d in deletions))
+        return deletions
+
+    def _expire(
+        self,
+        database: Database,
+        target: Target,
+        *,
+        table: str,
+        where: str,
+        cutoff: datetime | None,
+        cascade: str | None = None,
+    ) -> Deletion:
+        """One target. **A `None` cutoff deletes nothing** (the user chose unlimited).
+
+        The count is taken as the difference across the delete, so what gets recorded is
+        **how many rows actually went** rather than how many the code meant to ask for.
+        """
+        if cutoff is None:
+            return Deletion(target=target, count=0, trigger=Trigger.RETENTION)
+
+        boundary = cutoff.isoformat()
+        count_sql = f"SELECT COUNT(*) FROM {table}"
+        delete_sql = f"DELETE FROM {table} WHERE {where}"
+        with database.transaction() as conn:
+            before = int(one(conn.execute(count_sql))[0])
+            if cascade is not None:
+                conn.execute(cascade, (boundary,))
+            conn.execute(delete_sql, (boundary,))
+            after = int(one(conn.execute(count_sql))[0])
+        return Deletion(target=target, count=before - after, trigger=Trigger.RETENTION)
+
+    def _record(self, deletions: Sequence[Deletion], now: datetime) -> None:
+        """Write what was removed into the audit database.
+
+        **Only the counts.** The content is exactly what was being deleted, and a record
+        that keeps a shadow of it is not a record of deletion.
+
+        **A failure here does not turn a completed deletion into a failed pass.** The rows
+        are already gone; reporting the pass as failed would leave the caller believing
+        they are still there, which is the more dangerous of the two wrong beliefs. It is
+        logged at error level, because a deletion nobody recorded is exactly what §5 says
+        must not happen quietly.
+        """
+        timestamp = now.isoformat()
+        with self._audit.transaction() as conn:
+            for deletion in deletions:
+                if deletion.count == 0:
+                    # **Zero is not written.** A row per target per pass would bury the
+                    # passes that actually removed something.
+                    continue
+                conn.execute(
+                    "INSERT INTO deletion_log (ts, target, count, trigger) VALUES (?, ?, ?, ?)",
+                    (timestamp, deletion.target.value, deletion.count, deletion.trigger.value),
+                )
+        for deletion in deletions:
+            if deletion.count:
+                log.info(
+                    "retention.deleted",
+                    target=deletion.target.value,
+                    count=deletion.count,
+                    trigger=deletion.trigger.value,
+                )

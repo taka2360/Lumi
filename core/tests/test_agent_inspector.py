@@ -26,8 +26,8 @@ from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.cancellation import Cancellable, Cancellation
 from lumi.kernel.event import DomainEvent, EventBus
 from lumi.kernel.ids import new_activity_id, new_correlation_id, new_event_id
-from lumi.storage.events import SqliteEventStore
-from lumi.storage.sqlite import Database
+from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
+from lumi.storage.sqlite import IN_MEMORY, Database
 from lumi.transport.methods import METHOD_INSPECTOR
 from lumi.transport.protocol import Role
 
@@ -46,7 +46,7 @@ class FakeNotifier:
 
 
 def arbiter() -> AttentionArbiter:
-    database = Database.open(":memory:")
+    database = Database.open(IN_MEMORY, EVENTS_SCHEMA)
     database.migrate()
     return AttentionArbiter(EventBus(SqliteEventStore(database)))
 

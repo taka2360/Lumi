@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from lumi.settings import (
+    KEYS,
     SCHEMA_VERSION,
     InvalidSettingValue,
     SettingsUnreadable,
@@ -239,3 +240,97 @@ def test_the_payload_carries_where_each_value_came_from(tmp_path: Path) -> None:
 
     assert payload["values"]["inference_device"] == {"value": "cpu", "source": "env"}
     assert payload["version"] == SCHEMA_VERSION
+
+
+# ── Retention periods (docs/contracts/privacy.md §4) ──────────
+
+
+def test_retention_defaults_are_deadlines(tmp_path: Path) -> None:
+    """★ **Not "keep everything until someone deletes it".**
+
+    That sounds respectful and in practice means three years of conversation nobody has
+    read (docs/contracts/privacy.md §4). The numbers are §2's table.
+    """
+    settings = load(tmp_path / "settings.json", {})
+
+    assert settings.retention_episodes.value == "90"
+    assert settings.retention_events.value == "30"
+    assert settings.retention_audit.value == "180"
+
+
+def test_unlimited_is_a_value_the_user_can_choose(tmp_path: Path) -> None:
+    """**Choosing it is what makes the default mean anything.**"""
+    file = write(tmp_path, {"version": 1, "retention_episodes": "unlimited"})
+    settings = load(file, {})
+
+    assert settings.retention_episodes.value == "unlimited"
+    assert settings.retention_episodes.source is Source.FILE
+
+
+def test_zero_is_accepted_and_is_not_unlimited(tmp_path: Path) -> None:
+    """`0` means keep nothing. **Encoding "unlimited" as a number would collide with it.**"""
+    file = write(tmp_path, {"version": 1, "retention_episodes": "0"})
+    assert load(file, {}).retention_episodes.value == "0"
+
+
+def test_an_unparseable_period_keeps_the_deadline(tmp_path: Path) -> None:
+    """**The safe direction is the default, not "unlimited".** A typo must not turn into a
+    database that grows forever.
+    """
+    file = write(tmp_path, {"version": 1, "retention_episodes": "forever", "locale": "ja"})
+    settings = load(file, {})
+
+    assert settings.retention_episodes.value == "90"
+    assert settings.retention_episodes.source is Source.DEFAULT
+    assert settings.locale.value == "ja", "one bad value costs only that key"
+
+
+def test_every_setting_survives_a_save(tmp_path: Path) -> None:
+    """★ **A key that saves and silently reverts is worse than one that refuses.**
+
+    `save` once wrote a hand-maintained list of five keys while `KEYS` held eight: the
+    retention settings validated, were accepted, and were gone on the next start.
+    """
+    file = tmp_path / "settings.json"
+    for key in KEYS:
+        saved = save(file, load(file, {}), {key: _some_value(key)})
+        assert saved.get(key).value == _some_value(key)
+        assert load(file, {}).get(key).value == _some_value(key), f"{key} did not persist"
+
+
+def test_unlimited_retention_survives_a_save(tmp_path: Path) -> None:
+    """The one value a user picks deliberately. **Losing it restores a deadline they removed.**"""
+    file = tmp_path / "settings.json"
+    save(file, load(file, {}), {"retention_episodes": "unlimited"})
+
+    assert load(file, {}).retention_episodes.value == "unlimited"
+
+
+def test_a_retention_period_beyond_the_guard_is_refused(tmp_path: Path) -> None:
+    """**The number becomes a `timedelta`.** Past the guard it raises instead of expiring,
+    and "unlimited" is the honest way to say what such a number means.
+    """
+    file = write(tmp_path, {"version": 1, "retention_episodes": "99999999999"})
+    assert load(file, {}).retention_episodes.source is Source.DEFAULT
+
+
+def test_non_ascii_digits_are_not_a_retention_period(tmp_path: Path) -> None:
+    """`"１２３".isdigit()` is `True`, and `int()` parses it. **It is still a typo.**"""
+    file = write(tmp_path, {"version": 1, "retention_episodes": "１２３"})
+    assert load(file, {}).retention_episodes.source is Source.DEFAULT
+
+
+def _some_value(key: str) -> str:
+    """A valid, non-default value for each key. **Non-default is the point** — a save that
+    writes nothing would pass a test that used the defaults.
+    """
+    return {
+        "inference_device": "cpu",
+        "llm_model": "gemma3:12b",
+        "stt_model": "small",
+        "locale": "en",
+        "tts_speed": "1.4",
+        "retention_episodes": "30",
+        "retention_events": "7",
+        "retention_audit": "365",
+    }[key]

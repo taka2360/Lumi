@@ -18,6 +18,13 @@ cannot survive a program rewriting the file anyway.
 | Unknown keys are **preserved** on save | A downgrade must not lose them |
 | One bad value **only costs that key** | One typo must not discard every other setting |
 | Environment overrides the file, **visibly** | "I changed it and nothing happened" otherwise |
+
+## Retention is a setting, and that is the point
+
+docs/contracts/privacy.md §4 keeps a deadline by default and lets the user remove it.
+**Both halves matter**: without a default, nobody ever deletes anything; without the
+choice, "we decided how long you may keep your own conversations" is not the user's
+machine. `unlimited` is spelled out rather than encoded as a number — see `UNLIMITED`.
 """
 
 from __future__ import annotations
@@ -29,7 +36,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, cast
 
 from lumi import logging as lumi_logging
 
@@ -70,22 +77,28 @@ class Settings:
     stt_model: Setting
     locale: Setting
     tts_speed: Setting
+    #: How long the conversation log, the Kernel's events and the audit log are kept, in
+    #: days — or `unlimited`. **Defaults are deadlines** (docs/contracts/privacy.md §4)
+    retention_episodes: Setting
+    retention_events: Setting
+    retention_audit: Setting
     #: Keys this version does not know about. **Kept so a downgrade does not lose them**
     unknown: Mapping[str, Any]
     #: `True` when the file existed but could not be read. **Never overwrite it**
     unreadable: bool = False
 
+    def get(self, key: str) -> Setting:
+        """One effective value by key. **The field names are the keys** in `KEYS`."""
+        return cast(Setting, getattr(self, key))
+
     def to_payload(self) -> dict[str, Any]:
+        # **Built from `KEYS`, never from a second list.** A key added to one list and not
+        # the other is a setting the user can change and never see — or, worse, one that
+        # saves and silently reverts on the next start.
         return {
             "version": SCHEMA_VERSION,
             "unreadable": self.unreadable,
-            "values": {
-                "inference_device": self.inference_device.to_payload(),
-                "llm_model": self.llm_model.to_payload(),
-                "stt_model": self.stt_model.to_payload(),
-                "locale": self.locale.to_payload(),
-                "tts_speed": self.tts_speed.to_payload(),
-            },
+            "values": {key: self.get(key).to_payload() for key in KEYS},
         }
 
 
@@ -96,7 +109,24 @@ KEYS: Final[dict[str, tuple[str, str]]] = {
     "stt_model": ("LUMI_STT_MODEL", "large-v3-turbo"),
     "locale": ("LUMI_LOCALE", "auto"),
     "tts_speed": ("LUMI_TTS_SPEED", "1.2"),
+    # Days, or `unlimited`. **The numbers come from docs/contracts/privacy.md §2**, which
+    # is where a change to them belongs first.
+    "retention_episodes": ("LUMI_RETENTION_EPISODES", "90"),
+    "retention_events": ("LUMI_RETENTION_EVENTS", "30"),
+    "retention_audit": ("LUMI_RETENTION_AUDIT", "180"),
 }
+
+#: What the user picks when they want no deadline at all. **Spelled out rather than
+#: encoded as 0 or -1**: "0 days" is a real answer meaning "keep nothing", and a setting
+#: where one of those silently means the opposite of the other is a setting nobody can read.
+UNLIMITED: Final = "unlimited"
+
+#: Keys holding a retention period.
+RETENTION_KEYS: Final = ("retention_episodes", "retention_events", "retention_audit")
+
+#: A century. **Not a policy, a guard**: `timedelta` refuses much larger numbers, and a
+#: deadline nobody alive will see is what `unlimited` is for.
+MAX_RETENTION_DAYS: Final = 36_500
 
 TTS_SPEED_MIN: Final = 0.5
 TTS_SPEED_MAX: Final = 2.0
@@ -111,6 +141,16 @@ VALID_VALUES: Final[dict[str, frozenset[str]]] = {
 def _is_valid(key: str, value: object) -> bool:
     if not isinstance(value, str) or not value:
         return False
+    if key in RETENTION_KEYS:
+        if value == UNLIMITED:
+            return True
+        # `isdigit()` alone accepts "１２３" and "٣", which `int()` then happily parses —
+        # a retention period in Arabic-Indic digits is a typo, not a preference.
+        if not (value.isascii() and value.isdigit()):
+            return False
+        # **An upper bound, because the number becomes a `timedelta`.** Past a century the
+        # honest answer is `unlimited`, and far past it the arithmetic raises instead
+        return int(value) <= MAX_RETENTION_DAYS
     if key == "tts_speed":
         try:
             speed = float(value)
@@ -189,6 +229,9 @@ def load(path: Path, env: Mapping[str, str] | None = None) -> Settings:
         stt_model=_resolve("stt_model", stored, environ),
         locale=_resolve("locale", stored, environ),
         tts_speed=_resolve("tts_speed", stored, environ),
+        retention_episodes=_resolve("retention_episodes", stored, environ),
+        retention_events=_resolve("retention_events", stored, environ),
+        retention_audit=_resolve("retention_audit", stored, environ),
         unknown={key: value for key, value in stored.items() if key not in known},
         unreadable=unreadable,
     )
@@ -213,13 +256,10 @@ def save(path: Path, settings: Settings, changes: Mapping[str, str]) -> Settings
             raise InvalidSettingValue(f"Invalid value for {key}: {value!r}")
 
     stored: dict[str, Any] = {"version": SCHEMA_VERSION, **settings.unknown}
-    for key, current in (
-        ("inference_device", settings.inference_device),
-        ("llm_model", settings.llm_model),
-        ("stt_model", settings.stt_model),
-        ("locale", settings.locale),
-        ("tts_speed", settings.tts_speed),
-    ):
+    # **Every key in `KEYS`.** A hand-maintained list here once left the retention
+    # settings out: they validated, they were accepted, and they vanished on restart.
+    for key in KEYS:
+        current = settings.get(key)
         value = changes.get(key, current.value)
         if key in changes or current.source is Source.FILE:
             stored[key] = value

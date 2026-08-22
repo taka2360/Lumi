@@ -32,6 +32,7 @@ from pathlib import Path
 import apsw
 
 from lumi.storage import secret
+from lumi.storage.events import EVENTS_SCHEMA
 from lumi.storage.sqlite import CIPHER, Database, StorageError, one
 
 
@@ -56,7 +57,7 @@ def _probe_database() -> Iterator[tuple[Database, Path]]:
     """An encrypted database in a temporary directory, torn down afterwards."""
     with tempfile.TemporaryDirectory(prefix="lumi-selfcheck-") as directory:
         path = Path(directory) / "probe.db"
-        database = Database.open(path, key=_PROBE_KEY)
+        database = Database.open(path, EVENTS_SCHEMA, key=_PROBE_KEY)
         try:
             yield database, path
         finally:
@@ -119,7 +120,7 @@ def check_encrypted_sqlite() -> CheckResult:
                 )
 
             try:
-                Database.open(path, key="11" * 32).close()
+                Database.open(path, EVENTS_SCHEMA, key="11" * 32).close()
             except StorageError:
                 pass
             else:

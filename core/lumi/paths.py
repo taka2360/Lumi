@@ -80,6 +80,28 @@ def stt_models_dir() -> Path:
     return models_dir() / "whisper"
 
 
+def event_db_file() -> Path:
+    """Kernel facts (DomainEvent). **Encrypted; kept 30 days** → docs/contracts/privacy.md §2.
+
+    A separate file from the audit log and from memory. Splitting them is what lets
+    "the audit log is unreachable from every Tool path" be enforced by a path rule rather
+    than by everyone remembering (privacy.md §5).
+    """
+    return data_dir() / "events.db"
+
+
+def audit_db_file() -> Path:
+    """The permission audit log and the record of what deletion removed. **Encrypted.**"""
+    return data_dir() / "audit.db"
+
+
+def memory_db_file() -> Path:
+    """Episodes, and later memory records and their vectors. **Encrypted; the Episode log
+    is kept 90 days** → docs/contracts/privacy.md §2.
+    """
+    return data_dir() / "memory.db"
+
+
 def secrets_dir() -> Path:
     """Where OS-protected secrets live (the database key) → `lumi.storage.secret`.
 

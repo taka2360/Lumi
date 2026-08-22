@@ -94,6 +94,8 @@ def no_real_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def isolated_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # **One redirect covers every user-data path**, since they all derive from `data_dir`.
+    monkeypatch.setattr(paths_module, "data_dir", lambda: tmp_path / "data")
     monkeypatch.setattr(paths_module, "engines_dir", lambda: tmp_path / "engines")
     # **Never reads the developer's real model directory.** Doing so makes the outcome
     # depend on whose machine the suite runs on

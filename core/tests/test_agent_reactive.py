@@ -54,8 +54,8 @@ from lumi.providers.llm.base import (
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import Transcription
 from lumi.providers.tts.base import SpeechAudio, VoiceConfig
-from lumi.storage.events import SqliteEventStore
-from lumi.storage.sqlite import Database
+from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
+from lumi.storage.sqlite import IN_MEMORY, Database
 from lumi.tools.base import ToolDescriptor
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
@@ -214,7 +214,7 @@ class Rig:
         limits: LoopLimits | None = None,
         tts_speed: float = 1.2,
     ):
-        self.database = Database.open(":memory:")
+        self.database = Database.open(IN_MEMORY, EVENTS_SCHEMA)
         self.database.migrate()
         bus = EventBus(SqliteEventStore(self.database))
         self.arbiter = AttentionArbiter(bus)
@@ -798,6 +798,39 @@ async def test_the_loop_re_runs_when_the_user_kept_talking() -> None:
         assert latency is not None
         assert latency.speculation.speculative is False
         assert latency.speculation.discarded == 1
+    finally:
+        await _drain(task)
+
+
+async def test_shutdown_stops_the_turns_the_loop_spawned() -> None:
+    """★ **Cancelling the loop does not stop its turns.**
+
+    Each turn is its own task. One waiting on an uncancellable STT is still alive after
+    the loop task ends — and finishes by writing an episode into a database that is
+    already closing (`ConversationRuntime.stop`).
+    """
+    rig = Rig(FakeLlm([text("ながいはなしを。")], delay=5.0), stt_text="おーい")
+    await rig.start()
+
+    task = asyncio.create_task(rig.loop.run())
+    try:
+        started = time.perf_counter()
+        rig.audio._offer(VadNotification(VadEvent.SPEECH_STARTED, None, started, 1))
+        rig.audio._offer(
+            VadNotification(VadEvent.SPEECH_ENDED, np.zeros(1600, dtype=np.float32), started, 1)
+        )
+        for _ in range(10):
+            await asyncio.sleep(0)
+        turns = [t for t in asyncio.all_tasks() if t.get_name() == "turn"]
+        assert turns, "a turn is running"
+
+        task.cancel()
+        with contextlib.suppress(BaseException):
+            await task
+        assert not all(t.done() for t in turns), "cancelling the loop leaves the turn running"
+
+        await asyncio.wait_for(rig.loop.shutdown(), timeout=5.0)
+        assert all(t.done() for t in turns), "shutdown waited for them"
     finally:
         await _drain(task)
 

@@ -6,10 +6,10 @@
 
 ## 現在の状態
 
-**Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）完了。2b（投機 STT）は実装完了・実測は未取得。** 設計は rev.17 まで完了し承認済み。
+**Phase 2（Memory）に着手。2a（暗号化ストレージ基盤）/ 2c（Episode と保持期間）完了。2b（投機 STT）は実装完了・実測は未取得。** 設計は rev.17 まで完了し承認済み。
 コードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
 
-Phase 2 は 2a〜2g に分けてある（[docs/roadmap.md](docs/roadmap.md)）。**次は 2c（Episode と保持期間）。**
+Phase 2 は 2a〜2g に分けてある（[docs/roadmap.md](docs/roadmap.md)）。**次は 2d（記憶コア）。**
 破棄率・`stt_overlap_ms` は**実際に喋らないと出ない**ため、2b は実測が残っている。
 実測値 → [docs/measurements/phase2.md](docs/measurements/phase2.md) / [docs/measurements/phase1.md](docs/measurements/phase1.md)
 
