@@ -121,6 +121,14 @@ body {
 
 /* ── Memory ─────────────────────────────────────────────── */
 
+/* The shared Stage stylesheet locks every root to the viewport and hides overflow so
+   the transparent character window never grows a document scrollbar. The memory panel
+   can contain an arbitrary number of records, so its own root must be the scrollport. */
+#root[data-panel="memory"] {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
 .memory__controls {
   display: flex;
   align-items: center;
