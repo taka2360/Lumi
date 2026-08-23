@@ -105,7 +105,7 @@ REFLECTION_CHECK_SECONDS: Final = 15.0
 #: How quiet it has to be before Lumi thinks about what was said [Provisional]. Short
 #: enough that a session usually gets reflected on while it is still open; long enough that
 #: **a pause for breath is not mistaken for the end of a conversation.**
-REFLECTION_IDLE_AFTER: Final = timedelta(minutes=5)
+REFLECTION_IDLE_AFTER: Final = timedelta(seconds=120)
 
 #: How quiet it has to be **after the user asked for something to be remembered**
 #: [Provisional]. Long enough not to run inside the pause between two sentences of the
