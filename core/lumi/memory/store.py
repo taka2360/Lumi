@@ -63,7 +63,7 @@ from lumi.provenance import (
     propagate_from_trust,
     taint,
 )
-from lumi.storage.sqlite import Database
+from lumi.storage.sqlite import Database, one
 
 log = lumi_logging.get_logger(__name__)
 
@@ -272,6 +272,94 @@ class MemoryStore:
             ).fetchall()
             return [self._hydrate(conn, row) for row in rows]
 
+    async def browse(
+        self,
+        *,
+        query: str = "",
+        include_history: bool = False,
+        limit: int,
+        offset: int = 0,
+    ) -> tuple[list[MemoryRecord], int]:
+        """A page of memories for the memory window, and how many there are in total.
+
+        **Substring matching, not the 2e search.** Someone reading their own memory is
+        looking for the sentence they remember writing, and semantic search answers a
+        different question: it would return things that are *about* what they typed, in
+        an order they cannot predict, with the exact match possibly not first. Retrieval
+        ranks for a conversation; this lists for a person.
+
+        `include_history` brings in superseded and archived rows — **what Lumi used to
+        believe.** Off by default: the list would otherwise be dominated by corrections
+        of corrections, and the current belief is what people come to check.
+        """
+        if limit <= 0:
+            return [], 0
+        return await asyncio.to_thread(
+            self._browse_blocking, query.strip(), include_history, limit, max(offset, 0)
+        )
+
+    def _browse_blocking(
+        self, query: str, include_history: bool, limit: int, offset: int
+    ) -> tuple[list[MemoryRecord], int]:
+        clauses: list[str] = []
+        parameters: list[Any] = []
+        if not include_history:
+            clauses.append("superseded_by IS NULL AND archived_at IS NULL")
+        if query:
+            # **`%` and `_` are escaped.** Typing a `%` into the search box otherwise
+            # matches every memory, which reads as "the filter is broken".
+            pattern = (
+                "%" + query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+            )
+            clauses.append("(subject LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')")
+            parameters += [pattern, pattern]
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+
+        with self._db.transaction() as conn:
+            total = int(one(conn.execute(f"SELECT COUNT(*) FROM memories{where}", parameters))[0])
+            rows = conn.execute(
+                f"SELECT {_COLUMNS} FROM memories{where}"
+                " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*parameters, limit, offset),
+            ).fetchall()
+            return [self._hydrate(conn, row) for row in rows], total
+
+    async def everything_after(
+        self, *, after: MemoryRecord | None, limit: int
+    ) -> list[MemoryRecord]:
+        """The next page of **every memory, history included**, continuing from `after`.
+
+        For the export, which reads the whole table. **`browse`'s `offset` cannot do that
+        safely**: nothing is held between pages, so a memory written — or forgotten —
+        while the export runs shifts every later row by one, and the record on the page
+        boundary is written out twice or not at all. A cursor names the row it stopped
+        at, so the next page is decided by what the table holds now rather than by how
+        many rows it held before.
+
+        **Not one long transaction instead.** `transaction()` is `BEGIN IMMEDIATE` on the
+        one connection, so reading everything under a single one would stop reflection,
+        retrieval and every other write for as long as the export takes.
+        """
+        if limit <= 0:
+            return []
+        cursor = (after.created_at.isoformat(), after.id) if after is not None else None
+        return await asyncio.to_thread(self._everything_after_blocking, cursor, limit)
+
+    def _everything_after_blocking(
+        self, after: tuple[str, str] | None, limit: int
+    ) -> list[MemoryRecord]:
+        # **The cursor is a pair of values, not a row.** `created_at` alone repeats — a
+        # reflection pass writes several memories with one timestamp — and `id` alone
+        # does not sort, so the tie is broken by the same `id DESC` the order uses.
+        where = " WHERE (created_at, id) < (?, ?)" if after is not None else ""
+        parameters: tuple[Any, ...] = after if after is not None else ()
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {_COLUMNS} FROM memories{where} ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*parameters, limit),
+            ).fetchall()
+            return [self._hydrate(conn, row) for row in rows]
+
     async def get_many(self, memory_ids: Sequence[str]) -> dict[str, MemoryRecord]:
         """Several records at once, **by id, in no particular order.**"""
         if not memory_ids:
@@ -424,23 +512,99 @@ class MemoryStore:
             existing = self._read(conn, memory_id)
             if existing is None:
                 raise MemoryRejected(f"No such memory to confirm: {memory_id}")
-            conn.execute(
-                "UPDATE memories SET assertion_mode = ?, trust_level = ?, provenance_class = ?,"
-                " archived_at = NULL, last_accessed = ? WHERE id = ?",
-                (
-                    AssertionMode.USER_CONFIRMED.value,
-                    # **One of the two places in Lumi that may write this** (the other is
-                    # the handler for direct user input). docs/contracts/provenance.md.
-                    TrustLevel.TRUSTED.value,
-                    ProvenanceClass.TRUSTED.value,
-                    now.isoformat(),
-                    memory_id,
-                ),
-            )
+            self._confirm_in(conn, memory_id, now)
             confirmed = self._read(conn, memory_id)
         assert confirmed is not None  # read back inside the same transaction
         log.info("memory.confirmed", memory_id=memory_id, subject=confirmed.subject)
         return confirmed
+
+    def _confirm_in(self, conn: apsw.Connection, memory_id: str, now: datetime) -> None:
+        """The escalation itself. **Kept in one place** so `rewrite` cannot grow a
+        second copy of the only `TRUSTED` assignment outside direct user input.
+        """
+        conn.execute(
+            "UPDATE memories SET assertion_mode = ?, trust_level = ?, provenance_class = ?,"
+            " archived_at = NULL, last_accessed = ? WHERE id = ?",
+            (
+                AssertionMode.USER_CONFIRMED.value,
+                # **One of the two places in Lumi that may write this** (the other is
+                # the handler for direct user input). docs/contracts/provenance.md.
+                TrustLevel.TRUSTED.value,
+                ProvenanceClass.TRUSTED.value,
+                now.isoformat(),
+                memory_id,
+            ),
+        )
+
+    async def rewrite(
+        self,
+        memory_id: str,
+        *,
+        content: str,
+        subject: str | None = None,
+        now: datetime | None = None,
+    ) -> MemoryRecord:
+        """The user corrected a memory from the memory window (docs/architecture/ui.md §5b).
+
+        **Supersedes rather than overwrites**, like every other change of belief: what
+        Lumi thought before stays readable, and the correction is a record with its own
+        timestamp. The new record is `user_confirmed` and `TRUSTED` — the user wrote this
+        sentence themselves, and there is no grounds stronger than that (Invariant 7).
+
+        **No contradiction note is written.** The note exists so Lumi can say "you told me
+        something different before"; a person fixing Lumi's own transcription of them did
+        not tell it something different, and saying so would be an accusation built out of
+        a typo.
+        """
+        moment = now or datetime.now(UTC)
+        return await asyncio.to_thread(self._rewrite_blocking, memory_id, content, subject, moment)
+
+    def _rewrite_blocking(
+        self, memory_id: str, content: str, subject: str | None, now: datetime
+    ) -> MemoryRecord:
+        with self._db.transaction() as conn:
+            existing = self._read(conn, memory_id)
+            if existing is None:
+                raise MemoryRejected(f"No such memory to rewrite: {memory_id}")
+            if existing.superseded_by is not None:
+                # ★ **A superseded belief has already been replaced.** Correcting it would
+                # give one row two successors, and `_live_rows` would then return two live
+                # beliefs about the same subject — a contradiction Lumi made by itself.
+                # The window shows history read-only; the thing to correct is the current
+                # belief (docs/architecture/memory.md §8).
+                raise MemoryRejected(f"Already superseded, correct its successor: {memory_id}")
+            record = self._insert(
+                conn,
+                MemoryCandidate(
+                    type=existing.type,
+                    subject=subject if subject is not None else existing.subject,
+                    content=content,
+                    # **Written as `user_stated`, then escalated.** `_insert` refuses
+                    # `user_confirmed` on purpose (Invariant 7), and routing around that
+                    # check here would put a second escalation path in the codebase.
+                    assertion_mode=AssertionMode.USER_STATED,
+                    provenance_class=existing.provenance_class,
+                    trust_level=existing.trust_level,
+                    evidence_ref=existing.evidence_ref,
+                    confidence=existing.confidence,
+                    base_salience=existing.base_salience,
+                    valid_from=now,
+                    source_episode_ids=existing.source_episode_ids,
+                ),
+                now,
+                # The memory being corrected may cite utterances that have since expired.
+                # **A correction is not refused because the conversation it came from is
+                # past its retention** — that is exactly when a correction is needed.
+                require_evidence=False,
+            )
+            conn.execute(
+                "UPDATE memories SET superseded_by = ? WHERE id = ?", (record.id, existing.id)
+            )
+            self._confirm_in(conn, record.id, now)
+            rewritten = self._read(conn, record.id)
+        assert rewritten is not None  # read back inside the same transaction
+        log.info("memory.rewritten", old_id=existing.id, new_id=record.id, subject=record.subject)
+        return rewritten
 
     # ── internals ──────────────────────────────────────────────────────────
 

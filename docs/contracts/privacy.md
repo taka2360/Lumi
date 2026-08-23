@@ -187,6 +187,12 @@ DPAPI の鍵は current user スコープであり、**同じユーザーとし�
 > にしか無い。** 全消去（Phase 2g）も同じファイルに置く。監査ログを書く
 > `storage/audit.py` には削除経路が無く、DB もファイルごと分かれている（`audit.db`）ため、
 > **Tool 側の deny パスで名指しできる**。
+>
+> **〔2026-08-23 / 2g〕全消去は `retention.erase_everything()` として同じファイルに入った。**
+> 到達経路は `memory` ウィンドウの `panel.memory.erase` ただ1本
+> （[ADR-042](../decisions/ADR-042-panel-windows-and-panel-role.md)）。
+> **見せてから消す**ために `panel.memory.erase_preview` が先にあり、
+> §2 の表の行ごとの件数を返す。**0件の行も返す**——「無い」と「消し忘れ」は別のことなので。
 
 **「Lumi 自身が消せない」ことと「ユーザーが消せる」ことは別である。**
 前者は Invariant（Lumi が自分の足跡を消せない）で、後者はユーザーの権利である。

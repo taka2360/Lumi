@@ -31,6 +31,7 @@ interface PlatformShell {
   // ── ウィンドウ ─────────────────────────────
   createWindow(spec: WindowSpec): Promise<WindowHandle>
   openCredits(): Promise<void>                         // 静的な credits ウィンドウを開く / 前面へ出す
+  openPanel(kind: PanelKind): Promise<void>            // settings / inspector / memory を開く / 前面へ出す〔2g〕
   openOllamaSite(): Promise<void>                      // 固定の Ollama 公式ダウンロードページを既定ブラウザで開く
   setTransparent(w: WindowHandle, on: boolean): Promise<void>
   setAlwaysOnTop(w: WindowHandle, on: boolean): Promise<void>
@@ -117,7 +118,7 @@ Rust 側で ~60Hz でカーソル位置を取得（GetCursorPos 相当）
 
 | 分類 | 呼ぶ主体 | 経路 |
 |---|---|---|
-| `setHitRegion` / `onHoverState` / ウィンドウ操作 / `openCredits` / `openOllamaSite` / `quit` | Stage | `shell.*`（Tauri IPC） |
+| `setHitRegion` / `onHoverState` / ウィンドウ操作 / `openCredits` / **`openPanel`** / `openOllamaSite` / `quit` | Stage | `shell.*`（Tauri IPC） |
 | `toAssetUrl` | Stage | PlatformShell adapter（Tauri asset protocol） |
 | `captureScreen` / `injectInput` / `launchProcess` / `spawnSidecar` | **Core** | `os.*`（WS） |
 
@@ -151,6 +152,24 @@ Stage から渡せないため、外部通信や任意ウィンドウ生成の�
 Tauri 実装では `shell_credits_open` を**非同期コマンド**としてスレッドプールで実行する。
 同期 IPC ハンドラから `WebviewWindowBuilder::build()` を呼ぶと、Windows のメインイベントループが
 ウィンドウ生成の完了待ちと循環し、アプリ全体のイベント処理が停止するためである。
+
+#### `openPanel` を Stage に露出してよい理由〔2g〕
+
+`stage` の操作列から設定・インスペクタ・記憶のウィンドウを開くために要る
+（[ADR-042](../decisions/ADR-042-panel-windows-and-panel-role.md)）。
+
+**引数は列挙値ひとつだけ**で、URL もウィンドウ指定も渡さない。Shell は
+`settings` / `inspector` / `memory` の**3つに固定した対応表**を引くだけであり、
+知らない値は**開かずに警告する**（fail-closed）。侵害された Stage が得るのは
+「Lumi 自身の3つのウィンドウを繰り返し開く」能力までである。
+
+**トークンは Stage が渡すのではなく、Shell がウィンドウのラベルで選ぶ。**
+`shell_core_endpoint` は要求元ウィンドウのラベルを見て、`stage` ウィンドウにだけ
+`stage` トークンを、panel の3つには `panel` トークンを返す。
+**Stage がどのトークンを欲しいかを言える設計にしない**——言えるなら、
+侵害された Stage が `stage` トークンを要求して `invoke` の宛先を奪える。
+
+`openCredits` と同じ理由で**非同期コマンド**として実行する。
 
 #### `openOllamaSite` を Stage に露出してよい理由〔Phase 1〕
 

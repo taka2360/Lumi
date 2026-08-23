@@ -152,7 +152,42 @@ describe("the setup question", () => {
       reason: "http_error",
       model: null,
       alternatives: [],
+      items: [],
+      totalBytes: 0,
     });
+  });
+
+  it("reads what the bulk question offers, and keeps Core's total", () => {
+    // ★ **The total is Core's number, not a sum of what survived parsing.** A row that
+    // could not be read is dropped from the list, and the total still says what will be
+    // fetched — the honest disagreement, rather than a smaller number nobody will pay.
+    const prompt = toSetupPrompt({
+      component: "all",
+      total_bytes: 7_000_000_000,
+      items: [
+        { component: "tts", name: "AivisSpeech", size_bytes: 300_000_000 },
+        { component: "embedding", name: "harrier-oss-v1-270m", size_bytes: 196_000_000 },
+        { component: "stt", name: null, size_bytes: 500_000_000 },
+      ],
+    });
+
+    expect(prompt.items.map((item) => item.name)).toEqual(["AivisSpeech", "harrier-oss-v1-270m"]);
+    expect(prompt.totalBytes).toBe(7_000_000_000);
+  });
+
+  it("drops a row whose component it does not recognise", () => {
+    // ★ **Never renamed to something it is not.** Rounding an unknown component to `tts`
+    // would label a download as the speech engine on the screen where consent is given.
+    const prompt = toSetupPrompt({
+      component: "all",
+      total_bytes: 1_000,
+      items: [
+        { component: "wat", name: "Mystery", size_bytes: 1_000 },
+        { component: "stt", name: "large-v3-turbo", size_bytes: 1_000 },
+      ],
+    });
+
+    expect(prompt.items.map((item) => item.component)).toEqual(["stt"]);
   });
 
   it("reads the model identity and byte size without guessing", () => {

@@ -7,10 +7,14 @@ resolves to "ready."
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from lumi.setup.state import (
     BootPhase,
+    EmbeddingSetup,
+    EmbeddingSetupState,
     EngineRuntime,
     LlmSetup,
     LlmSetupState,
@@ -235,8 +239,61 @@ class TestBootPhase:
     def test_every_component_appears_in_the_payload(self) -> None:
         """The Stage cannot show what it was never sent."""
         payload = SetupSnapshot().to_payload()
-        assert set(payload) == {"boot", "tts", "llm", "stt"}
+        assert set(payload) == {"boot", "tts", "llm", "stt", "embedding"}
 
     def test_a_fresh_snapshot_is_blocked(self) -> None:
         """**Fail-closed.** Nothing has been detected yet, so nothing may be claimed ready."""
         assert boot_phase(SetupSnapshot(), prompting=False) is BootPhase.BLOCKED
+
+
+class TestTheEmbeddingModelIsOptional:
+    """★ **ADR-041's model does not gate the character** (ADR-034 applies to three, not four).
+
+    Declining a 196 MiB download costs similarity search; retrieval keeps working on
+    keywords and recency. A Lumi that refused to appear without it would be trading the
+    product for one of its features.
+    """
+
+    def test_a_missing_embedding_model_still_reaches_ready(self) -> None:
+        assert (
+            boot_phase(
+                replace(
+                    snapshot(), embedding=EmbeddingSetup(state=EmbeddingSetupState.NOT_CONFIGURED)
+                ),
+                prompting=False,
+            )
+            is BootPhase.READY
+        )
+
+    def test_a_failed_embedding_fetch_still_reaches_ready(self) -> None:
+        """**A failed optional download is not a blocked Lumi.** It is a Lumi that
+        searches its memory less well, and it says so where that matters.
+        """
+        assert (
+            boot_phase(
+                replace(
+                    snapshot(),
+                    embedding=EmbeddingSetup(
+                        state=EmbeddingSetupState.FAILED, reason="network_error"
+                    ),
+                ),
+                prompting=False,
+            )
+            is BootPhase.READY
+        )
+
+    def test_a_running_embedding_fetch_delays_the_character(self) -> None:
+        """It cannot block `READY`, but while it downloads there is progress on screen, and
+        **the character standing in front of its own progress bar** would be two answers to
+        "what is happening now".
+        """
+        assert (
+            boot_phase(
+                replace(
+                    snapshot(),
+                    embedding=EmbeddingSetup(state=EmbeddingSetupState.INSTALLING, progress=0.3),
+                ),
+                prompting=False,
+            )
+            is BootPhase.INSTALLING
+        )

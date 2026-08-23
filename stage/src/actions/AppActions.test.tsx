@@ -8,12 +8,18 @@ import { AppActions } from "./AppActions";
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 const openCredits = vi.fn();
+const openPanel = vi.fn();
 const quit = vi.fn();
 let onCreditsError: ((error: unknown) => void) | undefined;
+let onPanelError: ((error: unknown) => void) | undefined;
 vi.mock("../platform/useStageShell", () => ({
   useOpenCredits: (onError?: (error: unknown) => void) => {
     onCreditsError = onError;
     return openCredits;
+  },
+  useOpenPanel: (kind: string, onError?: (error: unknown) => void) => {
+    onPanelError = onError;
+    return () => openPanel(kind);
   },
   useQuit: () => quit,
   getPlatformShell: () => ({ setLocale: async () => {} }),
@@ -35,8 +41,10 @@ describe("Stage application actions", () => {
     container?.remove();
     container = null;
     openCredits.mockReset();
+    openPanel.mockReset();
     quit.mockReset();
     onCreditsError = undefined;
+    onPanelError = undefined;
     if (previousLocale === null) {
       localStorage.removeItem("lumi.locale");
     } else {
@@ -58,11 +66,42 @@ describe("Stage application actions", () => {
     return container;
   }
 
+  it("names every icon-only button", () => {
+    // ★ **An icon with no accessible name is a button nobody can identify** — not by
+    // screen reader, and not by hovering either. The glyph carries no meaning on its own,
+    // which is exactly why the name has to come from i18n.
+    const buttons = [...render().querySelectorAll("button")];
+
+    expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "設定",
+      "インスペクター",
+      "記憶",
+      "クレジットとライセンス",
+      "終了",
+    ]);
+    for (const button of buttons) {
+      // The tooltip and the accessible name are the same sentence, so a mouse user and a
+      // screen-reader user are told the same thing.
+      expect(button.getAttribute("title")).toBe(button.getAttribute("aria-label"));
+      expect(button.textContent).not.toBe("");
+    }
+  });
+
+  it("opens each panel window by name", () => {
+    const buttons = render().querySelectorAll("button");
+
+    act(() => buttons[0]?.click());
+    act(() => buttons[1]?.click());
+    act(() => buttons[2]?.click());
+
+    // **The kind is fixed per button.** Shell knows these three and opens nothing else.
+    expect(openPanel.mock.calls).toEqual([["settings"], ["inspector"], ["memory"]]);
+  });
+
   it("opens credits and licenses from the Stage window", () => {
     const buttons = render().querySelectorAll("button");
 
-    expect(buttons[0]?.textContent).toBe("クレジットとライセンス");
-    act(() => buttons[0]?.click());
+    act(() => buttons[3]?.click());
 
     expect(openCredits).toHaveBeenCalledOnce();
   });
@@ -70,8 +109,7 @@ describe("Stage application actions", () => {
   it("quits Lumi from the Stage window", () => {
     const buttons = render().querySelectorAll("button");
 
-    expect(buttons[1]?.textContent).toBe("終了");
-    act(() => buttons[1]?.click());
+    act(() => buttons[4]?.click());
 
     expect(quit).toHaveBeenCalledOnce();
   });
@@ -86,7 +124,18 @@ describe("Stage application actions", () => {
     expect(view.querySelector('[role="alert"]')?.textContent).toBe(
       "クレジット画面を開けませんでした",
     );
-    expect(consoleError).toHaveBeenCalledWith("Failed to open credits window", error);
+    consoleError.mockRestore();
+  });
+
+  it("shows a failure when Shell cannot open a panel", () => {
+    // **Never silently does nothing.** Shell logs an unknown kind and opens no window;
+    // without this the button would look like it simply does not work.
+    const view = render();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    act(() => onPanelError?.(new Error("window unavailable")));
+
+    expect(view.querySelector('[role="alert"]')?.textContent).toBe("画面を開けませんでした");
     consoleError.mockRestore();
   });
 });

@@ -33,6 +33,7 @@ from websockets.exceptions import ConnectionClosed
 from lumi import logging as lumi_logging
 from lumi.transport.protocol import (
     HELLO_TIMEOUT_S,
+    MULTI_CONNECTION_ROLES,
     PING_INTERVAL_S,
     PING_TIMEOUT_S,
     Command,
@@ -85,7 +86,7 @@ class CommandFailedError(RuntimeError):
 
 
 class _Connection:
-    """One authenticated connection. At most one per role."""
+    """One authenticated connection. **At most one per role, except `panel`** (ADR-042)."""
 
     def __init__(self, role: Role, ws: ServerConnection) -> None:
         self.role = role
@@ -142,7 +143,9 @@ class WsServer:
         self._requested_port = port
         self._on_connect = on_connect
         self._on_disconnect = on_disconnect
-        self._connections: dict[Role, _Connection] = {}
+        #: **A list per role, not one connection.** `panel` may hold several; every
+        #: other role holds at most one, which `_handle` enforces rather than assumes.
+        self._connections: dict[Role, list[_Connection]] = {}
         # : **The allowlist for the Stage → Core direction** (ADR-028). A method not
         # : registered here is unreachable — the allowlist is the registry itself, so
         # : adding a route is always a deliberate act rather than a missing check.
@@ -160,7 +163,22 @@ class WsServer:
         return self._port
 
     def is_connected(self, role: Role) -> bool:
-        return role in self._connections
+        return bool(self._connections.get(role))
+
+    def connection_count(self, role: Role) -> int:
+        """How many clients hold this role. **Only `panel` ever exceeds 1.**"""
+        return len(self._connections.get(role, ()))
+
+    def _sole(self, role: Role) -> _Connection | None:
+        """The one connection for a single-connection role.
+
+        **Refuses a multi-connection role outright** rather than picking one of them: a
+        caller that wanted an addressee has asked the wrong question.
+        """
+        if role in MULTI_CONNECTION_ROLES:
+            raise ValueError(f"{role.value} may hold several connections; it has no sole peer")
+        existing = self._connections.get(role)
+        return existing[0] if existing else None
 
     async def start(self) -> int:
         """Starts listening and returns the actual port number."""
@@ -301,8 +319,9 @@ class WsServer:
         """
         if not method_matches_role(method, role):
             raise ValueError(f"Cannot send {method} to {role.value} (namespace violation)")
-
-        connection = self._connections.get(role)
+        # **A command waits for an answer, so it needs one addressee** (ADR-042). Panels
+        # are notified, never commanded, and this is the check that keeps that true.
+        connection = self._sole(role)
         if connection is None:
             raise NotConnectedError(f"{role.value} is not connected")
 
@@ -322,18 +341,24 @@ class WsServer:
 
         A notification is "nice if it arrives" — not arriving isn't a failure.
         Unlike `invoke`, stalling here would let a UI update block Core's own progress.
+
+        **Goes to every connection holding the role.** For `panel` that is however many
+        windows the user has open, including none at all (ADR-042).
         """
         if not method_matches_role(method, role):
             raise ValueError(f"Cannot send {method} to {role.value} (namespace violation)")
 
-        connection = self._connections.get(role)
-        if connection is None:
+        peers = list(self._connections.get(role, ()))
+        if not peers:
             log.debug("transport.notify.dropped", role=role.value, method=method)
             return
-        try:
-            await connection.ws.send(Notify(method=method, payload=payload or {}).to_json())
-        except ConnectionClosed:
-            log.debug("transport.notify.closed", role=role.value, method=method)
+        frame = Notify(method=method, payload=payload or {}).to_json()
+        for connection in peers:
+            try:
+                await connection.ws.send(frame)
+            except ConnectionClosed:
+                # One window closing is not the other windows' problem.
+                log.debug("transport.notify.closed", role=role.value, method=method)
 
     async def _handle(self, ws: ServerConnection) -> None:
         role = await self._authenticate(ws)
@@ -341,26 +366,32 @@ class WsServer:
             return
 
         connection = _Connection(role, ws)
-        previous = self._connections.get(role)
-        if previous is not None:
-            # A reconnect. The old one is discarded (never leaves a ghost connection on Core's
-            # side).
-            log.info("transport.reconnect", role=role.value)
-            previous.abandon_all("Replaced by reconnection")
-            await previous.ws.close(code=1000, reason="replaced by a new connection")
+        peers = self._connections.setdefault(role, [])
+        if role not in MULTI_CONNECTION_ROLES:
+            for previous in list(peers):
+                # A reconnect. The old one is discarded (never leaves a ghost connection
+                # on Core's side).
+                log.info("transport.reconnect", role=role.value)
+                previous.abandon_all("Replaced by reconnection")
+                await previous.ws.close(code=1000, reason="replaced by a new connection")
+            peers.clear()
 
-        self._connections[role] = connection
-        log.info("transport.connected", role=role.value)
+        peers.append(connection)
+        log.info("transport.connected", role=role.value, peers=len(peers))
         if self._on_connect is not None:
             await self._on_connect(role)
 
         try:
             await self._receive_loop(connection)
         finally:
-            if self._connections.get(role) is connection:
-                del self._connections[role]
+            remaining = self._connections.get(role)
+            if remaining is not None and connection in remaining:
+                remaining.remove(connection)
                 connection.abandon_all("Connection closed")
-                log.info("transport.disconnected", role=role.value)
+                log.info("transport.disconnected", role=role.value, peers=len(remaining))
+                # **Fires for every closing connection, panel included.** A hook that only
+                # ran for the last one would never fire for a role that usually still has
+                # another window open.
                 if self._on_disconnect is not None:
                     await self._on_disconnect(role)
 
@@ -438,6 +469,7 @@ class WsServer:
 TOKEN_ENV_BY_ROLE: dict[Role, str] = {
     Role.SHELL: "LUMI_WS_TOKEN_SHELL",
     Role.STAGE: "LUMI_WS_TOKEN_STAGE",
+    Role.PANEL: "LUMI_WS_TOKEN_PANEL",
 }
 
 

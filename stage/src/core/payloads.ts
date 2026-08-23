@@ -21,12 +21,15 @@ import { parseTimeline, type VisemeTimeline } from "../character/lipsync";
 import type {
   BootPhase,
   CharacterModel,
+  EmbeddingSetupSnapshot,
+  EmbeddingSetupState,
   EngineRuntime,
   InspectorActivity,
   InspectorLatency,
   InspectorSnapshot,
   LlmSetupSnapshot,
   LlmSetupState,
+  MicState,
   SettingsSnapshot,
   SettingsSource,
   SettingValue,
@@ -90,7 +93,21 @@ export const BOOT_PHASES: readonly BootPhase[] = [
   "blocked",
   "ready",
 ];
-export const SETUP_COMPONENTS: readonly SetupComponent[] = ["tts", "stt", "llm_model"];
+export const SETUP_COMPONENTS: readonly SetupComponent[] = [
+  "tts",
+  "stt",
+  "llm_model",
+  "embedding",
+  "all",
+];
+
+export const EMBEDDING_SETUP_STATES: readonly EmbeddingSetupState[] = [
+  "unknown",
+  "not_configured",
+  "installing",
+  "installed",
+  "failed",
+];
 
 /**
  * Picks `value` out of `candidates`, or falls back. **`fallback` is required.**
@@ -133,6 +150,23 @@ export function toSetupSnapshot(payload: Record<string, unknown>): SetupSnapshot
     tts: toTtsSnapshot(part(payload, "tts")),
     llm: toLlmSnapshot(part(payload, "llm")),
     stt: toSttSnapshot(part(payload, "stt")),
+    embedding: toEmbeddingSnapshot(part(payload, "embedding")),
+  };
+}
+
+/**
+ * The embedding model's state (ADR-041).
+ *
+ * **Rounds an unknown value to `unknown`, not to `installed`.** Claiming a model is
+ * present when the field could not be read would hide the one thing this screen exists to
+ * offer.
+ */
+export function toEmbeddingSnapshot(payload: Record<string, unknown>): EmbeddingSetupSnapshot {
+  return {
+    state: oneOf(EMBEDDING_SETUP_STATES, payload.state, "unknown"),
+    model: asString(payload.model),
+    reason: asString(payload.reason),
+    progress: asNumber(payload.progress),
   };
 }
 
@@ -197,6 +231,24 @@ export function toSetupPrompt(payload: Record<string, unknown>): SetupPrompt {
     reason: asString(payload.reason),
     model,
     alternatives,
+    items: Array.isArray(payload.items)
+      ? payload.items.filter(isRecord).flatMap((item) => {
+          const name = asString(item.name);
+          const size = asNumber(item.size_bytes);
+          // **No fallback component.** Rounding an unknown name to `tts` would label a
+          // download as something it is not, on the screen where the user consents to it.
+          // A row nobody can identify is dropped, and the total below still says what
+          // will be fetched.
+          const part = SETUP_COMPONENTS.find((known) => known === item.component);
+          return part && name && size !== null && size > 0
+            ? [{ component: part, name, sizeBytes: size }]
+            : [];
+        })
+      : [],
+    // **Core's number, not a sum of what survived parsing.** If a row was dropped, the
+    // list and the total disagree — and that is the honest thing to show, because the
+    // bytes will still be fetched.
+    totalBytes: asNumber(payload.total_bytes) ?? 0,
   };
 }
 
@@ -388,4 +440,15 @@ export function toSettingsSnapshot(payload: Record<string, unknown>): SettingsSn
     unreadable: payload.unreadable === true,
     values,
   };
+}
+
+/**
+ * Whether the microphone is open, and whether the user muted it.
+ *
+ * **Both default to false on an unreadable payload.** For "open" that is the fail-closed
+ * direction in the sense that matters here: the indicator claims Lumi is listening only
+ * when Core said so, never because a field was missing.
+ */
+export function toMicState(payload: Record<string, unknown>): MicState {
+  return { open: payload.open === true, muted: payload.muted === true };
 }

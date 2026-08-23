@@ -140,9 +140,23 @@ class MicrophoneCapture:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+        # **Cleared so a restart has to see a frame of its own.** Unmuting onto a device
+        # that has since been unplugged would otherwise report itself as listening on the
+        # strength of a frame from before the mute.
+        self._first_frame.clear()
+        # ★ **And the audio from before the mute is dropped.** Whatever is still unread in
+        # the ring was captured while the user believed nothing was listening; letting the
+        # next worker read it would turn a mute into a delay.
+        self._ring.clear()
         if self._overflows or self._ring.dropped:
             # **Always check for silent degradation when stopping**
             log.warning("capture.lossy", overflows=self._overflows, dropped=self._ring.dropped)
+
+
+#: How long to wait for the VAD thread to notice it was stopped. **One window is 32 ms**,
+#: so this is orders of magnitude more than a healthy thread needs; reaching it means
+#: something is wedged, not that it was busy.
+STOP_TIMEOUT_S: Final = 2.0
 
 
 class VadWorker:
@@ -208,17 +222,36 @@ class VadWorker:
         self._resume = threading.Event()
         self._thread: threading.Thread | None = None
 
+    @property
+    def vad(self) -> SileroVad | None:
+        """The model this worker used. **Handed on when the worker is replaced** — the
+        one after a mute should not pay to load Silero again.
+        """
+        return self._vad
+
     def start(self) -> None:
         if self._vad is None:
             self._vad = SileroVad()
         self._thread = threading.Thread(target=self._loop, name="lumi-vad", daemon=True)
         self._thread.start()
 
-    def stop(self) -> None:
+    def stop(self) -> bool:
+        """Stop the worker. **Returns whether the thread actually finished.**
+
+        A `False` here means a thread is still reading the ring, and starting a second
+        worker over the same ring would give two readers racing for the same frames —
+        which is why the caller checks rather than assuming (`AudioIO.set_input_muted`).
+        """
         self._stop.set()
-        if self._thread is not None:
-            self._thread.join(timeout=2.0)
-            self._thread = None
+        if self._thread is None:
+            return True
+        self._thread.join(timeout=STOP_TIMEOUT_S)
+        stopped = not self._thread.is_alive()
+        if not stopped:
+            log.warning("vad.stop_timeout", seconds=STOP_TIMEOUT_S)
+            return False
+        self._thread = None
+        return True
 
     def _loop(self) -> None:
         try:

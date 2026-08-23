@@ -50,11 +50,18 @@ METHOD_MODEL: Final = "stage.character.model"
 #: face finished changing.
 METHOD_EXPRESSION: Final = "stage.character.expression"
 
-#: The Activity tree and the latest turn's latency breakdown.
-METHOD_INSPECTOR: Final = "stage.inspector.state"
-
 #: The effective settings and **where each value came from**.
+#:
+#: **Still sent to the Stage even though settings moved to their own window** (ADR-042):
+#: the character window reads `locale` from it, and a locale change has to reach the
+#: bubble as surely as it reaches the settings table.
 METHOD_SETTINGS: Final = "stage.settings.state"
+
+#: Whether the microphone is open, and whether the user muted it.
+#:
+#: **On the character window on purpose** (ui.md §5b). "Is it listening?" must not live
+#: inside a window that can be closed — closed is the state it would spend its life in.
+METHOD_MIC: Final = "stage.audio.mic"
 
 #: Everything Core may send to the Stage. **Cross-checked against the contract**
 #: (`test_wire_contract.py`), which is what makes forgetting to declare one a failure.
@@ -67,8 +74,33 @@ STAGE_METHODS: Final[frozenset[str]] = frozenset(
         METHOD_USER_SAID,
         METHOD_MODEL,
         METHOD_EXPRESSION,
-        METHOD_INSPECTOR,
         METHOD_SETTINGS,
+        METHOD_MIC,
+    }
+)
+
+# ── Core → Panel (ADR-042) ────────────────────────────────────
+
+#: The same settings snapshot the Stage gets, for the settings window.
+METHOD_PANEL_SETTINGS: Final = "panel.settings.state"
+
+#: The Activity tree and the latest turn's latency breakdown.
+#:
+#: **This used to be `stage.inspector.state`.** It is not sent to the character window at
+#: all any more, so the per-turn inspector payload no longer shares a connection with
+#: speech and barge-in (ADR-042).
+METHOD_PANEL_INSPECTOR: Final = "panel.inspector.state"
+
+#: Memory changed underneath an open memory window — a reflection pass wrote something.
+#: **A nudge, not the data**: the window asks for what it wants to show.
+METHOD_PANEL_MEMORY: Final = "panel.memory.state"
+
+#: Everything Core may send to a panel window. Cross-checked against the contract.
+PANEL_METHODS: Final[frozenset[str]] = frozenset(
+    {
+        METHOD_PANEL_SETTINGS,
+        METHOD_PANEL_INSPECTOR,
+        METHOD_PANEL_MEMORY,
     }
 )
 
@@ -81,10 +113,59 @@ METHOD_SETTINGS_UPDATE: Final = "stage.settings.update"
 #: the visible button use the same route, so there is only one decision path.
 METHOD_SETUP_RECHECK_OLLAMA: Final = "stage.setup.recheck_ollama"
 
-#: What the Stage may initiate. **A tuple, because the contract's order is checked too.**
+#: Mutes or unmutes the microphone. **From the character window**, next to the light
+#: that says the microphone is open.
+METHOD_MIC_MUTE: Final = "stage.audio.mute"
+
+# ── Panel → Core (ADR-042) ────────────────────────────────────
+
+#: The settings window asks for the same change the Stage could ask for. **Two names for
+#: one handler**: the namespace is what tells Core which window asked, and a role may
+#: only send its own.
+METHOD_PANEL_SETTINGS_UPDATE: Final = "panel.settings.update"
+
+#: Reading what is remembered. Text search is optional; without it, the most recent.
+METHOD_PANEL_MEMORY_SEARCH: Final = "panel.memory.search"
+
+#: Correcting a memory. **Supersedes rather than overwrites** — the correction is a new
+#: record, and what it corrected stays readable (memory.md §8).
+METHOD_PANEL_MEMORY_EDIT: Final = "panel.memory.edit"
+
+#: Deleting a memory. **Physically**, through the one file that may delete user data
+#: (privacy.md §5).
+METHOD_PANEL_MEMORY_FORGET: Final = "panel.memory.forget"
+
+#: "This is right." **The only escalation to `user_confirmed` / TRUSTED** (Invariant 7).
+METHOD_PANEL_MEMORY_CONFIRM: Final = "panel.memory.confirm"
+
+#: Writing everything remembered to a file the user chose. **The output is plain text**,
+#: and the window says so before it is written.
+METHOD_PANEL_MEMORY_EXPORT: Final = "panel.memory.export"
+
+#: What "erase everything" would delete, counted per row of privacy.md §2. **Asked before
+#: erasing, never after** — a confirmation with no numbers in it is not informed consent.
+METHOD_PANEL_MEMORY_ERASE_PREVIEW: Final = "panel.memory.erase_preview"
+
+#: Erase everything.
+METHOD_PANEL_MEMORY_ERASE: Final = "panel.memory.erase"
+
+#: What a client may initiate. **A tuple, because the contract's order is checked too.**
+#:
+#: **Namespaces are not decoration here.** A method's prefix decides which role can send
+#: it (`method_matches_role`), so `panel.memory.erase` is unreachable from the character
+#: window — not by a check somewhere, but because the token it holds is a different one.
 INBOUND_METHODS: Final[tuple[str, ...]] = (
     METHOD_SETTINGS_UPDATE,
     METHOD_SETUP_RECHECK_OLLAMA,
+    METHOD_MIC_MUTE,
+    METHOD_PANEL_SETTINGS_UPDATE,
+    METHOD_PANEL_MEMORY_SEARCH,
+    METHOD_PANEL_MEMORY_EDIT,
+    METHOD_PANEL_MEMORY_FORGET,
+    METHOD_PANEL_MEMORY_CONFIRM,
+    METHOD_PANEL_MEMORY_EXPORT,
+    METHOD_PANEL_MEMORY_ERASE_PREVIEW,
+    METHOD_PANEL_MEMORY_ERASE,
 )
 
 # ── Payload values ────────────────────────────────────────────
@@ -100,11 +181,24 @@ CHOICE_INSTALL: Final = "install"
 CHOICE_SKIP: Final = "skip"
 CHOICE_SELECT: Final = "select"
 
+#: The answer to the one question asked before the others: "fetch all of this?"
+#:
+#: **Its own value rather than reusing `select`.** For `llm_model`, `select` means "use a
+#: model already on this machine"; here the user is choosing *how to be asked*, and giving
+#: one word two unrelated meanings is how a contract stops being readable.
+CHOICE_INDIVIDUALLY: Final = "individually"
+
 #: Which component a question is about. **The panel has to say what it is fetching** —
 #: "may I download this?" without a subject is not consent.
 COMPONENT_TTS: Final = "tts"
 COMPONENT_STT: Final = "stt"
 COMPONENT_LLM_MODEL: Final = "llm_model"
+#: The embedding model (ADR-041). **The only optional one** — declining it costs
+#: similarity search, not the ability to hold a conversation.
+COMPONENT_EMBEDDING: Final = "embedding"
+#: Not a component: the question that offers **everything missing at once**, with the
+#: total. The payload carries `items` and `total_bytes` alongside the usual fields.
+COMPONENT_ALL: Final = "all"
 
 #: Why there is no character model to draw (ADR-036). **A code, never a sentence** —
 #: Core does not know the Stage's locale, and a display string sent from here is the one

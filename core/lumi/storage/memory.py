@@ -342,6 +342,29 @@ class EpisodeStore:
         """
         return await asyncio.to_thread(self._unreflected_blocking, limit)
 
+    async def unreflected_turns(self) -> int:
+        """How many utterances no reflection pass has read yet.
+
+        **What separates "Lumi remembers nothing about you" from "Lumi has not had a
+        quiet moment yet."** The memory window shows both as an empty list otherwise,
+        and only one of them is a reason to worry.
+        """
+        return await asyncio.to_thread(self._unreflected_turns_blocking)
+
+    def _unreflected_turns_blocking(self) -> int:
+        with self._db.transaction() as conn:
+            return int(
+                str(
+                    one(
+                        conn.execute(
+                            "SELECT COUNT(*) FROM utterances u"
+                            " JOIN episodes e ON e.id = u.episode_id"
+                            " WHERE u.turn_index >= e.reflected_turns"
+                        )
+                    )[0]
+                )
+            )
+
     def _unreflected_blocking(self, limit: int) -> list[tuple[str, int]]:
         with self._db.transaction() as conn:
             rows = conn.execute(

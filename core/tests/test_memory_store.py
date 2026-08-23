@@ -563,3 +563,93 @@ async def test_a_2c_memory_database_gains_memories_without_losing_a_word(tmp_pat
             assert one(conn.execute("SELECT COUNT(*) FROM memory_vectors"))[0] == 0
     finally:
         upgraded.close()
+
+
+async def test_a_superseded_belief_cannot_be_rewritten(rig: Rig) -> None:
+    """★ **One row, one successor.**
+
+    Correcting a belief that has already been replaced would give it a second successor,
+    and `_live_rows` would then return two live beliefs about the same subject — a
+    contradiction Lumi invented by itself, out of the user trying to fix a typo. The
+    history is read-only; the thing to correct is the current belief
+    (docs/architecture/memory.md §8).
+    """
+    await rig.say("u1")
+    original = await rig.store.write(
+        MemoryCandidate(
+            type=MemoryType.SEMANTIC,
+            subject="user.hobby",
+            content="ユーザーは Factorio が好き",
+            assertion_mode=AssertionMode.USER_STATED,
+            provenance_class=ProvenanceClass.TRUSTED,
+            trust_level=TrustLevel.TRUSTED,
+            evidence_ref=("u1",),
+        ),
+        now=NOW,
+    )
+    corrected = await rig.store.rewrite(original.id, content="ユーザーは Rimworld が好き", now=NOW)
+
+    with pytest.raises(MemoryRejected, match="Already superseded"):
+        await rig.store.rewrite(original.id, content="やっぱり Factorio", now=NOW)
+
+    # The successor is still the one to correct, and it still can be.
+    again = await rig.store.rewrite(corrected.id, content="やっぱり Factorio", now=NOW)
+    assert again.content == "やっぱり Factorio"
+
+
+async def test_a_correction_is_confirmed_by_the_hand_that_wrote_it(rig: Rig) -> None:
+    """★ **ADR-043.** A sentence the user typed is not "external, unverified".
+
+    The escalation is the same assignment `confirm()` makes — one site, two callers — and
+    without it a user correcting a tainted memory would watch their own words come back
+    marked as something Lumi picked up from a web page.
+    """
+    await rig.say("u1", trust=TrustLevel.TAINTED, provenance=ProvenanceClass.UNTRUSTED)
+    tainted = await rig.store.write(
+        MemoryCandidate(
+            type=MemoryType.SEMANTIC,
+            subject="user.hobby",
+            content="ユーザーは Factorio が嫌い",
+            assertion_mode=AssertionMode.INFERRED,
+            provenance_class=ProvenanceClass.UNTRUSTED,
+            trust_level=TrustLevel.TAINTED,
+            evidence_ref=("u1",),
+        ),
+        now=NOW,
+    )
+    assert tainted.trust_level is TrustLevel.TAINTED
+
+    corrected = await rig.store.rewrite(tainted.id, content="ユーザーは Factorio が好き", now=NOW)
+
+    assert corrected.assertion_mode is AssertionMode.USER_CONFIRMED
+    assert corrected.trust_level is TrustLevel.TRUSTED
+
+
+async def test_a_page_follows_the_row_it_stopped_at(rig: Rig) -> None:
+    """★ **The cursor is what makes the export a complete copy.**
+
+    `everything_after` is read page by page while the rest of Lumi keeps writing, so a
+    page has to be decided by the row the last one ended on — not by how many rows were
+    in the table then. Here the row the cursor names is superseded between two pages,
+    which changes what is in the table around it: the page after it still contains
+    exactly what had not been read yet.
+    """
+    await rig.say("u1")
+    written = [
+        await rig.store.write(
+            belief(content=f"事実 {index}", subject=f"user.topic{index}"),
+            now=NOW + timedelta(hours=index),
+        )
+        for index in range(4)
+    ]
+
+    first = await rig.store.everything_after(after=None, limit=2)
+    # What the window would be doing meanwhile: correcting the memory the cursor names.
+    await rig.store.rewrite(first[-1].id, content="直した", now=NOW + timedelta(days=1))
+    rest = await rig.store.everything_after(after=first[-1], limit=10)
+
+    assert [record.content for record in first] == ["事実 3", "事実 2"]
+    # Newest first, and the correction — newer than the cursor — is not read twice.
+    assert [record.content for record in rest] == ["事実 1", "事実 0"]
+    assert {record.id for record in first + rest} == {record.id for record in written}
+    assert await rig.store.everything_after(after=rest[-1], limit=10) == []

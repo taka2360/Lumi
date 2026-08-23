@@ -43,11 +43,24 @@ function formatGigabytes(bytes: number, locale: Locale): string {
   return `${(bytes / 1_000_000_000).toFixed(1)} ${translate(locale, "setup.model.gb")}`;
 }
 
+/**
+ * A size in whichever unit keeps it readable.
+ *
+ * The four things Lumi fetches span three orders of magnitude — a 196 MiB embedding model
+ * next to a 6.6 GB language model. **"0.2 GB" next to "6.6 GB" hides that difference**,
+ * and this list exists so people can see where the total comes from.
+ */
+function formatSize(bytes: number, locale: Locale): string {
+  return bytes >= 1_000_000_000
+    ? formatGigabytes(bytes, locale)
+    : `${Math.round(bytes / 1_000_000)} ${translate(locale, "setup.model.mb")}`;
+}
+
 /** What is being asked about. **The subject of consent is never left implicit.** */
 function prompts(
   locale: Locale,
 ): Record<
-  Exclude<SetupComponent, "llm_model">,
+  Exclude<SetupComponent, "llm_model" | "all">,
   { title: string; body: ReactNode; note: ReactNode }
 > {
   return {
@@ -82,6 +95,19 @@ function prompts(
         </>
       ),
       note: translate(locale, "setup.prompt.stt.note"),
+    },
+    embedding: {
+      title: translate(locale, "setup.prompt.embedding.title"),
+      body: (
+        <>
+          {translate(locale, "setup.prompt.embedding.body.before")}
+          <b>Harrier-OSS-v1 270M</b>
+          {translate(locale, "setup.prompt.embedding.body.after")}
+        </>
+      ),
+      // **The one component whose "not now" costs nothing that stops Lumi working.**
+      // Saying so is the difference between an informed decline and a worried one.
+      note: translate(locale, "setup.prompt.embedding.note"),
     },
   };
 }
@@ -143,6 +169,55 @@ export function SetupPanel() {
   }, [checkOllama, ollamaWaiting, prompt, setup.boot]);
 
   if (prompt) {
+    if (prompt.component === "all") {
+      // **One question with the total, before the per-component ones.** Four prompts with
+      // four numbers make the number that actually decides it — the total — the one
+      // nobody is ever shown.
+      return (
+        <div className="panel panel--model-prompt">
+          <h1 className="panel__title">{translate(locale, "setup.prompt.all.title")}</h1>
+          <p className="panel__body">
+            {translate(locale, "setup.prompt.all.body", {
+              size: formatSize(prompt.totalBytes, locale),
+            })}
+          </p>
+          <ul className="panel__fetch-list">
+            {prompt.items.map((item) => (
+              <li key={item.component}>
+                <span className="panel__fetch-name">{item.name}</span>
+                <span className="panel__fetch-size">{formatSize(item.sizeBytes, locale)}</span>
+              </li>
+            ))}
+          </ul>
+          <p className="panel__note">{translate(locale, "setup.prompt.all.note")}</p>
+          <div className="panel__model-options">
+            <button
+              type="button"
+              className="panel__button"
+              onClick={() => answerSetupPrompt("install")}
+            >
+              {translate(locale, "setup.prompt.all.install", {
+                size: formatSize(prompt.totalBytes, locale),
+              })}
+            </button>
+            <button
+              type="button"
+              className="panel__button"
+              onClick={() => answerSetupPrompt("individually")}
+            >
+              {translate(locale, "setup.prompt.all.individually")}
+            </button>
+            <button
+              type="button"
+              className="panel__button"
+              onClick={() => answerSetupPrompt("skip")}
+            >
+              {translate(locale, "setup.skip")}
+            </button>
+          </div>
+        </div>
+      );
+    }
     if (prompt.component === "llm_model") {
       const model = prompt.model;
       return (

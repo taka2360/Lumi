@@ -23,6 +23,7 @@ import {
   CMD_DRAG_START,
   CMD_OPEN_CREDITS,
   CMD_OPEN_OLLAMA_SITE,
+  CMD_OPEN_PANEL,
   CMD_QUIT,
   CMD_SCALE,
   CMD_SET_HIT_REGION,
@@ -32,12 +33,25 @@ import {
 import { CMD_CORE_ENDPOINT, EVENT_CORE_ENDPOINT } from "./connection";
 import {
   CHARACTER_MODEL_REASONS,
+  CHOICE_INDIVIDUALLY,
   CHOICE_INSTALL,
   CHOICE_SELECT,
   CHOICE_SKIP,
   METHOD_EXPRESSION,
-  METHOD_INSPECTOR,
+  METHOD_MIC,
+  METHOD_MIC_MUTE,
   METHOD_MODEL,
+  METHOD_PANEL_INSPECTOR,
+  METHOD_PANEL_MEMORY,
+  METHOD_PANEL_MEMORY_CONFIRM,
+  METHOD_PANEL_MEMORY_EDIT,
+  METHOD_PANEL_MEMORY_ERASE,
+  METHOD_PANEL_MEMORY_ERASE_PREVIEW,
+  METHOD_PANEL_MEMORY_EXPORT,
+  METHOD_PANEL_MEMORY_FORGET,
+  METHOD_PANEL_MEMORY_SEARCH,
+  METHOD_PANEL_SETTINGS,
+  METHOD_PANEL_SETTINGS_UPDATE,
   METHOD_SETTINGS,
   METHOD_SETTINGS_UPDATE,
   METHOD_SETUP_PROMPT,
@@ -46,6 +60,7 @@ import {
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
   METHOD_USER_SAID,
+  PANEL_KINDS,
 } from "./methods";
 import {
   BOOT_PHASES,
@@ -60,10 +75,16 @@ import { PROTOCOL_VERSION } from "./protocol";
 
 interface Wire {
   protocol_version: number;
-  methods: { stage: string[]; os: string[] };
-  setup_prompt_choices: { install: string; skip: string; select: string };
+  methods: { stage: string[]; panel: string[]; os: string[] };
+  setup_prompt_choices: {
+    install: string;
+    skip: string;
+    select: string;
+    individually: string;
+  };
   tauri_events: { hover_state: string; core_endpoint: string };
   tauri_commands: string[];
+  window_labels: string[];
   enums: {
     tts_setup_state: string[];
     engine_runtime: string[];
@@ -73,6 +94,7 @@ interface Wire {
     settings_source: string[];
     emotion: string[];
     viseme: string[];
+    panel_kind: string[];
   };
   setup_components: string[];
   character_model_reasons: string[];
@@ -101,11 +123,29 @@ describe("wire contract", () => {
         METHOD_SPEECH_ENDED,
         METHOD_USER_SAID,
         METHOD_EXPRESSION,
-        METHOD_INSPECTOR,
         METHOD_SETTINGS,
         METHOD_MODEL,
+        METHOD_MIC,
       ]),
     ).toEqual(new Set(wire.methods.stage));
+  });
+
+  it("panel's method names", () => {
+    // ★ **A separate list carried over a separate connection** (ADR-042). The inspector
+    // stream used to share the character's connection; it does not any more, and the two
+    // lists being separate here is what keeps that true.
+    expect(new Set([METHOD_PANEL_SETTINGS, METHOD_PANEL_INSPECTOR, METHOD_PANEL_MEMORY])).toEqual(
+      new Set(wire.methods.panel),
+    );
+  });
+
+  it("the windows the Stage may ask Shell to open", () => {
+    // **Shell holds the same three.** A kind here that Shell does not know opens nothing
+    // and only says so in the log, which looks exactly like a dead button.
+    expect([...PANEL_KINDS]).toEqual(wire.enums.panel_kind);
+    for (const kind of PANEL_KINDS) {
+      expect(wire.window_labels).toContain(kind);
+    }
   });
 
   it("os.* method names never appear in the Stage", () => {
@@ -118,8 +158,8 @@ describe("wire contract", () => {
       METHOD_SPEECH_ENDED,
       METHOD_USER_SAID,
       METHOD_EXPRESSION,
-      METHOD_INSPECTOR,
       METHOD_SETTINGS,
+      METHOD_MIC,
     ];
     for (const method of wire.methods.os) {
       expect(stageConstants).not.toContain(method);
@@ -130,7 +170,19 @@ describe("wire contract", () => {
     // ★ **The Stage → Core direction** (ADR-028). The real allowlist is Core's registry;
     // this pins the Stage's constant against the same contract, so a rename on one side
     // fails here instead of turning into a silent `unknown_method` at runtime.
-    expect([METHOD_SETTINGS_UPDATE, METHOD_SETUP_RECHECK_OLLAMA]).toEqual(wire.inbound_methods);
+    expect([
+      METHOD_SETTINGS_UPDATE,
+      METHOD_SETUP_RECHECK_OLLAMA,
+      METHOD_MIC_MUTE,
+      METHOD_PANEL_SETTINGS_UPDATE,
+      METHOD_PANEL_MEMORY_SEARCH,
+      METHOD_PANEL_MEMORY_EDIT,
+      METHOD_PANEL_MEMORY_FORGET,
+      METHOD_PANEL_MEMORY_CONFIRM,
+      METHOD_PANEL_MEMORY_EXPORT,
+      METHOD_PANEL_MEMORY_ERASE_PREVIEW,
+      METHOD_PANEL_MEMORY_ERASE,
+    ]).toEqual(wire.inbound_methods);
   });
 
   it("what a fetch question can be about", () => {
@@ -147,9 +199,12 @@ describe("wire contract", () => {
   });
 
   it("the fetch-or-not choices", () => {
-    expect({ install: CHOICE_INSTALL, skip: CHOICE_SKIP, select: CHOICE_SELECT }).toEqual(
-      wire.setup_prompt_choices,
-    );
+    expect({
+      install: CHOICE_INSTALL,
+      skip: CHOICE_SKIP,
+      select: CHOICE_SELECT,
+      individually: CHOICE_INDIVIDUALLY,
+    }).toEqual(wire.setup_prompt_choices);
   });
 
   it("Tauri event names", () => {
@@ -172,6 +227,7 @@ describe("wire contract", () => {
         CMD_OPEN_CREDITS,
         CMD_OPEN_OLLAMA_SITE,
         CMD_QUIT,
+        CMD_OPEN_PANEL,
       ]),
     ).toEqual(new Set(wire.tauri_commands));
   });

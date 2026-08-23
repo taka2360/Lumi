@@ -6,11 +6,10 @@
 
 ## 現在の状態
 
-**Phase 2（Memory）。2a / 2c / 2d / 2e / 2f 完了（埋め込みモデルの取得 UI は 2g）。2b（投機 STT）は実装完了・実測は未取得。** 設計は rev.20 まで完了し承認済み。
+**Phase 2（Memory）は 2a〜2g すべて実装済み。ただし 2b（投機 STT）の実測が未取得で、[roadmap.md](docs/roadmap.md) の完了条件はまだ満たしていない。** 設計は rev.23 まで完了し承認済み。
 コードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
 
-Phase 2 は 2a〜2g に分けてある（[docs/roadmap.md](docs/roadmap.md)）。**次は 2g（記憶 UI・全消去）で Phase 2 が閉じる。**
-破棄率・`stt_overlap_ms` は**実際に喋らないと出ない**ため、2b は実測が残っている。
+**Phase 3 に進む前に 2b の実測を取る。** 破棄率・`stt_overlap_ms` は**実際に喋らないと出ない**——それが残っている唯一の理由であり、コードの不足ではない。
 実測値 → [docs/measurements/phase2.md](docs/measurements/phase2.md) / [docs/measurements/phase1.md](docs/measurements/phase1.md)
 
 ## リポジトリ構成

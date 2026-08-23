@@ -41,7 +41,8 @@ from __future__ import annotations
 import asyncio
 import time
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from enum import StrEnum
 from typing import TypeVar
 
 from lumi import logging as lumi_logging
@@ -55,7 +56,12 @@ from lumi.setup.install import (
     install_model,
     is_model_installed,
 )
-from lumi.setup.models import FASTER_WHISPER_LARGE_V3_TURBO, STT_MODELS, ModelArtifact
+from lumi.setup.models import (
+    FASTER_WHISPER_LARGE_V3_TURBO,
+    HARRIER_OSS_V1_270M,
+    STT_MODELS,
+    ModelArtifact,
+)
 from lumi.setup.ollama import (
     OLLAMA_MODELS,
     QWEN_35_9B,
@@ -68,6 +74,8 @@ from lumi.setup.ollama import (
 )
 from lumi.setup.state import (
     BootPhase,
+    EmbeddingSetup,
+    EmbeddingSetupState,
     EngineRuntime,
     LlmSetup,
     LlmSetupState,
@@ -79,8 +87,11 @@ from lumi.setup.state import (
     boot_phase,
 )
 from lumi.transport.methods import (
+    CHOICE_INDIVIDUALLY,
     CHOICE_INSTALL,
     CHOICE_SELECT,
+    COMPONENT_ALL,
+    COMPONENT_EMBEDDING,
     COMPONENT_LLM_MODEL,
     COMPONENT_STT,
     COMPONENT_TTS,
@@ -123,6 +134,33 @@ def selected_stt_artifact(env: Mapping[str, str]) -> ModelArtifact | None:
     if artifact is None:
         log.warning("setup.stt.unpinned_model", model=name, pinned=sorted(STT_MODELS))
     return artifact
+
+
+@dataclass(frozen=True, slots=True)
+class MissingComponent:
+    """One thing that is not on this machine yet, and what fetching it would cost."""
+
+    component: str
+    #: What to call it on screen. **Not translated** — it is a product name (AivisSpeech,
+    #: `harrier-oss-v1-270m`), and translating a name makes it unsearchable.
+    name: str
+    size_bytes: int
+
+    def to_payload(self) -> dict[str, object]:
+        return {"component": self.component, "name": self.name, "size_bytes": self.size_bytes}
+
+
+class BulkAnswer(StrEnum):
+    """What the user said to "fetch everything missing?".
+
+    **`DECLINED` and `UNANSWERED` are different.** One is a decision to keep for this
+    session; the other is nobody being there, which means asking again next start.
+    """
+
+    ALL = "all"
+    INDIVIDUALLY = "individually"
+    DECLINED = "declined"
+    UNANSWERED = "unanswered"
 
 
 class SetupCoordinator:
@@ -187,6 +225,7 @@ class SetupCoordinator:
             tts=await self._detect_tts(),
             llm=await self._detect_llm(),
             stt=await asyncio.to_thread(self._detect_stt),
+            embedding=await asyncio.to_thread(self._detect_embedding),
         )
         await self._broadcast()
 
@@ -319,6 +358,16 @@ class SetupCoordinator:
             model=artifact.name,
         )
 
+    def _detect_embedding(self) -> EmbeddingSetup:
+        """Whether the embedding model is on disk (ADR-041). **A file check, like STT's.**"""
+        installed = is_model_installed(HARRIER_OSS_V1_270M, paths.embedding_models_dir())
+        return EmbeddingSetup(
+            state=(
+                EmbeddingSetupState.INSTALLED if installed else EmbeddingSetupState.NOT_CONFIGURED
+            ),
+            model=HARRIER_OSS_V1_270M.name,
+        )
+
     # ── Broadcasting ──────────────────────────────────────────────
 
     async def _update(
@@ -327,12 +376,14 @@ class SetupCoordinator:
         tts: TtsSetup | None = None,
         llm: LlmSetup | None = None,
         stt: SttSetup | None = None,
+        embedding: EmbeddingSetup | None = None,
     ) -> None:
         """Replaces one component and broadcasts. **The single exit point for state changes.**"""
         self._snapshot = SetupSnapshot(
             tts=tts if tts is not None else self._snapshot.tts,
             llm=llm if llm is not None else self._snapshot.llm,
             stt=stt if stt is not None else self._snapshot.stt,
+            embedding=embedding if embedding is not None else self._snapshot.embedding,
         )
         await self._broadcast()
 
@@ -551,9 +602,24 @@ class SetupCoordinator:
             return
         self._prompting = True
         try:
+            # **One question before the per-component ones.** Being asked four times in a
+            # row, each with its own size, makes the total impossible to see — and the
+            # total is the number someone actually decides on.
+            answer = await self._ask_for_everything()
+            if answer is BulkAnswer.UNANSWERED:
+                return
+            if answer is BulkAnswer.DECLINED:
+                # "Not now" for the whole set. **Asking the same thing again per component
+                # would make the first answer meaningless.**
+                return
+            if answer is BulkAnswer.ALL:
+                await self._install_everything()
+                return
             if await self._ask_for_tts():
                 return
-            await self._ask_for_stt()
+            if await self._ask_for_stt():
+                return
+            await self._ask_for_embedding()
         finally:
             self._prompting = False
             self._awaiting_answer = False
@@ -583,6 +649,137 @@ class SetupCoordinator:
             failed=lambda: self._snapshot.stt.state is SttSetupState.FAILED,
             reason=lambda: self._snapshot.stt.reason,
         )
+
+    async def _ask_for_embedding(self) -> bool:
+        """The embedding model (ADR-041). **Asked last, and never blocking.**
+
+        Declining it costs similarity search and nothing else, so this is the one setup
+        question whose "not now" leaves Lumi fully usable — which is also why it is asked
+        after the three that do not.
+        """
+        if self._snapshot.embedding.state is not EmbeddingSetupState.NOT_CONFIGURED:
+            return False
+        return await self._ask_and_maybe_install(
+            component=COMPONENT_EMBEDDING,
+            install=self.install_embedding_model,
+            failed=lambda: self._snapshot.embedding.state is EmbeddingSetupState.FAILED,
+            reason=lambda: self._snapshot.embedding.reason,
+        )
+
+    def _missing_components(self) -> list[MissingComponent]:
+        """What is not on this machine yet, with what each would cost to fetch.
+
+        **Ollama itself is never in here.** Lumi does not install it (ADR-023), so listing
+        it under a button that fetches things would promise something this cannot do.
+        """
+        missing: list[MissingComponent] = []
+        if self._snapshot.tts.state is TtsSetupState.NOT_CONFIGURED:
+            missing.append(
+                MissingComponent(
+                    component=COMPONENT_TTS,
+                    name=AIVISSPEECH_ENGINE.display_name,
+                    size_bytes=AIVISSPEECH_ENGINE.size,
+                )
+            )
+        stt_artifact = selected_stt_artifact(self._env)
+        if self._snapshot.stt.state is SttSetupState.NOT_CONFIGURED and stt_artifact is not None:
+            missing.append(
+                MissingComponent(
+                    component=COMPONENT_STT,
+                    name=stt_artifact.name,
+                    size_bytes=stt_artifact.size,
+                )
+            )
+        # **Only when Ollama is there to fetch it into.** Offering to download a 6.6 GB
+        # model that nothing can receive is worse than not offering.
+        # **One lookup, and no `assert` to narrow it.** `assert` disappears under `-O`,
+        # which would turn a missing model into an `AttributeError` in the one build where
+        # nobody is watching.
+        recommended = self._recommended_llm()
+        if self._snapshot.llm.state is LlmSetupState.MODEL_MISSING and recommended is not None:
+            missing.append(
+                MissingComponent(
+                    component=COMPONENT_LLM_MODEL,
+                    name=recommended.display_name,
+                    size_bytes=recommended.size_bytes,
+                )
+            )
+        if self._snapshot.embedding.state is EmbeddingSetupState.NOT_CONFIGURED:
+            missing.append(
+                MissingComponent(
+                    component=COMPONENT_EMBEDDING,
+                    name=HARRIER_OSS_V1_270M.name,
+                    size_bytes=HARRIER_OSS_V1_270M.size,
+                )
+            )
+        return missing
+
+    def _recommended_llm(self) -> OllamaModelArtifact | None:
+        return OLLAMA_MODELS.get(self._snapshot.llm.model or "", QWEN_35_9B)
+
+    async def _ask_for_everything(self) -> BulkAnswer:
+        """Offers to fetch everything missing at once, with the total.
+
+        **Skipped when there is nothing to fetch**, rather than asked and answered with an
+        empty list — a consent dialog for zero bytes teaches people to dismiss consent
+        dialogs.
+
+        The answer is one of three, and "individually" is not the same as "no": it means
+        the user wants to decide per item, which is what the existing per-component
+        questions are for.
+        """
+        missing = self._missing_components()
+        if not missing:
+            return BulkAnswer.INDIVIDUALLY
+        self._awaiting_answer = True
+        await self._broadcast()
+        try:
+            result = await self._server.invoke(
+                Role.STAGE,
+                METHOD_SETUP_PROMPT,
+                {
+                    "component": COMPONENT_ALL,
+                    "retry": False,
+                    "reason": None,
+                    "items": [item.to_payload() for item in missing],
+                    "total_bytes": sum(item.size_bytes for item in missing),
+                },
+                timeout=PROMPT_TIMEOUT_S,
+            )
+        except (NotConnectedError, TimeoutError):
+            log.info("setup.prompt.unanswered", component=COMPONENT_ALL)
+            return BulkAnswer.UNANSWERED
+        finally:
+            self._awaiting_answer = False
+
+        choice = result.payload.get("choice") if result.ok else None
+        log.info("setup.prompt.answered", component=COMPONENT_ALL, choice=choice)
+        if choice == CHOICE_INSTALL:
+            return BulkAnswer.ALL
+        if choice == CHOICE_INDIVIDUALLY:
+            return BulkAnswer.INDIVIDUALLY
+        # **Anything unrecognised is "not now"** (fail-closed): nothing is fetched.
+        return BulkAnswer.DECLINED
+
+    async def _install_everything(self) -> None:
+        """Fetches everything the bulk question listed, in order.
+
+        **A failure does not stop the rest.** Each component reports its own state, and
+        abandoning the remaining three because one distributor had a bad minute would turn
+        one retry into four.
+        """
+        for item in self._missing_components():
+            component = item.component
+            if component == COMPONENT_TTS:
+                await self.install_tts_engine()
+            elif component == COMPONENT_STT:
+                await self.install_speech_model()
+            elif component == COMPONENT_LLM_MODEL:
+                recommended = self._recommended_llm()
+                if recommended is not None:
+                    await self.install_llm_model(recommended)
+            elif component == COMPONENT_EMBEDDING:
+                await self.install_embedding_model()
 
     async def _ask_and_maybe_install(
         self,
@@ -876,6 +1073,43 @@ class SetupCoordinator:
         )
         if self._on_ollama_detected is not None:
             self._on_ollama_detected()
+
+    async def install_embedding_model(self) -> None:
+        """Fetches the embedding model (ADR-041). **The same rules as every other fetch**
+        (pinned URL + size + SHA-256 + atomic install + rollback → setup.md §3b).
+
+        **Nothing waits for this.** The index picks the Provider up on the next pass; a
+        Lumi that had already started stays running, with search improving once it lands.
+        """
+        artifact = HARRIER_OSS_V1_270M
+        await self._update(
+            embedding=EmbeddingSetup(
+                state=EmbeddingSetupState.INSTALLING, model=artifact.name, progress=0.0
+            )
+        )
+
+        async def progress(fraction: float) -> None:
+            await self._update(embedding=replace(self._snapshot.embedding, progress=fraction))
+
+        async def fail(reason: str) -> None:
+            await self._update(
+                embedding=EmbeddingSetup(
+                    state=EmbeddingSetupState.FAILED, model=artifact.name, reason=reason
+                )
+            )
+
+        async def fetch() -> str:
+            await install_model(
+                artifact, paths.embedding_models_dir(), progress=self._throttled(progress)
+            )
+            return artifact.name
+
+        if await self._install(event="setup.embedding", run=fetch, fail=fail) is None:
+            return
+
+        await self._update(
+            embedding=EmbeddingSetup(state=EmbeddingSetupState.INSTALLED, model=artifact.name)
+        )
 
     async def install_speech_model(self) -> None:
         """Fetches the speech-recognition model. **The same rules as the engine**

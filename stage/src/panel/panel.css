@@ -1,0 +1,265 @@
+/**
+ * The panel windows (ADR-042).
+ *
+ * **Opaque, unlike the Stage.** These are ordinary windows the user arranges and reads;
+ * the transparency that makes the character sit on the desktop would make a table of
+ * settings unreadable over whatever happens to be behind it.
+ */
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  background: #14161b;
+  color: #e8eaed;
+  font-family: "Segoe UI", "Hiragino Kaku Gothic ProN", "Noto Sans JP", system-ui, sans-serif;
+  font-size: 14px;
+}
+
+.panel-window {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+.panel-window__bar {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-bottom: 1px solid #262a33;
+  background: #191c22;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+.panel-window__title {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.panel-window__link {
+  font-size: 12px;
+}
+
+.panel-window__link--up {
+  color: #7fd18b;
+}
+
+/* **Not a quiet grey.** An edit made while disconnected goes nowhere, so this has to
+   read as a problem rather than as a status. */
+.panel-window__link--down {
+  color: #ffab6b;
+}
+
+.panel-window__body {
+  flex: 1;
+  padding: 16px 18px 24px;
+}
+
+.panel-window__body button {
+  font: inherit;
+  color: inherit;
+  background: #23272f;
+  border: 1px solid #333944;
+  border-radius: 6px;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.panel-window__body button:hover:not(:disabled) {
+  background: #2c313b;
+}
+
+.panel-window__body button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.panel-window__body input,
+.panel-window__body select,
+.panel-window__body textarea {
+  font: inherit;
+  color: inherit;
+  background: #1b1f26;
+  border: 1px solid #333944;
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+.settings__table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.settings__table th {
+  text-align: left;
+  font-weight: 500;
+  padding: 6px 12px 6px 0;
+  white-space: nowrap;
+  vertical-align: middle;
+}
+
+.settings__table td {
+  padding: 6px 12px 6px 0;
+}
+
+.settings__src {
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+.settings__src--env {
+  color: #ffab6b;
+  opacity: 1;
+}
+
+/* ── Memory ─────────────────────────────────────────────── */
+
+.memory__controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.memory__search {
+  flex: 1;
+}
+
+.memory__toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.memory__count {
+  font-size: 12px;
+  opacity: 0.7;
+  margin: 0 0 8px;
+}
+
+.memory__list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.memory__row {
+  border: 1px solid #262a33;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #181b21;
+}
+
+/* What Lumi used to believe. **Dimmed, not hidden** — it is still true about the past. */
+.memory__row--old {
+  opacity: 0.6;
+}
+
+.memory__head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.memory__subject {
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+  font-size: 12px;
+  color: #8fb7ff;
+}
+
+.memory__mode,
+.memory__flag {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+/* **Untrusted provenance is never quiet.** Invariant 7 exists because a memory made of
+   outside text can look exactly like one the user said. */
+.memory__taint {
+  font-size: 11px;
+  color: #ffab6b;
+}
+
+.memory__content {
+  margin: 0 0 6px;
+  line-height: 1.5;
+}
+
+.memory__editor {
+  width: 100%;
+  min-height: 60px;
+  resize: vertical;
+  margin-bottom: 6px;
+}
+
+.memory__meta {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  opacity: 0.6;
+  margin-bottom: 8px;
+}
+
+.memory__actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* Selector specificity rather than `!important`: this has to beat `.panel-window__body
+   button`, which is one class plus an element. */
+.panel-window__body button.memory__danger {
+  border-color: #5a2b2b;
+  color: #ff9c9c;
+}
+
+.memory__footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  border-top: 1px solid #262a33;
+  margin-top: 16px;
+  padding-top: 12px;
+}
+
+.memory__warning {
+  font-size: 11px;
+  opacity: 0.7;
+  flex: 1;
+}
+
+.memory__erase {
+  position: fixed;
+  inset: 10% 12%;
+  overflow: auto;
+  background: #1b1f26;
+  border: 1px solid #3a3040;
+  border-radius: 10px;
+  padding: 20px 24px;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 60%);
+}
+
+.memory__erase h2 {
+  margin-top: 0;
+  font-size: 15px;
+}
+
+.memory__erase ul {
+  margin: 0 0 12px;
+  padding-left: 20px;
+}

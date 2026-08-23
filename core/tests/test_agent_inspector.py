@@ -28,7 +28,7 @@ from lumi.kernel.event import DomainEvent, EventBus
 from lumi.kernel.ids import new_activity_id, new_correlation_id, new_event_id
 from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
 from lumi.storage.sqlite import IN_MEMORY, Database
-from lumi.transport.methods import METHOD_INSPECTOR
+from lumi.transport.methods import METHOD_PANEL_INSPECTOR
 from lumi.transport.protocol import Role
 
 
@@ -38,8 +38,9 @@ class FakeNotifier:
         self._delay = delay
 
     async def notify(self, role: Role, method: str, payload: dict[str, Any] | None = None) -> None:
-        assert role is Role.STAGE
-        assert method == METHOD_INSPECTOR
+        # **Not the character's connection any more** (ADR-042).
+        assert role is Role.PANEL
+        assert method == METHOD_PANEL_INSPECTOR
         if self._delay:
             await asyncio.sleep(self._delay)
         self.sent.append(payload or {})

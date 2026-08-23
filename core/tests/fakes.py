@@ -37,7 +37,7 @@ from lumi.providers.base import (
 from lumi.setup import coordinator as coordinator_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
-from lumi.transport.protocol import Role
+from lumi.transport.protocol import NAMESPACE_BY_ROLE, Role
 from lumi.transport.server import WsServer
 
 
@@ -51,12 +51,24 @@ class FakeServer:
         self.inbound: dict[str, Any] = {}
         #: Every settings payload broadcast. **Changing one has to reach everybody**
         self.settings: list[dict[str, Any]] = []
+        #: What went to the panel windows (ADR-042), by method.
+        self.panel: list[tuple[str, dict[str, Any]]] = []
+        #: The latest microphone state the character window was told.
+        self.mic: list[dict[str, Any]] = []
 
     def on_request(self, method: str, handler: Any) -> None:
         self.inbound[method] = handler
 
     async def notify(self, role: Role, method: str, payload: dict[str, Any] | None = None) -> None:
-        assert role is Role.STAGE
+        # **The namespace has to match the role**, exactly as the real server checks it:
+        # a fake that accepted anything would let a misaddressed notify pass here and
+        # fail only in front of a user.
+        assert method.startswith(NAMESPACE_BY_ROLE[role])
+        if role is Role.PANEL:
+            self.panel.append((method, payload or {}))
+            return
+        if method == "stage.audio.mic" and payload is not None:
+            self.mic.append(payload)
         if method == "stage.setup.state" and payload is not None:
             self.boots.append(str(payload["boot"]))
             self.stt_runtimes.append(str(payload["stt"]["runtime"]))

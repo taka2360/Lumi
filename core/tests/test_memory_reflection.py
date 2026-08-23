@@ -21,13 +21,14 @@ import pytest
 from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.cancellation import CancelToken
 from lumi.kernel.event import EventBus
-from lumi.memory.decay import WEIGHT_EXPLICIT, WEIGHT_LLM
+from lumi.memory.decay import WEIGHT_EXPLICIT, WEIGHT_LLM, WEIGHT_NOVELTY
 from lumi.memory.records import AssertionMode, MemoryType
 from lumi.memory.reflection import (
     CANDIDATE_LIMIT,
     EXTRACTION_SYSTEM,
     ReflectionJob,
     ReflectionRejected,
+    asked_to_remember,
     build_messages,
     explicit_marking,
     parse_extractions,
@@ -266,7 +267,6 @@ def test_an_extractor_cannot_claim_the_user_confirmed_it() -> None:
             },
             lines={"u1": said("u1", "やあ")},
             episode_id="e1",
-            now=NOW,
         )
 
 
@@ -279,7 +279,6 @@ def test_evidence_that_is_not_in_the_transcript_is_refused() -> None:
             {"subject": "s", "content": "c", "assertion_mode": "inferred", "evidence": ["nope"]},
             lines={"u1": said("u1", "やあ")},
             episode_id="e1",
-            now=NOW,
         )
 
 
@@ -296,7 +295,6 @@ def test_a_belief_from_tainted_speech_is_derived() -> None:
             )
         },
         episode_id="e1",
-        now=NOW,
     )
 
     assert candidate.trust_level is TrustLevel.TAINTED
@@ -308,7 +306,6 @@ def test_a_belief_from_ordinary_conversation_is_not_tainted() -> None:
         {"subject": "s", "content": "c", "assertion_mode": "user_stated", "evidence": ["u1"]},
         lines={"u1": said("u1", "やあ")},
         episode_id="e1",
-        now=NOW,
     )
 
     assert candidate.trust_level is TrustLevel.TRUSTED
@@ -329,7 +326,6 @@ def test_the_models_own_salience_is_only_part_of_the_answer() -> None:
         },
         lines={"u1": said("u1", "やあ")},
         episode_id="e1",
-        now=NOW,
     )
 
     assert candidate.base_salience == pytest.approx(WEIGHT_LLM + 0.10 / 5 * 1)
@@ -347,13 +343,11 @@ def test_being_asked_to_remember_is_counted_not_judged() -> None:
         {"subject": "s", "content": "c", "assertion_mode": "user_stated", "evidence": ["u1"]},
         lines={"u1": said("u1", "誕生日は6月。覚えておいて")},
         episode_id="e1",
-        now=NOW,
     )
     plain = to_candidate(
         {"subject": "s", "content": "c", "assertion_mode": "user_stated", "evidence": ["u1"]},
         lines={"u1": said("u1", "誕生日は6月")},
         episode_id="e1",
-        now=NOW,
     )
 
     assert marked.base_salience - plain.base_salience == pytest.approx(WEIGHT_EXPLICIT)
@@ -368,10 +362,24 @@ def test_a_belief_is_dated_from_when_it_was_said() -> None:
         {"subject": "s", "content": "c", "assertion_mode": "user_stated", "evidence": ["u1"]},
         lines={"u1": said("u1", "やあ", when=spoken)},
         episode_id="e1",
-        now=NOW,
     )
 
     assert candidate.valid_from == spoken
+
+
+def test_asking_to_be_remembered_is_recognised() -> None:
+    """★ **The same list decides the trigger and the salience** (`explicit_marking`).
+
+    Two lists would let Lumi treat a sentence as important without it having been enough
+    to make it think, or the other way round — and the second is 「覚えておいて」 being
+    heard and quietly ignored, which is the failure people actually notice.
+    """
+    assert asked_to_remember("ミケって呼ぶつもり。あ、これ覚えておいて")
+    assert asked_to_remember("remember this: the key is under the mat")
+    assert not asked_to_remember("今日は Rust を書いていた")
+
+    # The same sentence, through the salience path. **One list, two readers.**
+    assert explicit_marking([said("u1", "ミケって呼ぶつもり。あ、これ覚えておいて")])
 
 
 # ── A whole pass ─────────────────────────────────────────────
@@ -389,6 +397,32 @@ async def test_a_conversation_becomes_a_memory(rig: Rig) -> None:
     assert [record.content for record in live] == ["ユーザーは Factorio が好き"]
     assert live[0].assertion_mode is AssertionMode.USER_STATED
     assert live[0].evidence_ref == ("u1",)
+
+
+async def test_a_subject_nobody_has_mentioned_before_counts_as_novel(rig: Rig) -> None:
+    """★ `novelty` is an observation, and the store is the only thing that can make it.
+
+    Left unsupplied it defaulted to 0.0 forever, which is not "we did not look" but
+    "nothing here is new" — **every extracted memory started 0.15 short and faded sooner
+    than the design says it should.**
+    """
+    rig.llm._answers = [extraction()]
+    await rig.conversation(said("u1", "Factorio 好きなんだ"))
+    await rig.job.run()
+    first = (await rig.store.live("user.hobby"))[0].base_salience
+
+    rig.llm._answers = [extraction(content="ユーザーは Factorio に飽きた", evidence=["u2"])]
+    await rig.episodes.append(said("u2", "飽きたかも", turn=1))
+    await rig.job.run()
+    # Superseding leaves a contradiction note live alongside the new belief, so ask for
+    # the one we extracted rather than whichever the ordering puts first.
+    second = next(
+        record.base_salience
+        for record in await rig.store.live("user.hobby")
+        if record.content == "ユーザーは Factorio に飽きた"
+    )
+
+    assert second == pytest.approx(first - WEIGHT_NOVELTY)
 
 
 async def test_the_same_conversation_is_not_extracted_twice(rig: Rig) -> None:

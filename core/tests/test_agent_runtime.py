@@ -93,6 +93,13 @@ class TestAssembly:
             def can_listen(self) -> bool:
                 return True
 
+            @property
+            def input_muted(self) -> bool:
+                # **Part of the interface `AudioIO` stands in for here.** The runtime
+                # announces the microphone state as soon as the stream opens, and a fake
+                # missing this made `start()` raise where the test could only see a hang.
+                return False
+
             async def start(self) -> None:
                 timeline.append("audio.start")
                 self.started = True
@@ -420,6 +427,46 @@ class TestReflection:
         finally:
             await runtime.stop()
 
+    async def test_being_asked_to_remember_shortens_the_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ 「覚えておいて」 is answered while it still means something.
+
+        **It does not skip the wait, it shortens it.** Reflection takes an inference lease,
+        so starting one the instant the phrase is heard would put the extraction in
+        contention with the reply to the sentence that asked for it.
+        """
+        runtime = await self._runtime(monkeypatch)
+        ran = asyncio.Event()
+
+        class Reflecting:
+            def __init__(self, **_kwargs: Any) -> None: ...
+
+            async def run(self) -> Any:
+                ran.set()
+                return type("Report", (), {"learned": 0})()
+
+        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        # Long enough that the ordinary trigger cannot be what fires.
+        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(days=1))
+        monkeypatch.setattr(runtime_module, "REFLECTION_ASKED_IDLE_AFTER", timedelta(0))
+        monkeypatch.setattr(
+            runtime_module, "OllamaProvider", lambda _model: FakeTts(kind=ProviderKind.LLM)
+        )
+        try:
+            await runtime.start()
+            assert runtime._loop is not None
+            await asyncio.sleep(0.02)
+            assert not ran.is_set()
+
+            runtime._loop._asked_to_remember = True
+
+            async with asyncio.timeout(2):
+                await ran.wait()
+        finally:
+            await runtime.stop()
+
     async def test_an_engine_that_is_not_up_is_not_a_crash(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -581,3 +628,66 @@ class TestSettingsUpdate:
             await server.inbound["stage.settings.update"]({"changes": {"llm_model": "x"}})
 
         assert broken.read_text(encoding="utf-8") == "{ broken"
+
+
+class TestPanelWindows:
+    """★ **A window that opens later has missed every broadcast so far** (ADR-042)."""
+
+    async def _runtime(self, monkeypatch: pytest.MonkeyPatch) -> tuple[ConversationRuntime, Any]:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+        return runtime, server
+
+    async def test_a_panel_that_connects_is_given_the_current_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The bug this exists to prevent: **the settings window waiting forever.**
+
+        Core broadcasts on change, which is exactly the wrong shape for a window opened
+        afterwards — it sits showing "waiting for settings" while the settings it is
+        waiting for were sent before it existed.
+        """
+        runtime, server = await self._runtime(monkeypatch)
+        await runtime._arbiter.start()
+
+        await runtime.on_panel_connected()
+
+        sent = [method for method, _payload in server.panel]
+        assert "panel.settings.state" in sent
+        assert "panel.inspector.state" in sent
+
+    async def test_the_settings_reach_the_character_window_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**`locale` lives in the same snapshot.** Sending it only to the panels would
+        leave the bubble in the language the app started in (ADR-042).
+        """
+        runtime, server = await self._runtime(monkeypatch)
+
+        await runtime.on_panel_connected()
+
+        assert server.settings, "the character window was not sent the settings"
+        assert [method for method, _payload in server.panel].count("panel.settings.state") == 1
+
+    async def test_a_failing_snapshot_does_not_take_the_connection_down(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A window can open before the Arbiter is running. **Worth a log line, not a
+        raise** — the next change reaches it anyway.
+        """
+        runtime, server = await self._runtime(monkeypatch)
+
+        async def explode(_self: Any) -> None:
+            raise RuntimeError("not ready")
+
+        # `InspectorPublisher` has `__slots__`, so the class is what can be patched.
+        monkeypatch.setattr(type(runtime._inspector), "publish", explode)
+
+        await runtime.on_panel_connected()
+
+        assert [method for method, _payload in server.panel] == ["panel.settings.state"]

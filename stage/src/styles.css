@@ -334,7 +334,10 @@ body {
    something Lumi said. */
 .bubble--user {
   top: auto;
-  bottom: 8px;
+  /* Clears the microphone control, which sits in this corner and must stay reachable
+     (docs/architecture/ui.md §5b). The bubble comes and goes; the microphone does not,
+     so the bubble is the one that moves. */
+  bottom: 42px;
   left: auto;
   right: 8px;
   transform: none;
@@ -435,13 +438,22 @@ body {
   font-size: 10px;
 }
 
+/* Icon-only, so the row stays smaller than the character it floats over
+   (docs/architecture/ui.md §1). A square target rather than a text-shaped one: the glyph
+   has no width to speak of, and a 12px button is not something anyone can hit. */
 .app-actions__button {
-  padding: 2px 6px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 6px;
   background: rgba(12, 15, 22, 0.85);
   color: inherit;
   font: inherit;
+  font-size: 14px;
+  line-height: 1;
   cursor: pointer;
 }
 
@@ -615,4 +627,89 @@ body {
   min-width: 28px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── Microphone (docs/architecture/ui.md §5b) ───────────────────────────────
+   **Always on screen, always in the hit region.** Everything else on this window appears
+   on hover; whether the microphone is open is not something the user should have to go
+   looking for, and a control that hides itself is one they cannot reach in the second
+   they want it. */
+.mic-anchor {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  z-index: 3;
+}
+
+.mic {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(12, 15, 22, 0.85);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+/* Open is the state worth noticing. **Not a subtle tint** — this is the only thing on
+   screen that says the room is being listened to. */
+.mic--open {
+  border-color: rgba(126, 209, 139, 0.75);
+  box-shadow: 0 0 0 2px rgba(126, 209, 139, 0.18);
+}
+
+.mic--muted {
+  opacity: 0.75;
+  border-color: rgba(255, 171, 107, 0.6);
+}
+
+/* No microphone at all. **Visibly different from muted**: the user did not do this, and
+   nothing they press here will change it. */
+.mic--off {
+  opacity: 0.45;
+  cursor: default;
+}
+
+/* Opens to the left, because the button sits against the right edge. */
+.mic__error {
+  position: absolute;
+  right: 34px;
+  white-space: nowrap;
+  font-size: 10px;
+  color: #ffd9a0;
+}
+
+/* The bulk fetch question's itemised list (docs/architecture/setup.md).
+   **The sizes line up in a column** so the total above them can be checked at a glance —
+   an itemisation nobody can add up is decoration. */
+.panel__fetch-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.panel__fetch-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel__fetch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel__fetch-size {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }

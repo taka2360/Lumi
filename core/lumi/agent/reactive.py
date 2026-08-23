@@ -56,6 +56,7 @@ from lumi.kernel.activity import Activity, ActivityKind, ActivityProposal, Actor
 from lumi.kernel.arbiter import Accepted, AttentionArbiter
 from lumi.kernel.cancellation import Cancellable, Cancellation, CancelToken
 from lumi.kernel.ids import new_correlation_id
+from lumi.memory.reflection import asked_to_remember
 from lumi.memory.retrieval import Retriever
 from lumi.providers.base import ProviderError, ProviderKind
 from lumi.providers.llm.base import (
@@ -110,6 +111,7 @@ class ReactiveLoop:
 
     __slots__ = (
         "_arbiter",
+        "_asked_to_remember",
         "_audio",
         "_clock",
         "_episodes",
@@ -171,6 +173,10 @@ class ReactiveLoop:
         #: spoken to yet counts as idle — which is what makes the first idle pass pick up
         #: whatever the previous session left unreflected.
         self._last_turn_at = self._clock()
+        #: The user said something like 「覚えておいて」. **Reflection reads and clears
+        #: it** — the phrase is a request to write something down, and waiting out the
+        #: full idle period would answer it minutes after it stopped meaning anything.
+        self._asked_to_remember = False
         #: The turns currently running. **Held on the loop, not inside `run`**: shutdown
         #: has to be able to reach them, and a turn that outlives the databases writes an
         #: episode into a closed connection
@@ -187,6 +193,17 @@ class ReactiveLoop:
     def idle_for(self) -> timedelta:
         """How long since the last turn ended. **What decides that reflection may run.**"""
         return self._clock() - self._last_turn_at
+
+    def take_remember_request(self) -> bool:
+        """Whether the user asked to be remembered since this was last called.
+
+        **Reading it clears it.** The caller is about to reflect, and leaving the flag set
+        would make every later pass think it was asked too — a request answered once is
+        answered.
+        """
+        asked = self._asked_to_remember
+        self._asked_to_remember = False
+        return asked
 
     @property
     def last_latency(self) -> TurnLatency | None:
@@ -374,6 +391,11 @@ class ReactiveLoop:
         """
         timer = timer or TurnTimer(new_correlation_id())
         turn_tts_speed = self._tts_speed
+        # **Noticed here, acted on later.** The answer to 「覚えておいて」 is the reply this
+        # turn is about to give; the extraction is a Job, and putting it on this path
+        # would be inference inside the turn the user is waiting on (ADR-018).
+        if asked_to_remember(text):
+            self._asked_to_remember = True
         await self._show_user_said(text)
         if self._retriever is None:
             # **Only when nothing will retrieve.** `begin()` ignores a span that is already

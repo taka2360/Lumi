@@ -8,15 +8,13 @@
  *
  * Phase 1 shows the minimum: the Activity tree and the latency breakdown.
  *
- * **It lives inside the `stage` window**, not a window of its own. `WsServer` keeps at
- * most one connection per role, so a second window connecting as `stage` would take the
- * character's connection away from it (docs/architecture/ui.md).
+ * **Its own window since 2g** (ADR-042). It used to be drawn inside the character window
+ * because a second `stage` connection would have taken the character's; it now connects as
+ * `panel`, which may hold several connections and is never the addressee of a command.
  *
  * **Displays only.** Every value here was broadcast by Core; nothing is derived on this
  * side — including whether a span is over budget, which is Core's `unaccounted_ms` to say.
  */
-
-import { useState } from "react";
 
 import type { InspectorActivity, InspectorLatency } from "../core/store";
 import { useStageStore } from "../core/store";
@@ -121,40 +119,27 @@ function Latency({ latency }: { latency: InspectorLatency }) {
   );
 }
 
-export function Inspector({ onOpenChange }: { onOpenChange?: (open: boolean) => void } = {}) {
+export function Inspector() {
   const locale = useLocale();
   const inspector = useStageStore((state) => state.inspector);
-  const [open, setOpen] = useState(false);
 
   if (!inspector) {
-    // **Nothing has happened yet.** Never a button that opens an empty panel
-    return null;
+    // **Nothing has happened yet.** Core sends a snapshot on the first Activity
+    // transition, so an empty window here means the conversation has not started.
+    return <p className="inspect__empty">{translate(locale, "inspector.waiting")}</p>;
   }
-
-  const handleToggle = () => {
-    const next = !open;
-    setOpen(next);
-    onOpenChange?.(next);
-  };
 
   return (
     <div className="inspect">
-      <button type="button" className="inspect__toggle" onClick={handleToggle}>
-        {open ? "▾" : "▸"} {translate(locale, "inspector.title")}
-      </button>
-      {open && (
-        <div className="inspect__body">
-          <ul className="inspect__acts">
-            {inspector.activities.map((activity) => (
-              <ActivityRow key={activity.id} activity={activity} />
-            ))}
-          </ul>
-          {inspector.latency ? (
-            <Latency latency={inspector.latency} />
-          ) : (
-            <p className="inspect__empty">{translate(locale, "inspector.empty")}</p>
-          )}
-        </div>
+      <ul className="inspect__acts">
+        {inspector.activities.map((activity) => (
+          <ActivityRow key={activity.id} activity={activity} />
+        ))}
+      </ul>
+      {inspector.latency ? (
+        <Latency latency={inspector.latency} />
+      ) : (
+        <p className="inspect__empty">{translate(locale, "inspector.empty")}</p>
       )}
     </div>
   );
