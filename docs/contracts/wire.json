@@ -45,7 +45,9 @@
   "setup_components": [
     "tts",
     "stt",
-    "llm_model"
+    "llm_model",
+    "embedding",
+    "all"
   ],
   "$comment_reasons": "Reasons for stage.character.model (ADR-036). **Core never sends display strings.** Stage translates via i18n character.model.<reason>. Unknown codes are displayed as-is",
   "character_model_reasons": [
@@ -55,7 +57,8 @@
   "setup_prompt_choices": {
     "install": "install",
     "skip": "skip",
-    "select": "select"
+    "select": "select",
+    "individually": "individually"
   },
   "tauri_events": {
     "hover_state": "shell:hover:state",
@@ -166,6 +169,13 @@
       "domain_events",
       "audit_log",
       "memory_records"
+    ],
+    "embedding_setup_state": [
+      "unknown",
+      "not_configured",
+      "installing",
+      "installed",
+      "failed"
     ]
   }
 }

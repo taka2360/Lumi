@@ -48,7 +48,7 @@ export function MicIndicator() {
       aria-label={translate(locale, action)}
       aria-pressed={mic.muted}
     >
-      <span aria-hidden="true">{mic.muted ? "🔇" : "🎤"}</span>
+      <span aria-hidden="true">{mic.muted ? "🔇" : "🎙️"}</span>
       {failed && <span className="mic__error">{translate(locale, "mic.failed")}</span>}
     </button>
   );

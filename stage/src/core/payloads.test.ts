@@ -152,7 +152,27 @@ describe("the setup question", () => {
       reason: "http_error",
       model: null,
       alternatives: [],
+      items: [],
+      totalBytes: 0,
     });
+  });
+
+  it("reads what the bulk question offers, and keeps Core's total", () => {
+    // ★ **The total is Core's number, not a sum of what survived parsing.** A row that
+    // could not be read is dropped from the list, and the total still says what will be
+    // fetched — the honest disagreement, rather than a smaller number nobody will pay.
+    const prompt = toSetupPrompt({
+      component: "all",
+      total_bytes: 7_000_000_000,
+      items: [
+        { component: "tts", name: "AivisSpeech", size_bytes: 300_000_000 },
+        { component: "embedding", name: "harrier-oss-v1-270m", size_bytes: 196_000_000 },
+        { component: "stt", name: null, size_bytes: 500_000_000 },
+      ],
+    });
+
+    expect(prompt.items.map((item) => item.name)).toEqual(["AivisSpeech", "harrier-oss-v1-270m"]);
+    expect(prompt.totalBytes).toBe(7_000_000_000);
   });
 
   it("reads the model identity and byte size without guessing", () => {

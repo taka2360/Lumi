@@ -85,6 +85,10 @@ async def _run() -> int:
             asyncio.create_task(probe_os_boundary(server))  # noqa: RUF006
         if role is Role.STAGE:
             asyncio.create_task(on_stage_connected())  # noqa: RUF006
+        # **A panel window opened.** It has missed every broadcast so far, so it is handed
+        # the current state rather than being left to wait for the next change (ADR-042).
+        if role is Role.PANEL and conversation is not None:
+            asyncio.create_task(conversation.on_panel_connected())  # noqa: RUF006
 
     server = WsServer(tokens, port=int(os.environ.get("LUMI_WS_PORT", "0")), on_connect=on_connect)
     setup = SetupCoordinator(server, os.environ)

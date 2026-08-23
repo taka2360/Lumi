@@ -621,3 +621,66 @@ class TestSettingsUpdate:
             await server.inbound["stage.settings.update"]({"changes": {"llm_model": "x"}})
 
         assert broken.read_text(encoding="utf-8") == "{ broken"
+
+
+class TestPanelWindows:
+    """★ **A window that opens later has missed every broadcast so far** (ADR-042)."""
+
+    async def _runtime(self, monkeypatch: pytest.MonkeyPatch) -> tuple[ConversationRuntime, Any]:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+        return runtime, server
+
+    async def test_a_panel_that_connects_is_given_the_current_state(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The bug this exists to prevent: **the settings window waiting forever.**
+
+        Core broadcasts on change, which is exactly the wrong shape for a window opened
+        afterwards — it sits showing "waiting for settings" while the settings it is
+        waiting for were sent before it existed.
+        """
+        runtime, server = await self._runtime(monkeypatch)
+        await runtime._arbiter.start()
+
+        await runtime.on_panel_connected()
+
+        sent = [method for method, _payload in server.panel]
+        assert "panel.settings.state" in sent
+        assert "panel.inspector.state" in sent
+
+    async def test_the_settings_reach_the_character_window_too(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**`locale` lives in the same snapshot.** Sending it only to the panels would
+        leave the bubble in the language the app started in (ADR-042).
+        """
+        runtime, server = await self._runtime(monkeypatch)
+
+        await runtime.on_panel_connected()
+
+        assert server.settings, "the character window was not sent the settings"
+        assert [method for method, _payload in server.panel].count("panel.settings.state") == 1
+
+    async def test_a_failing_snapshot_does_not_take_the_connection_down(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A window can open before the Arbiter is running. **Worth a log line, not a
+        raise** — the next change reaches it anyway.
+        """
+        runtime, server = await self._runtime(monkeypatch)
+
+        async def explode(_self: Any) -> None:
+            raise RuntimeError("not ready")
+
+        # `InspectorPublisher` has `__slots__`, so the class is what can be patched.
+        monkeypatch.setattr(type(runtime._inspector), "publish", explode)
+
+        await runtime.on_panel_connected()
+
+        assert [method for method, _payload in server.panel] == ["panel.settings.state"]

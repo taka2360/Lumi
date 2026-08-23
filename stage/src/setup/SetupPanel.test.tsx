@@ -42,6 +42,7 @@ localStorage.setItem("lumi.locale", "ja");
 function working(over: Partial<SetupSnapshot> = {}): SetupSnapshot {
   return {
     boot: "blocked",
+    embedding: { ...UNKNOWN_SETUP.embedding, state: "installed" },
     tts: { ...UNKNOWN_SETUP.tts, state: "installed", runtime: "ready", engine_name: "AivisSpeech" },
     llm: { ...UNKNOWN_SETUP.llm, state: "detected", runtime: "ready" },
     stt: {
@@ -289,6 +290,8 @@ describe("the question", () => {
           reason: retry ? "network_unreachable" : null,
           model: null,
           alternatives: [],
+          items: [],
+          totalBytes: 0,
         },
       });
       root?.render(
@@ -334,6 +337,8 @@ describe("the question", () => {
               installed: false,
             },
           ],
+          items: [],
+          totalBytes: 0,
         },
       });
       root?.render(
@@ -383,6 +388,8 @@ describe("the question", () => {
               installed: true,
             },
           ],
+          items: [],
+          totalBytes: 0,
         },
       });
       root?.render(
@@ -431,5 +438,82 @@ describe("the question", () => {
       "ネットワークに接続できませんでした",
     );
     expect([...buttons].map((button) => button.textContent)).toEqual(["今は取得しない", "再試行"]);
+  });
+});
+
+describe("the question that comes before the others", () => {
+  let root: ReturnType<typeof createRoot> | null = null;
+  let container: HTMLDivElement | null = null;
+
+  function render(): HTMLDivElement {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+    act(() => {
+      useStageStore.setState({
+        setup: working(),
+        prompt: {
+          component: "all",
+          retry: false,
+          reason: null,
+          model: null,
+          alternatives: [],
+          items: [
+            { component: "tts", name: "AivisSpeech Engine", size_bytes: 300_000_000 },
+            { component: "llm_model", name: "Qwen 3.5 9B", size_bytes: 6_600_000_000 },
+            { component: "embedding", name: "harrier-oss-v1-270m", size_bytes: 196_000_000 },
+          ],
+          totalBytes: 7_096_000_000,
+        },
+      });
+      root?.render(
+        <LocaleProvider>
+          <SetupPanel />
+        </LocaleProvider>,
+      );
+    });
+    return container;
+  }
+
+  afterEach(() => {
+    act(() => root?.unmount());
+    root = null;
+    container?.remove();
+    container = null;
+    answerSetupPrompt.mockClear();
+    useStageStore.setState({ prompt: null });
+  });
+
+  it("shows the total and what makes it up", () => {
+    // ★ **The total is the number the decision is made on**, and an itemisation nobody
+    // can add up is decoration. Both are on screen, in units that keep the difference
+    // between 196 MB and 6.6 GB visible.
+    const view = render();
+
+    expect(view.querySelector(".panel__body")?.textContent).toContain("7.1 GB");
+    const rows = [...view.querySelectorAll(".panel__fetch-list li")].map((row) => row.textContent);
+    expect(rows).toEqual([
+      "AivisSpeech Engine300 MB",
+      "Qwen 3.5 9B6.6 GB",
+      "harrier-oss-v1-270m196 MB",
+    ]);
+  });
+
+  it("offers all three answers, and they are three different answers", () => {
+    // **"one at a time" is not "no".** Collapsing them would mean the only way to pick
+    // and choose is to decline everything and hope to be asked again.
+    const view = render();
+    const buttons = [...view.querySelectorAll<HTMLButtonElement>(".panel__button")];
+
+    expect(buttons.map((button) => button.textContent)).toEqual([
+      "まとめて取得する（7.1 GB）",
+      "個別に選ぶ",
+      "今は取得しない",
+    ]);
+
+    act(() => buttons[0]?.click());
+    act(() => buttons[1]?.click());
+    act(() => buttons[2]?.click());
+    expect(answerSetupPrompt.mock.calls).toEqual([["install"], ["individually"], ["skip"]]);
   });
 });

@@ -35,6 +35,7 @@ describe("nothing to say", () => {
       tts: tts({ state: "installed", runtime: "ready" }),
       llm: llm({ state: "detected", runtime: "ready" }),
       stt: stt({ state: "installed", runtime: "ready" }),
+      embedding: { state: "installed", model: "harrier-oss-v1-270m", reason: null, progress: null },
     });
     expect(lines).toEqual([]);
   });
@@ -149,6 +150,7 @@ describe("several at once", () => {
       tts: tts({ state: "not_configured" }),
       llm: llm({ state: "not_configured" }),
       stt: stt({ state: "not_configured" }),
+      embedding: { state: "installed", model: "harrier-oss-v1-270m", reason: null, progress: null },
     });
     expect(lines).toHaveLength(3);
   });

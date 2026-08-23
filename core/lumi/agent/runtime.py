@@ -224,6 +224,7 @@ class ConversationRuntime:
         self._panel = PanelService(
             store=self._memories,
             index=self._index,
+            episodes=self._episodes,
             retention=self._retention,
             settings_update=self._update_settings,
         )
@@ -466,6 +467,27 @@ class ConversationRuntime:
         await self._server.notify(Role.STAGE, METHOD_SETTINGS, payload)
         await self._server.notify(Role.PANEL, METHOD_PANEL_SETTINGS, payload)
 
+    async def on_panel_connected(self) -> None:
+        """A settings, inspector or memory window just opened. **Give it the current state.**
+
+        Core broadcasts when something changes, which is exactly the wrong shape for a
+        window that opens later: **every change it cares about has already happened.**
+        Without this the settings window waits forever for a snapshot it missed, and the
+        inspector stays empty until the next Activity happens to move.
+
+        The memory window is not sent anything here — it asks (`panel.memory.search`),
+        because what it should show depends on the page and filter it is on.
+
+        **Failing here must not take the connection down.** A window that opened during
+        startup, before the Arbiter is running, is worth a log line and nothing more; the
+        next change will reach it.
+        """
+        try:
+            await self._broadcast_settings()
+            await self._inspector.publish()
+        except Exception:
+            log.warning("panel.snapshot_failed", exc_info=True)
+
     async def _set_mute(self, payload: dict[str, object]) -> dict[str, object]:
         """Mute or unmute the microphone from the character window.
 
@@ -561,7 +583,7 @@ class ConversationRuntime:
         self._inspector.start()
         # **Sent once at startup.** The Stage shows values, not judgments — including
         # which of them an environment variable is currently overriding
-        await self._server.notify(Role.STAGE, METHOD_SETTINGS, self._settings.to_payload())
+        await self._broadcast_settings()
         await self._announce_model()
         # **The engine is started here, not at the first utterance.** The boot phase the
         # Stage shows is derived from this process state, so with nobody starting it and
@@ -645,7 +667,7 @@ class ConversationRuntime:
         self._providers.register(OllamaProvider(model))
         if self._loop is not None:
             self._loop.set_llm_model(model)
-        await self._server.notify(Role.STAGE, METHOD_SETTINGS, self._settings.to_payload())
+        await self._broadcast_settings()
 
     async def _start_listening(self) -> None:
         """Open voice input only after Core has broadcast `boot: ready` (ADR-033).

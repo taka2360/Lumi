@@ -74,6 +74,14 @@ export const METHOD_SETUP_RECHECK_OLLAMA = "stage.setup.recheck_ollama";
 export const CHOICE_INSTALL = "install";
 export const CHOICE_SKIP = "skip";
 export const CHOICE_SELECT = "select";
+/**
+ * The answer to "fetch all of this?" that means **"ask me one at a time"**.
+ *
+ * Its own value rather than reusing `select`, which for `llm_model` means "use a model
+ * already on this machine". One word with two unrelated meanings is how a contract stops
+ * being readable.
+ */
+export const CHOICE_INDIVIDUALLY = "individually";
 
 /**
  * Why Core says there is no model to draw (ADR-036). **Core sends a code; the wording

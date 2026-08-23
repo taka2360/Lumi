@@ -23,6 +23,14 @@ export interface MemoryItem {
 export interface MemoryPage {
   items: MemoryItem[];
   total: number;
+  /**
+   * Utterances no reflection pass has read yet.
+   *
+   * **This is what separates "Lumi remembers nothing about you" from "Lumi has not had a
+   * quiet moment yet."** Both show an empty list, and only one of them means something
+   * is wrong.
+   */
+  pendingTurns: number;
 }
 
 /** One row of privacy.md §2, and how many of it "erase everything" would remove. */
@@ -75,7 +83,11 @@ export function toMemoryPage(payload: Record<string, unknown>): MemoryPage {
   const items = raw.map(toMemoryItem).filter((item): item is MemoryItem => item !== null);
   // **The total is Core's**, so "showing 3 of 40" stays true even when a row was dropped
   // as unreadable — the gap is visible instead of being quietly closed.
-  return { items, total: asNumber(payload.total, items.length) };
+  return {
+    items,
+    total: asNumber(payload.total, items.length),
+    pendingTurns: asNumber(payload.pending_turns, 0),
+  };
 }
 
 export function toEraseTargets(payload: Record<string, unknown>): EraseTarget[] {

@@ -33,6 +33,7 @@ import {
 import { CMD_CORE_ENDPOINT, EVENT_CORE_ENDPOINT } from "./connection";
 import {
   CHARACTER_MODEL_REASONS,
+  CHOICE_INDIVIDUALLY,
   CHOICE_INSTALL,
   CHOICE_SELECT,
   CHOICE_SKIP,
@@ -75,7 +76,12 @@ import { PROTOCOL_VERSION } from "./protocol";
 interface Wire {
   protocol_version: number;
   methods: { stage: string[]; panel: string[]; os: string[] };
-  setup_prompt_choices: { install: string; skip: string; select: string };
+  setup_prompt_choices: {
+    install: string;
+    skip: string;
+    select: string;
+    individually: string;
+  };
   tauri_events: { hover_state: string; core_endpoint: string };
   tauri_commands: string[];
   window_labels: string[];
@@ -193,9 +199,12 @@ describe("wire contract", () => {
   });
 
   it("the fetch-or-not choices", () => {
-    expect({ install: CHOICE_INSTALL, skip: CHOICE_SKIP, select: CHOICE_SELECT }).toEqual(
-      wire.setup_prompt_choices,
-    );
+    expect({
+      install: CHOICE_INSTALL,
+      skip: CHOICE_SKIP,
+      select: CHOICE_SELECT,
+      individually: CHOICE_INDIVIDUALLY,
+    }).toEqual(wire.setup_prompt_choices);
   });
 
   it("Tauri event names", () => {

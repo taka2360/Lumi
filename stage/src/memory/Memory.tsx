@@ -178,6 +178,7 @@ export function Memory() {
   const [includeHistory, setIncludeHistory] = useState(false);
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [total, setTotal] = useState(0);
+  const [pending, setPending] = useState(0);
   const [limit, setLimit] = useState(PAGE);
   const [failure, setFailure] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -198,6 +199,7 @@ export function Memory() {
       const page = toMemoryPage(answer);
       setItems(page.items);
       setTotal(page.total);
+      setPending(page.pendingTurns);
       setFailure(null);
     } catch (error: unknown) {
       setFailure(reason(error));
@@ -288,8 +290,18 @@ export function Memory() {
       {notice && <p className="panel__status">{notice}</p>}
 
       {items.length === 0 ? (
+        // **Three different empty states, because they mean three different things.**
+        // A window that renders "nothing remembered" while disconnected, or while a
+        // conversation is still waiting to be read, invites the conclusion that memory
+        // is broken.
         <p className="inspect__empty">
-          {translate(locale, query ? "memory.noMatch" : "memory.empty")}
+          {!connected
+            ? translate(locale, "memory.disconnected")
+            : query
+              ? translate(locale, "memory.noMatch")
+              : pending > 0
+                ? translate(locale, "memory.pending", { count: pending })
+                : translate(locale, "memory.empty")}
         </p>
       ) : (
         <>

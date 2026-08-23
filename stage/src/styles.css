@@ -334,7 +334,10 @@ body {
    something Lumi said. */
 .bubble--user {
   top: auto;
-  bottom: 8px;
+  /* Clears the microphone control, which sits in this corner and must stay reachable
+     (docs/architecture/ui.md §5b). The bubble comes and goes; the microphone does not,
+     so the bubble is the one that moves. */
+  bottom: 42px;
   left: auto;
   right: 8px;
   transform: none;
@@ -633,8 +636,8 @@ body {
    they want it. */
 .mic-anchor {
   position: absolute;
-  top: 6px;
-  left: 6px;
+  right: 6px;
+  bottom: 6px;
   z-index: 3;
 }
 
@@ -664,10 +667,42 @@ body {
   border-color: rgba(255, 171, 107, 0.6);
 }
 
+/* Opens to the left, because the button sits against the right edge. */
 .mic__error {
   position: absolute;
-  left: 34px;
+  right: 34px;
   white-space: nowrap;
   font-size: 10px;
   color: #ffd9a0;
+}
+
+/* The bulk fetch question's itemised list (docs/architecture/setup.md).
+   **The sizes line up in a column** so the total above them can be checked at a glance —
+   an itemisation nobody can add up is decoration. */
+.panel__fetch-list {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.panel__fetch-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.panel__fetch-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.panel__fetch-size {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
 }

@@ -35,6 +35,7 @@ from lumi.memory import decay
 from lumi.memory.records import MemoryRecord
 from lumi.memory.store import MemoryRejected, MemoryStore
 from lumi.memory.vectors import MemoryIndex
+from lumi.storage.memory import EpisodeStore
 from lumi.storage.retention import Deletion, RetentionService
 from lumi.transport.methods import (
     METHOD_PANEL_MEMORY_CONFIRM,
@@ -126,19 +127,24 @@ class PanelService:
     view of it that can only be tested by waiting a fortnight is one that ships untested.
     """
 
-    __slots__ = ("_clock", "_index", "_retention", "_settings_update", "_store")
+    __slots__ = ("_clock", "_episodes", "_index", "_retention", "_settings_update", "_store")
 
     def __init__(
         self,
         *,
         store: MemoryStore,
         index: MemoryIndex,
+        episodes: EpisodeStore,
         retention: RetentionService,
         settings_update: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]],
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._store = store
         self._index = index
+        #: Only ever asked how much is waiting to be reflected on. **An empty memory list
+        #: with unread conversation behind it is a different fact** from an empty one
+        #: without, and the window cannot tell them apart on its own.
+        self._episodes = episodes
         self._retention = retention
         #: The settings window asks for exactly what the character window may ask for.
         #: **The same handler**, reached under a different name because the namespace is
@@ -175,6 +181,10 @@ class PanelService:
             "items": [record_payload(record, now=now) for record in records],
             "total": total,
             "offset": offset,
+            # **Why the list might be empty.** Reflection runs when the conversation goes
+            # quiet, so "nothing here yet" is often "nothing read yet" — and a window that
+            # cannot say which invites the conclusion that memory is broken.
+            "pending_turns": await self._episodes.unreflected_turns(),
         }
 
     async def edit(self, payload: dict[str, Any]) -> dict[str, Any]:

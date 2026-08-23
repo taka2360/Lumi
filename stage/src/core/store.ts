@@ -57,8 +57,16 @@ export type LlmSetupState =
  * such thing as an STT model the user installed separately (docs/architecture/setup.md §2b). */
 export type SttSetupState = "unknown" | "not_configured" | "installing" | "installed" | "failed";
 
+/**
+ * The embedding model's installation state (ADR-041).
+ *
+ * **The same values as STT's, and a different meaning for `not_configured`**: this one
+ * never blocks startup. Lumi without it still talks; what it loses is similarity search.
+ */
+export type EmbeddingSetupState = SttSetupState;
+
 /** Which component a question is about. **A question with no subject is not consent.** */
-export type SetupComponent = "tts" | "stt" | "llm_model";
+export type SetupComponent = "tts" | "stt" | "llm_model" | "embedding" | "all";
 
 /** Same shape as Core's `TtsSetup.to_payload()` (core/lumi/setup/state.py). */
 export interface TtsSetupSnapshot {
@@ -103,6 +111,20 @@ export interface SetupSnapshot {
   tts: TtsSetupSnapshot;
   llm: LlmSetupSnapshot;
   stt: SttSetupSnapshot;
+  embedding: EmbeddingSetupSnapshot;
+}
+
+/**
+ * The embedding model (ADR-041). **No `runtime` field, unlike the other three.**
+ *
+ * There is nothing to wait for: the memory index loads it in the background, and its
+ * absence degrades search rather than stopping Lumi.
+ */
+export interface EmbeddingSetupSnapshot {
+  state: EmbeddingSetupState;
+  model: string | null;
+  reason: string | null;
+  progress: number | null;
 }
 
 /**
@@ -136,6 +158,23 @@ export interface SetupPrompt {
   reason: string | null;
   model: SetupModelOption | null;
   alternatives: SetupModelOption[];
+  /**
+   * For the `all` question: everything missing, and what each would cost.
+   *
+   * **Empty for every other component**, which is what makes the bulk screen's condition
+   * a fact from Core rather than a guess from the component name.
+   */
+  items: SetupFetchItem[];
+  /** For the `all` question: the sum of `items`. Zero elsewhere. */
+  totalBytes: number;
+}
+
+/** One thing the bulk question offers to fetch. */
+export interface SetupFetchItem {
+  component: SetupComponent;
+  /** A product name (AivisSpeech, `harrier-oss-v1-270m`). **Never translated.** */
+  name: string;
+  size_bytes: number;
 }
 
 export interface SetupModelOption {
@@ -300,12 +339,20 @@ const UNKNOWN_STT: SttSetupSnapshot = {
   runtime: "stopped",
 };
 
+const UNKNOWN_EMBEDDING: EmbeddingSetupSnapshot = {
+  state: "unknown",
+  model: null,
+  reason: null,
+  progress: null,
+};
+
 export const UNKNOWN_SETUP: SetupSnapshot = {
   // **Shows nothing before connecting.** The character never appears until Core says `ready`.
   boot: "starting",
   tts: UNKNOWN_TTS,
   llm: UNKNOWN_LLM,
   stt: UNKNOWN_STT,
+  embedding: UNKNOWN_EMBEDDING,
 };
 
 export const useStageStore = create<StageState>((set) => ({

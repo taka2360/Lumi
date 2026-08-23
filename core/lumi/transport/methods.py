@@ -181,11 +181,24 @@ CHOICE_INSTALL: Final = "install"
 CHOICE_SKIP: Final = "skip"
 CHOICE_SELECT: Final = "select"
 
+#: The answer to the one question asked before the others: "fetch all of this?"
+#:
+#: **Its own value rather than reusing `select`.** For `llm_model`, `select` means "use a
+#: model already on this machine"; here the user is choosing *how to be asked*, and giving
+#: one word two unrelated meanings is how a contract stops being readable.
+CHOICE_INDIVIDUALLY: Final = "individually"
+
 #: Which component a question is about. **The panel has to say what it is fetching** —
 #: "may I download this?" without a subject is not consent.
 COMPONENT_TTS: Final = "tts"
 COMPONENT_STT: Final = "stt"
 COMPONENT_LLM_MODEL: Final = "llm_model"
+#: The embedding model (ADR-041). **The only optional one** — declining it costs
+#: similarity search, not the ability to hold a conversation.
+COMPONENT_EMBEDDING: Final = "embedding"
+#: Not a component: the question that offers **everything missing at once**, with the
+#: total. The payload carries `items` and `total_bytes` alongside the usual fields.
+COMPONENT_ALL: Final = "all"
 
 #: Why there is no character model to draw (ADR-036). **A code, never a sentence** —
 #: Core does not know the Stage's locale, and a display string sent from here is the one

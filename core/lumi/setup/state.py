@@ -95,6 +95,22 @@ class SttSetupState(StrEnum):
     FAILED = "failed"
 
 
+class EmbeddingSetupState(StrEnum):
+    """The embedding model's installation state (ADR-041).
+
+    **The same shape as `SttSetupState`, minus the runtime axis.** There is no separate
+    "can it run" state to report, because nothing waits for it: the Provider is loaded by
+    the memory index in the background, and its absence is a degraded search rather than a
+    Lumi that cannot answer.
+    """
+
+    UNKNOWN = "unknown"
+    NOT_CONFIGURED = "not_configured"
+    INSTALLING = "installing"
+    INSTALLED = "installed"
+    FAILED = "failed"
+
+
 class BootPhase(StrEnum):
     """How far startup has progressed. **Core decides when it's okay to show the character.**
 
@@ -239,6 +255,35 @@ class SttSetup:
 
 
 @dataclass(frozen=True, slots=True)
+class EmbeddingSetup:
+    """Whether the embedding model is on disk (ADR-041).
+
+    **Never part of the boot gate.** Lumi without it still hears, thinks and speaks; what
+    it loses is similarity search, and retrieval says so by degrading to keywords and
+    recency. Gating the character on a 196 MiB optional download would trade the product
+    for one of its features — the exact trade ADR-034 refused for the other direction.
+    """
+
+    state: EmbeddingSetupState = EmbeddingSetupState.UNKNOWN
+    model: str | None = None
+    reason: str | None = None
+    #: Fetch progress (0.0-1.0). Only populated for `INSTALLING`
+    progress: float | None = None
+
+    def to_payload(self) -> dict[str, Any]:
+        return {
+            "state": str(self.state),
+            "model": self.model,
+            "reason": self.reason,
+            "progress": self.progress,
+        }
+
+    @property
+    def installed(self) -> bool:
+        return self.state is EmbeddingSetupState.INSTALLED
+
+
+@dataclass(frozen=True, slots=True)
 class SetupSnapshot:
     """All three components, as broadcast to the Stage. **The Stage only displays it.**
 
@@ -249,6 +294,8 @@ class SetupSnapshot:
     tts: TtsSetup = field(default_factory=lambda: TtsSetup(state=TtsSetupState.UNKNOWN))
     llm: LlmSetup = field(default_factory=LlmSetup)
     stt: SttSetup = field(default_factory=SttSetup)
+    #: **Optional, and deliberately not one of "all three"** (`boot_phase`).
+    embedding: EmbeddingSetup = field(default_factory=EmbeddingSetup)
 
     def to_payload(self, *, prompting: bool = False) -> dict[str, Any]:
         return {
@@ -256,6 +303,7 @@ class SetupSnapshot:
             "tts": self.tts.to_payload(),
             "llm": self.llm.to_payload(),
             "stt": self.stt.to_payload(),
+            "embedding": self.embedding.to_payload(),
         }
 
 
@@ -295,6 +343,11 @@ def boot_phase(setup: SetupSnapshot, *, prompting: bool) -> BootPhase:
         setup.tts.state is TtsSetupState.INSTALLING
         or setup.stt.state is SttSetupState.INSTALLING
         or setup.llm.state is LlmSetupState.MODEL_INSTALLING
+        # **The embedding model is the one fetch that does not gate `READY`** — but while
+        # it is downloading, showing the character with a progress bar running behind it
+        # would be two answers to "what is happening". It delays the character; it can
+        # never prevent it, because no branch below reads `setup.embedding`.
+        or setup.embedding.state is EmbeddingSetupState.INSTALLING
     ):
         return BootPhase.INSTALLING
     if not setup.llm.ready:

@@ -54,6 +54,7 @@ class Rig:
         self.service = PanelService(
             store=self.store,
             index=self.index,
+            episodes=self.episodes,
             retention=self.retention,
             settings_update=self._settings,
             clock=lambda: NOW,
@@ -207,6 +208,7 @@ async def test_what_is_shown_includes_how_close_it_is_to_fading(rig: Rig) -> Non
     later = PanelService(
         store=rig.store,
         index=rig.index,
+        episodes=rig.episodes,
         retention=rig.retention,
         settings_update=rig._settings,
         clock=lambda: NOW + timedelta(days=60),

@@ -27,6 +27,7 @@
  */
 
 import type {
+  EmbeddingSetupSnapshot,
   LlmSetupSnapshot,
   SetupSnapshot,
   SttSetupSnapshot,
@@ -196,10 +197,41 @@ export function sttStatus(stt: SttSetupSnapshot, locale: Locale = "ja"): StatusL
  * **All of them, not the first one.** Fixing what one line asks for and then being handed
  * the next is how a two-minute setup turns into three restarts.
  */
+/**
+ * The embedding model (ADR-041).
+ *
+ * **Never a `bad` tone, even when the fetch failed.** Every other line here is a reason
+ * Lumi cannot start; this one is a reason memory search is worse than it could be, and
+ * colouring the two the same would make the list unreadable as a list of blockers.
+ */
+export function embeddingStatus(
+  embedding: EmbeddingSetupSnapshot,
+  locale: Locale = "ja",
+): StatusLine | null {
+  switch (embedding.state) {
+    case "installing":
+      return {
+        tone: "normal",
+        text: translate(locale, "boot.embedding.fetching", {
+          percent: percent(embedding.progress),
+        }),
+      };
+    case "failed":
+      return { tone: "normal", text: translate(locale, "status.embedding.failed") };
+    case "not_configured":
+      return { tone: "normal", text: translate(locale, "status.embedding.missing") };
+    default:
+      return null;
+  }
+}
+
 export function statusLines(setup: SetupSnapshot, locale: Locale = "ja"): StatusLine[] {
   return [
     ttsStatus(setup.tts, locale),
     llmStatus(setup.llm, locale),
     sttStatus(setup.stt, locale),
+    // **Last.** It is the only line that does not stop Lumi running, and putting it above
+    // one that does would misrepresent which of them the user has to act on.
+    embeddingStatus(setup.embedding, locale),
   ].filter((line): line is StatusLine => line !== null);
 }

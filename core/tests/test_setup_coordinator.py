@@ -22,13 +22,18 @@ from lumi.setup.install import SetupError
 from lumi.setup.ollama import OllamaLocalModel
 from lumi.setup.state import (
     BootPhase,
+    EmbeddingSetupState,
     EngineRuntime,
     LlmSetup,
     LlmSetupState,
     SttSetupState,
     TtsSetupState,
 )
-from lumi.transport.methods import METHOD_SETUP_RECHECK_OLLAMA
+from lumi.transport.methods import (
+    CHOICE_INDIVIDUALLY,
+    COMPONENT_ALL,
+    METHOD_SETUP_RECHECK_OLLAMA,
+)
 from lumi.transport.protocol import Result, Role
 from lumi.transport.server import WsServer
 
@@ -36,11 +41,31 @@ from lumi.transport.server import WsServer
 class FakeServer:
     """Holds only the two methods of `WsServer` that the Coordinator uses."""
 
-    def __init__(self, answers: list[str | dict[str, Any] | None]) -> None:
+    def __init__(
+        self,
+        answers: list[str | dict[str, Any] | None],
+        *,
+        bulk: str | dict[str, Any] | None = CHOICE_INDIVIDUALLY,
+    ) -> None:
         self.notifications: list[dict[str, Any]] = []
         self.invocations: list[tuple[str, dict[str, Any]]] = []
-        self._answers = answers
+        self._answers = list(answers)
+        #: **The bulk question comes first now** (roadmap 2g), and it is answered from
+        #: here rather than from the script. Most tests are about one component and say
+        #: "let me choose individually"; answering it out of `answers` would mean editing
+        #: every one of them, and every future one, to account for a question they are not
+        #: about. `bulk=None` makes it go unanswered, for the tests that are about it.
+        self._bulk = bulk
         self.request_handlers: dict[str, Any] = {}
+
+    @property
+    def asked(self) -> list[str]:
+        """Which components were asked about, **excluding the bulk question**."""
+        return [
+            str(payload["component"])
+            for method, payload in self.invocations
+            if method == "stage.setup.prompt" and payload.get("component") != COMPONENT_ALL
+        ]
 
     def on_request(self, method: str, handler: Any) -> None:
         self.request_handlers[method] = handler
@@ -59,6 +84,11 @@ class FakeServer:
     ) -> Result:
         del role, timeout
         self.invocations.append((method, payload or {}))
+        if (payload or {}).get("component") == COMPONENT_ALL:
+            if self._bulk is None:
+                raise TimeoutError
+            answer = self._bulk if isinstance(self._bulk, dict) else {"choice": self._bulk}
+            return Result(corr_id="x", ok=True, payload=answer)
         if not self._answers:
             raise TimeoutError
         choice = self._answers.pop(0)
@@ -138,6 +168,18 @@ def speech_model_present(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def no_speech_model(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: False)
+
+
+def missing_models(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
+    """Only the named artifacts are absent. **Two models share this check now** — the
+    speech model and the embedding model — so a blanket `lambda: False` would silently
+    make the tests about one of them also be about the other.
+    """
+
+    def installed(artifact: Any, *_args: Any) -> bool:
+        return artifact.name not in names
+
+    monkeypatch.setattr(coordinator_module, "is_model_installed", installed)
 
 
 def no_engines(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -234,7 +276,10 @@ class TestPrompt:
         connected = asyncio.create_task(coordinator.on_stage_connected())
         await asyncio.gather(initializing, connected)
 
-        assert [method for method, _ in server.invocations] == ["stage.setup.prompt"]
+        assert [method for method, _ in server.invocations] == [
+            "stage.setup.prompt",
+            "stage.setup.prompt",
+        ]
 
     async def test_declining_leaves_setup_incomplete(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -275,8 +320,8 @@ class TestPrompt:
         await again.initialize()
         await again.on_stage_connected()
 
-        assert len(server.invocations) == 2, "the prompt was not repeated on the second start"
-        assert [payload["component"] for _method, payload in server.invocations] == ["tts", "tts"]
+        assert len(server.asked) == 2, "the prompt was not repeated on the second start"
+        assert server.asked == ["tts", "tts"]
         assert again.state.tts.state is TtsSetupState.NOT_CONFIGURED
 
     async def test_does_not_repeat_the_question_by_itself(
@@ -292,7 +337,7 @@ class TestPrompt:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert len(server.invocations) == 1
+        assert len(server.asked) == 1
 
     async def test_an_unanswered_prompt_stops_asking(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Nobody answered, so **nothing is inferred from the silence** and nothing loops."""
@@ -303,7 +348,7 @@ class TestPrompt:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert len(server.invocations) == 1
+        assert len(server.asked) == 1
         assert boots_of(server)[-1] == "blocked", "the coordinator is still waiting for an answer"
 
     async def test_an_unanswered_tts_prompt_does_not_ask_for_stt(
@@ -318,7 +363,7 @@ class TestPrompt:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert [payload["component"] for _method, payload in server.invocations] == ["tts"]
+        assert server.asked == ["tts"]
 
     async def test_offers_a_retry_after_a_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         no_engines(monkeypatch)
@@ -333,9 +378,9 @@ class TestPrompt:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert len(server.invocations) == 2, "a failure should re-offer the choices"
-        assert server.invocations[1][1]["retry"] is True
-        assert server.invocations[1][1]["reason"] == "network_unreachable"
+        assert len(server.asked) == 2, "a failure should re-offer the choices"
+        assert server.invocations[2][1]["retry"] is True
+        assert server.invocations[2][1]["reason"] == "network_unreachable"
         # **A failure never reverts to "not yet attempted."**
         assert coordinator.state.tts.state is TtsSetupState.FAILED
         assert coordinator.state.tts.reason == "network_unreachable"
@@ -392,7 +437,7 @@ class TestPrompt:
         await coordinator.on_stage_connected()
 
         assert attempts == 4, "retry attempts were capped"
-        assert all(payload["retry"] for _method, payload in server.invocations[1:])
+        assert all(payload["retry"] for _method, payload in server.invocations[2:])
 
     async def test_a_successful_retry_leaves_the_failure_behind(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
@@ -434,9 +479,10 @@ class TestPrompt:
         await coordinator.on_stage_connected()
 
         assert coordinator.state.tts.state is TtsSetupState.INSTALLED
-        # Also broadcast when asking starts and when answering ends, so the same state repeats in a
-        # row.
+        # Also broadcast when asking starts and when answering ends, so the same state repeats
+        # in a row. **Two questions now**: the bulk one and then this component's.
         assert states_of(server) == [
+            "not_configured",
             "not_configured",
             "not_configured",
             "not_configured",
@@ -451,6 +497,7 @@ class TestPrompt:
         assert boots_of(server) == [
             "blocked",
             "blocked",
+            "setup",
             "setup",
             "installing",
             "starting",
@@ -543,7 +590,9 @@ class TestSpeechModel:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert [payload["component"] for _method, payload in server.invocations] == ["tts", "stt"]
+        # **The embedding model is asked about last**, and only after the three that
+        # gate startup — declining it leaves Lumi fully able to talk (ADR-041).
+        assert server.asked == ["tts", "stt", "embedding"]
 
     async def test_does_not_ask_when_the_model_is_already_there(
         self, monkeypatch: pytest.MonkeyPatch
@@ -555,7 +604,7 @@ class TestSpeechModel:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert server.invocations == []
+        assert server.asked == []
 
     async def test_an_unanswered_stt_prompt_does_not_repeat(
         self, monkeypatch: pytest.MonkeyPatch
@@ -569,7 +618,7 @@ class TestSpeechModel:
         await coordinator.initialize()
         await coordinator.on_stage_connected()
 
-        assert [payload["component"] for _method, payload in server.invocations] == ["stt"]
+        assert server.asked == ["stt"]
 
     async def test_fetches_when_the_user_asks_for_it(self, monkeypatch: pytest.MonkeyPatch) -> None:
         one_engine(monkeypatch)
@@ -641,7 +690,7 @@ class TestSpeechModel:
 
         assert coordinator.state.stt.state is SttSetupState.NOT_CONFIGURED
         assert coordinator.state.stt.reason == "unpinned_model"
-        assert server.invocations == [], "the coordinator asked to fetch an unpinned model"
+        assert "stt" not in server.asked, "the coordinator asked to fetch an unpinned model"
 
     async def test_declining_leaves_it_not_configured_and_blocks_startup(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1018,7 +1067,7 @@ class TestLlm:
 
         assert coordinator.state.llm.state is LlmSetupState.MODEL_FAILED
         assert coordinator.state.llm.reason == "settings_save_failed"
-        assert len([item for item in server.invocations if item[0] == "stage.setup.prompt"]) == 2
+        assert len(server.asked) == 2
 
     async def test_local_model_selection_settings_failure_is_reported(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1125,3 +1174,171 @@ class TestLlm:
 
         assert coordinator.boot is BootPhase.READY
         assert boots_of(server)[-1] == "ready"
+
+
+class TestFetchingEverythingAtOnce:
+    """★ **One question with the total, before four questions with four numbers.**
+
+    Four consecutive prompts, each with its own size, make the number that actually
+    matters — what this will cost altogether — the one number nobody is shown.
+    """
+
+    async def test_the_question_carries_the_total_and_what_makes_it_up(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        no_engines(monkeypatch)
+        missing_models(monkeypatch, "large-v3-turbo", "harrier-oss-v1-270m")
+        server = FakeServer([], bulk="skip")
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        asked = server.invocations[0][1]
+        assert asked["component"] == COMPONENT_ALL
+        items = asked["items"]
+        assert [item["component"] for item in items] == ["tts", "stt", "embedding"]
+        # **The total is the sum of what is listed**, not a second number that can drift
+        # from it. Someone deciding on "12.4 GB" has to be able to see where it comes from.
+        assert asked["total_bytes"] == sum(int(item["size_bytes"]) for item in items)
+        assert all(int(item["size_bytes"]) > 0 for item in items)
+
+    async def test_choosing_everything_fetches_without_asking_again(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """★ **"Yes, all of it" is an answer to all of it.** Asking again per component
+        would make the first answer meaningless, and is exactly the repetition it exists
+        to remove.
+        """
+        no_engines(monkeypatch)
+        missing_models(monkeypatch, "large-v3-turbo", "harrier-oss-v1-270m")
+        server = FakeServer([], bulk="install")
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        async def fake_engine(*_args: Any, **_kwargs: Any) -> Path:
+            return tmp_path / "engines" / "aivisspeech-1.2.0" / "run.exe"
+
+        async def fake_model(artifact: Any, *_args: Any, **_kwargs: Any) -> Path:
+            return tmp_path / str(artifact.name)
+
+        monkeypatch.setattr(coordinator_module, "install_engine", fake_engine)
+        monkeypatch.setattr(coordinator_module, "install_model", fake_model)
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert server.asked == []
+        assert coordinator.state.tts.state is TtsSetupState.INSTALLED
+        assert coordinator.state.stt.state is SttSetupState.INSTALLED
+        assert coordinator.state.embedding.state is EmbeddingSetupState.INSTALLED
+
+    async def test_declining_the_lot_does_not_ask_component_by_component(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ "Not now" means not now. **Following it with four more questions asks the
+        same thing four more times**, which is how a consent prompt becomes something
+        people learn to dismiss without reading.
+        """
+        no_engines(monkeypatch)
+        missing_models(monkeypatch, "large-v3-turbo", "harrier-oss-v1-270m")
+        server = FakeServer([], bulk="skip")
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert server.asked == []
+        assert coordinator.state.tts.state is TtsSetupState.NOT_CONFIGURED
+        assert boots_of(server)[-1] == "blocked"
+
+    async def test_nothing_missing_asks_nothing(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """**A consent dialog for zero bytes teaches people to dismiss consent dialogs.**"""
+        one_engine(monkeypatch)
+        missing_models(monkeypatch)
+        server = FakeServer([], bulk=None)
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert server.invocations == []
+
+    async def test_an_unanswered_bulk_question_fetches_nothing(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nobody is there to answer. **Stop asking**, and never read silence as a yes."""
+        no_engines(monkeypatch)
+        missing_models(monkeypatch, "large-v3-turbo", "harrier-oss-v1-270m")
+        server = FakeServer([], bulk=None)
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert server.asked == []
+        assert coordinator.state.tts.state is TtsSetupState.NOT_CONFIGURED
+
+
+class TestEmbeddingModel:
+    """★ **The one optional download** (ADR-041)."""
+
+    async def test_it_is_fetched_when_the_user_asks(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        one_engine(monkeypatch)
+        missing_models(monkeypatch, "harrier-oss-v1-270m")
+        server = FakeServer(["install"])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        async def fake_model(artifact: Any, *_args: Any, **_kwargs: Any) -> Path:
+            return tmp_path / str(artifact.name)
+
+        monkeypatch.setattr(coordinator_module, "install_model", fake_model)
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert server.asked == ["embedding"]
+        assert coordinator.state.embedding.state is EmbeddingSetupState.INSTALLED
+        assert coordinator.state.embedding.model == "harrier-oss-v1-270m"
+
+    async def test_declining_it_still_leaves_lumi_usable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ **This is why it is asked last.** Every other "not now" ends in `blocked`;
+        this one does not, because similarity search is a feature and talking is the
+        product (ADR-041).
+        """
+        one_engine(monkeypatch)
+        missing_models(monkeypatch, "harrier-oss-v1-270m")
+        server = FakeServer(["skip"])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert coordinator.state.embedding.state is EmbeddingSetupState.NOT_CONFIGURED
+        # **Declining is not a failure**, and the boot phase says so: `ready` is still
+        # reachable, which is the difference from every other component.
+        assert boots_of(server)[-1] != "blocked"
+
+    async def test_a_failed_fetch_says_why_and_offers_again(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """**A failure is never smoothed into "done"** — the same rule as every other fetch."""
+        one_engine(monkeypatch)
+        missing_models(monkeypatch, "harrier-oss-v1-270m")
+        server = FakeServer(["install", "skip"])
+        coordinator = SetupCoordinator(server.as_server(), {})
+
+        async def failing(*_args: Any, **_kwargs: Any) -> Path:
+            raise SetupError("network_unreachable", "no route")
+
+        monkeypatch.setattr(coordinator_module, "install_model", failing)
+
+        await coordinator.initialize()
+        await coordinator.on_stage_connected()
+
+        assert coordinator.state.embedding.state is EmbeddingSetupState.FAILED
+        assert coordinator.state.embedding.reason == "network_unreachable"
+        assert server.asked.count("embedding") == 2
