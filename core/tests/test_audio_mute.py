@@ -11,6 +11,7 @@ where the failures are: audio surviving a mute, and two VAD workers on one ring.
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from typing import Any
 
 import numpy as np
@@ -64,12 +65,16 @@ class FakeVad:
 
 
 @pytest.fixture
-def rig(monkeypatch: pytest.MonkeyPatch) -> tuple[AudioIO, FakeCapture]:
+def rig(monkeypatch: pytest.MonkeyPatch) -> Iterator[tuple[AudioIO, FakeCapture]]:
     """`AudioIO` over a capture that opens nothing, **and the fake it is holding.**
 
     Handed back rather than reached for through `audio._capture`: that attribute is typed
     as the real class, so narrowing it to the fake tells the type checker the rest of the
     test is unreachable.
+
+    **Whatever thread the test started is stopped here.** The VAD worker is real, and a
+    test that stubs `VadWorker.stop` out to reproduce a wedged one otherwise leaves it
+    reading for the rest of the session.
     """
     from lumi.audio import io as io_module
 
@@ -86,7 +91,17 @@ def rig(monkeypatch: pytest.MonkeyPatch) -> tuple[AudioIO, FakeCapture]:
         playback=None,
         warnings=(),
     )
-    return AudioIO(plan), created[0]
+    audio = AudioIO(plan)
+    # **Taken before the test can patch it.** A fixture is torn down before the
+    # `monkeypatch` it depends on, so by the time the lines below run `VadWorker.stop` may
+    # still be the stub that made this test's worker refuse to stop.
+    stop_worker = VadWorker.stop
+
+    yield audio, created[0]
+
+    worker = audio._vad_worker
+    if worker is not None:
+        stop_worker(worker)
 
 
 def _device() -> Device:

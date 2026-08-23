@@ -193,6 +193,15 @@ export function Memory() {
   const [erasing, setErasing] = useState<{ targets: EraseTarget[]; confirmation: string } | null>(
     null,
   );
+  /**
+   * Whether one of the two whole-store actions is still running.
+   *
+   * **Neither shows anything while it works**, and both walk every memory there is. A
+   * second click on [書き出す] writes a second file nobody asked for; a second click on
+   * [全部消す] sends a second erase over the first — and being able to start an erase
+   * while the export is still reading is worse than either.
+   */
+  const [busy, setBusy] = useState(false);
 
   /**
    * Which search is the current one.
@@ -256,6 +265,7 @@ export function Memory() {
 
   const exportAll = async () => {
     setFailure(null);
+    setBusy(true);
     try {
       const answer = await callCore(METHOD_PANEL_MEMORY_EXPORT);
       setNotice(
@@ -266,6 +276,8 @@ export function Memory() {
       );
     } catch (error: unknown) {
       setFailure(reason(error));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -331,6 +343,7 @@ export function Memory() {
   }, [erasing]);
 
   const eraseEverything = async (confirmation: string) => {
+    setBusy(true);
     try {
       await callCore(METHOD_PANEL_MEMORY_ERASE, { confirmation });
       setErasing(null);
@@ -338,6 +351,8 @@ export function Memory() {
       void load();
     } catch (error: unknown) {
       setFailure(reason(error));
+    } finally {
+      setBusy(false);
     }
   };
 
@@ -402,12 +417,17 @@ export function Memory() {
       )}
 
       <footer className="memory__footer">
-        <button type="button" onClick={() => void exportAll()}>
+        <button type="button" disabled={busy} onClick={() => void exportAll()}>
           {translate(locale, "memory.export")}
         </button>
         {/* **Said before it happens**, not in the success message. */}
         <span className="memory__warning">{translate(locale, "memory.exportWarning")}</span>
-        <button type="button" className="memory__danger" onClick={() => void previewErase()}>
+        <button
+          type="button"
+          className="memory__danger"
+          disabled={busy}
+          onClick={() => void previewErase()}
+        >
           {translate(locale, "memory.eraseAll")}
         </button>
       </footer>
@@ -433,6 +453,7 @@ export function Memory() {
             <button
               type="button"
               className="memory__danger"
+              disabled={busy}
               onClick={() => void eraseEverything(erasing.confirmation)}
             >
               {translate(locale, "memory.eraseAll")}

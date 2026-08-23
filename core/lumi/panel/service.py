@@ -115,12 +115,29 @@ def _text(payload: dict[str, Any], key: str, *, limit: int) -> str:
     return text
 
 
-def _write_export(target: Path, document: dict[str, Any]) -> None:
+def _write_export(target: Path, document: dict[str, Any]) -> Path:
     """Serialise and write, on a thread. **Both halves, not just the write** — for a large
     memory `json.dumps` is the more expensive of the two.
+
+    **Never onto a file that is already there.** The name is only accurate to the second,
+    so two exports inside one second aim at the same path; opening with `x` rather than
+    truncating means the second gets a file of its own instead of overwriting — or
+    interleaving with — the copy the user was just told the path of. The name actually
+    used is what comes back, because that is what gets shown.
     """
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
+    text = json.dumps(document, ensure_ascii=False, indent=2)
+    candidate = target
+    taken = 1
+    while True:
+        try:
+            with candidate.open("x", encoding="utf-8") as handle:
+                handle.write(text)
+        except FileExistsError:
+            taken += 1
+            candidate = target.with_name(f"{target.stem}-{taken}{target.suffix}")
+            continue
+        return candidate
 
 
 def _memory_id(payload: dict[str, Any]) -> str:
@@ -182,7 +199,10 @@ class PanelService:
         query = payload.get("query")
         records, total = await self._store.browse(
             query=query if isinstance(query, str) else "",
-            include_history=bool(payload.get("include_history")),
+            # **Only a literal `true` opens the history.** `bool("false")` is `True`, and
+            # every other field here is read the same way: what the window did not ask for
+            # is not shown because the value was the wrong shape.
+            include_history=payload.get("include_history") is True,
             limit=min(limit, MAX_PAGE_SIZE),
             offset=offset,
         )
@@ -269,9 +289,9 @@ class PanelService:
         # **Serialising and writing both go to a thread.** A long memory is megabytes of
         # JSON, and doing that on the event loop stalls audio — the one thing in Lumi with
         # a deadline. `asyncio.to_thread` is how every other blocking call here behaves.
-        await asyncio.to_thread(_write_export, target, document)
-        log.info("panel.memory.exported", count=len(records), path=str(target))
-        return {"path": str(target), "count": len(records), "plaintext": True}
+        written = await asyncio.to_thread(_write_export, target, document)
+        log.info("panel.memory.exported", count=len(records), path=str(written))
+        return {"path": str(written), "count": len(records), "plaintext": True}
 
     async def erase_preview(self, payload: dict[str, Any]) -> dict[str, Any]:
         """What "erase everything" would remove, per row of privacy.md §2."""

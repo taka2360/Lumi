@@ -417,3 +417,23 @@ async def test_the_export_includes_what_was_superseded(
     answer = await rig.service.export({})
 
     assert answer["count"] == 2
+
+
+async def test_a_second_export_does_not_overwrite_the_first(
+    rig: Rig, tmp_path: Any, monkeypatch: Any
+) -> None:
+    """★ **The file name is only accurate to the second.**
+
+    Two exports inside one second aim at the same path, and the user was handed the first
+    one's path as their copy — an export that silently replaces it is a copy that went
+    missing, and one that interleaves with it is worse.
+    """
+    monkeypatch.setattr("lumi.paths.data_dir", lambda: tmp_path)
+    await rig.remember("user.hobby", "ユーザーは Factorio が好き")
+
+    first = await rig.service.export({})
+    second = await rig.service.export({})
+
+    assert first["path"] != second["path"]
+    assert await asyncio.to_thread(Path(str(first["path"])).exists)
+    assert await asyncio.to_thread(Path(str(second["path"])).exists)
