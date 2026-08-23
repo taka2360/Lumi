@@ -30,9 +30,9 @@ body {
   height: 100%;
 }
 
-/* During boot, keep the content-sized overlay in normal flow at the bottom of the
+/* During boot, keep the responsive overlay in normal flow at the bottom of the
    transparent window. The loading card and its controls live in that one overlay, so
-   resizing cannot give them different horizontal anchors. */
+   resizing changes their width together without giving them different anchors. */
 .stage--boot {
   display: flex;
   flex-direction: column;
@@ -81,8 +81,10 @@ body {
   bottom: auto;
   transform: none;
   box-sizing: border-box;
-  width: 320px;
-  max-width: calc(100% - 20px);
+  /* Fill the Stage with the same inset at every size. All loading phases therefore
+     have one width, while Shell-driven window scaling still resizes the surface. */
+  width: calc(100% - 20px);
+  max-width: none;
   margin-bottom: 0;
 }
 
@@ -235,8 +237,8 @@ body {
   align-items: center;
   gap: 8px;
   box-sizing: border-box;
-  /* Every boot step keeps the same card width. Without an explicit width, translated
-     step text makes installing, starting, and connecting appear as different windows. */
+  /* Every boot step fills the shared responsive overlay. Without this width,
+     translated step text makes each phase appear as a differently sized window. */
   width: 100%;
   max-width: 100%;
   padding: 14px 18px;
@@ -297,6 +299,7 @@ body {
 
 .boot__bar {
   width: 200px;
+  max-width: 100%;
   height: 4px;
   border-radius: 2px;
   background: rgba(255, 255, 255, 0.18);
@@ -474,6 +477,21 @@ body {
 .app-actions__error {
   align-self: center;
   color: #ffd9a0;
+}
+
+/* Shell allows the Stage down to 160px wide. Keep all five boot controls on the same
+   row even at that boundary instead of letting the last button drift outside the card. */
+@media (max-width: 190px) {
+  .inspect-anchor--boot .app-actions {
+    gap: 2px;
+    margin-inline: 0;
+    max-width: 100%;
+  }
+
+  .inspect-anchor--boot .app-actions__button {
+    width: 24px;
+    height: 24px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

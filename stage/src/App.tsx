@@ -71,7 +71,7 @@ export function App() {
   // settings/diagnostics entry points when setup is waiting for user action.
   const controlsAbovePanel = prompt !== null || blocked;
   // Loading and actionable setup states share one layout host. Keeping the action row
-  // inside the content-sized overlay gives it the same horizontal reference as the card;
+  // inside the same overlay gives it the same horizontal reference as the card;
   // a sibling flex item would move independently when the Stage window is resized.
   const controlsInOverlay = showBootScreen || controlsAbovePanel;
 
