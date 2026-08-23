@@ -70,6 +70,10 @@ export function App() {
   // screen. Keeping this condition separate from `prompt` avoids hiding the
   // settings/diagnostics entry points when setup is waiting for user action.
   const controlsAbovePanel = prompt !== null || blocked;
+  // Loading and actionable setup states share one layout host. Keeping the action row
+  // inside the same overlay gives it the same horizontal reference as the card;
+  // a sibling flex item would move independently when the Stage window is resized.
+  const controlsInOverlay = showBootScreen || controlsAbovePanel;
 
   const [status, setStatus] = useState<CharacterStatus>({ kind: null, fallbackReason: null });
   const onStatus = useCallback((next: CharacterStatus) => setStatus(next), []);
@@ -90,15 +94,15 @@ export function App() {
 
   const [anchorHovered, setAnchorHovered] = useState(false);
 
-  // Prompt/setup and normal character mode render the controls in different hosts. Their
+  // Boot/setup and normal character mode render the controls in different hosts. Their
   // child components are remounted when that host changes, so clear parent-owned flags that
   // otherwise keep the hidden normal-mode anchor visible.
   useEffect(() => {
-    if (controlsAbovePanel) {
+    if (controlsInOverlay) {
       return;
     }
     setAnchorHovered(false);
-  }, [controlsAbovePanel]);
+  }, [controlsInOverlay]);
 
   // **The panels are windows of their own now** (ADR-042), so nothing expands in place
   // any more and the row's visibility follows the cursor alone.
@@ -171,10 +175,16 @@ export function App() {
         onPointerDown={gestures.onPointerDown}
         onWheel={gestures.onWheel}
       >
-        {controlsAbovePanel && (
+        {controlsInOverlay && (
           <div
             ref={setInspector}
-            className="inspect-anchor inspect-anchor--setup"
+            className={
+              showBootScreen
+                ? `inspect-anchor inspect-anchor--boot${
+                    inspectVisible ? " inspect-anchor--visible" : ""
+                  }`
+                : "inspect-anchor inspect-anchor--setup"
+            }
             onPointerEnter={() => setAnchorHovered(true)}
             onPointerLeave={() => setAnchorHovered(false)}
           >
@@ -191,7 +201,7 @@ export function App() {
       {/* **A development view** (docs/architecture/ui.md §5). Inside the `stage` window
           because `WsServer` keeps one connection per role — a second window would take
           the character's connection. Shown on hover or when expanded. */}
-      {!controlsAbovePanel && (
+      {!controlsInOverlay && (
         <div
           ref={setInspector}
           className={inspectVisible ? "inspect-anchor inspect-anchor--visible" : "inspect-anchor"}
