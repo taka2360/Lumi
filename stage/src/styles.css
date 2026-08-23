@@ -30,9 +30,9 @@ body {
   height: 100%;
 }
 
-/* During boot, keep the loading card and the lower-left controls in normal flow.
-   Both are anchored to the bottom of the transparent window, so absolute positioning
-   lets the loading card cover the controls on smaller Stage windows. */
+/* During boot, keep the content-sized overlay in normal flow at the bottom of the
+   transparent window. The loading card and its controls live in that one overlay, so
+   resizing cannot give them different horizontal anchors. */
 .stage--boot {
   display: flex;
   flex-direction: column;
@@ -80,6 +80,9 @@ body {
   left: auto;
   bottom: auto;
   transform: none;
+  box-sizing: border-box;
+  width: 320px;
+  max-width: calc(100% - 20px);
   margin-bottom: 0;
 }
 
@@ -231,13 +234,17 @@ body {
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  box-sizing: border-box;
+  /* Every boot step keeps the same card width. Without an explicit width, translated
+     step text makes installing, starting, and connecting appear as different windows. */
+  width: 100%;
+  max-width: 100%;
   padding: 14px 18px;
   border-radius: 14px;
   background: rgba(20, 24, 34, 0.92);
   border: 1px solid rgba(255, 255, 255, 0.18);
   color: #f2f5fb;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  max-width: 320px;
 }
 
 .boot__spinner {
@@ -420,13 +427,15 @@ body {
   order: -1;
 }
 
-.stage--boot .inspect-anchor {
-  position: relative;
-  left: auto;
-  bottom: auto;
-  align-self: flex-start;
-  order: -1;
-  margin-bottom: 10px;
+/* The boot controls remain hover-only, but share the loading overlay's width and
+   therefore its left edge. This is deliberately separate from `--setup`, whose
+   actions must stay visible while Lumi is waiting for a user decision. */
+.inspect-anchor--boot {
+  position: absolute;
+  left: 0;
+  bottom: 100%;
+  width: 100%;
+  max-width: none;
 }
 
 .app-actions {
