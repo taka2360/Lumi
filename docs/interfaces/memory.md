@@ -378,6 +378,11 @@ class MemoryStore(Protocol):
     ) -> tuple[list[MemoryRecord], int]:
         """一覧。**部分一致であって 2e の検索ではない**"""
 
+    async def everything_after(
+        self, *, after: MemoryRecord | None, limit: int,
+    ) -> list[MemoryRecord]:
+        """エクスポート用。**カーソルで送る全件**（履歴込み・`browse` と同じ順）"""
+
     async def rewrite(
         self, memory_id: str, *, content: str, subject: str | None = None,
         now: datetime | None = None,
@@ -389,6 +394,14 @@ class MemoryStore(Protocol):
 > **自分が書いた覚えのあるその文**であり、意味検索は別の問いに答える——
 > 打った語に「関係する」ものを、予測できない順で返し、完全一致が先頭とも限らない。
 > **検索は会話のために順位をつけ、これは人のために並べる。**
+
+> **エクスポートが `offset` で送らないのは意図的。** ページ間で何も保持しないので、
+> 書き出している最中に Reflection が記憶を書けば以降の行が1つずれ、
+> 境界のレコードが**二重に出るか、出ない**——それが「全部の写し」であるはずのファイルで起きる。
+> カーソルは「どの行まで書いたか」を値で指すので、次のページは
+> **今テーブルにあるもの**で決まる。1トランザクションで全件読めば一貫はするが、
+> `transaction()` は単一コネクションの `BEGIN IMMEDIATE` であり、
+> エクスポートの間ずっと他の書き込みを止める。
 
 > **`rewrite` が `user_confirmed` になるのは [ADR-043](../decisions/ADR-043-user-edited-memories-are-confirmed.md)。**
 > 昇格の代入は `confirm()` と同じ `_confirm_in()` の1箇所で、呼び出し元が2つあるだけである。

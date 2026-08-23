@@ -58,8 +58,9 @@ log = lumi_logging.get_logger(__name__)
 PAGE_SIZE: Final = 50
 MAX_PAGE_SIZE: Final = 200
 
-#: The longest correction accepted. **Not a storage limit** — a memory is one sentence,
-#: and something the length of an essay is a note the user wants somewhere else.
+#: The longest text the window may put in one field. **Not a storage limit** — a memory is
+#: one sentence, and something the length of an essay is a note the user wants somewhere
+#: else. A filter that long is not a filter either, so the same bound holds for `query`.
 MAX_CONTENT_CHARS: Final = 500
 
 #: The confirmation token the window must echo back to erase everything.
@@ -113,6 +114,26 @@ def _text(payload: dict[str, Any], key: str, *, limit: int) -> str:
     if len(text) > limit:
         raise RequestRefused(f"{key}_too_long")
     return text
+
+
+def _optional_text(payload: dict[str, Any], key: str, *, limit: int) -> str | None:
+    """A field the window may leave out. **Left out and malformed are different things.**
+
+    Absent — or `null`, which is how a window that has nothing to say says so — means "no
+    value", and the handler falls back. A number or an object where a string belongs means
+    the caller is broken, and reading that as "no value" answers a filter nobody asked for
+    with the whole list, or drops a correction the user typed. That is the failure this
+    file exists to avoid: a request that did something other than what it said, quietly.
+    """
+    if key not in payload or payload[key] is None:
+        return None
+    value = payload[key]
+    if not isinstance(value, str):
+        raise RequestRefused(f"{key}_invalid")
+    text = value.strip()
+    if len(text) > limit:
+        raise RequestRefused(f"{key}_too_long")
+    return text or None
 
 
 def _write_export(target: Path, document: dict[str, Any]) -> Path:
@@ -196,12 +217,14 @@ class PanelService:
         limit = raw_limit if isinstance(raw_limit, int) and raw_limit > 0 else PAGE_SIZE
         raw_offset = payload.get("offset")
         offset = raw_offset if isinstance(raw_offset, int) and raw_offset > 0 else 0
-        query = payload.get("query")
         records, total = await self._store.browse(
-            query=query if isinstance(query, str) else "",
-            # **Only a literal `true` opens the history.** `bool("false")` is `True`, and
-            # every other field here is read the same way: what the window did not ask for
-            # is not shown because the value was the wrong shape.
+            # **A malformed filter is refused, not dropped.** `limit` and `offset` are
+            # view mechanics with an obvious default, but `query` decides which of the
+            # user's memories they are looking at — silently ignoring one that arrived as
+            # a number would show everything and read as the search box having broken.
+            query=_optional_text(payload, "query", limit=MAX_CONTENT_CHARS) or "",
+            # **Only a literal `true` opens the history.** `bool("false")` is `True`, so
+            # what the window did not explicitly ask for is not shown.
             include_history=payload.get("include_history") is True,
             limit=min(limit, MAX_PAGE_SIZE),
             offset=offset,
@@ -221,13 +244,12 @@ class PanelService:
         """Correct a memory. **Supersedes; the old wording stays readable.**"""
         memory_id = _memory_id(payload)
         content = _text(payload, "content", limit=MAX_CONTENT_CHARS)
-        subject = payload.get("subject")
+        # **`None` keeps the subject it already has** — the window edits the sentence far
+        # more often than the thing it is about, and has no reason to resend it.
+        subject = _optional_text(payload, "subject", limit=MAX_CONTENT_CHARS)
         try:
             record = await self._store.rewrite(
-                memory_id,
-                content=content,
-                subject=subject.strip() if isinstance(subject, str) and subject.strip() else None,
-                now=self._clock(),
+                memory_id, content=content, subject=subject, now=self._clock()
             )
         except MemoryRejected as refused:
             raise RequestRefused(str(refused)) from refused
@@ -270,15 +292,18 @@ class PanelService:
         """
         del payload
         now = self._clock()
+        # **Paged by cursor, not by offset.** Reflection writes memories while the window
+        # is open, and an offset counted against a table that grew between two pages skips
+        # a record or writes it out twice — in the one file that is supposed to be the
+        # complete copy. Reading it all under one transaction would be consistent and
+        # would also hold the database against every other write for the whole export.
         records: list[MemoryRecord] = []
-        offset = 0
         while True:
-            page, total = await self._store.browse(
-                include_history=True, limit=MAX_PAGE_SIZE, offset=offset
+            page = await self._store.everything_after(
+                after=records[-1] if records else None, limit=MAX_PAGE_SIZE
             )
             records.extend(page)
-            offset += len(page)
-            if not page or offset >= total:
+            if len(page) < MAX_PAGE_SIZE:
                 break
 
         target = paths.data_dir() / "exports" / f"lumi-memory-{now.strftime('%Y%m%d-%H%M%S')}.json"

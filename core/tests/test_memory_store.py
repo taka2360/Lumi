@@ -623,3 +623,33 @@ async def test_a_correction_is_confirmed_by_the_hand_that_wrote_it(rig: Rig) -> 
 
     assert corrected.assertion_mode is AssertionMode.USER_CONFIRMED
     assert corrected.trust_level is TrustLevel.TRUSTED
+
+
+async def test_a_page_follows_the_row_it_stopped_at(rig: Rig) -> None:
+    """★ **The cursor is what makes the export a complete copy.**
+
+    `everything_after` is read page by page while the rest of Lumi keeps writing, so a
+    page has to be decided by the row the last one ended on — not by how many rows were
+    in the table then. Here the row the cursor names is superseded between two pages,
+    which changes what is in the table around it: the page after it still contains
+    exactly what had not been read yet.
+    """
+    await rig.say("u1")
+    written = [
+        await rig.store.write(
+            belief(content=f"事実 {index}", subject=f"user.topic{index}"),
+            now=NOW + timedelta(hours=index),
+        )
+        for index in range(4)
+    ]
+
+    first = await rig.store.everything_after(after=None, limit=2)
+    # What the window would be doing meanwhile: correcting the memory the cursor names.
+    await rig.store.rewrite(first[-1].id, content="直した", now=NOW + timedelta(days=1))
+    rest = await rig.store.everything_after(after=first[-1], limit=10)
+
+    assert [record.content for record in first] == ["事実 3", "事実 2"]
+    # Newest first, and the correction — newer than the cursor — is not read twice.
+    assert [record.content for record in rest] == ["事実 1", "事実 0"]
+    assert {record.id for record in first + rest} == {record.id for record in written}
+    assert await rig.store.everything_after(after=rest[-1], limit=10) == []

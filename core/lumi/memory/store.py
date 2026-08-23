@@ -324,6 +324,42 @@ class MemoryStore:
             ).fetchall()
             return [self._hydrate(conn, row) for row in rows], total
 
+    async def everything_after(
+        self, *, after: MemoryRecord | None, limit: int
+    ) -> list[MemoryRecord]:
+        """The next page of **every memory, history included**, continuing from `after`.
+
+        For the export, which reads the whole table. **`browse`'s `offset` cannot do that
+        safely**: nothing is held between pages, so a memory written — or forgotten —
+        while the export runs shifts every later row by one, and the record on the page
+        boundary is written out twice or not at all. A cursor names the row it stopped
+        at, so the next page is decided by what the table holds now rather than by how
+        many rows it held before.
+
+        **Not one long transaction instead.** `transaction()` is `BEGIN IMMEDIATE` on the
+        one connection, so reading everything under a single one would stop reflection,
+        retrieval and every other write for as long as the export takes.
+        """
+        if limit <= 0:
+            return []
+        cursor = (after.created_at.isoformat(), after.id) if after is not None else None
+        return await asyncio.to_thread(self._everything_after_blocking, cursor, limit)
+
+    def _everything_after_blocking(
+        self, after: tuple[str, str] | None, limit: int
+    ) -> list[MemoryRecord]:
+        # **The cursor is a pair of values, not a row.** `created_at` alone repeats — a
+        # reflection pass writes several memories with one timestamp — and `id` alone
+        # does not sort, so the tie is broken by the same `id DESC` the order uses.
+        where = " WHERE (created_at, id) < (?, ?)" if after is not None else ""
+        parameters: tuple[Any, ...] = after if after is not None else ()
+        with self._db.transaction() as conn:
+            rows = conn.execute(
+                f"SELECT {_COLUMNS} FROM memories{where} ORDER BY created_at DESC, id DESC LIMIT ?",
+                (*parameters, limit),
+            ).fetchall()
+            return [self._hydrate(conn, row) for row in rows]
+
     async def get_many(self, memory_ids: Sequence[str]) -> dict[str, MemoryRecord]:
         """Several records at once, **by id, in no particular order.**"""
         if not memory_ids:

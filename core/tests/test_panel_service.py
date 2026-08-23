@@ -188,6 +188,23 @@ async def test_a_wildcard_in_the_search_box_is_a_character(rig: Rig) -> None:
     assert (await rig.service.search({"query": "%"}))["total"] == 1
 
 
+async def test_a_filter_that_is_not_text_is_refused(rig: Rig) -> None:
+    """★ **"Left out" and "wrong shape" are different requests.**
+
+    An omitted `query` means "no filter" and lists everything. A `query` that arrived as a
+    number is a caller that is broken, and answering it with everything looks exactly like
+    a search box that silently stopped filtering — the failure this window cannot afford,
+    because the user is here to check what Lumi believes about them.
+    """
+    await rig.remember("user.hobby", "ユーザーは Factorio が好き")
+
+    with pytest.raises(RequestRefused, match="query_invalid"):
+        await rig.service.search({"query": 100})
+
+    # `null` is how a window with nothing to filter by says so, and is not malformed.
+    assert (await rig.service.search({"query": None}))["total"] == 1
+
+
 async def test_a_page_says_how_many_there_are_in_total(rig: Rig) -> None:
     """**The total is of the filter, not of the page.** Without it the window cannot tell
     "these are all of them" from "these are the first few".
@@ -269,6 +286,26 @@ async def test_an_empty_correction_is_refused(rig: Rig) -> None:
     memory_id = await rig.remember("user.hobby", "ユーザーは Factorio が好き")
     with pytest.raises(RequestRefused, match="content_required"):
         await rig.service.edit({"id": memory_id, "content": "   "})
+
+
+async def test_a_correction_keeps_the_subject_it_is_not_given(rig: Rig) -> None:
+    """The window edits the sentence far more often than the thing it is about."""
+    memory_id = await rig.remember("user.hobby", "ユーザーは Factorio が好き")
+
+    answer = await rig.service.edit({"id": memory_id, "content": "ユーザーは Factorio に飽きた"})
+
+    assert answer["memory"]["subject"] == "user.hobby"
+
+
+async def test_a_subject_that_is_not_text_is_refused(rig: Rig) -> None:
+    """**Not read as "no subject given".** That would keep the old subject and answer as
+    if the correction had been applied in full."""
+    memory_id = await rig.remember("user.hobby", "ユーザーは Factorio が好き")
+
+    with pytest.raises(RequestRefused, match="subject_invalid"):
+        await rig.service.edit(
+            {"id": memory_id, "content": "ユーザーは Rust を書く", "subject": {"user": "work"}}
+        )
 
 
 async def test_confirming_says_who_said_so(rig: Rig) -> None:
@@ -437,3 +474,62 @@ async def test_a_second_export_does_not_overwrite_the_first(
     assert first["path"] != second["path"]
     assert await asyncio.to_thread(Path(str(first["path"])).exists)
     assert await asyncio.to_thread(Path(str(second["path"])).exists)
+
+
+async def test_the_export_writes_each_memory_once_while_more_are_being_written(
+    rig: Rig, tmp_path: Any, monkeypatch: Any
+) -> None:
+    """★ **A copy with a record in it twice, or missing, is not a copy.**
+
+    Reflection writes memories while the window is open, and the export reads the table a
+    page at a time without holding it — holding it would stop every other write for the
+    length of the export. Counting each page from the start of the table would therefore
+    hand back a file in which the row on the page boundary shifted underneath the count.
+    The cursor names the row it stopped at, so what has appeared since cannot move it.
+    """
+    monkeypatch.setattr("lumi.paths.data_dir", lambda: tmp_path)
+    monkeypatch.setattr("lumi.panel.service.MAX_PAGE_SIZE", 2)
+    remembered = [
+        await rig.remember(
+            f"user.topic{index}",
+            f"事実 {index}",
+            utterance=f"u{index}",
+            when=NOW + timedelta(hours=index),
+        )
+        for index in range(3)
+    ]
+
+    class WritesBetweenPages:
+        """The store, with a reflection pass landing after the first page."""
+
+        def __init__(self) -> None:
+            self.pages = 0
+
+        async def everything_after(self, **kwargs: Any) -> Any:
+            page = await rig.store.everything_after(**kwargs)
+            self.pages += 1
+            if self.pages == 1:
+                # Newest, so an offset would push every remaining row down by one.
+                await rig.remember(
+                    "user.new", "書き出し中に覚えた", utterance="u9", when=NOW + timedelta(days=1)
+                )
+            return page
+
+    service = PanelService(
+        store=WritesBetweenPages(),  # type: ignore[arg-type]
+        index=rig.index,
+        episodes=rig.episodes,
+        retention=rig.retention,
+        settings_update=rig._settings,
+        clock=lambda: NOW,
+    )
+
+    answer = await service.export({})
+
+    written = json.loads(
+        await asyncio.to_thread(Path(str(answer["path"])).read_text, encoding="utf-8")
+    )
+    exported = [memory["id"] for memory in written["memories"]]
+    assert len(exported) == len(set(exported))
+    assert set(remembered) <= set(exported)
+    assert answer["count"] == len(exported)
