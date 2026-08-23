@@ -57,13 +57,25 @@ class Role(StrEnum):
 
     SHELL = "shell"
     STAGE = "stage"
+    #: The auxiliary windows — settings, inspector, memory (ADR-042). **Several of them
+    #: can be open at once**, which is why it is a role of its own rather than more
+    #: `stage` connections: the character's connection is never taken from it.
+    PANEL = "panel"
 
 
 #: The namespace Core is allowed to send for each role. **Re-read B2/B3 before adding a line here.**
 NAMESPACE_BY_ROLE: Final[dict[Role, str]] = {
     Role.SHELL: "os.",
     Role.STAGE: "stage.",
+    Role.PANEL: "panel.",
 }
+
+#: Roles that may hold **more than one connection at a time** (ADR-042).
+#:
+#: **A role in here cannot be the target of `invoke`.** Waiting for an answer needs one
+#: addressee, and "whichever panel replied first" is not an answer — it is a race. Core
+#: only ever notifies panels, and a notification with nowhere to go is not a failure.
+MULTI_CONNECTION_ROLES: Final[frozenset[Role]] = frozenset({Role.PANEL})
 
 
 class ProtocolError(ValueError):

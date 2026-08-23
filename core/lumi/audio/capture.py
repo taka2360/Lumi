@@ -140,6 +140,10 @@ class MicrophoneCapture:
             self._stream.stop()
             self._stream.close()
             self._stream = None
+        # **Cleared so a restart has to see a frame of its own.** Unmuting onto a device
+        # that has since been unplugged would otherwise report itself as listening on the
+        # strength of a frame from before the mute.
+        self._first_frame.clear()
         if self._overflows or self._ring.dropped:
             # **Always check for silent degradation when stopping**
             log.warning("capture.lossy", overflows=self._overflows, dropped=self._ring.dropped)
@@ -207,6 +211,13 @@ class VadWorker:
         #: (never touch `SpeechSegmenter` directly from another thread)
         self._resume = threading.Event()
         self._thread: threading.Thread | None = None
+
+    @property
+    def vad(self) -> SileroVad | None:
+        """The model this worker used. **Handed on when the worker is replaced** — the
+        one after a mute should not pay to load Silero again.
+        """
+        return self._vad
 
     def start(self) -> None:
         if self._vad is None:

@@ -120,6 +120,26 @@ pub fn shell_credits_open(app: AppHandle) {
     crate::open_credits(&app);
 }
 
+/// Opens one of Lumi's own auxiliary windows from the Stage's action row (ADR-042).
+///
+/// **The argument is one of three names, not a label or a URL.** An unrecognised value
+/// opens nothing and is logged — a compromised Stage gets "open Lumi's settings window
+/// repeatedly", which is where this ends (docs/interfaces/shell.md).
+// `async` for the same reason as `shell_credits_open`: creating a window from a
+// synchronous IPC handler deadlocks the Windows event loop.
+#[tauri::command(async)]
+pub fn shell_panel_open(app: AppHandle, kind: String) {
+    match crate::window::PanelKind::from_request(&kind) {
+        Some(panel) => {
+            log::info!("shell.panel_open requested by stage kind={kind}");
+            crate::open_panel(&app, panel);
+        }
+        // **fail-closed, and loudly.** Silence here would look like a window that opens
+        // sometimes, which is far harder to diagnose than one that never does.
+        None => log::warn!("shell.panel_open.unknown kind={kind}"),
+    }
+}
+
 /// Opens Ollama's fixed official download page in the user's default browser.
 ///
 /// The URL is not an argument, so a compromised Stage cannot redirect this command.

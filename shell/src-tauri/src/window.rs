@@ -30,16 +30,27 @@ pub enum WindowKind {
     Credits,
     /// The permission prompt. Must be focused / protected under Invariant 8. Implemented in Phase 4a.
     Permission,
-    /// Settings. A normal window. Implemented in Phase 1.
+    /// Settings. A normal window (ADR-042).
     Settings,
+    /// The development view. A normal window since 2g (ADR-042); it used to be drawn
+    /// inside `stage`, back when connecting meant taking the character's connection.
+    Inspector,
+    /// **What Lumi remembers**, and where the user corrects or deletes it (ADR-042).
+    Memory,
 }
 
 impl WindowKind {
     /// Every variant. **The mapping to labels is derived from this single
     /// place**, so adding a variant can never leave `from_label` un-updated.
     /// The authoritative order and values live in `docs/contracts/wire.json` (→ ADR-022).
-    pub const ALL: [WindowKind; 4] =
-        [WindowKind::Stage, WindowKind::Credits, WindowKind::Permission, WindowKind::Settings];
+    pub const ALL: [WindowKind; 6] = [
+        WindowKind::Stage,
+        WindowKind::Credits,
+        WindowKind::Permission,
+        WindowKind::Settings,
+        WindowKind::Inspector,
+        WindowKind::Memory,
+    ];
 
     pub const fn label(self) -> &'static str {
         match self {
@@ -47,7 +58,17 @@ impl WindowKind {
             WindowKind::Credits => "credits",
             WindowKind::Permission => "permission",
             WindowKind::Settings => "settings",
+            WindowKind::Inspector => "inspector",
+            WindowKind::Memory => "memory",
         }
+    }
+
+    /// Whether this window talks to Core as `panel` rather than `stage` (ADR-042).
+    ///
+    /// **This decides which token it is given**, so it is the check that keeps the
+    /// character's connection out of reach of every other window.
+    pub const fn is_panel(self) -> bool {
+        matches!(self, WindowKind::Settings | WindowKind::Inspector | WindowKind::Memory)
     }
 
     /// **A protected window** (docs/contracts/security-boundaries.md B3 / Invariant 8).
@@ -282,6 +303,88 @@ pub fn credits_title(locale: crate::locale::Locale) -> &'static str {
     }
 }
 
+/// Which panel the Stage asked for. **A fixed set, not a label.**
+///
+/// The Stage names one of three windows and nothing else: no URL, no size, no label of
+/// its own choosing. An unknown value opens nothing (`from_request` returns `None`), which
+/// is the fail-closed half of exposing this at all (docs/interfaces/shell.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PanelKind {
+    Settings,
+    Inspector,
+    Memory,
+}
+
+impl PanelKind {
+    pub const ALL: [PanelKind; 3] = [PanelKind::Settings, PanelKind::Inspector, PanelKind::Memory];
+
+    pub const fn window(self) -> WindowKind {
+        match self {
+            PanelKind::Settings => WindowKind::Settings,
+            PanelKind::Inspector => WindowKind::Inspector,
+            PanelKind::Memory => WindowKind::Memory,
+        }
+    }
+
+    /// **Derived from `WindowKind::label`**, so the two can never drift apart.
+    pub fn from_request(value: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|kind| kind.window().label() == value)
+    }
+
+    /// The page this window loads. **Each panel is its own entry point**, so opening
+    /// settings never loads the character's code (the same reason credits has its own).
+    pub const fn page(self) -> &'static str {
+        match self {
+            PanelKind::Settings => "/settings.html",
+            PanelKind::Inspector => "/inspector.html",
+            PanelKind::Memory => "/memory.html",
+        }
+    }
+}
+
+pub fn panel_title(kind: PanelKind, locale: crate::locale::Locale) -> &'static str {
+    match (kind, locale) {
+        (PanelKind::Settings, crate::locale::Locale::Ja) => "Lumi — 設定",
+        (PanelKind::Settings, crate::locale::Locale::En) => "Lumi — Settings",
+        (PanelKind::Inspector, crate::locale::Locale::Ja) => "Lumi — インスペクタ",
+        (PanelKind::Inspector, crate::locale::Locale::En) => "Lumi — Inspector",
+        (PanelKind::Memory, crate::locale::Locale::Ja) => "Lumi — 記憶",
+        (PanelKind::Memory, crate::locale::Locale::En) => "Lumi — Memory",
+    }
+}
+
+/// A panel window's spec. **A pure function**, like the credits one.
+///
+/// Not always-on-top and not content-protected: these are ordinary windows the user
+/// arranges themselves. They are still protected from `os.input.*` — every window Lumi
+/// owns is (`WindowKind::is_protected`), which is what stops Lumi from pressing the
+/// buttons in its own memory window (Invariant 8).
+pub fn compute_panel_window_options(kind: PanelKind, locale: crate::locale::Locale) -> WindowSpec {
+    let (width, height) = match kind {
+        PanelKind::Settings => (640.0, 560.0),
+        PanelKind::Inspector => (720.0, 640.0),
+        // The widest of the three: a list of sentences with their grounds beside them.
+        PanelKind::Memory => (860.0, 680.0),
+    };
+    WindowSpec {
+        label: kind.window().label(),
+        title: panel_title(kind, locale),
+        width,
+        height,
+        position: None,
+        transparent: false,
+        decorations: true,
+        always_on_top: false,
+        skip_taskbar: false,
+        resizable: true,
+        shadow: true,
+        focused: true,
+        visible: true,
+        content_protected: false,
+        click_through: false,
+    }
+}
+
 pub fn compute_credits_window_options(locale: crate::locale::Locale) -> WindowSpec {
     WindowSpec {
         label: WindowKind::Credits.label(),
@@ -312,6 +415,59 @@ mod tests {
     fn full_hd() -> ScreenArea {
         // The work area at 1080p, excluding the 48px taskbar.
         ScreenArea { x: 0.0, y: 0.0, width: 1920.0, height: 1032.0 }
+    }
+
+    #[test]
+    fn a_panel_is_an_ordinary_window_the_user_arranges() {
+        // Not always-on-top and not click-through: these are windows someone reads and
+        // types in, unlike the character, which is decoration that must not steal focus.
+        let spec = compute_panel_window_options(PanelKind::Memory, crate::locale::Locale::Ja);
+        assert_eq!(spec.label, "memory");
+        assert!(spec.decorations);
+        assert!(spec.resizable);
+        assert!(spec.focused);
+        assert!(!spec.always_on_top);
+        assert!(!spec.click_through);
+        assert!(!spec.transparent);
+    }
+
+    #[test]
+    fn every_panel_is_protected_from_lumis_own_input() {
+        // ★ **Invariant 8.** The memory window holds the only escalation to
+        // `user_confirmed`; Lumi pressing that button itself would make the strongest
+        // grounds in the system self-issued.
+        for kind in PanelKind::ALL {
+            assert!(kind.window().is_protected(), "{} is not protected", kind.window().label());
+            assert!(kind.window().is_panel());
+        }
+    }
+
+    #[test]
+    fn a_panel_kind_round_trips_through_its_window_label() {
+        for kind in PanelKind::ALL {
+            assert_eq!(PanelKind::from_request(kind.window().label()), Some(kind));
+        }
+    }
+
+    #[test]
+    fn an_unknown_panel_kind_opens_nothing() {
+        // **fail-closed.** The Stage names one of three windows; anything else — including
+        // the labels of Lumi's other windows — is not a panel and opens none of them.
+        assert_eq!(PanelKind::from_request("credits"), None);
+        assert_eq!(PanelKind::from_request("stage"), None);
+        assert_eq!(PanelKind::from_request("../../etc/passwd"), None);
+        assert_eq!(PanelKind::from_request(""), None);
+    }
+
+    #[test]
+    fn each_panel_loads_its_own_page() {
+        // **No panel loads the character's entry point.** Sharing one would mean opening
+        // settings starts a second Stage, which would try to connect as `stage`.
+        let pages: Vec<&str> = PanelKind::ALL.iter().map(|kind| kind.page()).collect();
+        assert_eq!(pages, ["/settings.html", "/inspector.html", "/memory.html"]);
+        for page in pages {
+            assert_ne!(page, "index.html");
+        }
     }
 
     #[test]

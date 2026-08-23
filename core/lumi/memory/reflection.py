@@ -100,7 +100,6 @@ REMEMBER_PHRASES: Final = (
 #: subject (`episode.move`, measured 2026-08-23). Two semantic memories sharing a subject
 #: are a contradiction as far as `reconcile` is concerned, so **one of them would have
 #: superseded the other**: a fact quietly deleting an unrelated fact.
-#: not shown to anyone, and the model is multilingual.
 EXTRACTION_SYSTEM: Final = """\
 You extract durable memories from a transcript of a conversation between a user and Lumi.
 
@@ -178,18 +177,25 @@ class ReflectionReport:
         return self.written + self.superseded
 
 
+def asked_to_remember(text: str) -> bool:
+    """Whether an utterance is the user asking for something to be remembered.
+
+    **A substring match on a short list, not a classifier.** Getting this wrong in the
+    permissive direction costs one early reflection pass; getting it wrong the other way
+    means "覚えておいて" was heard and quietly ignored, which is the failure people
+    remember. The same list decides `explicit_marking`, so what triggers a pass and what
+    counts as important within it cannot disagree.
+    """
+    return any(phrase in text for phrase in REMEMBER_PHRASES)
+
+
 def explicit_marking(lines: Sequence[Utterance]) -> bool:
     """Whether the user asked, in so many words, for this to be kept.
 
     **A string check, and deliberately so.** "Did they mean it as important" is exactly the
     judgement an LLM is unreliable at; "did they say 覚えておいて" is not a judgement.
     """
-    return any(
-        phrase in line.text
-        for line in lines
-        if line.speaker == SPEAKER_USER
-        for phrase in REMEMBER_PHRASES
-    )
+    return any(asked_to_remember(line.text) for line in lines if line.speaker == SPEAKER_USER)
 
 
 def render_transcript(lines: Sequence[Utterance]) -> str:
@@ -262,7 +268,6 @@ def to_candidate(
     *,
     lines: Mapping[str, Utterance],
     episode_id: str,
-    now: datetime,
     novelty: float = 0.0,
 ) -> MemoryCandidate:
     """One extracted item as something the store can be asked to believe.
@@ -270,6 +275,10 @@ def to_candidate(
     Raises `ReflectionRejected` for anything that cannot be checked. **Trust is computed
     from the cited utterances**, never taken from the model: an extractor has no standing
     to say how trustworthy its own source was (Invariant 7).
+
+    **There is no `now` here on purpose.** A memory is valid from when it was *said*, not
+    from when reflection got around to reading it, so `valid_from` comes from the cited
+    utterances. Passing the clock in would invite the two to drift apart.
     """
     subject = str(item.get("subject", "")).strip()
     content = str(item.get("content", "")).strip()
@@ -303,6 +312,8 @@ def to_candidate(
             # stored, so there is nothing here to read intensity from; Phase 3's internal
             # state is where it will come from. Zero is honest; a guess would not be.
             emotional_intensity=0.0,
+            # Supplied by the caller, the only side that can ask the store. **The default
+            # is the cautious one**: novelty nobody looked up adds nothing.
             novelty=novelty,
             explicit_marking=explicit_marking(supporting),
             repetition=len(evidence),
@@ -399,6 +410,20 @@ class ReflectionJob:
         )
         return report
 
+    async def _novelty(self, item: Mapping[str, Any]) -> float:
+        """How far this sits from what is already believed. **1.0 means nothing like it.**
+
+        Measured at the subject, which is the store's own notion of "about the same thing"
+        — the extraction prompt is written so that one subject is one topic. It is coarse:
+        a second, unrelated fact about a subject we already know reads as familiar. The
+        finer answer is embedding distance, and it cannot be had here, because a candidate
+        is embedded by the `Indexer` **after** it has been written.
+        """
+        subject = str(item.get("subject", "")).strip()
+        if not subject:
+            return 0.0  # `to_candidate` is about to reject it anyway
+        return 0.0 if await self._store.live(subject) else 1.0
+
     async def _reflect(
         self, episode_id: str, lines: Sequence[Utterance], job: Job
     ) -> ReflectionReport:
@@ -420,7 +445,10 @@ class ReflectionJob:
         for item in items:
             try:
                 candidate = to_candidate(
-                    item, lines=by_id, episode_id=episode_id, now=self._clock()
+                    item,
+                    lines=by_id,
+                    episode_id=episode_id,
+                    novelty=await self._novelty(item),
                 )
             except ReflectionRejected as error:
                 rejected.append(str(error))

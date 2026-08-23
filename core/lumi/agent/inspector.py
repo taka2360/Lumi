@@ -30,7 +30,7 @@ from lumi.agent.latency import TurnLatency
 from lumi.kernel.activity import Activity
 from lumi.kernel.event import DomainEvent
 from lumi.kernel.ids import ActivityId
-from lumi.transport.methods import METHOD_INSPECTOR
+from lumi.transport.methods import METHOD_PANEL_INSPECTOR
 from lumi.transport.protocol import Role
 
 log = lumi_logging.get_logger(__name__)
@@ -153,4 +153,4 @@ class InspectorPublisher:
         payload = snapshot(
             list(self._arbiter.activities()), self._arbiter.current().id, self._latency()
         )
-        await self._notifier.notify(Role.STAGE, METHOD_INSPECTOR, payload)
+        await self._notifier.notify(Role.PANEL, METHOD_PANEL_INSPECTOR, payload)

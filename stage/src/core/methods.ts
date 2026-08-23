@@ -22,11 +22,45 @@ export const METHOD_USER_SAID = "stage.user.said";
 /** Which model to draw, decided by Core from the Content Pack (ADR-029). */
 export const METHOD_MODEL = "stage.character.model";
 export const METHOD_EXPRESSION = "stage.character.expression";
-export const METHOD_INSPECTOR = "stage.inspector.state";
+/**
+ * The effective settings and where each value came from.
+ *
+ * **Still sent to the character window** even though settings live in their own window
+ * now (ADR-042): `locale` decides the language of everything drawn here.
+ */
 export const METHOD_SETTINGS = "stage.settings.state";
 
-/** Stage → Core (ADR-028). **The only inbound method in Phase 1.** */
+/** Whether the microphone is open, and whether the user muted it (ui.md §5b). */
+export const METHOD_MIC = "stage.audio.mic";
+
+/** Core → panel windows (ADR-042). */
+export const METHOD_PANEL_SETTINGS = "panel.settings.state";
+export const METHOD_PANEL_INSPECTOR = "panel.inspector.state";
+/** Memory changed under an open memory window. **A nudge; the window asks for the data.** */
+export const METHOD_PANEL_MEMORY = "panel.memory.state";
+
+/** Stage → Core (ADR-028). */
 export const METHOD_SETTINGS_UPDATE = "stage.settings.update";
+
+/** Mute or unmute the microphone, from beside the indicator that says it is open. */
+export const METHOD_MIC_MUTE = "stage.audio.mute";
+
+/** Panel → Core (ADR-042). **A different namespace, because a different window asks.** */
+export const METHOD_PANEL_SETTINGS_UPDATE = "panel.settings.update";
+export const METHOD_PANEL_MEMORY_SEARCH = "panel.memory.search";
+export const METHOD_PANEL_MEMORY_EDIT = "panel.memory.edit";
+export const METHOD_PANEL_MEMORY_FORGET = "panel.memory.forget";
+export const METHOD_PANEL_MEMORY_CONFIRM = "panel.memory.confirm";
+export const METHOD_PANEL_MEMORY_EXPORT = "panel.memory.export";
+export const METHOD_PANEL_MEMORY_ERASE_PREVIEW = "panel.memory.erase_preview";
+export const METHOD_PANEL_MEMORY_ERASE = "panel.memory.erase";
+
+/**
+ * The windows `openPanel` can open. **Shell holds the same three**, and an unknown value
+ * opens nothing (docs/interfaces/shell.md).
+ */
+export const PANEL_KINDS = ["settings", "inspector", "memory"] as const;
+export type PanelKind = (typeof PANEL_KINDS)[number];
 /** Re-runs the fixed local Ollama detection; no URL or host is supplied by Stage. */
 export const METHOD_SETUP_RECHECK_OLLAMA = "stage.setup.recheck_ollama";
 

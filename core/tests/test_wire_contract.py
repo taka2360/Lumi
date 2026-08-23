@@ -40,6 +40,7 @@ from lumi.transport.methods import (
     COMPONENT_STT,
     COMPONENT_TTS,
     INBOUND_METHODS,
+    PANEL_METHODS,
     STAGE_METHODS,
 )
 from lumi.transport.protocol import NAMESPACE_BY_ROLE, PROTOCOL_VERSION, Role
@@ -124,10 +125,26 @@ class TestCoreMatchesTheContract:
         """
         assert list(INBOUND_METHODS) == wire["inbound_methods"]
 
-    def test_inbound_methods_are_stage_namespace(self, wire: dict[str, Any]) -> None:
-        """**`stage.*` must never request OS privileges** (docs/architecture/core.md §3)."""
+    def test_panel_methods(self, wire: dict[str, Any]) -> None:
+        """**Everything Core may send to a panel window** (ADR-042).
+
+        Separate from `stage`, and that is the point: what goes to the character window
+        and what goes to a settings or memory window are **different lists carried over
+        different connections**, so neither can quietly acquire the other's methods.
+        """
+        assert PANEL_METHODS == set(wire["methods"]["panel"])
+
+    def test_inbound_methods_never_request_os_privileges(self, wire: dict[str, Any]) -> None:
+        """★ **A window never asks for OS privileges** (docs/architecture/core.md §3).
+
+        `os.*` from a WebView is the thing B2 exists to prevent. The namespace check is
+        not decoration: `method_matches_role` refuses anything outside the role's prefix
+        **before a handler is found**, so an inbound name in the wrong namespace is not a
+        weaker route — it is no route at all.
+        """
+        allowed = tuple(NAMESPACE_BY_ROLE[role] for role in (Role.STAGE, Role.PANEL))
         for method in wire["inbound_methods"]:
-            assert method.startswith("stage."), f"{method} is not in the stage.* namespace"
+            assert method.startswith(allowed), f"{method} is in no client namespace"
 
     def test_character_model_reasons(self, wire: dict[str, Any]) -> None:
         """**Core sends a code, and the Stage owns the wording** (ADR-036).

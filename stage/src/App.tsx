@@ -9,13 +9,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { AppActions } from "./actions/AppActions";
+import { MicIndicator } from "./audio/MicIndicator";
 import { CharacterCanvas, type CharacterStatus } from "./character/CharacterCanvas";
 import { useStageStore } from "./core/store";
 import { useCoreConnection } from "./core/useCoreConnection";
-import { Inspector } from "./inspector/Inspector";
 import type { CssRect } from "./platform/geometry";
 import { useHitRegionReporter, useHoverState, useWindowGestures } from "./platform/useStageShell";
-import { Settings } from "./settings/Settings";
 import { BootScreen } from "./setup/BootScreen";
 import { SetupPanel } from "./setup/SetupPanel";
 import { Bubble } from "./speech/Bubble";
@@ -83,29 +82,27 @@ export function App() {
   const [panel, setPanel] = useState<HTMLDivElement | null>(null);
   const panelRect = useElementRect(panel);
 
-  // The Inspector is a real control. **Without its rect in the hit region the toggle
+  // The action row is a real control. **Without its rect in the hit region the buttons
   // cannot be clicked at all** — Shell makes everything outside the region click-through.
   // When hidden, its rect is excluded to prevent blocking click-through over empty space.
   const [inspector, setInspector] = useState<HTMLDivElement | null>(null);
   const inspectorRect = useElementRect(inspector);
 
-  const [inspectorOpen, setInspectorOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
   const [anchorHovered, setAnchorHovered] = useState(false);
 
   // Prompt/setup and normal character mode render the controls in different hosts. Their
   // child components are remounted when that host changes, so clear parent-owned flags that
-  // otherwise keep the hidden normal-mode anchor visible after an open panel disappears.
+  // otherwise keep the hidden normal-mode anchor visible.
   useEffect(() => {
     if (controlsAbovePanel) {
       return;
     }
-    setInspectorOpen(false);
-    setSettingsOpen(false);
     setAnchorHovered(false);
   }, [controlsAbovePanel]);
 
-  const isActivelyHovered = hover === "inside" || anchorHovered || inspectorOpen || settingsOpen;
+  // **The panels are windows of their own now** (ADR-042), so nothing expands in place
+  // any more and the row's visibility follows the cursor alone.
+  const isActivelyHovered = hover === "inside" || anchorHovered;
   const [inspectVisible, setInspectVisible] = useState(false);
 
   useEffect(() => {
@@ -119,10 +116,16 @@ export function App() {
     return () => clearTimeout(timer);
   }, [isActivelyHovered]);
 
+  // **The microphone control is always in the hit region.** Everything else on this
+  // window appears on hover; a mute button that has to be found by hovering is one the
+  // user cannot reach in the moment they most want it (ui.md §5b).
+  const [mic, setMic] = useState<HTMLDivElement | null>(null);
+  const micRect = useElementRect(mic);
+
   const lastReported = useRef<string>("");
   useEffect(() => {
     const activeInspectorRect = inspectVisible ? inspectorRect : null;
-    const rects = [characterRect, panelRect, activeInspectorRect].filter(
+    const rects = [characterRect, panelRect, activeInspectorRect, micRect].filter(
       (rect): rect is CssRect => rect !== null,
     );
     const signature = JSON.stringify(rects);
@@ -131,15 +134,9 @@ export function App() {
     }
     lastReported.current = signature;
     reportHitRegion(rects);
-  }, [characterRect, panelRect, inspectorRect, inspectVisible, reportHitRegion]);
+  }, [characterRect, panelRect, inspectorRect, micRect, inspectVisible, reportHitRegion]);
 
-  const inspectorControls = (
-    <>
-      <AppActions />
-      <Inspector onOpenChange={setInspectorOpen} />
-      <Settings onOpenChange={setSettingsOpen} />
-    </>
-  );
+  const inspectorControls = <AppActions />;
 
   return (
     <div
@@ -161,6 +158,13 @@ export function App() {
       {/* Only while the character is out. A bubble floating over a loading screen would
           be speech with nobody visibly saying it. */}
       {showCharacter && <Bubble />}
+      {/* **Not conditional on hover.** Whether the microphone is open is the one thing
+          on this window that has to be visible without looking for it. */}
+      {showCharacter && (
+        <div ref={setMic} className="mic-anchor">
+          <MicIndicator />
+        </div>
+      )}
       <div
         className={showBootScreen ? "overlay overlay--boot" : "overlay"}
         ref={setPanel}

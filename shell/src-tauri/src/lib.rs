@@ -28,8 +28,9 @@ use crate::core_process::{find_sidecar, resolve_launch_spec, CoreSupervisor, Cor
 use crate::hover::{shell_hit_region_set, spawn_cursor_watcher, HitRegionStore};
 use crate::locale::system_locale;
 use crate::window::{
-    compute_credits_window_options, compute_stage_placement, compute_stage_window_options,
-    shell_window_drag_start, shell_window_scale, ScreenArea, StageConfig, WindowKind, WindowSpec,
+    compute_credits_window_options, compute_panel_window_options, compute_stage_placement,
+    compute_stage_window_options, shell_window_drag_start, shell_window_scale, PanelKind,
+    ScreenArea, StageConfig, WindowKind, WindowSpec,
 };
 
 /// Opens a window per the spec.
@@ -97,6 +98,28 @@ fn open_credits(app: &AppHandle) {
         Ok(_) => log::info!("credits.opened"),
         // **Never let it silently do nothing.** Logs it if it couldn't open.
         Err(error) => log::error!("credits.open_failed {error}"),
+    }
+}
+
+/// Opens one of the auxiliary windows (ADR-042).
+///
+/// **The same shape as `open_credits`**, including bringing an existing one forward
+/// rather than making a second: two settings windows disagreeing about the current value
+/// is not a state anyone should have to reason about.
+fn open_panel(app: &AppHandle, kind: PanelKind) {
+    let label = kind.window().label();
+    if let Some(existing) = app.get_webview_window(label) {
+        let _ = existing.show();
+        let _ = existing.unminimize();
+        let _ = existing.set_focus();
+        return;
+    }
+
+    let spec = compute_panel_window_options(kind, system_locale());
+    match create_window(app, &spec, WebviewUrl::App(kind.page().into())) {
+        Ok(_) => log::info!("panel.opened label={label}"),
+        // **Never let it silently do nothing.** Logs it if it couldn't open.
+        Err(error) => log::error!("panel.open_failed label={label} {error}"),
     }
 }
 
@@ -199,6 +222,10 @@ pub fn run() {
     // (docs/contracts/security-boundaries.md B2 / B3).
     let shell_token = generate_token();
     let stage_token = generate_token();
+    // **A third token for the auxiliary windows** (ADR-042). Held by settings, inspector
+    // and memory; never by the character window, which is what keeps `invoke`'s addressee
+    // unambiguous.
+    let panel_token = generate_token();
     let (supervisor, port_rx) = CoreSupervisor::new();
 
     let setup_supervisor = supervisor.clone();
@@ -206,7 +233,7 @@ pub fn run() {
 
     let app = tauri::Builder::default()
         .manage(HitRegionStore::default())
-        .manage(CoreEndpointState::new(port_rx.clone(), stage_token.clone()))
+        .manage(CoreEndpointState::new(port_rx.clone(), stage_token.clone(), panel_token.clone()))
         // `shell.*`'s allowlist (B1). Anything not listed here can't be called from the Stage.
         // **Never add a command here that carries AI judgment.**
         .invoke_handler(tauri::generate_handler![
@@ -216,6 +243,7 @@ pub fn run() {
             shell_window_scale,
             tray::shell_locale_set,
             tray::shell_credits_open,
+            tray::shell_panel_open,
             tray::shell_ollama_site_open,
             // Credits and quitting carry no judgment, so `shell.*`'s rule holds.
             tray::shell_app_quit
@@ -252,7 +280,11 @@ pub fn run() {
                     allow_content_pack(app.handle(), &launch.content_dir);
                     setup_supervisor.start(
                         launch,
-                        CoreTokens { shell: setup_shell_token.clone(), stage: stage_token.clone() },
+                        CoreTokens {
+                            shell: setup_shell_token.clone(),
+                            stage: stage_token.clone(),
+                            panel: panel_token.clone(),
+                        },
                     );
                     ws_client::start(
                         app.handle().clone(),

@@ -43,11 +43,13 @@ class AudioIO:
     __slots__ = (
         "_capture",
         "_events",
+        "_input_muted",
         "_loop",
         "_mute_flag",
         "_params",
         "_plan",
         "_playback",
+        "_vad",
         "_vad_worker",
     )
 
@@ -62,6 +64,11 @@ class AudioIO:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._vad_worker: VadWorker | None = None
         self._params = params
+        #: Kept across a mute so unmuting does not reload the model.
+        self._vad: SileroVad | None = None
+        #: **Muting closes the input stream**, so this is not "ignore what arrives" — see
+        #: `set_input_muted`.
+        self._input_muted = False
 
     @property
     def can_listen(self) -> bool:
@@ -88,24 +95,68 @@ class AudioIO:
             log.warning("audio.no_input", warnings=list(self._plan.warnings))
             return
 
+        self._vad = vad
         self._capture.start()
         await asyncio.to_thread(self._capture.wait_until_open)
-
-        self._vad_worker = VadWorker(
-            self._capture.ring,
-            self._capture.plan.samplerate,
-            self._mute_flag,
-            self._notify,
-            vad=vad,
-            params=self._params,
-            is_playing=self._is_playing,
-        )
-        self._vad_worker.start()
+        self._start_vad()
         log.info(
             "audio.started",
             capture=self._capture.plan.describe(),
             playback=self._playback.plan.describe() if self._playback else None,
         )
+
+    def _start_vad(self) -> None:
+        """A worker over the current stream. **A fresh one every time**: `VadWorker.stop`
+        latches, so restarting the old one would return without reading a single frame.
+        """
+        assert self._capture is not None
+        self._vad_worker = VadWorker(
+            self._capture.ring,
+            self._capture.plan.samplerate,
+            self._mute_flag,
+            self._notify,
+            vad=self._vad,
+            params=self._params,
+            is_playing=self._is_playing,
+        )
+        self._vad_worker.start()
+        # **Held for the next unmute.** `VadWorker.start` builds one when given none, and
+        # loading Silero again on every unmute would make the button feel broken.
+        self._vad = self._vad_worker.vad
+
+    @property
+    def input_muted(self) -> bool:
+        return self._input_muted
+
+    async def set_input_muted(self, muted: bool) -> None:
+        """Mute or unmute the microphone (docs/architecture/ui.md §5b).
+
+        **This closes the input stream rather than discarding what it produces.** A mute
+        that keeps the device open leaves the OS microphone indicator lit and leaves Lumi
+        holding audio it has promised not to listen to — and the whole point of the
+        control is that the user can believe it.
+
+        The cost is that unmuting has to reopen the device, which can fail (unplugged in
+        the meantime). **It fails loudly**: the exception reaches the caller, and the
+        state stays muted rather than claiming to listen.
+        """
+        if self._capture is None or muted == self._input_muted:
+            self._input_muted = muted
+            return
+        if muted:
+            if self._vad_worker is not None:
+                await asyncio.to_thread(self._vad_worker.stop)
+                self._vad_worker = None
+            self._capture.stop()
+            self._input_muted = True
+            log.info("audio.input_muted")
+            return
+
+        self._capture.start()
+        await asyncio.to_thread(self._capture.wait_until_open)
+        self._start_vad()
+        self._input_muted = False
+        log.info("audio.input_unmuted")
 
     def resume_listening(self) -> None:
         """**Resets to a state that can accept the next barge-in.**

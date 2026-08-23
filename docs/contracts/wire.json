@@ -3,7 +3,8 @@
   "protocol_version": 1,
   "namespace_by_role": {
     "shell": "os.",
-    "stage": "stage."
+    "stage": "stage.",
+    "panel": "panel."
   },
   "methods": {
     "stage": [
@@ -14,18 +15,32 @@
       "stage.user.said",
       "stage.character.model",
       "stage.character.expression",
-      "stage.inspector.state",
-      "stage.settings.state"
+      "stage.settings.state",
+      "stage.audio.mic"
     ],
     "os": [
       "os.window.get_position",
       "os.window.set_position"
+    ],
+    "panel": [
+      "panel.settings.state",
+      "panel.inspector.state",
+      "panel.memory.state"
     ]
   },
   "$comment_inbound": "Stage -> Core requests (ADR-028). Methods not listed here will not be delivered (WsServer.on_request registration serves as the allowlist itself)",
   "inbound_methods": [
     "stage.settings.update",
-    "stage.setup.recheck_ollama"
+    "stage.setup.recheck_ollama",
+    "stage.audio.mute",
+    "panel.settings.update",
+    "panel.memory.search",
+    "panel.memory.edit",
+    "panel.memory.forget",
+    "panel.memory.confirm",
+    "panel.memory.export",
+    "panel.memory.erase_preview",
+    "panel.memory.erase"
   ],
   "setup_components": [
     "tts",
@@ -53,6 +68,7 @@
     "shell_window_scale",
     "shell_locale_set",
     "shell_credits_open",
+    "shell_panel_open",
     "shell_ollama_site_open",
     "shell_app_quit"
   ],
@@ -60,7 +76,9 @@
     "stage",
     "credits",
     "permission",
-    "settings"
+    "settings",
+    "inspector",
+    "memory"
   ],
   "enums": {
     "tts_setup_state": [
@@ -125,6 +143,29 @@
     "model_format": [
       "vrm0",
       "vrm1"
+    ],
+    "panel_kind": [
+      "settings",
+      "inspector",
+      "memory"
+    ],
+    "memory_type": [
+      "episodic",
+      "semantic",
+      "procedural"
+    ],
+    "assertion_mode": [
+      "user_confirmed",
+      "user_stated",
+      "inferred",
+      "self_generated",
+      "external"
+    ],
+    "erase_target": [
+      "episodes",
+      "domain_events",
+      "audit_log",
+      "memory_records"
     ]
   }
 }

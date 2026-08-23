@@ -8,6 +8,7 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
+import type { PanelKind } from "../core/methods";
 import type { Disposable, HitRect, HoverState, PlatformShell } from "./PlatformShell";
 
 /**
@@ -23,6 +24,7 @@ export const CMD_DRAG_START = "shell_window_drag_start";
 export const CMD_SCALE = "shell_window_scale";
 export const CMD_SET_LOCALE = "shell_locale_set";
 export const CMD_OPEN_CREDITS = "shell_credits_open";
+export const CMD_OPEN_PANEL = "shell_panel_open";
 export const CMD_OPEN_OLLAMA_SITE = "shell_ollama_site_open";
 export const CMD_QUIT = "shell_app_quit";
 
@@ -63,6 +65,10 @@ export function createTauriPlatformShell(): PlatformShell {
 
     async scaleWindow(factor: number): Promise<void> {
       await invoke(CMD_SCALE, { factor });
+    },
+
+    async openPanel(kind: PanelKind): Promise<void> {
+      await invoke(CMD_OPEN_PANEL, { kind });
     },
 
     async openCredits(): Promise<void> {

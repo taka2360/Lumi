@@ -231,11 +231,27 @@ export interface CharacterModel {
   reason: string;
 }
 
+/** Whether Lumi's microphone is open, and whether the user muted it (ui.md §5b). */
+export interface MicState {
+  /** **A stream is actually being read.** Muting closes it, so muted is never open. */
+  open: boolean;
+  muted: boolean;
+}
+
 interface StageState {
   connected: boolean;
   settings: SettingsSnapshot | null;
   setup: SetupSnapshot;
   inspector: InspectorSnapshot | null;
+  /**
+   * Bumped whenever Core says memory changed (`panel.memory.state`).
+   *
+   * **A counter, not the memories.** The memory window is on a page, with a filter, and
+   * what it should now show is its own question — this only says the answer changed.
+   */
+  memoryRevision: number;
+  /** `null` = Core has not said yet, which is not the same as "closed". */
+  mic: MicState | null;
   prompt: SetupPrompt | null;
   speech: Speech | null;
   userSaid: UserSaid | null;
@@ -246,6 +262,8 @@ interface StageState {
   setSetup(snapshot: SetupSnapshot): void;
   setInspector(snapshot: InspectorSnapshot): void;
   setSettings(snapshot: SettingsSnapshot): void;
+  setMic(mic: MicState): void;
+  nudgeMemory(): void;
   setPrompt(prompt: SetupPrompt | null): void;
   setSpeech(speech: Speech | null): void;
   setUserSaid(said: UserSaid | null): void;
@@ -295,6 +313,8 @@ export const useStageStore = create<StageState>((set) => ({
   setup: UNKNOWN_SETUP,
   inspector: null,
   settings: null,
+  mic: null,
+  memoryRevision: 0,
   prompt: null,
   speech: null,
   userSaid: null,
@@ -304,6 +324,8 @@ export const useStageStore = create<StageState>((set) => ({
   setSetup: (setup) => set({ setup }),
   setInspector: (inspector) => set({ inspector }),
   setSettings: (settings) => set({ settings }),
+  setMic: (mic) => set({ mic }),
+  nudgeMemory: () => set((state) => ({ memoryRevision: state.memoryRevision + 1 })),
   setPrompt: (prompt) => set({ prompt }),
   // **Lumi starting to speak clears what the user said.** That is the turn changing hands,
   // and it comes from a Core event rather than a Stage-side timer — the Stage decides nothing

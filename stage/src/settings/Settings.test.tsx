@@ -1,14 +1,13 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
-
+import { updateSettings } from "../core/request";
 import { type SettingsSnapshot, useStageStore } from "../core/store";
-import { updateSettings } from "../core/useCoreConnection";
 import { LocaleProvider } from "../i18n/provider";
 import { Settings } from "./Settings";
 
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-vi.mock("../core/useCoreConnection", () => ({ updateSettings: vi.fn() }));
+vi.mock("../core/request", () => ({ updateSettings: vi.fn() }));
 
 function snapshot(value: string): SettingsSnapshot {
   return {
@@ -45,9 +44,6 @@ describe("Settings", () => {
       );
     });
 
-    act(() => {
-      container?.querySelector<HTMLButtonElement>("button")?.click();
-    });
     expect(container.querySelector<HTMLInputElement>("input")?.value).toBe("old-model");
 
     act(() => {

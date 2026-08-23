@@ -286,7 +286,9 @@ class ReflectionReport:
     superseded: int = 0
     duplicates: int = 0
     rejected: tuple[str, ...] = ()   # 受け付けなかった理由。**数だけでなく理由を残す**
-    interrupted: bool = False        # revoke / エンジン失敗。**watermark は動いていない**
+    interrupted: bool = False        # revoke / エンジン失敗。**中断した Episode の
+                                     # watermark は動いていない**（同じ pass で先に
+                                     # 終わった Episode の分は動いている）
     episodes: int = 0
 ```
 
@@ -359,3 +361,35 @@ _schema_version (component, version, applied_at)
 | 11 | 埋め込みモデル変更が `model_id` の不一致で検出される |
 | 12 | マイグレーションが旧バージョンの DB を読める |
 | 13 | マイグレーション失敗時に旧 DB がバックアップされる |
+
+
+---
+
+## 記憶 UI が使う操作〔2026-08-23 / 2g〕
+
+`memory` ウィンドウから `panel.*` で届く（[ADR-042](../decisions/ADR-042-panel-windows-and-panel-role.md)）。
+画面と操作の一覧は [../architecture/ui.md](../architecture/ui.md) §5b が唯一の定義場所。
+
+```python
+class MemoryStore(Protocol):
+    async def browse(
+        self, *, query: str = "", include_history: bool = False,
+        limit: int, offset: int = 0,
+    ) -> tuple[list[MemoryRecord], int]:
+        """一覧。**部分一致であって 2e の検索ではない**"""
+
+    async def rewrite(
+        self, memory_id: str, *, content: str, subject: str | None = None,
+        now: datetime | None = None,
+    ) -> MemoryRecord:
+        """ユーザーが直した。**supersede して user_confirmed / TRUSTED**"""
+```
+
+> **`browse` が意味検索でないのは意図的。** 自分の記憶を読む人が探しているのは
+> **自分が書いた覚えのあるその文**であり、意味検索は別の問いに答える——
+> 打った語に「関係する」ものを、予測できない順で返し、完全一致が先頭とも限らない。
+> **検索は会話のために順位をつけ、これは人のために並べる。**
+
+> **`rewrite` が矛盾ノートを書かないのも意図的。** ノートは
+> 「前は違うことを言っていたよね」と言うためにあり、**Lumi 自身の書き取りを本人が直したこと**は
+> 違うことを言ったのではない。書けば、誤字を根拠にした非難になる。

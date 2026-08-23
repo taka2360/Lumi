@@ -53,6 +53,7 @@ from lumi.memory.reflection import ReflectionJob
 from lumi.memory.retrieval import Retriever
 from lumi.memory.store import MemoryStore
 from lumi.memory.vectors import MemoryIndex
+from lumi.panel.service import PanelService
 from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
@@ -78,7 +79,11 @@ from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
 from lumi.transport.methods import (
     METHOD_EXPRESSION,
+    METHOD_MIC,
+    METHOD_MIC_MUTE,
     METHOD_MODEL,
+    METHOD_PANEL_MEMORY,
+    METHOD_PANEL_SETTINGS,
     METHOD_SETTINGS,
     METHOD_SETTINGS_UPDATE,
     REASON_MODEL_NOT_IN_PACK,
@@ -97,6 +102,12 @@ REFLECTION_CHECK_SECONDS: Final = 60.0
 #: enough that a session usually gets reflected on while it is still open; long enough that
 #: **a pause for breath is not mistaken for the end of a conversation.**
 REFLECTION_IDLE_AFTER: Final = timedelta(minutes=5)
+
+#: How quiet it has to be **after the user asked for something to be remembered**
+#: [Provisional]. Long enough not to run inside the pause between two sentences of the
+#: same thought; short enough that 「覚えておいて」 is acted on while the conversation it
+#: belongs to is still the one happening (docs/architecture/memory.md §4).
+REFLECTION_ASKED_IDLE_AFTER: Final = timedelta(seconds=20)
 
 #: What is configurable, and each key's environment override and default, live in
 #: `lumi.settings.KEYS`. **Declared once** — a second copy here drifted the moment the
@@ -125,8 +136,10 @@ class ConversationRuntime:
         "_memory_db",
         "_model",
         "_pack",
+        "_panel",
         "_providers",
         "_recorder",
+        "_reflect_asked",
         "_reflecting",
         "_retention",
         "_server",
@@ -146,6 +159,10 @@ class ConversationRuntime:
         self._model = self._settings.llm_model.value
         self._task: asyncio.Task[None] | None = None
         self._indexing: asyncio.Task[None] | None = None
+        #: The user asked to be remembered and the pass has not run yet. **Held here
+        #: rather than on the loop** so that a request survives the checks that find
+        #: the conversation still going.
+        self._reflect_asked = False
         self._reflecting: asyncio.Task[None] | None = None
         self._warmup: asyncio.Task[None] | None = None
         self._llm_retry: asyncio.Task[None] | None = None
@@ -196,9 +213,21 @@ class ConversationRuntime:
         )
         bus.subscribe(self._inspector.on_event)
 
-        # **The only inbound route in Phase 1** (ADR-028). Registering is what makes it
-        # reachable at all — anything unregistered is answered `unknown_method`
+        # **Registering is what makes a route reachable at all** (ADR-028) — anything
+        # unregistered is answered `unknown_method`
         server.on_request(METHOD_SETTINGS_UPDATE, self._update_settings)
+        server.on_request(METHOD_MIC_MUTE, self._set_mute)
+
+        # The settings, inspector and memory windows (ADR-042). **Registered whether or
+        # not a window is open**: routes belong to Core, not to whoever happens to be
+        # connected, and a route that appeared when a window opened would be a race.
+        self._panel = PanelService(
+            store=self._memories,
+            index=self._index,
+            retention=self._retention,
+            settings_update=self._update_settings,
+        )
+        self._panel.register(server)
 
     def _build_tools(self, server: WsServer, bus: EventBus) -> ToolRegistry:
         """Every tool Lumi has, behind the Permission Kernel.
@@ -315,10 +344,20 @@ class ConversationRuntime:
         """Extract memories from what has been said, **while nobody is talking.**
 
         docs/architecture/memory.md §4 lists three triggers: session end, a long idle, and
-        an explicit request. This implements the middle one, and **the other two fall out
-        of it**: a session that ends leaves its transcript for the next start, where "no
-        turn yet" is already an idle period. Holding shutdown open for an inference would
-        trade a clean exit for a chore.
+        an explicit request. **Two of them are the same mechanism with a different
+        threshold**, and the third falls out of it: a session that ends leaves its
+        transcript for the next start, where "no turn yet" is already an idle period.
+        Holding shutdown open for an inference would trade a clean exit for a chore.
+
+        | trigger | what it waits for |
+        |---|---|
+        | a long idle | `REFLECTION_IDLE_AFTER` of quiet |
+        | 「覚えておいて」 | `REFLECTION_ASKED_IDLE_AFTER` of quiet — **still quiet, not now** |
+        | session end | the next start's first idle period |
+
+        **The explicit request does not skip the wait.** Reflection takes an inference
+        lease, and starting one while the user is mid-sentence would put the extraction in
+        contention with the reply to the very sentence that asked for it.
 
         The interval is a poll rather than a timer reset per turn, because what is being
         waited for is the *absence* of turns — there is no event for that.
@@ -327,8 +366,15 @@ class ConversationRuntime:
             return
         while True:
             await asyncio.sleep(REFLECTION_CHECK_SECONDS)
-            if self._loop.idle_for() < REFLECTION_IDLE_AFTER:
+            # **Read once per pass**, because reading it clears it: a request must not be
+            # dropped by a loop that checked, decided it was too soon, and moved on.
+            asked = self._loop.take_remember_request()
+            if asked:
+                self._reflect_asked = True
+            wait = REFLECTION_ASKED_IDLE_AFTER if self._reflect_asked else REFLECTION_IDLE_AFTER
+            if self._loop.idle_for() < wait:
                 continue
+            self._reflect_asked = False
             try:
                 llm = cast(LLMProvider, await self._providers.get(ProviderKind.LLM))
             except ProviderError as error:
@@ -348,6 +394,14 @@ class ConversationRuntime:
                 # **What was just learned should be findable.** Indexing is cheap and this
                 # is already the idle path, so it costs the user nothing.
                 await self._index_memories()
+                # **A nudge, not the memories themselves.** An open memory window asks for
+                # what it wants to show; sending the records here would mean guessing
+                # which page it is on (ADR-042).
+                await self._server.notify(
+                    Role.PANEL,
+                    METHOD_PANEL_MEMORY,
+                    {"written": report.written, "superseded": report.superseded},
+                )
 
     async def _index_memories(self) -> None:
         """Embed anything unindexed, and re-embed after a model change.
@@ -397,9 +451,61 @@ class ConversationRuntime:
         if "tts_speed" in changes and self._loop is not None:
             self._loop.set_tts_speed(float(self._settings.tts_speed.value))
 
-        payload_out = self._settings.to_payload()
-        await self._server.notify(Role.STAGE, METHOD_SETTINGS, payload_out)
+        await self._broadcast_settings()
         return {"applied_at_next_start": any(key not in {"locale", "tts_speed"} for key in changes)}
+
+    async def _broadcast_settings(self) -> None:
+        """Send the settings snapshot to **both** the character window and the panels.
+
+        The settings window is where they are read and changed; the character window
+        needs `locale`, which decides the language of everything it draws. Sending to one
+        and not the other would leave the bubble in the language the app started in
+        (ADR-042).
+        """
+        payload = self._settings.to_payload()
+        await self._server.notify(Role.STAGE, METHOD_SETTINGS, payload)
+        await self._server.notify(Role.PANEL, METHOD_PANEL_SETTINGS, payload)
+
+    async def _set_mute(self, payload: dict[str, object]) -> dict[str, object]:
+        """Mute or unmute the microphone from the character window.
+
+        **The state is broadcast after the audio stack has actually changed**, never when
+        the request arrives. An indicator that goes dark on the press rather than on the
+        change is the one thing here that must not be optimistic — it is the only thing
+        telling the user whether the room is being listened to.
+        """
+        wanted = payload.get("muted")
+        if not isinstance(wanted, bool):
+            raise RequestRefused("invalid_payload")
+        if not self._audio.can_listen:
+            raise RequestRefused("no_microphone")
+        try:
+            await self._audio.set_input_muted(wanted)
+        except Exception as error:
+            # Unmuting reopens the device, and the device may be gone. **Say so and stay
+            # muted**; reporting success would leave the light on over a dead stream.
+            log.warning("audio.mute_failed", muted=wanted, error=str(error))
+            await self._announce_mic()
+            raise RequestRefused("microphone_unavailable") from error
+        await self._announce_mic()
+        return {"muted": self._audio.input_muted}
+
+    async def _announce_mic(self) -> None:
+        """Whether the microphone is open, and whether the user muted it (ui.md §5b).
+
+        **Open means a stream is actually being read**, so a muted microphone is not open:
+        muting closes it (`AudioIO.set_input_muted`).
+        """
+        await self._server.notify(
+            Role.STAGE,
+            METHOD_MIC,
+            {
+                "open": (
+                    self._listening and self._audio.can_listen and not self._audio.input_muted
+                ),
+                "muted": self._audio.input_muted,
+            },
+        )
 
     async def _announce_model(self) -> None:
         """Tells the Stage **which model to draw, and the credit that goes with it** (ADR-029).
@@ -571,6 +677,8 @@ class ConversationRuntime:
             report_task_exit("reactive.crashed", on_return="reactive.stopped")
         )
         log.info("conversation.started", can_listen=self._audio.can_listen)
+        # **The light comes on when the stream does**, not when the window loads.
+        await self._announce_mic()
 
     def _register_providers(self) -> None:
         """**Registered even when not set up.** Failure happens at `load()` time, which

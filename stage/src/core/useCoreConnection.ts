@@ -15,24 +15,28 @@
  * | `stage.user.said` | notify | What Core heard the user say |
  * | `stage.character.model` | notify | Which model to draw (ADR-029) |
  * | `stage.character.expression` | notify | The face changed |
- * | `stage.inspector.state` | notify | Activity tree and latency breakdown |
- * | `stage.settings.state` | notify | The effective settings |
+ * | `stage.settings.state` | notify | The effective settings (`locale` is what this window needs) |
+ * | `stage.audio.mic` | notify | Whether the microphone is open, and whether it is muted |
  *
- * The one outbound direction is `stage.settings.update` (ADR-028), sent by `updateSettings`.
+ * **The inspector stream is not here any more** (ADR-042). It goes to the inspector
+ * window over the `panel` connection, so the per-turn payload no longer shares a socket
+ * with speech and barge-in.
+ *
+ * The outbound direction is `stage.settings.update` and `stage.audio.mute` (ADR-028).
  */
 
 import { useEffect } from "react";
 
-import { type CoreConnection, connectToCore } from "./connection";
+import { connectToCore } from "./connection";
 import {
   type CHOICE_INSTALL,
   type CHOICE_SELECT,
   type CHOICE_SKIP,
   METHOD_EXPRESSION,
-  METHOD_INSPECTOR,
+  METHOD_MIC,
+  METHOD_MIC_MUTE,
   METHOD_MODEL,
   METHOD_SETTINGS,
-  METHOD_SETTINGS_UPDATE,
   METHOD_SETUP_PROMPT,
   METHOD_SETUP_RECHECK_OLLAMA,
   METHOD_SETUP_STATE,
@@ -43,13 +47,14 @@ import {
 import {
   toCharacterModel,
   toExpression,
-  toInspectorSnapshot,
+  toMicState,
   toSettingsSnapshot,
   toSetupPrompt,
   toSetupSnapshot,
   toSpeech,
   toUserSaid,
 } from "./payloads";
+import { callCore, clearRequester, setRequester } from "./request";
 import { useStageStore } from "./store";
 
 type Answer = typeof CHOICE_INSTALL | typeof CHOICE_SELECT | typeof CHOICE_SKIP;
@@ -58,29 +63,20 @@ type AnswerPayload = { choice: Answer; model?: string };
 /** The "function that returns an answer," populated only while being asked. Called by a UI button. */
 let pendingAnswer: ((answer: AnswerPayload) => void) | null = null;
 
-/**
- * The live connection's `request`, for UI that asks Core to change something (ADR-028).
- *
- * Module-level for the same reason `pendingAnswer` is: **a button deep in the tree needs
- * it, and threading a callback through every component to reach one button is worse than
- * this.** `null` while disconnected, and callers must handle that.
- */
-let requestToCore: CoreConnection["request"] | null = null;
-
-/** Asks Core to change settings. **Rejects if Core refused** (never silently no-ops). */
-export async function updateSettings(changes: Record<string, string>): Promise<void> {
-  if (!requestToCore) {
-    throw new Error("not_connected");
-  }
-  await requestToCore(METHOD_SETTINGS_UPDATE, { changes });
-}
-
 /** Re-checks the fixed local Ollama endpoint from the setup screen's timer. */
 export async function recheckOllama(): Promise<void> {
-  if (!requestToCore) {
-    throw new Error("not_connected");
-  }
-  await requestToCore(METHOD_SETUP_RECHECK_OLLAMA);
+  await callCore(METHOD_SETUP_RECHECK_OLLAMA);
+}
+
+/**
+ * Mutes or unmutes the microphone.
+ *
+ * **The indicator is not changed here.** Core closes the input stream and then broadcasts
+ * what it actually did (`stage.audio.mic`); a light that goes out on the press rather than
+ * on the change would be the one thing in this feature nobody could trust.
+ */
+export async function setMicMuted(muted: boolean): Promise<void> {
+  await callCore(METHOD_MIC_MUTE, { muted });
 }
 
 /** Returns the user's choice to Core. **Core waits until answered** (there is a timeout). */
@@ -99,8 +95,9 @@ export function useCoreConnection(): void {
       onConnectedChange: (connected) => store.setConnected(connected),
       notifications: {
         [METHOD_SETUP_STATE]: (payload) => store.setSetup(toSetupSnapshot(payload)),
-        [METHOD_INSPECTOR]: (payload) => store.setInspector(toInspectorSnapshot(payload)),
         [METHOD_SETTINGS]: (payload) => store.setSettings(toSettingsSnapshot(payload)),
+        // **What the microphone is actually doing**, as opposed to what was asked of it
+        [METHOD_MIC]: (payload) => store.setMic(toMicState(payload)),
         // **Which model to draw is Core's decision** (ADR-029). Sent once at startup,
         // including when there is none — the placeholder needs a reason to show
         [METHOD_MODEL]: (payload) => store.setModel(toCharacterModel(payload)),
@@ -130,11 +127,11 @@ export function useCoreConnection(): void {
       },
     });
 
-    requestToCore = connection.request;
+    setRequester(connection.request, "stage");
 
     return () => {
       pendingAnswer = null;
-      requestToCore = null;
+      clearRequester();
       connection.close();
     };
   }, []);

@@ -9,6 +9,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import type { PanelKind } from "../core/methods";
 import { type CssRect, normalizeHitRects } from "./geometry";
 import type { HoverState, PlatformShell } from "./PlatformShell";
 import { createTauriPlatformShell, isTauri } from "./tauri";
@@ -22,6 +23,7 @@ const noopShell: PlatformShell = {
   startWindowDrag: async () => {},
   scaleWindow: async () => {},
   openCredits: async () => {},
+  openPanel: async () => {},
   openOllamaSite: async () => {},
   // Outside Tauri there is no process to end. **Left as a no-op rather than closing the
   // tab**: a browser-opened Stage is a development view, and taking the window away from
@@ -99,6 +101,19 @@ export function useOpenCredits(onError?: (error: unknown) => void): () => void {
       onError?.(error);
     });
   }, [onError, shell]);
+}
+
+/**
+ * Returns a function that opens one of Lumi's auxiliary windows (ADR-042).
+ *
+ * **The kind is fixed at the call site**, not typed by anyone: the action row has one
+ * button per window, and Shell refuses anything outside its own three.
+ */
+export function useOpenPanel(kind: PanelKind, onError?: (error: unknown) => void): () => void {
+  const shell = useMemo(getPlatformShell, []);
+  return useCallback(() => {
+    void shell.openPanel(kind).catch((error: unknown) => onError?.(error));
+  }, [kind, onError, shell]);
 }
 
 /** Opens the fixed official Ollama download page. No URL crosses the Stage/Shell boundary. */

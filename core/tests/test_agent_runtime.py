@@ -420,6 +420,46 @@ class TestReflection:
         finally:
             await runtime.stop()
 
+    async def test_being_asked_to_remember_shortens_the_wait(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ 「覚えておいて」 is answered while it still means something.
+
+        **It does not skip the wait, it shortens it.** Reflection takes an inference lease,
+        so starting one the instant the phrase is heard would put the extraction in
+        contention with the reply to the sentence that asked for it.
+        """
+        runtime = await self._runtime(monkeypatch)
+        ran = asyncio.Event()
+
+        class Reflecting:
+            def __init__(self, **_kwargs: Any) -> None: ...
+
+            async def run(self) -> Any:
+                ran.set()
+                return type("Report", (), {"learned": 0})()
+
+        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        # Long enough that the ordinary trigger cannot be what fires.
+        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(days=1))
+        monkeypatch.setattr(runtime_module, "REFLECTION_ASKED_IDLE_AFTER", timedelta(0))
+        monkeypatch.setattr(
+            runtime_module, "OllamaProvider", lambda _model: FakeTts(kind=ProviderKind.LLM)
+        )
+        try:
+            await runtime.start()
+            assert runtime._loop is not None
+            await asyncio.sleep(0.02)
+            assert not ran.is_set()
+
+            runtime._loop._asked_to_remember = True
+
+            async with asyncio.timeout(2):
+                await ran.wait()
+        finally:
+            await runtime.stop()
+
     async def test_an_engine_that_is_not_up_is_not_a_crash(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

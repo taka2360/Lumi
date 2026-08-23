@@ -21,7 +21,7 @@ from lumi.transport.server import (
     tokens_from_env,
 )
 
-TOKENS = {Role.SHELL: "shell-token", Role.STAGE: "stage-token"}
+TOKENS = {Role.SHELL: "shell-token", Role.STAGE: "stage-token", Role.PANEL: "panel-token"}
 
 
 @pytest.fixture
@@ -197,12 +197,99 @@ class TestReconnect:
         await second.close()
 
 
+class TestPanelConnections:
+    """★ **The one role that may be several windows at once** (ADR-042)."""
+
+    async def test_a_second_panel_does_not_evict_the_first(self, server: WsServer) -> None:
+        """Opening settings must not close the memory window.
+
+        This is the whole reason `panel` is a role of its own rather than more `stage`
+        connections: **a reconnect on a single-connection role kills the old one**, and
+        that behaviour is right for the character and wrong for windows the user opens
+        deliberately, several at a time.
+        """
+        first = await open_client(server, role="panel")
+        await first.recv()
+        await wait_until_connected(server, Role.PANEL)
+        second = await open_client(server, role="panel")
+        await second.recv()
+
+        for _ in range(100):
+            if server.connection_count(Role.PANEL) == 2:
+                break
+            await asyncio.sleep(0.01)
+        assert server.connection_count(Role.PANEL) == 2
+
+        await server.notify(Role.PANEL, "panel.settings.state", {"n": 1})
+        assert json.loads(await first.recv())["method"] == "panel.settings.state"
+        assert json.loads(await second.recv())["method"] == "panel.settings.state"
+
+        await first.close()
+        await second.close()
+
+    async def test_a_notification_with_nobody_listening_is_not_a_failure(
+        self, server: WsServer
+    ) -> None:
+        """**No window open is the normal case**, not an error to report."""
+        await server.notify(Role.PANEL, "panel.memory.state", {"written": 1})
+
+    async def test_a_command_to_a_panel_is_refused(self, server: WsServer) -> None:
+        """★ **Core never waits for an answer from a panel.**
+
+        `invoke` resolves one future from one peer. With several connected there is no
+        such thing as "the" answer, and picking the first to reply would make the result
+        depend on which window happened to be open — a race dressed up as a decision.
+        """
+        client = await open_client(server, role="panel")
+        await client.recv()
+        await wait_until_connected(server, Role.PANEL)
+
+        with pytest.raises(ValueError, match="sole peer"):
+            await server.invoke(Role.PANEL, "panel.settings.state")
+
+        await client.close()
+
+    async def test_a_panel_cannot_send_a_stage_method(self, server: WsServer) -> None:
+        """★ **B2.** The namespace is the boundary, and it is checked before any handler.
+
+        The memory window can erase everything the user remembers. It must not also be
+        able to answer a setup prompt on the character's behalf.
+        """
+        seen: list[str] = []
+
+        async def handler(payload: dict[str, object]) -> dict[str, object]:
+            seen.append("called")
+            return {}
+
+        server.on_request("stage.settings.update", handler)
+        client = await open_client(server, role="panel")
+        await client.recv()
+
+        await client.send(
+            json.dumps(
+                {
+                    "v": PROTOCOL_VERSION,
+                    "kind": "request",
+                    "id": "r1",
+                    "method": "stage.settings.update",
+                    "payload": {},
+                }
+            )
+        )
+        answer = json.loads(await client.recv())
+
+        assert answer["ok"] is False
+        assert answer["error"] == "unknown_method"
+        assert seen == []
+        await client.close()
+
+
 class TestToken:
     def test_uses_env_tokens(self) -> None:
         tokens, generated = tokens_from_env(
-            {"LUMI_WS_TOKEN_SHELL": "a", "LUMI_WS_TOKEN_STAGE": "b"}
+            {"LUMI_WS_TOKEN_SHELL": "a", "LUMI_WS_TOKEN_STAGE": "b", "LUMI_WS_TOKEN_PANEL": "c"}
         )
-        assert tokens == {Role.SHELL: "a", Role.STAGE: "b"}
+        assert tokens == {Role.SHELL: "a", Role.STAGE: "b", Role.PANEL: "c"}
         assert not generated
 
     def test_generates_when_missing(self) -> None:
@@ -212,7 +299,7 @@ class TestToken:
 
     def test_refuses_empty_token(self) -> None:
         with pytest.raises(ValueError, match="token"):
-            WsServer({Role.SHELL: "a", Role.STAGE: ""})
+            WsServer({Role.SHELL: "a", Role.STAGE: "b", Role.PANEL: ""})
 
 
 class TestRoleTokenIsolation:

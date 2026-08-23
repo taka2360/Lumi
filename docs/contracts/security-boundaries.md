@@ -12,7 +12,7 @@
 | # | 境界 | 信頼の低い側 | 想定される攻撃者 | 認証 | 認可 | 検証 |
 |---|---|---|---|---|---|---|
 | **B1** | Shell ↔ Stage | Stage | XSS / 悪意ある Widget の脱出 | 同一プロセスペア（Tauri IPC） | `shell.*` allowlist | schema |
-| **B2** | Core ↔ Stage | Stage | 同上 | WS token | `stage.*` のみ受理 | schema |
+| **B2** | Core ↔ Stage / Panel | Stage・Panel | 同上 | **role ごとに別の WS token** | `stage.*` / `panel.*` のみ受理（role の namespace 外は届かない） | schema |
 | **B3** | **Core → Shell** | **Core** | **侵害された Core / インジェクションされた LLM** | WS token | `os.*` allowlist + **Shell側ハードコード拒否** | schema + 対象ウィンドウ検証 |
 | **B4** | Core ↔ Capability Ext | Ext | 第三者 Extension | WS token + manifest 検証 | capability 交差（Invariant 5） | schema |
 | **B5** | Core ↔ 外部エンジン | エンジン | 侵害された Ollama / TTS | localhost bind | — | **出力を必ず untrusted 扱い** |
@@ -92,6 +92,7 @@ Stage は WebView であり、以下のリスクがある。
 |---|---|
 | B1 (Shell↔Stage) | `shell.*` の allowlist。ウィンドウ操作以外は通さない。**AI の判断を運ぶ経路を作らない** |
 | B2 (Core↔Stage) | `stage.*` namespace のみ受理。`os.*` / `ext.*` は Stage から受け付けない |
+| B2 (Core↔Panel) | `panel.*` namespace のみ受理（[ADR-042](../decisions/ADR-042-panel-windows-and-panel-role.md)）。**`panel` は複数接続を許す唯一の role** であり、そのぶん Core → panel は `notify` だけ。**答えを待つ `invoke` は禁止**（宛先が一意でないものに判断を待たせない） |
 
 **規則の再掲**: `shell.*` は絶対に AI の判断を運ばない。`stage.*` は絶対に OS 特権を要求しない。
 

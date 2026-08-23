@@ -13,10 +13,9 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-
+import { updateSettings } from "../core/request";
 import type { SettingsSource } from "../core/store";
 import { useStageStore } from "../core/store";
-import { updateSettings } from "../core/useCoreConnection";
 import { translate } from "../i18n";
 import { useLocale } from "../i18n/provider";
 
@@ -162,45 +161,38 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
   );
 }
 
-export function Settings({ onOpenChange }: { onOpenChange?: (open: boolean) => void } = {}) {
+/**
+ * The settings window's content (ADR-042).
+ *
+ * **Nothing is shown until Core has said what the values are.** Rendering an empty table
+ * first and filling it in would make "not connected yet" look like "no settings", and
+ * every field would appear to have been cleared.
+ */
+export function Settings() {
   const locale = useLocale();
   const settings = useStageStore((state) => state.settings);
-  const [open, setOpen] = useState(false);
 
   if (!settings) {
-    return null;
+    return <p className="inspect__empty">{translate(locale, "settings.waiting")}</p>;
   }
-
-  const handleToggle = () => {
-    const next = !open;
-    setOpen(next);
-    onOpenChange?.(next);
-  };
 
   return (
     <div className="settings">
-      <button type="button" className="inspect__toggle" onClick={handleToggle}>
-        {open ? "▾" : "▸"} {translate(locale, "settings.title")}
-      </button>
-      {open && (
-        <div className="inspect__body">
-          {settings.unreadable && (
-            // **Core refuses to save over it**, and says so rather than quietly running
-            // on defaults and destroying what the user meant.
-            <p className="panel__status panel__status--bad">
-              {translate(locale, "settings.unreadable")}
-            </p>
-          )}
-          <table className="inspect__lat">
-            <tbody>
-              {Object.entries(settings.values).map(([name, setting]) => (
-                <Row key={name} name={name} value={setting.value} source={setting.source} />
-              ))}
-            </tbody>
-          </table>
-          <p className="inspect__empty">{translate(locale, "settings.restart")}</p>
-        </div>
+      {settings.unreadable && (
+        // **Core refuses to save over it**, and says so rather than quietly running
+        // on defaults and destroying what the user meant.
+        <p className="panel__status panel__status--bad">
+          {translate(locale, "settings.unreadable")}
+        </p>
       )}
+      <table className="settings__table">
+        <tbody>
+          {Object.entries(settings.values).map(([name, setting]) => (
+            <Row key={name} name={name} value={setting.value} source={setting.source} />
+          ))}
+        </tbody>
+      </table>
+      <p className="inspect__empty">{translate(locale, "settings.restart")}</p>
     </div>
   );
 }

@@ -27,6 +27,7 @@ import type {
   InspectorSnapshot,
   LlmSetupSnapshot,
   LlmSetupState,
+  MicState,
   SettingsSnapshot,
   SettingsSource,
   SettingValue,
@@ -388,4 +389,15 @@ export function toSettingsSnapshot(payload: Record<string, unknown>): SettingsSn
     unreadable: payload.unreadable === true,
     values,
   };
+}
+
+/**
+ * Whether the microphone is open, and whether the user muted it.
+ *
+ * **Both default to false on an unreadable payload.** For "open" that is the fail-closed
+ * direction in the sense that matters here: the indicator claims Lumi is listening only
+ * when Core said so, never because a field was missing.
+ */
+export function toMicState(payload: Record<string, unknown>): MicState {
+  return { open: payload.open === true, muted: payload.muted === true };
 }

@@ -32,7 +32,8 @@
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",
-        "startMenuFolder": "Lumi"
+        "startMenuFolder": "Lumi",
+        "installerHooks": "nsis/uninstall.nsh"
       }
     },
     "icon": [

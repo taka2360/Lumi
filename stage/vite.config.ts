@@ -19,9 +19,16 @@ export default defineConfig({
     rollupOptions: {
       // Credits get their own page. **So it never loads the Stage code that
       // connects to Core** (docs/architecture/ui.md "Why `credits` doesn't connect to Core").
+      //
+      // The three panels get their own pages for a related but different reason
+      // (ADR-042): they do connect, as `panel`, and loading the character's entry point
+      // would start a second client claiming `stage`.
       input: {
         main: "index.html",
         credits: "credits.html",
+        settings: "settings.html",
+        inspector: "inspector.html",
+        memory: "memory.html",
       },
     },
   },

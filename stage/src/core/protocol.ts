@@ -4,11 +4,26 @@
  * The corresponding definition on the Core side is `core/lumi/transport/protocol.py`.
  * **Fix both at the same time.**
  *
- * The Stage receives only `stage.*`. `os.*` never arrives, and even if it did it
- * would never be interpreted (**`stage.*` must never request OS privileges** → docs/architecture/core.md §3).
+ * A window receives only its own namespace: the character window `stage.*`, the settings,
+ * inspector and memory windows `panel.*` (ADR-042). `os.*` never arrives, and even if it
+ * did it would never be interpreted (**a window must never request OS privileges** →
+ * docs/architecture/core.md §3).
  */
 
 export const PROTOCOL_VERSION = 1;
+
+/**
+ * Which client this window is. **Not a choice the window makes at runtime**: Shell hands
+ * out a different token per role, so claiming the wrong one here fails authentication
+ * rather than succeeding as somebody else.
+ */
+export type CoreRole = "stage" | "panel";
+
+/** The namespace a role may receive and send. Mirrors Core's `NAMESPACE_BY_ROLE`. */
+export const NAMESPACE_BY_ROLE: Record<CoreRole, string> = {
+  stage: "stage.",
+  panel: "panel.",
+};
 
 export class ProtocolVersionMismatch extends Error {
   constructor(received: unknown) {
@@ -55,10 +70,10 @@ function asRecord(value: unknown): Record<string, unknown> {
  * Parses a received message. **`null` if it can't be parsed** (never executes anything silently).
  * A version mismatch throws `ProtocolVersionMismatch` so the connection can reject it visibly.
  *
- * A method not starting with `stage.` is discarded. Core shouldn't send one, but
- * **even if it did, both the type and the implementation guarantee the Stage never receives it.**
+ * A method outside `role`'s namespace is discarded. Core shouldn't send one, but
+ * **even if it did, both the type and the implementation guarantee it never arrives.**
  */
-export function parseCoreMessage(raw: string): CoreMessage | null {
+export function parseCoreMessage(raw: string, role: CoreRole = "stage"): CoreMessage | null {
   let value: unknown;
   try {
     value = JSON.parse(raw);
@@ -75,7 +90,11 @@ export function parseCoreMessage(raw: string): CoreMessage | null {
       return { kind: "welcome" };
     case "command": {
       const { id, method } = message;
-      if (typeof id !== "string" || typeof method !== "string" || !method.startsWith("stage.")) {
+      if (
+        typeof id !== "string" ||
+        typeof method !== "string" ||
+        !method.startsWith(NAMESPACE_BY_ROLE[role])
+      ) {
         return null;
       }
       return { kind: "command", id, method, payload: asRecord(message.payload) };
@@ -96,7 +115,7 @@ export function parseCoreMessage(raw: string): CoreMessage | null {
     }
     case "notify": {
       const { method } = message;
-      if (typeof method !== "string" || !method.startsWith("stage.")) {
+      if (typeof method !== "string" || !method.startsWith(NAMESPACE_BY_ROLE[role])) {
         return null;
       }
       return { kind: "notify", method, payload: asRecord(message.payload) };
@@ -106,8 +125,8 @@ export function parseCoreMessage(raw: string): CoreMessage | null {
   }
 }
 
-export function helloMessage(token: string): string {
-  return JSON.stringify({ v: PROTOCOL_VERSION, kind: "hello", role: "stage", token });
+export function helloMessage(token: string, role: CoreRole = "stage"): string {
+  return JSON.stringify({ v: PROTOCOL_VERSION, kind: "hello", role, token });
 }
 
 export function resultMessage(

@@ -18,6 +18,8 @@
  * The character's speech, expressions, and memory come from Core via `stage.*` (WS).
  */
 
+import type { PanelKind } from "../core/methods";
+
 /** A rectangle with its origin at the window's client area. **Physical pixels** (not CSS pixels). */
 export interface HitRect {
   x: number;
@@ -72,6 +74,16 @@ export interface PlatformShell {
 
   /** Opens the bundled static credits and licenses window, or brings it forward. */
   openCredits(): Promise<void>;
+
+  /**
+   * Opens one of Lumi's own auxiliary windows — settings, inspector, memory — or brings
+   * it forward (ADR-042).
+   *
+   * **The argument is one of three names, not a label or a URL.** Shell looks it up in a
+   * fixed table and opens nothing for anything else, so this never becomes a way to make
+   * arbitrary windows (docs/interfaces/shell.md).
+   */
+  openPanel(kind: PanelKind): Promise<void>;
 
   /** Opens the fixed Ollama official download page in the default browser. */
   openOllamaSite(): Promise<void>;

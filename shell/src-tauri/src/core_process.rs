@@ -6,7 +6,7 @@
 //! |---|---|---|
 //! | 1 | Core reliably terminates when Shell terminates | Three layers: **Job Object (works even under force-kill) +** explicit kill + self-termination via stdin EOF → `job_object.rs` |
 //! | 2 | Detects and restarts Core if it exits abnormally | The watcher task restarts with exponential backoff |
-//! | 3 | Pass the WS token via environment variable | `LUMI_WS_TOKEN_SHELL` / `LUMI_WS_TOKEN_STAGE`. **Never put it on the command line** |
+//! | 3 | Pass the WS token via environment variable | `LUMI_WS_TOKEN_SHELL` / `LUMI_WS_TOKEN_STAGE` / `LUMI_WS_TOKEN_PANEL`. **Never put it on the command line** |
 //! | 4 | Shell logs stdout / stderr | Streamed to `log` line by line |
 //!
 //! **The port number is read from Core's stdout.** Core binds to a free port
@@ -34,6 +34,10 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 pub struct CoreTokens {
     pub shell: String,
     pub stage: String,
+    /// The auxiliary windows' token (ADR-042). **Separate from the Stage's** for the same
+    /// reason the Stage's is separate from the Shell's: a role that can be claimed with
+    /// somebody else's token is not a role.
+    pub panel: String,
 }
 
 /// The command that launches Core. Kept as **pure data** so the decision is testable.
@@ -210,6 +214,7 @@ impl CoreSupervisor {
             // **The token is never put on the command line** (visible to other processes via `ps`).
             .env("LUMI_WS_TOKEN_SHELL", &tokens.shell)
             .env("LUMI_WS_TOKEN_STAGE", &tokens.stage)
+            .env("LUMI_WS_TOKEN_PANEL", &tokens.panel)
             // Exits on its own once the parent disappears (the second layer of zombie prevention).
             .env("LUMI_PARENT_WATCH", "stdin")
             .stdin(Stdio::piped())

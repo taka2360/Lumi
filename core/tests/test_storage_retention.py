@@ -460,3 +460,79 @@ async def test_deleting_the_current_belief_leaves_its_predecessor_readable(rig: 
     assert predecessor is not None
     assert predecessor.superseded_by is None
     assert predecessor.is_live
+
+
+# ── 全部消して (docs/contracts/privacy.md §5) ──────────────────
+
+
+async def test_the_preview_counts_every_row_including_the_empty_ones(rig: Rig) -> None:
+    """★ **Zero is a fact about the row, not a reason to drop it.**
+
+    This is the list a user reads immediately before erasing everything. A category that
+    disappears when it happens to be empty cannot be told apart from one that was left out
+    of the erase altogether — and only one of those is safe.
+    """
+    await rig.add_memory()
+    await rig.add_episode(NOW)
+
+    counted = {row.target: row.count for row in await rig.service.count_everything()}
+
+    assert counted == {
+        Target.MEMORIES: 1,
+        Target.EPISODES: 1,
+        Target.EVENTS: 0,
+        Target.AUDIT: 0,
+    }
+
+
+async def test_erasing_everything_empties_every_table(rig: Rig) -> None:
+    """★ **The whole §2 table, including the derived indexes.**
+
+    `memory_fts` holds the text of every memory. It is left alone by ordinary deletion
+    because it is rebuilt from the rows — but after this there are no rows to rebuild it
+    from, and what would be left is the user's own sentences, still searchable, after they
+    asked for all of it to be gone.
+    """
+    await rig.add_memory("ユーザーは Factorio が好き")
+    await rig.add_episode(NOW, lines=2)
+    rig.add_event(NOW)
+    rig.add_audit(NOW)
+
+    erased = {row.target: row.count for row in await rig.service.erase_everything(now=NOW)}
+
+    assert erased[Target.MEMORIES] == 1
+    assert erased[Target.EPISODES] == 1
+    assert erased[Target.EVENTS] == 1
+    assert erased[Target.AUDIT] == 1
+    for table in ("memories", "memory_evidence", "memory_fts", "utterances", "episodes"):
+        with rig.memory.transaction() as conn:
+            assert int(one(conn.execute(f"SELECT COUNT(*) FROM {table}"))[0]) == 0, table
+    with rig.events.transaction() as conn:
+        assert int(one(conn.execute("SELECT COUNT(*) FROM events"))[0]) == 0
+
+
+async def test_erasing_everything_keeps_the_record_that_it_happened(rig: Rig) -> None:
+    """**`deletion_log` is not part of what gets erased** (privacy.md §5).
+
+    It holds counts and no content, and losing it would leave the erasure itself with no
+    trace — the one claim the user has to be able to check afterwards.
+    """
+    await rig.add_memory()
+    rig.add_audit(NOW)
+
+    await rig.service.erase_everything(now=NOW)
+
+    with rig.audit.transaction() as conn:
+        rows = conn.execute("SELECT target, count, trigger FROM deletion_log").fetchall()
+    assert rows
+    assert {str(row[2]) for row in rows} == {Trigger.ERASE.value}
+    assert Target.MEMORIES.value in {str(row[0]) for row in rows}
+
+
+async def test_erasing_an_empty_lumi_is_not_an_error(rig: Rig) -> None:
+    """Every count is zero, nothing is written to the log, and nothing raises."""
+    erased = await rig.service.erase_everything(now=NOW)
+
+    assert [row.count for row in erased] == [0, 0, 0, 0]
+    with rig.audit.transaction() as conn:
+        assert int(one(conn.execute("SELECT COUNT(*) FROM deletion_log"))[0]) == 0

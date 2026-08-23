@@ -22,7 +22,7 @@ use serde_json::Value;
 use crate::core_endpoint::EVENT_CORE_ENDPOINT;
 use crate::hover::EVENT_HOVER_STATE;
 use crate::os_command::ALLOWED_METHODS;
-use crate::window::WindowKind;
+use crate::window::{PanelKind, WindowKind};
 use crate::ws_client::PROTOCOL_VERSION;
 
 /// The repo's `docs/contracts/wire.json`. **Never included in the distributable** (only read by tests).
@@ -79,5 +79,33 @@ fn window_labels_match_and_round_trip() {
     // label → kind round-trips for every entry. A kind that doesn't round-trip can't be specified from `os.*`.
     for kind in WindowKind::ALL {
         assert_eq!(WindowKind::from_label(kind.label()), Some(kind));
+    }
+}
+
+#[test]
+fn panel_kinds_match_the_contract() {
+    // **What the Stage may ask `shell_panel_open` for** (ADR-042). A kind on one side
+    // only is a button that does nothing, and the log line is the only sign of it.
+    let expected = strings(&wire()["enums"]["panel_kind"]);
+    let actual: Vec<String> =
+        PanelKind::ALL.iter().map(|kind| kind.window().label().to_owned()).collect();
+    assert_eq!(actual, expected);
+}
+
+#[test]
+fn every_exposed_command_is_on_the_contract() {
+    // The `shell.*` allowlist is `invoke_handler`'s list (B1), so **the contract has to
+    // name the same commands**. Read from the source because the macro's list is not a
+    // value anything can inspect at runtime.
+    let source = include_str!("lib.rs");
+    let handler = source
+        .split_once("invoke_handler(tauri::generate_handler![")
+        .expect("invoke_handler list")
+        .1
+        .split_once("])")
+        .expect("end of handler list")
+        .0;
+    for command in strings(&wire()["tauri_commands"]) {
+        assert!(handler.contains(&command), "{command} is on the contract but not exposed");
     }
 }

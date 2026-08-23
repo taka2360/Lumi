@@ -15,6 +15,7 @@ import { isTauri } from "../platform/tauri";
 import {
   type CoreMessage,
   type CoreResult,
+  type CoreRole,
   helloMessage,
   ProtocolVersionMismatch,
   parseCoreMessage,
@@ -62,7 +63,15 @@ const REQUEST_TIMEOUT_MS = 10_000;
  * Does nothing outside Tauri (when opened in a browser). Branches explicitly here
  * **so it never silently breaks**.
  */
-export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection {
+export function connectToCore(
+  handlers: CoreConnectionHandlers,
+  /**
+   * Which client this window is (ADR-042). **The token it receives is chosen by Shell
+   * from the window's label**, so a window that claims the wrong role here fails to
+   * authenticate rather than connecting as something else.
+   */
+  role: CoreRole = "stage",
+): CoreConnection {
   if (!isTauri()) {
     return {
       close: () => {},
@@ -72,6 +81,10 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
 
   let closed = false;
   let socket: WebSocket | null = null;
+  //: Set across the `await` that fetches the endpoint. **Without it, a retry timer and an
+  //: endpoint event that land together each get past the `socket !== null` check and open
+  //: a socket**, and the second one silently replaces the first in `socket`.
+  let connecting = false;
   let retryTimer: number | null = null;
   let unlistenEndpoint: (() => void) | null = null;
   let nextRequestId = 0;
@@ -134,25 +147,38 @@ export function connectToCore(handlers: CoreConnectionHandlers): CoreConnection 
   };
 
   const openSocket = async () => {
-    if (closed || socket !== null) {
+    if (closed || connecting || socket !== null) {
       return;
     }
-    const endpoint = await invoke<CoreEndpoint | null>(CMD_CORE_ENDPOINT);
-    if (closed || !endpoint) {
-      // Core isn't listening yet. Woken by an event once the port is decided.
+    connecting = true;
+    let endpoint: CoreEndpoint | null;
+    try {
+      endpoint = await invoke<CoreEndpoint | null>(CMD_CORE_ENDPOINT);
+    } finally {
+      connecting = false;
+    }
+    if (closed) {
+      return;
+    }
+    if (!endpoint) {
+      // **Core is not listening yet, so try again.** The Stage is also woken by an
+      // endpoint event, but a panel window is not (Shell emits it only to the character
+      // window), and one opened while Core was restarting would otherwise sit there
+      // disconnected forever with nothing left to wake it.
+      scheduleRetry();
       return;
     }
 
     const ws = new WebSocket(`ws://127.0.0.1:${endpoint.port}`);
     socket = ws;
 
-    ws.addEventListener("open", () => ws.send(helloMessage(endpoint.token)));
+    ws.addEventListener("open", () => ws.send(helloMessage(endpoint.token, role)));
     ws.addEventListener("message", (event) => {
       if (typeof event.data !== "string") {
         return;
       }
       try {
-        const message = parseCoreMessage(event.data);
+        const message = parseCoreMessage(event.data, role);
         if (message) {
           handleMessage(message);
         }

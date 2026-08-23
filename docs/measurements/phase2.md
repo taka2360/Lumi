@@ -202,21 +202,25 @@ Phase 2b で [ADR-039](../decisions/ADR-039-speculative-stt.md) を実装した�
 > 信頼された指示が最後に読まれ、データが Lumi 自身の言葉で挟まれる
 > （[../contracts/provenance.md](../contracts/provenance.md)）。
 
-### 直した後の1回（同じ会話・4.2 s）
+### 直した後の1回（同じ会話・4.4 s。空の DB なので `novelty` は全件 1.0）
 
 | subject | content | mode | salience |
 |---|---|---|---|
-| `user.work` | ユーザーは今日一日 Rust を書いていた。 | user_stated | 0.26 |
-| `episode.moving_plans` | 来月に引っ越す予定で、今の部屋では猫を飼えない。 | user_stated | 0.34 |
-| **`user.pet_preference`** | 三毛猫を飼いたがっており、名前を「ミケ」と考えている。 | inferred | **0.55** |
-| `episode.mars_joke` | 冗談で自分は火星人だと述べた。 | user_stated | 0.14 |
+| `user.work` | ユーザーは今日一日 Rust を書いていた。 | user_stated | 0.45 |
+| `episode.moving_soon` | 来月に引っ越す予定で、今の部屋では猫を飼えない。 | user_stated | 0.49 |
+| **`user.pet_preference`** | 三毛猫を飼いたがっており、名前を「ミケ」と決めている。 | user_stated | **0.70** |
+| `episode.mars_joke` | 冗談で自分は火星人だと述べた。 | user_stated | 0.29 |
 
-- **「これ覚えておいて」と言われた記憶が最も高い**（0.55）。決定論的補正が効いている
+- **「これ覚えておいて」と言われた記憶が最も高い**（0.70）。決定論的補正が効いている
 - **「冗談だけど、僕は火星人」は事実として保存されなかった。**
-  出来事として「冗談で述べた」と記録され、salience は最低（0.14）
-- 抽出 1 回あたり **4.2 s**。会話のクリティカルパスには乗らない（アイドル時の Job）
+  出来事として「冗談で述べた」と記録され、salience は最低（0.29）
+- 抽出 1 回あたり **4.4 s**。会話のクリティカルパスには乗らない（アイドル時の Job）
+
+> **この表は空の DB での値である。** `novelty` は既知の subject なら 0.0 になるので、
+> **同じ会話を使い込んだ DB に対して流すと全件 0.15 低い。** 順位は変わらない。
 
 ### 残っている揺れ
 
-**subject の名前は実行ごとに揺れる**（`user.pet_preference` / `user.pet_name_plan`）。
+**subject の名前も assertion_mode も実行ごとに揺れる**
+（`user.pet_preference` / `user.pet_name_plan`、猫の件は `inferred` の回と `user_stated` の回がある）。
 既存 subject をプロンプトに列挙して収束させる設計だが、**その効果はまだ測っていない。**

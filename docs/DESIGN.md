@@ -9,8 +9,27 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.20 |
-| 実装フェーズ | **Phase 2（Memory）。2a / 2c / 2d / 2e / 2f 完了。2b は実装完了・実測は未取得。次は 2g（記憶 UI・全消去・取得 UI）で Phase 2 が閉じる。** → [roadmap.md](roadmap.md) |
+| Revision | rev.21 |
+| 実装フェーズ | **Phase 2（Memory）。2a / 2c / 2d / 2e / 2f 完了、2g は埋め込みモデルの取得 UI を残して完了。2b は実装完了・実測は未取得。** → [roadmap.md](roadmap.md) |
+
+> **rev.21 の変更点**（見て直せるようになった。ウィンドウが増えた）
+> 1. **設定・インスペクタ・記憶を独立ウィンドウにした**
+>    → [ADR-042](decisions/ADR-042-panel-windows-and-panel-role.md)。
+>    新しい role `panel`（namespace `panel.`）は **複数接続を許す唯一の role** であり、
+>    そのぶん **Core → panel は `notify` だけ。`invoke` は禁止**——
+>    答えを待つコマンドは宛先が一意でなければ成立しない
+> 2. **元の判断（Inspector を `stage` に置く）の理由はいまも正しい。** 別ウィンドウが
+>    `stage` role で繋ぐとキャラクターの接続を奪う。変わったのは前提のほうで、
+>    panel は `stage` ではない
+> 3. **記憶 UI が Invariant 7 の昇格経路である**ことを明記した
+>    → [architecture/ui.md](architecture/ui.md) §5b。
+>    **Lumi 自身がそのボタンを押せないこと**（Invariant 8）に依存している
+> 4. **「全部消して」は見せてから消す。** `erase_preview` が
+>    [contracts/privacy.md](contracts/privacy.md) §2 の**行ごとの件数を、0 件の行も含めて**返す
+> 5. **マイクのミュートは入力ストリームを閉じる。** 「開いているが無視している」にしない——
+>    OS のマイク表示が点いたままになり、表示が信用できなくなる
+> 6. `stage` の操作列を**アイコンの横並び**にした。キャラクターの上に文字を並べると
+>    **ボタンの列がキャラクターより大きくなる**
 
 > **rev.20 の変更点**（覚えるようになった。プロンプトが2回壊れ、どちらも実機でしか出なかった）
 > 1. **Reflection Job を実装した**（2f）。`Job(kind=reflection, uses_inference=True)` として

@@ -70,6 +70,7 @@ class Trigger(StrEnum):
     """
 
     RETENTION = "retention"
+    #: "Erase everything" from the memory window (privacy.md §5).
     ERASE = "erase"
     #: The user deleted particular memories from the memory UI.
     PURGE = "purge"
@@ -263,6 +264,91 @@ class RetentionService:
         except Exception:
             log.exception("retention.record_failed", removed=deletion.count)
         return deletion
+
+    async def count_everything(self) -> list[Deletion]:
+        """What "erase everything" would remove, per row of privacy.md §2.
+
+        **Every row is reported, zero included.** "There is none of that kind of data"
+        and "that kind is missing from the list" look identical once a row is dropped,
+        and the second one is a bug in the thing the user is about to trust.
+
+        The counts are a snapshot, not a promise: a reflection pass may write another
+        memory between the preview and the press. It is close enough for consent about
+        *what kinds* of data go, which is what the confirmation is for.
+        """
+        return await asyncio.to_thread(self._count_blocking)
+
+    def _count_blocking(self) -> list[Deletion]:
+        return [
+            Deletion(target=target, count=self._count(database, table), trigger=Trigger.ERASE)
+            for target, database, table in self._erasable()
+        ]
+
+    def _erasable(self) -> tuple[tuple[Target, Database, str], ...]:
+        """The §2 rows whose "erase everything" column is ✓. **One list, two callers** —
+        the preview and the erase must not be able to disagree about what is included.
+        """
+        return (
+            (Target.MEMORIES, self._memory, "memories"),
+            (Target.EPISODES, self._memory, "episodes"),
+            (Target.EVENTS, self._events, "events"),
+            (Target.AUDIT, self._audit, "audit_log"),
+        )
+
+    def _count(self, database: Database, table: str) -> int:
+        with database.transaction() as conn:
+            return int(one(conn.execute(f"SELECT COUNT(*) FROM {table}"))[0])
+
+    async def erase_everything(self, *, now: datetime | None = None) -> list[Deletion]:
+        """**Erase everything the user's data amounts to** (privacy.md §5).
+
+        Deletes the rows of every §2 row marked "erase everything", including the audit
+        log — which is append-only *to Lumi*, not to the person whose log it is. The one
+        thing that survives is `deletion_log`: a record that "everything was erased" is
+        not the data, and losing it would make the erasure itself unverifiable.
+
+        **The derived indexes go too.** `memory_fts` holds the text of every memory, so
+        leaving it behind would leave the sentences readable after the memories they came
+        from are gone. They are excluded from ordinary deletion because they are rebuilt
+        from the rows; here there are no rows left to rebuild from.
+        """
+        moment = now or datetime.now(UTC)
+        return await asyncio.to_thread(self._erase_blocking, moment)
+
+    def _erase_blocking(self, now: datetime) -> list[Deletion]:
+        counted = self._count_blocking()
+
+        with self._memory.transaction() as conn:
+            for table in (
+                "memory_evidence",
+                "memory_sources",
+                "memory_vectors",
+                "memory_fts",
+                "memories",
+                "utterances",
+                "episodes",
+            ):
+                conn.execute(f"DELETE FROM {table}")
+        with self._events.transaction() as conn:
+            conn.execute("DELETE FROM events")
+        with self._audit.transaction() as conn:
+            conn.execute("DELETE FROM audit_log")
+
+        # **Counted before, verified after.** Reporting the intended number would let a
+        # table that refused to empty be reported as emptied.
+        deletions = [
+            Deletion(
+                target=deletion.target,
+                count=deletion.count - self._count(database, table),
+                trigger=Trigger.ERASE,
+            )
+            for deletion, (_, database, table) in zip(counted, self._erasable(), strict=True)
+        ]
+        try:
+            self._record(deletions, now)
+        except Exception:
+            log.exception("retention.record_failed", removed=sum(d.count for d in deletions))
+        return deletions
 
     def _record(self, deletions: Sequence[Deletion], now: datetime) -> None:
         """Write what was removed into the audit database.
