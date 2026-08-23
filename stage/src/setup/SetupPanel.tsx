@@ -185,7 +185,7 @@ export function SetupPanel() {
             {prompt.items.map((item) => (
               <li key={item.component}>
                 <span className="panel__fetch-name">{item.name}</span>
-                <span className="panel__fetch-size">{formatSize(item.size_bytes, locale)}</span>
+                <span className="panel__fetch-size">{formatSize(item.sizeBytes, locale)}</span>
               </li>
             ))}
           </ul>

@@ -692,12 +692,11 @@ class SetupCoordinator:
             )
         # **Only when Ollama is there to fetch it into.** Offering to download a 6.6 GB
         # model that nothing can receive is worse than not offering.
-        if (
-            self._snapshot.llm.state is LlmSetupState.MODEL_MISSING
-            and self._recommended_llm() is not None
-        ):
-            recommended = self._recommended_llm()
-            assert recommended is not None
+        # **One lookup, and no `assert` to narrow it.** `assert` disappears under `-O`,
+        # which would turn a missing model into an `AttributeError` in the one build where
+        # nobody is watching.
+        recommended = self._recommended_llm()
+        if self._snapshot.llm.state is LlmSetupState.MODEL_MISSING and recommended is not None:
             missing.append(
                 MissingComponent(
                     component=COMPONENT_LLM_MODEL,

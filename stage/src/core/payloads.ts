@@ -235,10 +235,13 @@ export function toSetupPrompt(payload: Record<string, unknown>): SetupPrompt {
       ? payload.items.filter(isRecord).flatMap((item) => {
           const name = asString(item.name);
           const size = asNumber(item.size_bytes);
-          const part = oneOf(SETUP_COMPONENTS, item.component, "tts");
-          // **An unreadable row is dropped, and the total is not recomputed** — see below.
-          return name && size !== null && size > 0
-            ? [{ component: part, name, size_bytes: size }]
+          // **No fallback component.** Rounding an unknown name to `tts` would label a
+          // download as something it is not, on the screen where the user consents to it.
+          // A row nobody can identify is dropped, and the total below still says what
+          // will be fetched.
+          const part = SETUP_COMPONENTS.find((known) => known === item.component);
+          return part && name && size !== null && size > 0
+            ? [{ component: part, name, sizeBytes: size }]
             : [];
         })
       : [],

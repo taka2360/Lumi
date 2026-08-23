@@ -9,8 +9,18 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.22 |
+| Revision | rev.23 |
 | 実装フェーズ | **Phase 2（Memory）完了。2b（投機 STT）の実測だけ未取得。次は Phase 3。** → [roadmap.md](roadmap.md) |
+
+> **rev.23 の変更点**（レビュー由来の修正。契約の書き方を実装に合わせた）
+> 1. **ユーザーが記憶 UI で書き直した文は `user_confirmed` になる**
+>    → [ADR-043](decisions/ADR-043-user-edited-memories-are-confirmed.md)。
+>    Invariant 7 の「昇格してよい箇所」を**関数名ではなく経路**で書き直した——
+>    **代入は1箇所のまま**で、呼び出し元が `confirm()` と `rewrite()` の2つになる
+> 2. **supersede 済みのレコードは書き直せない。** 1つの行に後継が2つできると、
+>    同じ subject に live な belief が2つ並ぶ
+> 3. **ミュートは入力ストリームを閉じるだけでなく、リングも捨てる。**
+>    ミュート中に溜まった音を解除後に読むと、**ミュートが遅延になる**
 
 > **rev.22 の変更点**（Phase 2 が閉じた。取得の同意がまとまった）
 > 1. **取得の同意を最初の1問にまとめた** → [architecture/setup.md](architecture/setup.md)。
@@ -362,12 +372,17 @@ Memory       何を覚えているか         Vision model
 │   ┌────────── Stage WebView (React + TS + Zustand) ──────────┐               │
 │   │  責務: 表現のみ。ビジネスロジックを持たない                │ ← Tauri IPC   │
 │   │  VRM描画・表情/モーション/リップシンク・吹き出し            │   shell.*     │
-│   │  Widgetホスト(sandboxed iframe) + Widget Broker・設定UI    │               │
-│   │  権限プロンプト（独立ウィンドウ / Invariant 8 の保護対象）  │               │
+│   │  Widgetホスト(sandboxed iframe) + Widget Broker            │               │
+│   │  マイク表示とミュート・アイコンの操作列                     │               │
 │   └──────────────────────────────────────────────────────────┘               │
+│   ┌── Panel windows (ADR-042) ───┐ ┌── credits ──┐                           │
+│   │  settings / inspector /      │ │  静的。Core │                           │
+│   │  memory。**別ウィンドウ**     │ │  に繋がない │                           │
+│   └──────────────────────────────┘ └─────────────┘                           │
 └──────────────────────────────────────────────────────────────────────────────┘
-              │ os.* (WS)                               │ stage.* (WS)
-              ▼                                         ▼
+              │ os.* (WS)              │ stage.* (WS)      │ panel.* (WS)
+              │                        │  接続は1本         │  複数接続可
+              ▼                        ▼  invoke 可         ▼  **notify のみ**
 ┌────────────────────── Lumi Core (Python / asyncio) ──────────────────────────┐
 │  ┌── Attention Arbiter ──┐  単一の「今なにをしているか」の所有者               │
 │  └───┬───────────┬───────┘                                                    │

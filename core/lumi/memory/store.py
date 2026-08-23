@@ -530,6 +530,13 @@ class MemoryStore:
             existing = self._read(conn, memory_id)
             if existing is None:
                 raise MemoryRejected(f"No such memory to rewrite: {memory_id}")
+            if existing.superseded_by is not None:
+                # ★ **A superseded belief has already been replaced.** Correcting it would
+                # give one row two successors, and `_live_rows` would then return two live
+                # beliefs about the same subject — a contradiction Lumi made by itself.
+                # The window shows history read-only; the thing to correct is the current
+                # belief (docs/architecture/memory.md §8).
+                raise MemoryRejected(f"Already superseded, correct its successor: {memory_id}")
             record = self._insert(
                 conn,
                 MemoryCandidate(

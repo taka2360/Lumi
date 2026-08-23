@@ -563,3 +563,63 @@ async def test_a_2c_memory_database_gains_memories_without_losing_a_word(tmp_pat
             assert one(conn.execute("SELECT COUNT(*) FROM memory_vectors"))[0] == 0
     finally:
         upgraded.close()
+
+
+async def test_a_superseded_belief_cannot_be_rewritten(rig: Rig) -> None:
+    """★ **One row, one successor.**
+
+    Correcting a belief that has already been replaced would give it a second successor,
+    and `_live_rows` would then return two live beliefs about the same subject — a
+    contradiction Lumi invented by itself, out of the user trying to fix a typo. The
+    history is read-only; the thing to correct is the current belief
+    (docs/architecture/memory.md §8).
+    """
+    await rig.say("u1")
+    original = await rig.store.write(
+        MemoryCandidate(
+            type=MemoryType.SEMANTIC,
+            subject="user.hobby",
+            content="ユーザーは Factorio が好き",
+            assertion_mode=AssertionMode.USER_STATED,
+            provenance_class=ProvenanceClass.TRUSTED,
+            trust_level=TrustLevel.TRUSTED,
+            evidence_ref=("u1",),
+        ),
+        now=NOW,
+    )
+    corrected = await rig.store.rewrite(original.id, content="ユーザーは Rimworld が好き", now=NOW)
+
+    with pytest.raises(MemoryRejected, match="Already superseded"):
+        await rig.store.rewrite(original.id, content="やっぱり Factorio", now=NOW)
+
+    # The successor is still the one to correct, and it still can be.
+    again = await rig.store.rewrite(corrected.id, content="やっぱり Factorio", now=NOW)
+    assert again.content == "やっぱり Factorio"
+
+
+async def test_a_correction_is_confirmed_by_the_hand_that_wrote_it(rig: Rig) -> None:
+    """★ **ADR-043.** A sentence the user typed is not "external, unverified".
+
+    The escalation is the same assignment `confirm()` makes — one site, two callers — and
+    without it a user correcting a tainted memory would watch their own words come back
+    marked as something Lumi picked up from a web page.
+    """
+    await rig.say("u1", trust=TrustLevel.TAINTED, provenance=ProvenanceClass.UNTRUSTED)
+    tainted = await rig.store.write(
+        MemoryCandidate(
+            type=MemoryType.SEMANTIC,
+            subject="user.hobby",
+            content="ユーザーは Factorio が嫌い",
+            assertion_mode=AssertionMode.INFERRED,
+            provenance_class=ProvenanceClass.UNTRUSTED,
+            trust_level=TrustLevel.TAINTED,
+            evidence_ref=("u1",),
+        ),
+        now=NOW,
+    )
+    assert tainted.trust_level is TrustLevel.TAINTED
+
+    corrected = await rig.store.rewrite(tainted.id, content="ユーザーは Factorio が好き", now=NOW)
+
+    assert corrected.assertion_mode is AssertionMode.USER_CONFIRMED
+    assert corrected.trust_level is TrustLevel.TRUSTED

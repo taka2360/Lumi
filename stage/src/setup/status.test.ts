@@ -10,9 +10,21 @@
 
 import { describe, expect, it } from "vitest";
 
-import type { LlmSetupSnapshot, SttSetupSnapshot, TtsSetupSnapshot } from "../core/store";
+import type {
+  EmbeddingSetupSnapshot,
+  LlmSetupSnapshot,
+  SttSetupSnapshot,
+  TtsSetupSnapshot,
+} from "../core/store";
 import { UNKNOWN_SETUP } from "../core/store";
-import { failureText, llmStatus, statusLines, sttStatus, ttsStatus } from "./status";
+import {
+  embeddingStatus,
+  failureText,
+  llmStatus,
+  statusLines,
+  sttStatus,
+  ttsStatus,
+} from "./status";
 
 function tts(over: Partial<TtsSetupSnapshot> = {}): TtsSetupSnapshot {
   return { ...UNKNOWN_SETUP.tts, ...over };
@@ -171,5 +183,41 @@ describe("failure reasons", () => {
       "The downloaded file did not match the expected contents",
     );
     expect(failureText("something_new", "en")).toContain("something_new");
+  });
+});
+
+describe("the embedding model", () => {
+  const embedding = (over: Partial<EmbeddingSetupSnapshot> = {}): EmbeddingSetupSnapshot => ({
+    state: "unknown",
+    model: "harrier-oss-v1-270m",
+    reason: null,
+    progress: null,
+    ...over,
+  });
+
+  it("says nothing once it is installed", () => {
+    expect(embeddingStatus(embedding({ state: "installed" }))).toBeNull();
+    expect(embeddingStatus(embedding())).toBeNull();
+  });
+
+  it("shows progress while it downloads", () => {
+    const line = embeddingStatus(embedding({ state: "installing", progress: 0.42 }));
+    expect(line?.text).toContain("42");
+  });
+
+  it("★ is never a blocker, whatever happened to it", () => {
+    // Every other line here is a reason Lumi cannot start. This one is a reason memory
+    // search is worse than it could be — **and a list where those look identical cannot
+    // be read as a list of things to fix.**
+    for (const state of ["installing", "failed", "not_configured"] as const) {
+      expect(embeddingStatus(embedding({ state }))?.tone).toBe("normal");
+    }
+  });
+
+  it("distinguishes never fetched from tried and failed", () => {
+    expect(embeddingStatus(embedding({ state: "not_configured" }))?.text).toContain("未取得");
+    expect(embeddingStatus(embedding({ state: "failed", reason: "http_error" }))?.text).toContain(
+      "取得できませんでした",
+    );
   });
 });

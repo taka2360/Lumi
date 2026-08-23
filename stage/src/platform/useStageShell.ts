@@ -23,7 +23,12 @@ const noopShell: PlatformShell = {
   startWindowDrag: async () => {},
   scaleWindow: async () => {},
   openCredits: async () => {},
-  openPanel: async () => {},
+  // **Rejects rather than resolving.** There is no window to open outside Tauri, and a
+  // silent success would leave the action row looking like it worked (`useOpenPanel`
+  // never reaches its error state).
+  openPanel: async () => {
+    throw new Error("openPanel is unavailable outside Tauri");
+  },
   openOllamaSite: async () => {},
   // Outside Tauri there is no process to end. **Left as a no-op rather than closing the
   // tab**: a browser-opened Stage is a development view, and taking the window away from

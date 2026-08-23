@@ -249,13 +249,24 @@ AIRI は交差モデル自体は正しく実装しているが、`permissionReso
 | | 許可される箇所 | 種別 |
 |---|---|---|
 | 1 | ユーザーの直接入力ハンドラ（音声 / テキスト / UI 操作） | **初期付与**（昇格ではない） |
-| 2 | `MemoryStore.confirm()`（記憶 UI のユーザー確認） | **昇格**。Invariant 7 が言う唯一の経路 |
+| 2 | **`MemoryStore._confirm_in()`** — 記憶 UI の「確認」（`confirm()`）と「直す」（`rewrite()`）から呼ばれる | **昇格**。Invariant 7 が言う唯一の経路 |
 
 **この2箇所以外に `trust_level = TRUSTED` の代入が存在してはならない。**
+
+> **〔2026-08-23 / [ADR-043](../decisions/ADR-043-user-edited-memories-are-confirmed.md)〕
+> 昇格の呼び出し元は2つ、代入は1つ。** ユーザーが記憶 UI で書き直した文も
+> `user_confirmed` になる——**自分で打ち直すことは、確認より弱い根拠ではない。**
+> 昇格しない設計にすると、ユーザー自身が書いた1文が「外部由来・未確認」として残る。
+> これは汚染の伝播ではなく**汚染の誤検出**である。
+>
+> **押せるのが人間だけであることは Invariant 8 が支えている**（記憶ウィンドウは
+> `os.input.*` の対象にできない）。
 
 ### 検証方法
 
 - コードベース全体の `trust_level = TRUSTED` の代入箇所を列挙し、上記2箇所だけであること（grep + テスト）
+- **検査の単位はファイル。** 代入があってよいのは `agent/session.py` / `memory/store.py` /
+  `provenance.py` だけであり、`rewrite()` が増えてもこの集合は変わらない
 
 ### 関連
 [provenance.md](provenance.md), [ADR-011](../decisions/ADR-011-provenance-no-laundering.md)

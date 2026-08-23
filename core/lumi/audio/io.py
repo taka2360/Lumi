@@ -25,7 +25,7 @@ from contextlib import suppress
 from typing import Final
 
 from lumi import logging as lumi_logging
-from lumi.audio.capture import MicrophoneCapture, VadWorker
+from lumi.audio.capture import CaptureUnavailable, MicrophoneCapture, VadWorker
 from lumi.audio.devices import AudioPlan
 from lumi.audio.playback import SpeakerPlayback
 from lumi.audio.vad import SileroVad, VadNotification, VadParams
@@ -108,8 +108,15 @@ class AudioIO:
     def _start_vad(self) -> None:
         """A worker over the current stream. **A fresh one every time**: `VadWorker.stop`
         latches, so restarting the old one would return without reading a single frame.
+
+        **The model is kept but its state is not.** Silero carries context across frames,
+        and a stream that resumes minutes later is not a continuation of the one before —
+        feeding it as though it were makes the first windows after an unmute be judged
+        against audio from before it.
         """
         assert self._capture is not None
+        if self._vad is not None:
+            self._vad.reset()
         self._vad_worker = VadWorker(
             self._capture.ring,
             self._capture.plan.samplerate,
@@ -145,12 +152,24 @@ class AudioIO:
             return
         if muted:
             if self._vad_worker is not None:
-                await asyncio.to_thread(self._vad_worker.stop)
-                self._vad_worker = None
+                # **Muted even if the thread will not stop.** The stream closes either
+                # way, so nothing more is captured; a worker that outlives this only
+                # matters when unmuting, which is where it is refused.
+                if not await asyncio.to_thread(self._vad_worker.stop):
+                    log.warning("audio.vad_still_running")
+                else:
+                    self._vad_worker = None
             self._capture.stop()
             self._input_muted = True
             log.info("audio.input_muted")
             return
+
+        if self._vad_worker is not None:
+            # ★ **Never a second reader on one ring.** The previous worker did not stop,
+            # and two threads pulling from the same ring would each get half the frames —
+            # silence that looks like a bad microphone. Staying muted is the honest state.
+            log.error("audio.unmute_refused", reason="previous VAD worker is still running")
+            raise CaptureUnavailable("The previous VAD worker did not stop")
 
         self._capture.start()
         await asyncio.to_thread(self._capture.wait_until_open)

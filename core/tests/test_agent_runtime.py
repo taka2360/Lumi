@@ -93,6 +93,13 @@ class TestAssembly:
             def can_listen(self) -> bool:
                 return True
 
+            @property
+            def input_muted(self) -> bool:
+                # **Part of the interface `AudioIO` stands in for here.** The runtime
+                # announces the microphone state as soon as the stream opens, and a fake
+                # missing this made `start()` raise where the test could only see a hang.
+                return False
+
             async def start(self) -> None:
                 timeline.append("audio.start")
                 self.started = True

@@ -154,6 +154,13 @@ export function connectToCore(
     let endpoint: CoreEndpoint | null;
     try {
       endpoint = await invoke<CoreEndpoint | null>(CMD_CORE_ENDPOINT);
+    } catch {
+      // **Shell can refuse too**, and a rejected `invoke` here would otherwise be an
+      // unhandled rejection that also ends the retry chain: the window would sit
+      // disconnected with nothing left to wake it.
+      connecting = false;
+      scheduleRetry();
+      return;
     } finally {
       connecting = false;
     }

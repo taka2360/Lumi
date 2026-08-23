@@ -125,7 +125,13 @@ def rig() -> Iterator[Rig]:
 
 
 def test_every_registered_route_is_on_the_contract(rig: Rig) -> None:
-    """**Registration is the allowlist** (ADR-028), so it is what has to match the wire."""
+    """**Registration is the allowlist** (ADR-028), so it is what has to match the wire.
+
+    **Compared as an ordered list on purpose.** `INBOUND_METHODS` is a tuple because the
+    contract's order is checked on all three sides (`test_wire_contract.py`), and this
+    keeps `register` reading in the same order as the contract does — so the two can be
+    diffed by eye when a route is added.
+    """
     registered: list[str] = []
 
     class Recorder:

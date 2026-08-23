@@ -71,6 +71,24 @@ describe("microphone indicator", () => {
     expect(view.querySelector("button")?.className).toContain("mic--muted");
   });
 
+  it("★ does not call a closed microphone open", () => {
+    // `{open: false, muted: false}` is a real answer from Core — no capture device, or
+    // listening has not started. **Folding it into "open" puts a live microphone icon on
+    // screen for a microphone that is not there**, which is the one claim this control
+    // exists to make truthfully.
+    const view = render();
+    act(() => useStageStore.getState().setMic({ open: false, muted: false }));
+
+    const button = view.querySelector("button");
+    expect(button?.className).toContain("mic--off");
+    expect(button?.className).not.toContain("mic--open");
+    expect(button?.getAttribute("aria-label")).toBe("マイクは使えません");
+    // Nothing to mute, so nothing to press. Core refuses it anyway.
+    expect(button?.disabled).toBe(true);
+    act(() => button?.click());
+    expect(setMicMuted).not.toHaveBeenCalled();
+  });
+
   it("carries a translated name, not just a glyph", () => {
     const view = render();
     act(() => useStageStore.getState().setMic({ open: true, muted: false }));

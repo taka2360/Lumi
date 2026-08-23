@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useStageStore } from "../core/store";
 import { LocaleProvider } from "../i18n/provider";
-import { Memory } from "./Memory";
+import { Memory, SEARCH_DEBOUNCE_MS } from "./Memory";
 
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
@@ -33,10 +33,16 @@ function memory(overrides: Record<string, unknown> = {}) {
   };
 }
 
-/** Lets the effects that load a page settle before assertions. */
+/**
+ * Lets the effects that load a page settle before assertions.
+ *
+ * **Waits out the search debounce.** Real time rather than fake timers: the component
+ * also awaits promises, and interleaving those with a fake clock is more machinery than
+ * a fifth of a second is worth.
+ */
 async function settle(): Promise<void> {
   await act(async () => {
-    await Promise.resolve();
+    await new Promise((resolve) => setTimeout(resolve, SEARCH_DEBOUNCE_MS + 20));
   });
 }
 
@@ -184,6 +190,28 @@ describe("memory window", () => {
       "panel.memory.erase",
       { confirmation: "erase-everything" },
     ]);
+  });
+
+  it("★ the erase dialog can be left by keyboard, and starts on Cancel", async () => {
+    // This is the one screen in Lumi whose default action cannot be undone. Opening it
+    // with focus on nothing means the first Enter goes wherever the browser decides.
+    const view = await render();
+    callCore.mockResolvedValue({ targets: [], confirmation: "erase-everything" });
+
+    await act(async () => {
+      [...view.querySelectorAll("button")]
+        .find((button) => button.textContent === "全部消す")
+        ?.click();
+    });
+    await settle();
+
+    expect(document.activeElement?.textContent).toBe("やめる");
+
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    expect(view.querySelector(".memory__erase")).toBeNull();
   });
 
   it("warns that an export is readable before it is written", async () => {

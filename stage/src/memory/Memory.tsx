@@ -22,7 +22,7 @@
  * the erase request has to carry back.
  */
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
   METHOD_PANEL_MEMORY_CONFIRM,
@@ -41,6 +41,14 @@ import { type EraseTarget, type MemoryItem, toEraseTargets, toMemoryPage } from 
 
 /** How many rows one request asks for. The window grows a page at a time. */
 const PAGE = 50;
+
+/**
+ * How long to wait before searching for what is being typed.
+ *
+ * **Short enough not to feel like lag, long enough that a word is one search.** Every
+ * keystroke otherwise asks Core to scan the memory table.
+ */
+export const SEARCH_DEBOUNCE_MS = 200;
 
 function reason(error: unknown): string {
   return error instanceof Error ? error.message : "failed";
@@ -186,36 +194,60 @@ export function Memory() {
     null,
   );
 
+  /**
+   * Which search is the current one.
+   *
+   * **Answers arrive in whatever order Core finishes them.** Typing "fac" fires three
+   * searches, and without this the list ends up showing whichever came back last rather
+   * than the one matching what is in the box.
+   */
+  const latest = useRef(0);
+
   const load = useCallback(async () => {
     if (!connected) {
       return;
     }
+    const request = ++latest.current;
     try {
       const answer = await callCore(METHOD_PANEL_MEMORY_SEARCH, {
         query,
         include_history: includeHistory,
         limit,
       });
+      if (request !== latest.current) {
+        return;
+      }
       const page = toMemoryPage(answer);
       setItems(page.items);
       setTotal(page.total);
       setPending(page.pendingTurns);
       setFailure(null);
     } catch (error: unknown) {
+      if (request !== latest.current) {
+        return;
+      }
       setFailure(reason(error));
     }
   }, [connected, includeHistory, limit, query]);
 
   // **Re-read rather than patched.** After an edit, a delete, or a reflection pass, what
   // the list should show is Core's answer, not this component's guess at it.
+  //
+  // **One effect, and `revision` is one of its inputs.** Two effects both depending on
+  // `load` fired twice for every keystroke, because a changed `load` re-ran both.
+  //
+  // The delay debounces typing. It applies to every trigger rather than only to the
+  // query, which costs a reflection nudge a fraction of a second and keeps this to one
+  // rule instead of two.
   useEffect(() => {
-    void load();
-  }, [load]);
-  useEffect(() => {
-    if (revision > 0) {
-      void load();
-    }
-  }, [revision, load]);
+    // **`revision` is read here on purpose.** It is a signal rather than an input: a new
+    // value means Core said memory changed, and re-running the search is the whole
+    // response. Reading it is also what makes it an honest dependency instead of one the
+    // linter has to be told about.
+    void revision;
+    const timer = window.setTimeout(() => void load(), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [load, revision]);
 
   const onChanged = useCallback(() => {
     setNotice(null);
@@ -249,6 +281,54 @@ export function Memory() {
       setFailure(reason(error));
     }
   };
+
+  /**
+   * Keyboard behaviour for the erase dialog.
+   *
+   * **Escape closes it, and focus starts on Cancel.** This is the one screen in Lumi
+   * where the default action is irreversible; opening it with focus on nothing means the
+   * first Enter goes wherever the browser decides.
+   */
+  const cancelErase = useRef<HTMLButtonElement | null>(null);
+  const dialog = useRef<HTMLDivElement | null>(null);
+  const returnFocus = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!erasing) {
+      // Back to whatever opened it, so the keyboard does not land at the top of the page.
+      returnFocus.current?.focus();
+      returnFocus.current = null;
+      return;
+    }
+    returnFocus.current = document.activeElement as HTMLElement | null;
+    cancelErase.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setErasing(null);
+        return;
+      }
+      if (event.key !== "Tab" || !dialog.current) {
+        return;
+      }
+      // **Focus stays inside.** Tabbing out of a modal leaves the keyboard on the list
+      // behind it, where [忘れさせる] sits — reachable by Enter, over a dialog that is
+      // still covering the screen.
+      const focusable = [...dialog.current.querySelectorAll<HTMLButtonElement>("button")];
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) {
+        return;
+      }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [erasing]);
 
   const eraseEverything = async (confirmation: string) => {
     try {
@@ -333,7 +413,7 @@ export function Memory() {
       </footer>
 
       {erasing && (
-        <div className="memory__erase" role="dialog" aria-modal="true">
+        <div className="memory__erase" role="dialog" aria-modal="true" ref={dialog}>
           <h2>{translate(locale, "memory.erasePreview")}</h2>
           <ul>
             {erasing.targets.map((target) => {
@@ -357,7 +437,7 @@ export function Memory() {
             >
               {translate(locale, "memory.eraseAll")}
             </button>
-            <button type="button" onClick={() => setErasing(null)}>
+            <button type="button" ref={cancelErase} onClick={() => setErasing(null)}>
               {translate(locale, "memory.cancel")}
             </button>
           </div>

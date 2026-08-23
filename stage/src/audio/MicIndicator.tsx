@@ -37,18 +37,32 @@ export function MicIndicator() {
     return null;
   }
 
-  const state = mic.muted ? "mic.muted" : "mic.open";
+  // ★ **Three states, not two.** `{open: false, muted: false}` is a real answer from
+  // Core: no capture device, or listening has not started. Folding it into "open" —
+  // which is what `muted ? … : open` does — puts a live microphone icon on screen for a
+  // microphone that is not there, and this control exists to be believed.
+  const unavailable = !mic.open && !mic.muted;
+  const state = unavailable ? "mic.unavailable" : mic.muted ? "mic.muted" : "mic.open";
   const action = mic.muted ? "mic.unmute" : "mic.mute";
+  const className = unavailable ? "mic mic--off" : mic.muted ? "mic mic--muted" : "mic mic--open";
+
   return (
     <button
       type="button"
-      className={mic.muted ? "mic mic--muted" : "mic mic--open"}
+      className={className}
       onClick={toggle}
-      title={`${translate(locale, state)} — ${translate(locale, action)}`}
-      aria-label={translate(locale, action)}
-      aria-pressed={mic.muted}
+      // **Not pressable when there is nothing to mute.** Core refuses it anyway
+      // (`no_microphone`), and a button that only ever fails is worse than a disabled one.
+      disabled={unavailable}
+      title={
+        unavailable
+          ? translate(locale, state)
+          : `${translate(locale, state)} — ${translate(locale, action)}`
+      }
+      aria-label={translate(locale, unavailable ? state : action)}
+      aria-pressed={unavailable ? undefined : mic.muted}
     >
-      <span aria-hidden="true">{mic.muted ? "🔇" : "🎙️"}</span>
+      <span aria-hidden="true">{mic.open ? "🎙️" : "🔇"}</span>
       {failed && <span className="mic__error">{translate(locale, "mic.failed")}</span>}
     </button>
   );

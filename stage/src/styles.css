@@ -667,6 +667,13 @@ body {
   border-color: rgba(255, 171, 107, 0.6);
 }
 
+/* No microphone at all. **Visibly different from muted**: the user did not do this, and
+   nothing they press here will change it. */
+.mic--off {
+  opacity: 0.45;
+  cursor: default;
+}
+
 /* Opens to the left, because the button sits against the right edge. */
 .mic__error {
   position: absolute;

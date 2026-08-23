@@ -45,6 +45,8 @@ from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from typing import Final
 
+import apsw
+
 from lumi import logging as lumi_logging
 from lumi.storage.sqlite import Database, one
 
@@ -297,7 +299,13 @@ class RetentionService:
 
     def _count(self, database: Database, table: str) -> int:
         with database.transaction() as conn:
-            return int(one(conn.execute(f"SELECT COUNT(*) FROM {table}"))[0])
+            return self._count_in(conn, table)
+
+    def _count_in(self, conn: apsw.Connection, table: str) -> int:
+        """A count on a connection the caller already has. **Used inside the erase's own
+        transaction**, so the number describes the rows that transaction is deleting.
+        """
+        return int(one(conn.execute(f"SELECT COUNT(*) FROM {table}"))[0])
 
     async def erase_everything(self, *, now: datetime | None = None) -> list[Deletion]:
         """**Erase everything the user's data amounts to** (privacy.md §5).
@@ -316,9 +324,15 @@ class RetentionService:
         return await asyncio.to_thread(self._erase_blocking, moment)
 
     def _erase_blocking(self, now: datetime) -> list[Deletion]:
-        counted = self._count_blocking()
+        # **Counted inside the transaction that deletes.** Counting first and deleting
+        # after leaves a window in which a reflection pass writes a memory: it is deleted
+        # like everything else, and the recorded number says it never existed. The record
+        # of a deletion has to describe the deletion that happened.
+        counts: dict[Target, int] = {}
 
         with self._memory.transaction() as conn:
+            counts[Target.MEMORIES] = self._count_in(conn, "memories")
+            counts[Target.EPISODES] = self._count_in(conn, "episodes")
             for table in (
                 "memory_evidence",
                 "memory_sources",
@@ -329,20 +343,22 @@ class RetentionService:
                 "episodes",
             ):
                 conn.execute(f"DELETE FROM {table}")
+            # **Verified before the transaction closes.** A table that refused to empty is
+            # reported as what it is, rather than as the number this meant to remove.
+            counts[Target.MEMORIES] -= self._count_in(conn, "memories")
+            counts[Target.EPISODES] -= self._count_in(conn, "episodes")
         with self._events.transaction() as conn:
+            counts[Target.EVENTS] = self._count_in(conn, "events")
             conn.execute("DELETE FROM events")
+            counts[Target.EVENTS] -= self._count_in(conn, "events")
         with self._audit.transaction() as conn:
+            counts[Target.AUDIT] = self._count_in(conn, "audit_log")
             conn.execute("DELETE FROM audit_log")
+            counts[Target.AUDIT] -= self._count_in(conn, "audit_log")
 
-        # **Counted before, verified after.** Reporting the intended number would let a
-        # table that refused to empty be reported as emptied.
         deletions = [
-            Deletion(
-                target=deletion.target,
-                count=deletion.count - self._count(database, table),
-                trigger=Trigger.ERASE,
-            )
-            for deletion, (_, database, table) in zip(counted, self._erasable(), strict=True)
+            Deletion(target=target, count=counts[target], trigger=Trigger.ERASE)
+            for target, _database, _table in self._erasable()
         ]
         try:
             self._record(deletions, now)

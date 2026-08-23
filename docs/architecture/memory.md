@@ -459,7 +459,8 @@ selected = pack_into_budget(sorted(scored, reverse=True), token_budget)
 | 操作 | 記憶側で起きること |
 |---|---|
 | 編集 | **上書きしない。** `supersede` して新しいレコードを立て、直した事実を履歴に残す |
-| 編集した記憶の `assertion_mode` | **`user_confirmed`。** ユーザーが自分で書いた文がそれ未満になる理由がない |
+| 編集した記憶の `assertion_mode` | **`user_confirmed`。** ユーザーが自分で書いた文がそれ未満になる理由がない（[ADR-043](../decisions/ADR-043-user-edited-memories-are-confirmed.md)） |
+| 編集できるもの | **live な belief だけ。** supersede 済みの行を直すと後継が2つできる |
 | 確認 | `MemoryStore.confirm()`。**`tainted → trusted` の唯一の昇格経路**（Invariant 7） |
 | 削除 | archive ではなく**物理削除**。経路は `retention.py` の1箇所（[../contracts/privacy.md](../contracts/privacy.md) §5） |
 | エクスポート | **平文の JSON。** 書き出す前に平文であることを言う |

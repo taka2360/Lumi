@@ -16,7 +16,9 @@
 
 ## 実装時に特に間違えやすい点
 
-- `trust_level = TRUSTED` を書いてよいのは **2箇所だけ**（ユーザー直接入力ハンドラ / `MemoryStore.confirm()`）
+- `trust_level = TRUSTED` を書いてよいのは **2箇所だけ**（ユーザー直接入力ハンドラ /
+  `MemoryStore._confirm_in()`。後者は記憶 UI の「確認」と「直す」から呼ばれる →
+  [ADR-043](../../docs/decisions/ADR-043-user-edited-memories-are-confirmed.md)）
 - `sequence_id` を代入してよいのは **EventBus だけ**
 - Activity の状態遷移を実行してよいのは **Attention Arbiter だけ**
 - Tool の状態遷移を実行してよいのは **Tool Registry だけ**

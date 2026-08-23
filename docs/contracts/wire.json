@@ -28,7 +28,7 @@
       "panel.memory.state"
     ]
   },
-  "$comment_inbound": "Stage -> Core requests (ADR-028). Methods not listed here will not be delivered (WsServer.on_request registration serves as the allowlist itself)",
+  "$comment_inbound": "Stage/Panel -> Core requests (ADR-028, ADR-042). A method's namespace decides which role may send it. Methods not listed here will not be delivered (WsServer.on_request registration serves as the allowlist itself)",
   "inbound_methods": [
     "stage.settings.update",
     "stage.setup.recheck_ollama",

@@ -96,7 +96,11 @@ log = lumi_logging.get_logger(__name__)
 
 #: How often the idle pass looks [Provisional]. **A poll, not a timer**: what it waits for
 #: is the absence of turns, and absence does not raise an event.
-REFLECTION_CHECK_SECONDS: Final = 60.0
+#:
+#: **Shorter than `REFLECTION_ASKED_IDLE_AFTER`**, or 「覚えておいて」 would wait out a
+#: whole poll interval past the threshold it was given — a 20-second promise answered in
+#: a minute. The check itself is one attribute read and a subtraction.
+REFLECTION_CHECK_SECONDS: Final = 15.0
 
 #: How quiet it has to be before Lumi thinks about what was said [Provisional]. Short
 #: enough that a session usually gets reflected on while it is still open; long enough that
@@ -688,6 +692,11 @@ class ConversationRuntime:
             self._listening = False
             raise
 
+        # **Announced as soon as the stream is open**, before the early return below.
+        # A Lumi with no Content Pack still has an open microphone, and the indicator is
+        # the only thing on screen saying so.
+        await self._announce_mic()
+
         if self._loop is None:
             log.warning("conversation.disabled", reason="content pack")
             return
@@ -699,8 +708,6 @@ class ConversationRuntime:
             report_task_exit("reactive.crashed", on_return="reactive.stopped")
         )
         log.info("conversation.started", can_listen=self._audio.can_listen)
-        # **The light comes on when the stream does**, not when the window loads.
-        await self._announce_mic()
 
     def _register_providers(self) -> None:
         """**Registered even when not set up.** Failure happens at `load()` time, which

@@ -459,9 +459,9 @@ describe("the question that comes before the others", () => {
           model: null,
           alternatives: [],
           items: [
-            { component: "tts", name: "AivisSpeech Engine", size_bytes: 300_000_000 },
-            { component: "llm_model", name: "Qwen 3.5 9B", size_bytes: 6_600_000_000 },
-            { component: "embedding", name: "harrier-oss-v1-270m", size_bytes: 196_000_000 },
+            { component: "tts", name: "AivisSpeech Engine", sizeBytes: 300_000_000 },
+            { component: "llm_model", name: "Qwen 3.5 9B", sizeBytes: 6_600_000_000 },
+            { component: "embedding", name: "harrier-oss-v1-270m", sizeBytes: 196_000_000 },
           ],
           totalBytes: 7_096_000_000,
         },

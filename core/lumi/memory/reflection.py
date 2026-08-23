@@ -186,7 +186,12 @@ def asked_to_remember(text: str) -> bool:
     remember. The same list decides `explicit_marking`, so what triggers a pass and what
     counts as important within it cannot disagree.
     """
-    return any(phrase in text for phrase in REMEMBER_PHRASES)
+    # **Case-folded for the English phrases.** "Remember this" at the start of a sentence
+    # is the ordinary way to write it, and a trigger that misses the capitalised form is
+    # one that misses it exactly when someone is being deliberate. The Japanese phrases
+    # are unaffected — `casefold` leaves them as they are.
+    folded = text.casefold()
+    return any(phrase.casefold() in folded for phrase in REMEMBER_PHRASES)
 
 
 def explicit_marking(lines: Sequence[Utterance]) -> bool:

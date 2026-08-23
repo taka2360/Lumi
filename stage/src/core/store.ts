@@ -174,7 +174,8 @@ export interface SetupFetchItem {
   component: SetupComponent;
   /** A product name (AivisSpeech, `harrier-oss-v1-270m`). **Never translated.** */
   name: string;
-  size_bytes: number;
+  /** Camel-cased like `SetupPrompt.totalBytes`: **past the parser, one convention.** */
+  sizeBytes: number;
 }
 
 export interface SetupModelOption {

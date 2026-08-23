@@ -109,9 +109,18 @@ fn open_credits(app: &AppHandle) {
 fn open_panel(app: &AppHandle, kind: PanelKind) {
     let label = kind.window().label();
     if let Some(existing) = app.get_webview_window(label) {
-        let _ = existing.show();
-        let _ = existing.unminimize();
-        let _ = existing.set_focus();
+        // **Logged rather than discarded.** "Nothing happened when I clicked it" with a
+        // silent `Err` behind it is the hardest kind of report to act on, and bringing a
+        // window forward is exactly the operation a window manager can refuse.
+        for (what, result) in [
+            ("show", existing.show()),
+            ("unminimize", existing.unminimize()),
+            ("focus", existing.set_focus()),
+        ] {
+            if let Err(error) = result {
+                log::warn!("panel.reuse_failed label={label} op={what} {error}");
+            }
+        }
         return;
     }
 

@@ -24,9 +24,11 @@ has to reach every line on screen, including the ones nobody expected to be read
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable, Sequence
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Final
 
 from lumi import logging as lumi_logging
@@ -111,6 +113,14 @@ def _text(payload: dict[str, Any], key: str, *, limit: int) -> str:
     if len(text) > limit:
         raise RequestRefused(f"{key}_too_long")
     return text
+
+
+def _write_export(target: Path, document: dict[str, Any]) -> None:
+    """Serialise and write, on a thread. **Both halves, not just the write** — for a large
+    memory `json.dumps` is the more expensive of the two.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(document, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 def _memory_id(payload: dict[str, Any]) -> str:
@@ -251,20 +261,15 @@ class PanelService:
             if not page or offset >= total:
                 break
 
-        directory = paths.data_dir() / "exports"
-        directory.mkdir(parents=True, exist_ok=True)
-        target = directory / f"lumi-memory-{now.strftime('%Y%m%d-%H%M%S')}.json"
-        target.write_text(
-            json.dumps(
-                {
-                    "exported_at": now.isoformat(),
-                    "memories": [record_payload(record, now=now) for record in records],
-                },
-                ensure_ascii=False,
-                indent=2,
-            ),
-            encoding="utf-8",
-        )
+        target = paths.data_dir() / "exports" / f"lumi-memory-{now.strftime('%Y%m%d-%H%M%S')}.json"
+        document = {
+            "exported_at": now.isoformat(),
+            "memories": [record_payload(record, now=now) for record in records],
+        }
+        # **Serialising and writing both go to a thread.** A long memory is megabytes of
+        # JSON, and doing that on the event loop stalls audio — the one thing in Lumi with
+        # a deadline. `asyncio.to_thread` is how every other blocking call here behaves.
+        await asyncio.to_thread(_write_export, target, document)
         log.info("panel.memory.exported", count=len(records), path=str(target))
         return {"path": str(target), "count": len(records), "plaintext": True}
 

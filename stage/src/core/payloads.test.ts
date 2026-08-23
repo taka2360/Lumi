@@ -175,6 +175,21 @@ describe("the setup question", () => {
     expect(prompt.totalBytes).toBe(7_000_000_000);
   });
 
+  it("drops a row whose component it does not recognise", () => {
+    // ★ **Never renamed to something it is not.** Rounding an unknown component to `tts`
+    // would label a download as the speech engine on the screen where consent is given.
+    const prompt = toSetupPrompt({
+      component: "all",
+      total_bytes: 1_000,
+      items: [
+        { component: "wat", name: "Mystery", size_bytes: 1_000 },
+        { component: "stt", name: "large-v3-turbo", size_bytes: 1_000 },
+      ],
+    });
+
+    expect(prompt.items.map((item) => item.component)).toEqual(["stt"]);
+  });
+
   it("reads the model identity and byte size without guessing", () => {
     expect(
       toSetupPrompt({

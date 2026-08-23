@@ -171,7 +171,7 @@ def test_only_decide_returns_a_decision() -> None:
 #: **"Lumi cannot erase its own tracks" and "the user may erase their data" are different
 #: claims**, and only the first one is the Invariant. The retention job and "erase
 #: everything" are the user's own doing; every other route is Lumi's, and there is none.
-AUDIT_DELETION_SITE = "retention.py"
+AUDIT_DELETION_SITE = LUMI / "storage" / "retention.py"
 
 
 def test_the_audit_log_is_append_only() -> None:
@@ -187,7 +187,9 @@ def test_the_audit_log_is_append_only() -> None:
     somewhere a reader can find in one look.
     """
     for source in lumi_sources():
-        if source.name == AUDIT_DELETION_SITE:
+        # **The exact path, not the basename.** A second `retention.py` somewhere else
+        # under `lumi/` would otherwise inherit the exception by being named the same.
+        if source == AUDIT_DELETION_SITE:
             continue
         text = source.read_text(encoding="utf-8").upper()
         assert "DELETE FROM AUDIT_LOG" not in text, source.name
@@ -201,7 +203,7 @@ def test_only_the_deletion_service_deletes_the_audit_log() -> None:
     the exception. If `retention.py` ever stops deleting the audit log, the skip above
     becomes a hole nobody is watching — so it is an error for the exception to be unused.
     """
-    text = (LUMI / "storage" / AUDIT_DELETION_SITE).read_text(encoding="utf-8").upper()
+    text = AUDIT_DELETION_SITE.read_text(encoding="utf-8").upper()
     assert "DELETE FROM AUDIT_LOG" in text
 
 
