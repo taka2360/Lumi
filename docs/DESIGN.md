@@ -9,8 +9,15 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.23 |
+| Revision | rev.24 |
 | 実装フェーズ | **Phase 2（Memory）完了。2b（投機 STT）の実測だけ未取得。次は Phase 3。** → [roadmap.md](roadmap.md) |
+
+> **rev.24 の変更点**（表示アセットの欠落を会話停止から分離した）
+> 1. **VRM ファイルが欠けても人格と音声設定が読めるなら会話を開始する**
+>    → [ADR-044](decisions/ADR-044-missing-character-model-keeps-conversation.md)。
+>    Stage は既存のプレースホルダと理由表示へフォールバックし、Core は Reactive Loop を維持する
+> 2. Content Pack 外を指すパスとモデルクレジット欠落は、引き続き fail-closed。
+>    表示アセットの可用性と、安全性・権利処理の検証を混同しない
 
 > **rev.23 の変更点**（レビュー由来の修正。契約の書き方を実装に合わせた）
 > 1. **ユーザーが記憶 UI で書き直した文は `user_confirmed` になる**

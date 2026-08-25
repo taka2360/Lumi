@@ -1,6 +1,7 @@
 """Content Pack. **docs/architecture/extension.md tests 13 / 13b.**
 
-Both are fail-closed. Never builds a "couldn't read it, so falling back to a default" path.
+Code, path boundaries and missing credits fail closed. A missing rendering asset keeps the
+validated persona and voice so Stage can fall back without disabling conversation (ADR-044).
 """
 
 from __future__ import annotations
@@ -98,10 +99,14 @@ def test_a_declared_model_is_read(tmp_path: Path) -> None:
     assert loaded.model.credit.credit_text == "3Dモデル: 光莉 / ひかり（あわ）"
 
 
-def test_a_model_that_is_not_shipped_is_rejected(tmp_path: Path) -> None:
-    """**Never silently falls back to a placeholder.** Having a name with no entity is broken"""
-    with pytest.raises(ContentPackError, match=r"model\.vrm"):
-        load_character(pack(tmp_path, character=CHARACTER + MODEL))
+def test_a_model_that_is_not_shipped_keeps_the_pack_usable(tmp_path: Path) -> None:
+    """★ Regression: a visible placeholder must keep the pack's conversation identity."""
+    loaded = load_character(pack(tmp_path, character=CHARACTER + MODEL))
+
+    assert loaded.persona == "あなたは Lumi。"
+    assert loaded.voice.credit.credit_text == "音声: AivisSpeech"
+    assert loaded.model is not None
+    assert loaded.model.path.name == "model.vrm"
 
 
 def test_a_model_without_credit_is_rejected(tmp_path: Path) -> None:

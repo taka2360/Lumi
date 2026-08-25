@@ -46,6 +46,30 @@ from lumi.transport.server import RequestRefused
 class TestAssembly:
     """**Does starting the runtime actually leave a usable system behind.**"""
 
+    async def test_missing_vrm_does_not_disable_the_reactive_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """★ Regression (observed 2026-08-25): placeholder rendered, but mic got no reply.
+
+        Rejecting the declared-but-missing model as a Content Pack error discarded the valid
+        persona and voice too. `_start_listening()` then opened AudioIO but returned before
+        starting the Reactive Loop, leaving the on-screen fallback permanently deaf.
+        """
+        (paths_module.default_character_dir() / "model.vrm").unlink()
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+        try:
+            assert runtime._pack is not None
+            assert runtime._pack.model is not None
+            assert runtime._loop is not None, "model fallback must retain microphone handling"
+        finally:
+            await runtime.stop()
+
     async def test_the_arbiter_is_started(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
