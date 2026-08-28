@@ -18,7 +18,7 @@
 >    Stage は既存のプレースホルダと理由表示へフォールバックし、Core は Reactive Loop を維持する
 > 2. Content Pack 外を指すパスとモデルクレジット欠落は、引き続き fail-closed。
 >    表示アセットの可用性と、安全性・権利処理の検証を混同しない
-
+>
 > **rev.23 の変更点**（レビュー由来の修正。契約の書き方を実装に合わせた）
 > 1. **ユーザーが記憶 UI で書き直した文は `user_confirmed` になる**
 >    → [ADR-043](decisions/ADR-043-user-edited-memories-are-confirmed.md)。
