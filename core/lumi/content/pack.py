@@ -98,8 +98,9 @@ class ModelSettings:
     the moment it is swapped.
     """
 
-    #: Absolute path to the model file. **Resolved at load**, so a pack that declares a model
-    #: it doesn't ship fails here rather than as a blank character later
+    #: Absolute path to the model file. **Resolved at load**, but availability is a rendering
+    #: concern: if it is missing, Stage shows its explicit placeholder while conversation
+    #: keeps using the pack's persona and voice (ADR-044).
     path: Path
     #: `vrm0` / `vrm1`. **Read but not acted on in Phase 1** — `@pixiv/three-vrm` handles both,
     #: and Live2D is Phase 9 (docs/architecture/ui.md §3)
@@ -179,9 +180,11 @@ def _model(document: dict[str, Any], root: Path) -> ModelSettings | None:
 
     path = _inside(root, _text(model, "file", root / "character.toml"))
     if not path.is_file():
-        # **Never fall back silently.** A pack that names a model it doesn't ship is broken,
-        # and a blank character is the least informative way to report it
-        raise ContentPackError(f"File specified by [model] does not exist: {path}")
+        # **Appearance degrades explicitly, conversation does not.** Stage already reports
+        # asset conversion/loading failures beside its placeholder. Rejecting the whole pack
+        # here also discards the persona and voice, so Core never builds the Reactive Loop and
+        # the visible placeholder cannot respond to the microphone (ADR-044).
+        log.warning("content.model_file_missing", path=str(path))
 
     return ModelSettings(
         path=path,

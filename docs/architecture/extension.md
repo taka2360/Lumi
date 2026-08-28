@@ -270,7 +270,7 @@ license_url   = "https://..."
 | 同梱アセットは**ライセンス全文を `LICENSE/` に含める** | ACML「配布する場合は必ずライセンス文書も一緒に添付してください」 |
 | **Core は `credit_text` を解釈しない。** そのまま Stage に渡す | 規約が要求する表記は権利者が決める。Core が整形すると要求を満たさなくなりうる |
 | **`[model]` を宣言するなら `[model.credit]` も宣言する**（fail-closed） | 同上。**その license がクレジットを要求するかどうかとは別の判断**（既定同梱モデルは表記不要だが Lumi は出す） |
-| `[model]` が無い Content Pack は**読める**（プレースホルダで動く） | 声だけの Content Pack は正当な Content Pack。**モデルを宣言したのに実体が無い**場合だけ失敗させる |
+| `[model]` が無い、または宣言したモデル実体が欠けた Content Pack も**読める**（プレースホルダで動く） | 声だけの Content Pack は正当であり、表示アセットの欠落で人格と会話まで停止しない（[ADR-044](../decisions/ADR-044-missing-character-model-keeps-conversation.md)）。欠落は Stage が理由付きで表示する |
 | **パックが宣言するファイルパスは、パックの中を指していなければ読み込まない**（fail-closed） | Content Pack は再配布されるデータであり、**境界の外を指してよい根拠が無い**。読めた path はそのまま Stage に配信される（[ADR-029](../decisions/ADR-029-content-pack-asset-delivery.md)）ため、絶対パスや `..` を通すと任意のローカルファイルを名指しできる。Shell の asset scope も拒むが、**向こう側も見ているから成立する境界は境界ではない** |
 
 ```toml

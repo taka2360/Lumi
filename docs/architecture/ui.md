@@ -217,6 +217,10 @@ Ollama が `not_configured` のときは、その不足項目を専用の案内�
 **モデルが無いことも配る**（`path: null` + 理由）。「まだ来ていない」と「モデルを持たない
 Content Pack」は別の状態で、後者だけがプレースホルダを**理由付きで**出す。
 
+**宣言されたモデルファイルが欠けている、または読み込めない場合もプレースホルダへ落とすが、
+音声入力と会話は継続する**（[ADR-044](../decisions/ADR-044-missing-character-model-keeps-conversation.md)）。
+モデルは表現層のアセットであり、その失敗で有効な人格・音声設定と Reactive Loop を捨てない。
+
 #### CSP の `connect-src` から `blob:` を外さない
 
 GLTFLoader は **GLB に埋め込まれたテクスチャを `blob:` URL にしてから `ImageBitmapLoader`
