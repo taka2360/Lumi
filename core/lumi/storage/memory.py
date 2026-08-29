@@ -57,6 +57,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Final
 
+import apsw
+
 from lumi import logging as lumi_logging
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.storage.sqlite import Database, Schema, one
@@ -256,28 +258,25 @@ class EpisodeStore:
         self._db = database
 
     async def open_episode(self, episode: Episode) -> None:
-        await asyncio.to_thread(self._open_blocking, episode)
+        await self._db.in_transaction(lambda conn: self._open_in(conn, episode))
 
-    def _open_blocking(self, episode: Episode) -> None:
-        with self._db.transaction() as conn:
-            conn.execute(
-                "INSERT INTO episodes (id, session_id, started_at, ended_at)"
-                " VALUES (?, ?, ?, NULL)",
-                (episode.id, episode.session_id, episode.started_at.isoformat()),
-            )
+    def _open_in(self, conn: apsw.Connection, episode: Episode) -> None:
+        conn.execute(
+            "INSERT INTO episodes (id, session_id, started_at, ended_at) VALUES (?, ?, ?, NULL)",
+            (episode.id, episode.session_id, episode.started_at.isoformat()),
+        )
 
     async def close_episode(self, episode_id: str, ended_at: datetime) -> None:
         """Marks the conversation finished. **A missing episode is not an error** — a
         session that never said anything never opened one.
         """
-        await asyncio.to_thread(self._close_blocking, episode_id, ended_at)
+        await self._db.in_transaction(lambda conn: self._close_in(conn, episode_id, ended_at))
 
-    def _close_blocking(self, episode_id: str, ended_at: datetime) -> None:
-        with self._db.transaction() as conn:
-            conn.execute(
-                "UPDATE episodes SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
-                (ended_at.isoformat(), episode_id),
-            )
+    def _close_in(self, conn: apsw.Connection, episode_id: str, ended_at: datetime) -> None:
+        conn.execute(
+            "UPDATE episodes SET ended_at = ? WHERE id = ? AND ended_at IS NULL",
+            (ended_at.isoformat(), episode_id),
+        )
 
     async def episode(self, episode_id: str) -> Episode | None:
         return await asyncio.to_thread(self._episode_blocking, episode_id)
@@ -298,27 +297,26 @@ class EpisodeStore:
         )
 
     async def append(self, utterance: Utterance) -> None:
-        await asyncio.to_thread(self._append_blocking, utterance)
+        await self._db.in_transaction(lambda conn: self._append_in(conn, utterance))
 
-    def _append_blocking(self, utterance: Utterance) -> None:
-        with self._db.transaction() as conn:
-            conn.execute(
-                "INSERT INTO utterances"
-                " (id, episode_id, turn_index, speaker, text, provenance_class,"
-                "  trust_level, occurred_at, correlation_id)"
-                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    utterance.id,
-                    utterance.episode_id,
-                    utterance.turn_index,
-                    utterance.speaker,
-                    utterance.text,
-                    utterance.provenance_class.value,
-                    utterance.trust_level.value,
-                    utterance.occurred_at.isoformat(),
-                    utterance.correlation_id,
-                ),
-            )
+    def _append_in(self, conn: apsw.Connection, utterance: Utterance) -> None:
+        conn.execute(
+            "INSERT INTO utterances"
+            " (id, episode_id, turn_index, speaker, text, provenance_class,"
+            "  trust_level, occurred_at, correlation_id)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                utterance.id,
+                utterance.episode_id,
+                utterance.turn_index,
+                utterance.speaker,
+                utterance.text,
+                utterance.provenance_class.value,
+                utterance.trust_level.value,
+                utterance.occurred_at.isoformat(),
+                utterance.correlation_id,
+            ),
+        )
 
     async def utterances(self, episode_id: str) -> Sequence[Utterance]:
         return await asyncio.to_thread(self._utterances_blocking, episode_id)
@@ -349,21 +347,20 @@ class EpisodeStore:
         quiet moment yet."** The memory window shows both as an empty list otherwise,
         and only one of them is a reason to worry.
         """
-        return await asyncio.to_thread(self._unreflected_turns_blocking)
+        return await self._db.in_transaction(self._unreflected_turns_in)
 
-    def _unreflected_turns_blocking(self) -> int:
-        with self._db.transaction() as conn:
-            return int(
-                str(
-                    one(
-                        conn.execute(
-                            "SELECT COUNT(*) FROM utterances u"
-                            " JOIN episodes e ON e.id = u.episode_id"
-                            " WHERE u.turn_index >= e.reflected_turns"
-                        )
-                    )[0]
-                )
+    def _unreflected_turns_in(self, conn: apsw.Connection) -> int:
+        return int(
+            str(
+                one(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM utterances u"
+                        " JOIN episodes e ON e.id = u.episode_id"
+                        " WHERE u.turn_index >= e.reflected_turns"
+                    )
+                )[0]
             )
+        )
 
     def _unreflected_blocking(self, limit: int) -> list[tuple[str, int]]:
         with self._db.transaction() as conn:
@@ -396,18 +393,18 @@ class EpisodeStore:
         """Move the watermark. **Never backwards** — a later pass that read less than an
         earlier one must not make the earlier work look undone.
         """
-        await asyncio.to_thread(self._mark_reflected_blocking, episode_id, upto_turn)
+        await self._db.in_transaction(
+            lambda conn: self._mark_reflected_in(conn, episode_id, upto_turn)
+        )
 
-    def _mark_reflected_blocking(self, episode_id: str, upto_turn: int) -> None:
-        with self._db.transaction() as conn:
-            conn.execute(
-                "UPDATE episodes SET reflected_turns = MAX(reflected_turns, ?) WHERE id = ?",
-                (upto_turn, episode_id),
-            )
+    def _mark_reflected_in(self, conn: apsw.Connection, episode_id: str, upto_turn: int) -> None:
+        conn.execute(
+            "UPDATE episodes SET reflected_turns = MAX(reflected_turns, ?) WHERE id = ?",
+            (upto_turn, episode_id),
+        )
 
     async def count(self) -> int:
-        return await asyncio.to_thread(self._count_blocking)
+        return await self._db.in_transaction(self._count_in)
 
-    def _count_blocking(self) -> int:
-        with self._db.transaction() as conn:
-            return int(one(conn.execute("SELECT COUNT(*) FROM utterances"))[0])
+    def _count_in(self, conn: apsw.Connection) -> int:
+        return int(one(conn.execute("SELECT COUNT(*) FROM utterances"))[0])
