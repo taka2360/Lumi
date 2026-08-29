@@ -676,6 +676,24 @@ class TestSettingsUpdate:
         assert received == [1.4]
         del runtime
 
+    async def test_tts_volume_is_marked_as_applied_immediately(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        runtime, server = await self.build(monkeypatch, tmp_path)
+        received: list[float] = []
+
+        class RecordingLoop:
+            def set_tts_volume(self, volume: float) -> None:
+                received.append(volume)
+
+        runtime._loop = cast(Any, RecordingLoop())
+        answer = await server.inbound["stage.settings.update"]({"changes": {"tts_volume": "0.5"}})
+
+        assert answer == {"applied_at_next_start": False}
+        assert server.settings[-1]["values"]["tts_volume"]["value"] == "0.5"
+        assert received == [0.5]
+        del runtime
+
     async def test_a_key_that_is_not_a_setting_is_refused(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:

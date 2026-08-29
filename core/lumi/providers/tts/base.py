@@ -22,11 +22,15 @@ CPU. `resource_hint()` reports the resolved device's VRAM estimate separately.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Final, Protocol
 
 from lumi.kernel.cancellation import CancelToken
 from lumi.providers.base import Provider
 from lumi.providers.tts.viseme import VisemeTimeline
+
+#: The largest `volume_scale` the AivisSpeech / VOICEVOX engines accept. **Core clamps to
+#: it** rather than letting the engine reject or silently reinterpret a larger number.
+VOLUME_SCALE_MAX: Final = 2.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,8 +46,9 @@ class SpeechAudio:
 class VoiceConfig:
     """Which voice to speak with.
 
-    The Content Pack selects the speaker (`voice.toml`); Core-owned settings select the
-    playback-independent speed for the current conversation.
+    The Content Pack selects the speaker and its own volume (`voice.toml`); Core-owned
+    settings scale the speed and that volume for the current conversation
+    (ADR-032 / ADR-046).
     """
 
     speaker: int

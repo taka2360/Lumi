@@ -25,14 +25,42 @@ const CHOICES: Record<string, string[]> = {
   locale: ["auto", "ja", "en"],
 };
 
-const TTS_SPEED_MIN = 0.5;
-const TTS_SPEED_MAX = 2.0;
-const TTS_SPEED_STEP = 0.1;
+/**
+ * The settings shown as a slider, with the range Core validates against.
+ *
+ * **`tts_volume` is a multiplier over the Content Pack's own volume** (ADR-046), which is
+ * why it is shown as a percentage and why 100% is the default: it is exactly the volume
+ * the character was authored with.
+ */
+const SLIDERS: Partial<
+  Record<string, { min: number; max: number; step: number; format: (v: number) => string }>
+> = {
+  tts_speed: { min: 0.5, max: 2.0, step: 0.1, format: (v) => `${v.toFixed(1)}x` },
+  tts_volume: { min: 0.0, max: 2.0, step: 0.05, format: (v) => `${Math.round(v * 100)}%` },
+};
 
-function formatSpeed(value: string): string {
-  const speed = Number(value);
-  return Number.isFinite(speed) ? `${speed.toFixed(1)}x` : value;
+/**
+ * Settings that have a translated label. **Kept as literals**, so the message key stays
+ * type-checked — a setting added here without a string in `i18n` fails to compile rather
+ * than showing its raw key to the user.
+ */
+const LABELLED = [
+  "inference_device",
+  "llm_model",
+  "stt_model",
+  "locale",
+  "tts_speed",
+  "tts_volume",
+] as const;
+
+type Labelled = (typeof LABELLED)[number];
+
+function isLabelled(name: string): name is Labelled {
+  return (LABELLED as readonly string[]).includes(name);
 }
+
+/** Changes a running Lumi picks up without a restart (Core decides; this only words it). */
+const APPLIED_NOW: ReadonlySet<string> = new Set(["locale", "tts_speed", "tts_volume"]);
 
 function Row({ name, value, source }: { name: string; value: string; source: SettingsSource }) {
   const locale = useLocale();
@@ -92,38 +120,42 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
   };
 
   const choices = CHOICES[name];
-  const isSpeed = name === "tts_speed";
+  const slider = SLIDERS[name];
+
+  const label = isLabelled(name) ? translate(locale, `settings.label.${name}`) : null;
+
+  /**
+   * The value as the user reads it. **One formatting for both branches** — an overridden
+   * setting printing its raw number would read as a different quantity than the same
+   * setting unlocked ("1.5" against "150%"), which is exactly the multiplier-for-level
+   * confusion ADR-046 exists to prevent. A value Core sent that is not a number is shown
+   * as-is rather than rendered as `NaN%`.
+   */
+  const display = (raw: string) =>
+    slider && Number.isFinite(Number(raw)) ? slider.format(Number(raw)) : raw;
 
   return (
     <tr>
-      <th>
-        {name === "inference_device" ||
-        name === "llm_model" ||
-        name === "stt_model" ||
-        name === "locale" ||
-        name === "tts_speed"
-          ? translate(locale, `settings.label.${name}`)
-          : name}
-      </th>
+      <th>{label ?? name}</th>
       <td className="settings__value">
         {locked ? (
-          value
-        ) : isSpeed ? (
-          <div className="settings__speed">
+          display(value)
+        ) : slider ? (
+          <div className="settings__slider">
             <input
-              className="settings__input settings__speed-input"
+              className="settings__input settings__slider-input"
               type="range"
-              min={TTS_SPEED_MIN}
-              max={TTS_SPEED_MAX}
-              step={TTS_SPEED_STEP}
+              min={slider.min}
+              max={slider.max}
+              step={slider.step}
               value={draft}
-              aria-label={translate(locale, "settings.label.tts_speed")}
+              aria-label={label ?? name}
               onChange={(event) => setDraft(event.target.value)}
               onPointerUp={(event) => void commit(event.currentTarget.value)}
               onKeyUp={(event) => void commit(event.currentTarget.value)}
               onBlur={() => void commit(draft)}
             />
-            <output>{formatSpeed(draft)}</output>
+            <output>{display(draft)}</output>
           </div>
         ) : choices ? (
           <select
@@ -151,10 +183,7 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
       <td className={locked ? "settings__src settings__src--env" : "settings__src"}>
         {error ??
           (saved
-            ? translate(
-                locale,
-                name === "locale" || name === "tts_speed" ? "settings.applied" : "settings.saved",
-              )
+            ? translate(locale, APPLIED_NOW.has(name) ? "settings.applied" : "settings.saved")
             : translate(locale, `settings.source.${source}`))}
       </td>
     </tr>

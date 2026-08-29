@@ -638,20 +638,20 @@ body {
   font: inherit;
 }
 
-.settings__speed {
+.settings__slider {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 150px;
 }
 
-.settings__speed-input {
+.settings__slider-input {
   padding: 0;
   accent-color: #a9c7ff;
 }
 
-.settings__speed output {
-  min-width: 28px;
+.settings__slider output {
+  min-width: 38px;
   text-align: right;
   font-variant-numeric: tabular-nums;
 }

@@ -209,6 +209,32 @@ def test_tts_speed_accepts_only_values_in_the_engine_range(tmp_path: Path) -> No
             save(file, updated, {"tts_speed": value})
 
 
+def test_tts_volume_defaults_to_the_content_packs_own_level(tmp_path: Path) -> None:
+    """**The default is the identity, not a level** (ADR-046) — "100%" has to mean today."""
+    settings = load(write(tmp_path, {}), {})
+    assert settings.tts_volume.value == "1.0"
+    assert settings.tts_volume.source is Source.DEFAULT
+
+
+def test_tts_volume_accepts_only_values_in_the_engine_range(tmp_path: Path) -> None:
+    file = write(tmp_path, {})
+    updated = save(file, load(file, {}), {"tts_volume": "0.5"})
+    assert updated.tts_volume.value == "0.5"
+
+    # `0.0` is silence and a legitimate choice; below it and above 2.0 are not
+    assert save(file, updated, {"tts_volume": "0.0"}).tts_volume.value == "0.0"
+
+    for value in ("-0.01", "2.01", "loud", "nan", "inf"):
+        with pytest.raises(InvalidSettingValue, match="tts_volume"):
+            save(file, updated, {"tts_volume": value})
+
+
+def test_tts_volume_can_be_overridden_by_the_environment(tmp_path: Path) -> None:
+    settings = load(write(tmp_path, {"tts_volume": "0.5"}), {"LUMI_TTS_VOLUME": "1.5"})
+    assert settings.tts_volume.value == "1.5"
+    assert settings.tts_volume.source is Source.ENV
+
+
 def test_invalid_stored_locale_falls_back_without_costing_other_keys(tmp_path: Path) -> None:
     settings = load(write(tmp_path, {"locale": "fr", "llm_model": "gemma3:12b"}), {})
     assert settings.locale.value == "auto"
@@ -330,6 +356,7 @@ def _some_value(key: str) -> str:
         "stt_model": "small",
         "locale": "en",
         "tts_speed": "1.4",
+        "tts_volume": "0.5",
         "retention_episodes": "30",
         "retention_events": "7",
         "retention_audit": "365",
