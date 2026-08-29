@@ -142,6 +142,27 @@ describe("Settings", () => {
     expect(container.querySelector(".settings__value")?.textContent).toBe("150%");
   });
 
+  it("does not format a blank volume as zero percent", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      useStageStore.getState().setSettings({
+        version: 1,
+        unreadable: false,
+        values: { tts_volume: { value: "", source: "env" } },
+      });
+      root?.render(
+        <LocaleProvider>
+          <Settings />
+        </LocaleProvider>,
+      );
+    });
+
+    expect(container.querySelector(".settings__value")?.textContent).toBe("");
+  });
+
   it("ignores an older save failure after a newer save starts", async () => {
     let rejectFirst: (reason: unknown) => void = () => {};
     let rejectSecond: (reason: unknown) => void = () => {};

@@ -131,8 +131,13 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
    * confusion ADR-046 exists to prevent. A value Core sent that is not a number is shown
    * as-is rather than rendered as `NaN%`.
    */
-  const display = (raw: string) =>
-    slider && Number.isFinite(Number(raw)) ? slider.format(Number(raw)) : raw;
+  const display = (raw: string) => {
+    if (!slider || raw.trim() === "") {
+      return raw;
+    }
+    const numeric = Number(raw);
+    return Number.isFinite(numeric) ? slider.format(numeric) : raw;
+  };
 
   return (
     <tr>
