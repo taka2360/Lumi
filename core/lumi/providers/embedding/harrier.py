@@ -41,6 +41,13 @@ from typing import Any, Final
 import numpy as np
 
 from lumi import logging as lumi_logging
+from lumi.artifacts.install import is_model_installed
+from lumi.artifacts.models import (
+    EMBEDDING_MODEL_FILE,
+    HARRIER_OSS_V1_270M,
+    ModelArtifact,
+    model_directory,
+)
 from lumi.providers.base import (
     Attribution,
     DevicePref,
@@ -51,13 +58,6 @@ from lumi.providers.base import (
     UnloadPolicy,
 )
 from lumi.providers.embedding.base import Vector
-from lumi.setup.install import is_model_installed
-from lumi.setup.models import (
-    EMBEDDING_MODEL_FILE,
-    HARRIER_OSS_V1_270M,
-    ModelArtifact,
-    model_directory,
-)
 
 log = lumi_logging.get_logger(__name__)
 

@@ -9,6 +9,7 @@ import httpx
 import pytest
 
 from lumi import paths as paths_module
+from lumi.artifacts.engines import AIVISSPEECH_ENGINE
 from lumi.setup import detect as detect_module
 from lumi.setup.detect import (
     KNOWN_ENGINES,
@@ -18,7 +19,6 @@ from lumi.setup.detect import (
     is_port_open,
     ollama_api_version,
 )
-from lumi.setup.engines import AIVISSPEECH_ENGINE
 
 
 def engine(name: str) -> detect_module.KnownEngine:

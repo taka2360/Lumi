@@ -38,6 +38,8 @@ from lumi.agent.recall import cost_of
 from lumi.agent.session import Session
 from lumi.agent.tasks import report_task_exit
 from lumi.agent.warmup import warm_all, warm_llm
+from lumi.artifacts.install import is_model_installed
+from lumi.artifacts.models import HARRIER_OSS_V1_270M
 from lumi.audio.devices import AudioPlan
 from lumi.audio.io import AudioIO
 from lumi.character import ExpressionIntent
@@ -66,8 +68,6 @@ from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
-from lumi.setup.install import is_model_installed
-from lumi.setup.models import HARRIER_OSS_V1_270M
 from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState
 from lumi.storage.audit import AUDIT_SCHEMA, SqliteAuditLog
 from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore

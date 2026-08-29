@@ -29,6 +29,8 @@ from typing import Any, Final
 import numpy as np
 
 from lumi import logging as lumi_logging
+from lumi.artifacts.install import is_model_installed
+from lumi.artifacts.models import STT_MODELS, model_directory
 from lumi.kernel.cancellation import CancelToken
 from lumi.providers.base import (
     Attribution,
@@ -42,8 +44,6 @@ from lumi.providers.base import (
 )
 from lumi.providers.device import DeviceChoice, resolve
 from lumi.providers.stt.base import AudioBuffer, Segment, Transcription
-from lumi.setup.install import is_model_installed
-from lumi.setup.models import STT_MODELS, model_directory
 
 log = lumi_logging.get_logger(__name__)
 
