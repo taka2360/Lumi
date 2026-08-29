@@ -30,6 +30,7 @@ from lumi.agent.latency import TurnLatency
 from lumi.kernel.activity import Activity
 from lumi.kernel.event import DomainEvent
 from lumi.kernel.ids import ActivityId
+from lumi.tasks import spawn
 from lumi.transport.methods import METHOD_PANEL_INSPECTOR
 from lumi.transport.protocol import Role
 
@@ -118,7 +119,7 @@ class InspectorPublisher:
         self._task: asyncio.Task[None] | None = None
 
     def start(self) -> None:
-        self._task = asyncio.create_task(self._run(), name="inspector")
+        self._task = spawn(self._run(), name="inspector", event="inspector.publish_crashed")
 
     async def stop(self) -> None:
         if self._task is None:

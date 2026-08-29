@@ -23,7 +23,9 @@ KERNEL = LUMI / "kernel"
 
 #: Modules under lumi that `kernel/` may import (prefix match).
 #: **When adding one, also update docs/architecture/core.md §4's exception table.**
-KERNEL_ALLOWED_PREFIXES = ("lumi.kernel.", "lumi.provenance", "lumi.logging")
+#: Each is groundwork rather than a capability: types every module needs
+#: (`provenance`), or the plumbing every module runs on (`logging`, `tasks`).
+KERNEL_ALLOWED_PREFIXES = ("lumi.kernel.", "lumi.provenance", "lumi.logging", "lumi.tasks")
 
 
 def lumi_sources() -> list[Path]:

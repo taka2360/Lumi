@@ -36,7 +36,6 @@ from lumi.agent.prompt import estimate_tokens
 from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.recall import cost_of
 from lumi.agent.session import Session
-from lumi.agent.tasks import report_task_exit
 from lumi.agent.warmup import warm_all, warm_llm
 from lumi.artifacts.install import is_model_installed
 from lumi.artifacts.models import HARRIER_OSS_V1_270M
@@ -75,6 +74,7 @@ from lumi.storage.memory import EpisodeStore, open_memory
 from lumi.storage.retention import RetentionPolicy, RetentionService
 from lumi.storage.secret import DpapiSecretStore, get_or_create_db_key
 from lumi.storage.sqlite import Database
+from lumi.tasks import report_task_exit, spawn
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
 from lumi.transport.methods import (
@@ -576,10 +576,12 @@ class ConversationRuntime:
         await self._expire_old_records()
         await self._forget_faded_memories()
         # **Not awaited.** Indexing is the one maintenance job that can take seconds.
-        self._indexing = asyncio.create_task(self._index_memories(), name="memory.index")
-        self._indexing.add_done_callback(report_task_exit("memory.index_crashed"))
-        self._reflecting = asyncio.create_task(self._reflect_while_idle(), name="memory.reflect")
-        self._reflecting.add_done_callback(report_task_exit("memory.reflect_crashed"))
+        self._indexing = spawn(
+            self._index_memories(), name="memory.index", event="memory.index_crashed"
+        )
+        self._reflecting = spawn(
+            self._reflect_while_idle(), name="memory.reflect", event="memory.reflect_crashed"
+        )
         # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
         # rest of the session (observed 2026-08-17).
@@ -599,7 +601,7 @@ class ConversationRuntime:
         # **Not awaited.** The Stage connection handler must stay responsive while the engine
         # starts. `_warm` opens audio and starts the reactive loop only once all three have
         # reported and the phase has actually reached `ready` (ADR-033 / ADR-034).
-        self._warmup = asyncio.create_task(
+        self._warmup = spawn(
             warm_all(
                 self._providers,
                 self._setup,
@@ -607,6 +609,7 @@ class ConversationRuntime:
                 on_ready=self._start_listening,
             ),
             name="warmup",
+            event="warmup.crashed",
         )
         # **Nobody awaits this task while it runs.** Without a callback an unexpected failure
         # stays invisible until GC, and `stop()` is where it would finally surface — as an
@@ -621,8 +624,9 @@ class ConversationRuntime:
         """
         if self._llm_retry is not None and not self._llm_retry.done():
             return
-        self._llm_retry = asyncio.create_task(self._warm_llm_after_detection(), name="llm-recheck")
-        self._llm_retry.add_done_callback(report_task_exit("llm.recheck_crashed"))
+        self._llm_retry = spawn(
+            self._warm_llm_after_detection(), name="llm-recheck", event="llm.recheck_crashed"
+        )
 
     async def _warm_llm_after_detection(self) -> None:
         # Ollama may appear while the initial sequence is still warming STT. Wait for
@@ -700,13 +704,15 @@ class ConversationRuntime:
         if self._loop is None:
             log.warning("conversation.disabled", reason="content pack")
             return
-        self._task = asyncio.create_task(self._loop.run(), name="reactive")
+        self._task = spawn(
+            self._loop.run(),
+            name="reactive",
+            event="reactive.crashed",
+            on_return="reactive.stopped",
+        )
         # **A dead reactive loop means Lumi is deaf, and nothing else notices.** asyncio only
         # surfaces an unretrieved task exception at GC, which is how the missing
         # `arbiter.start()` stayed invisible. **Never let this exit quietly.**
-        self._task.add_done_callback(
-            report_task_exit("reactive.crashed", on_return="reactive.stopped")
-        )
         log.info("conversation.started", can_listen=self._audio.can_listen)
 
     def _register_providers(self) -> None:

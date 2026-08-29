@@ -38,6 +38,7 @@ from lumi.audio.wav import WavError, decode_wav
 from lumi.kernel.cancellation import CancelToken
 from lumi.providers.base import ProviderFailed, ProviderUnavailable
 from lumi.providers.tts.base import SpeechAudio, TTSProvider, VoiceConfig
+from lumi.tasks import spawn
 from lumi.transport.methods import METHOD_SPEECH_ENDED, METHOD_SPEECH_STARTED
 from lumi.transport.protocol import Role
 
@@ -132,15 +133,20 @@ class PlaybackScheduler:
         slot = _Slot(index=self._total, text=text, audio=asyncio.get_running_loop().create_future())
         self._total += 1
 
-        task = asyncio.create_task(self._synthesize(slot), name=f"tts-{slot.index}")
-        self._synth.add(task)
-        task.add_done_callback(self._synth.discard)
+        spawn(
+            self._synthesize(slot),
+            name=f"tts-{slot.index}",
+            event="speech.synthesis_crashed",
+            keep=self._synth,
+        )
 
         if slot.index == 0 and self._timer is not None:
             self._timer.begin("tts_first_audio_ms")
         self._queue.put_nowait(slot)
         if self._player is None:
-            self._player = asyncio.create_task(self._play_loop(), name="playback")
+            self._player = spawn(
+                self._play_loop(), name="playback", event="speech.playback_crashed"
+            )
 
     async def finish(self) -> SpeechOutcome:
         """No more sentences will come. **Wait until the last sound finishes playing.**"""

@@ -51,6 +51,7 @@ from lumi.kernel.cancellation import Cancellable, Cancellation, CancelToken
 from lumi.kernel.event import DomainEventDraft, EventBus, activity_stream
 from lumi.kernel.ids import ActivityId, JobId, new_activity_id, new_correlation_id
 from lumi.kernel.job import Job
+from lumi.tasks import spawn
 
 log = lumi_logging.get_logger(__name__)
 
@@ -250,11 +251,12 @@ class AttentionArbiter:
         if interrupting:
             current._apply(ActivityState.CANCELLING)
             # 6. **Never waits for the old one's children to stop.** Waiting would delay barge-in
-            task = asyncio.create_task(
-                self._finish_cancelling(current, reason=f"preempted_by:{proposal.kind.value}")
+            spawn(
+                self._finish_cancelling(current, reason=f"preempted_by:{proposal.kind.value}"),
+                name="finish-cancelling",
+                event="arbiter.cancel_crashed",
+                keep=self._pending,
             )
-            self._pending.add(task)
-            task.add_done_callback(self._pending.discard)
         else:
             current._apply(ActivityState.SUSPENDED)
 

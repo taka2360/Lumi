@@ -146,6 +146,7 @@ core/lumi/
 ├── settings.py      ユーザー設定の SSoT（env > file > default）
 ├── character.py     ExpressionIntent（表情意図）
 ├── logging.py       structlog の設定
+├── tasks.py         バックグラウンドタスクの生成と終了報告（`spawn` / `report_task_exit`）
 ├── selfcheck.py     配布物の動作検証（`--self-check`）
 ├── artifacts/       models, engines, install
 │                    モデル / エンジンの pin と取得。**providers と setup の両方の下**（ADR-045）
@@ -160,7 +161,6 @@ core/lumi/
 │                    recall（記憶 → ContextBlock）, episodes（エピソード書き込み）,
 │                    inspector（スナップショット発行）,
 │                    warmup（エンジンの暖機と起動ゲート → ADR-033 / ADR-034）,
-│                    tasks（await されない task の終了報告）,
 │                    reflection_scheduler（**いつ**思い出すか → ADR-045）
 ├── memory/          store（記憶レコードへの**唯一の書き手** → ADR-045）, records,
 │                    reflection（**何を**抽出するか）, retrieval（ハイブリッド検索）,
@@ -211,7 +211,14 @@ trust の型は kernel・permission・tools・agent・memory の**すべてが�
 規則の定義は [../contracts/provenance.md](../contracts/provenance.md)。
 
 **`kernel/` が import してよい lumi 配下のモジュールは、`lumi.kernel.*` / `lumi.provenance` /
-`lumi.logging` の3つだけ**（構造化ログは能力ではなく全モジュールの土台）。
+`lumi.logging` / `lumi.tasks` の4つだけ。**
+いずれも**能力ではなく土台**である——全モジュールが使う型（`provenance`）か、
+全モジュールが乗る足回り（構造化ログ、バックグラウンドタスクの生成と終了報告）。
+
+`lumi.tasks` がここに入るのは、**`asyncio.create_task` を直接呼んでよい場所を1つにする**ため。
+参照を保持しないタスクは GC で消え、拾われない例外は GC 時にしか出ない——
+`kernel/` を例外にすると、**最も落ちてはいけない場所だけが黙って落ちる**。
+
 永続化のような「外の世界」は Protocol（`EventStore`）で受け取り、実装は kernel の外に置く。
 **これを AST の静的検査で縛る**（`core/tests/test_kernel_boundaries.py`）。
 
