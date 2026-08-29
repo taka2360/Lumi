@@ -55,13 +55,10 @@ from lumi.providers.llm.base import (
     TextDelta,
     ToolCall,
 )
+from lumi.providers.llm.endpoint import DEFAULT_PORT, HOST
 from lumi.tools.base import ToolDescriptor
 
 log = lumi_logging.get_logger(__name__)
-
-#: **Not a setting.** To change it, swap the whole Provider
-HOST: Final = "127.0.0.1"
-DEFAULT_PORT: Final = 11434
 
 #: Liveness probe. **Don't wait long** (quickly confirm it isn't running)
 PROBE_TIMEOUT_S: Final = 2.0

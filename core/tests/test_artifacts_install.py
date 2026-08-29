@@ -25,7 +25,7 @@ from lumi.artifacts.engines import (
     is_allowed_redirect,
 )
 from lumi.artifacts.install import SetupError, _download, install_engine
-from lumi.providers.llm import ollama
+from lumi.providers.llm import endpoint, ollama
 from lumi.providers.tts import aivisspeech
 
 PAYLOAD = b"lumi-test-engine-payload" * 100
@@ -443,7 +443,7 @@ class TestNetworkOptional:
             url.startswith(("http://{HOST}:", "https://github.com", "https://ollama.com"))
             for url in urls
         ), urls
-        assert ollama.HOST == "127.0.0.1"
+        assert endpoint.HOST == "127.0.0.1"
 
     def test_the_installer_is_only_reachable_through_the_coordinator(self) -> None:
         root = Path(__file__).resolve().parent.parent / "lumi"

@@ -14,7 +14,7 @@ from typing import Final
 
 import httpx
 
-from lumi.providers.llm.ollama import DEFAULT_PORT, HOST
+from lumi.providers.llm.endpoint import DEFAULT_PORT, HOST
 
 PULL_TIMEOUT_S: Final = 60.0 * 60.0
 PULL_CONNECT_TIMEOUT_S: Final = 2.0
