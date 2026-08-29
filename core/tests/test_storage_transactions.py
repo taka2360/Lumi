@@ -19,8 +19,9 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from pathlib import Path
+from typing import Any
 
 import apsw
 import pytest
@@ -51,8 +52,9 @@ def count(database: Database) -> int:
         return int(one(conn.execute("SELECT COUNT(*) FROM events"))[0])
 
 
-async def run_blocking[T](database: Database, work: Callable[[apsw.Connection], T]) -> T:
-    """How Core calls the database today: the whole transaction inside one thread hop.
+async def by_hand[T](database: Database, work: Callable[[apsw.Connection], T]) -> T:
+    """How every DAO spelled it out before `in_transaction`: the whole transaction
+    inside one thread hop.
 
     **Not `with transaction(): await ...`** — that would hold a `threading.Lock` across
     an await point, and the transaction boundary would no longer match the thread's.
@@ -65,19 +67,32 @@ async def run_blocking[T](database: Database, work: Callable[[apsw.Connection], 
     return await asyncio.to_thread(once)
 
 
-async def test_the_work_and_its_commit_happen_in_one_thread_hop(db: Database) -> None:
+async def by_helper[T](database: Database, work: Callable[[apsw.Connection], T]) -> T:
+    return await database.in_transaction(work)
+
+
+#: **Both spellings, every test.** The helper is only worth having if it is the hand-written
+#: form exactly — including where that form is surprising.
+type Runner = Callable[[Database, Callable[[apsw.Connection], object]], Coroutine[Any, Any, object]]
+
+runners = pytest.mark.parametrize("run", [by_hand, by_helper], ids=["by_hand", "in_transaction"])
+
+
+@runners
+async def test_the_work_and_its_commit_happen_in_one_thread_hop(db: Database, run: Runner) -> None:
     inside: list[int] = []
 
     def work(conn: apsw.Connection) -> None:
         conn.execute(INSERT, ("a", 1))
         inside.append(threading.get_ident())
 
-    await run_blocking(db, work)
+    await run(db, work)
     assert inside and inside[0] != threading.get_ident()
     assert count(db) == 1
 
 
-async def test_an_exception_rolls_back_and_reaches_the_caller(db: Database) -> None:
+@runners
+async def test_an_exception_rolls_back_and_reaches_the_caller(db: Database, run: Runner) -> None:
     """The exception type is not swallowed or wrapped. **The row is gone.**"""
 
     def work(conn: apsw.Connection) -> None:
@@ -85,11 +100,12 @@ async def test_an_exception_rolls_back_and_reaches_the_caller(db: Database) -> N
         raise StorageError("boom")
 
     with pytest.raises(StorageError, match="boom"):
-        await run_blocking(db, work)
+        await run(db, work)
     assert count(db) == 0
 
 
-async def test_the_connection_still_works_after_a_rollback(db: Database) -> None:
+@runners
+async def test_the_connection_still_works_after_a_rollback(db: Database, run: Runner) -> None:
     """A failed transaction must not leave `BEGIN` open. **The next writer would hang.**"""
 
     def failing(conn: apsw.Connection) -> None:
@@ -97,12 +113,13 @@ async def test_the_connection_still_works_after_a_rollback(db: Database) -> None
         raise StorageError("boom")
 
     with pytest.raises(StorageError):
-        await run_blocking(db, failing)
-    await run_blocking(db, lambda conn: conn.execute(INSERT, ("b", 1)))
+        await run(db, failing)
+    await run(db, lambda conn: conn.execute(INSERT, ("b", 1)))
     assert count(db) == 1
 
 
-async def test_cancelling_the_caller_does_not_undo_the_write(db: Database) -> None:
+@runners
+async def test_cancelling_the_caller_does_not_undo_the_write(db: Database, run: Runner) -> None:
     """**Cancellation abandons the await, not the work** — `to_thread` cannot be cancelled.
 
     Core relies on this without saying so. The retention job deletes across three
@@ -119,7 +136,7 @@ async def test_cancelling_the_caller_does_not_undo_the_write(db: Database) -> No
         release.wait(5)
         finished.set()
 
-    task = asyncio.create_task(run_blocking(db, work))
+    task: asyncio.Task[object] = asyncio.create_task(run(db, work))
     await asyncio.to_thread(inside.wait, 5)
 
     task.cancel()
@@ -133,7 +150,10 @@ async def test_cancelling_the_caller_does_not_undo_the_write(db: Database) -> No
     assert count(db) == 1, "the committed row survived the cancel"
 
 
-async def test_concurrent_writers_are_serialized_rather_than_interleaved(db: Database) -> None:
+@runners
+async def test_concurrent_writers_are_serialized_rather_than_interleaved(
+    db: Database, run: Runner
+) -> None:
     """One connection, one lock. **Queued, not raising** ("cannot start a transaction
     within a transaction" is what happens without it).
     """
@@ -150,9 +170,7 @@ async def test_concurrent_writers_are_serialized_rather_than_interleaved(db: Dat
 
         return run
 
-    await asyncio.gather(
-        *(run_blocking(db, work(tag, n)) for n, tag in enumerate(("a", "b", "c"), start=1))
-    )
+    await asyncio.gather(*(run(db, work(tag, n)) for n, tag in enumerate(("a", "b", "c"), start=1)))
 
     assert count(db) == 3
     # Every enter is immediately followed by its own exit.
