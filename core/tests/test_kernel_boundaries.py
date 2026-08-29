@@ -11,6 +11,7 @@ Anything grep and AST can cover is enforced here instead of building runtime mac
 | Where `trust_level = TRUSTED` is written | docs/contracts/provenance.md test 5 |
 | No import cycles between packages | authority-matrix #20 / ADR-045 |
 | `providers/` does not import `lumi.setup` | authority-matrix #21 / ADR-045 |
+| Background tasks are started through `spawn` | lumi/tasks.py |
 """
 
 from __future__ import annotations
@@ -143,6 +144,38 @@ def test_providers_do_not_import_setup() -> None:
         for name in sorted(imported_names(source))
         if name.startswith("lumi.setup")
     ]
+    assert offenders == []
+
+
+#: Files that may call `asyncio.create_task` directly, and why.
+#: **When adding one, write down who claims the task's result.** Everywhere else goes
+#: through `lumi.tasks.spawn`, which keeps a strong reference and reports failures.
+ALLOWED_DIRECT_CREATE_TASK: dict[str, str] = {
+    "tasks.py": "Defines spawn(). Someone has to make the call",
+    "agent/stt.py": (
+        "The result is claimed — by the awaiting caller, or by _finished. A reporter "
+        "here would log failures the consumer already handles"
+    ),
+}
+
+
+def test_background_tasks_are_started_through_spawn() -> None:
+    """**A task nobody holds can be collected mid-flight, and its exception surfaces at
+    GC time if ever.**
+
+    That is not a hypothetical: a missing `arbiter.start()` stayed invisible for a day
+    (2026-08-17) because the reactive loop died into silence. `spawn` fixes both halves
+    at once, which only helps if there is no second way to start a task.
+
+    Files are listed with a reason rather than the rule being dropped — the exceptions
+    are real, and the reason is what makes the next one arguable.
+    """
+    offenders = sorted(
+        source.relative_to(LUMI).as_posix()
+        for source in lumi_sources()
+        if "asyncio.create_task" in source.read_text(encoding="utf-8")
+        and source.relative_to(LUMI).as_posix() not in ALLOWED_DIRECT_CREATE_TASK
+    )
     assert offenders == []
 
 
