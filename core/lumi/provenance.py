@@ -124,6 +124,29 @@ def propagate_from_trust(trust: TrustLevel, *, is_raw_external: bool) -> Provena
     return ProvenanceClass.TRUSTED if trust is TrustLevel.TRUSTED else ProvenanceClass.DERIVED
 
 
+def provenance_from(trust: TrustLevel, sources: Iterable[ProvenanceClass]) -> ProvenanceClass:
+    """The class to store a memory with, given what it was built from.
+
+    **`UNTRUSTED` survives being written down.** `propagate()` answers a different
+    question — it turns any non-trusted mix into `DERIVED`, which is right for a
+    processing step whose output is Lumi's own words. A memory is not that: it is the
+    outside utterance kept, and calling it "derived" would say the record is one step
+    removed from the web page when the web page is what it holds.
+
+    That distinction is Invariant 7 (ADR-011): **no automatic step removes taint, and
+    remembering is an automatic step.** Extraction, summarisation and reconciliation all
+    run without anyone looking, so if any of them could turn `UNTRUSTED` into `DERIVED`,
+    a page could launder itself into a belief simply by being remembered.
+
+    `is_raw_external` is never set here for the same reason it is never set on LLM
+    output: **a memory is a function of what Lumi was told, not an observation of the
+    outside world** (docs/contracts/provenance.md).
+    """
+    if any(source is ProvenanceClass.UNTRUSTED for source in sources):
+        return ProvenanceClass.UNTRUSTED
+    return propagate_from_trust(trust, is_raw_external=False)
+
+
 @dataclass(frozen=True, slots=True)
 class Turn:
     """One turn of conversation.

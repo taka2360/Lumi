@@ -60,7 +60,7 @@ from lumi.provenance import (
     TrustLevel,
     join,
     join_all,
-    propagate_from_trust,
+    provenance_from,
     taint,
 )
 from lumi.storage.sqlite import Database, one
@@ -711,14 +711,7 @@ class MemoryStore:
             levels.extend(found.values())
 
         trust = join_all(levels)
-        provenance = (
-            ProvenanceClass.UNTRUSTED
-            if candidate.provenance_class is ProvenanceClass.UNTRUSTED
-            # **Never `is_raw_external` here.** A memory is a function of what Lumi was
-            # told, not an observation of the outside world (docs/contracts/provenance.md).
-            else propagate_from_trust(trust, is_raw_external=False)
-        )
-        return trust, provenance
+        return trust, provenance_from(trust, [candidate.provenance_class])
 
     def _read(self, conn: apsw.Connection, memory_id: str) -> MemoryRecord | None:
         row = conn.execute(f"SELECT {_COLUMNS} FROM memories WHERE id = ?", (memory_id,)).fetchone()

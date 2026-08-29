@@ -16,6 +16,7 @@ from lumi.provenance import (
     propagate,
     propagate_from_trust,
     propagate_trust,
+    provenance_from,
     taint,
 )
 
@@ -129,6 +130,32 @@ def test_propagate_from_trust_follows_the_lane() -> None:
     assert (
         propagate_from_trust(TrustLevel.TAINTED, is_raw_external=False) is ProvenanceClass.DERIVED
     )
+
+
+def test_writing_something_down_does_not_launder_it() -> None:
+    """**`UNTRUSTED` survives being remembered** (Invariant 7 / ADR-011).
+
+    Extraction, reconciliation and recall all run with nobody looking. If any of them
+    could relabel a web page's claim as merely `DERIVED`, a page would launder itself
+    into a belief by the act of being stored.
+    """
+    assert (
+        provenance_from(TrustLevel.TAINTED, [ProvenanceClass.UNTRUSTED])
+        is ProvenanceClass.UNTRUSTED
+    )
+    assert (
+        provenance_from(TrustLevel.TAINTED, [ProvenanceClass.TRUSTED, ProvenanceClass.UNTRUSTED])
+        is ProvenanceClass.UNTRUSTED
+    )
+
+
+def test_a_memory_with_no_untrusted_source_follows_its_trust() -> None:
+    """Nothing untrusted went in, so the label is decided by the join alone."""
+    assert provenance_from(TrustLevel.TRUSTED, [ProvenanceClass.TRUSTED]) is ProvenanceClass.TRUSTED
+    assert provenance_from(TrustLevel.TAINTED, [ProvenanceClass.DERIVED]) is ProvenanceClass.DERIVED
+    # **No sources is not a reason to distrust.** An empty join is TRUSTED, and the
+    # label follows it (same identity element as `join_all`).
+    assert provenance_from(TrustLevel.TRUSTED, []) is ProvenanceClass.TRUSTED
 
 
 def test_a_lumi_turn_inherits_the_trust_of_its_inputs() -> None:
