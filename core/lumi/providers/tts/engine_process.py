@@ -46,7 +46,8 @@ _CREATE_NO_WINDOW = 0x08000000
 class EngineProcess:
     """Manages the lifetime of one external engine.
 
-    The state vocabulary (`EngineRuntime`) lives in `lumi.setup.state`.
+    The state vocabulary (`EngineRuntime`) lives in `lumi.providers.base` — it describes
+    a process this Provider owns, not a step of setup (ADR-045).
     It's the same single state distributed to the Stage, so **it's never defined in two places.**
     """
 

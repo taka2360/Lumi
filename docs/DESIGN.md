@@ -29,7 +29,7 @@
 > 5. **§4 のモジュール構成を実装に合わせて書き直した。** `world/` `internal/` `extensions/` が
 >    載っている一方で、実装済みの `setup/` `panel/` が載っていなかった。
 >    **〔Phase N〕注記で将来形と現在形を区別する**
-
+>
 > **rev.24 の変更点**（表示アセットの欠落を会話停止から分離した）
 > 1. **VRM ファイルが欠けても人格と音声設定が読めるなら会話を開始する**
 >    → [ADR-044](decisions/ADR-044-missing-character-model-keeps-conversation.md)。
