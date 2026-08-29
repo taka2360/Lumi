@@ -171,9 +171,13 @@ TASK_STARTERS = ("create_task", "ensure_future")
 def task_starts(path: Path) -> list[int]:
     """Lines calling something that starts a task. **Parsed, not grepped** — a mention in
     a docstring is not a call, and `loop.create_task` is.
+
+    Importing one counts as starting one. `from asyncio import create_task as go` renames
+    the call out of reach of any check that reads call sites, and the import is the one
+    spelling the rename cannot hide.
     """
     tree = ast.parse(path.read_text(encoding="utf-8"))
-    return [
+    lines = [
         node.lineno
         for node in ast.walk(tree)
         if isinstance(node, ast.Call)
@@ -182,6 +186,14 @@ def task_starts(path: Path) -> list[int]:
             or (isinstance(node.func, ast.Name) and node.func.id in TASK_STARTERS)
         )
     ]
+    lines += [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "asyncio"
+        and any(alias.name in TASK_STARTERS for alias in node.names)
+    ]
+    return sorted(lines)
 
 
 #: Files that may call `asyncio.create_task` directly, and why.

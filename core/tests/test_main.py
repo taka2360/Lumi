@@ -139,7 +139,14 @@ async def test_shutdown_leaves_no_conversation_running(
     TrackedRuntime.created = []
     port = free_port()
 
+    detecting = asyncio.Event()
+
     async def detect(_env: Any) -> list[Any]:
+        # **Says when the handler is actually parked here**, rather than letting the test
+        # guess with a sleep. The window under test is "still inside detection", so a
+        # guess that lands early tests nothing and a guess that lands late tests nothing
+        # else.
+        detecting.set()
         await asyncio.sleep(0.2)
         return []
 
@@ -160,7 +167,7 @@ async def test_shutdown_leaves_no_conversation_running(
     client = await open_stage(port)
 
     # Quit while the connect handler is still inside detection.
-    await asyncio.sleep(0.05)
+    await asyncio.wait_for(detecting.wait(), timeout=5)
     core.cancel()
     with contextlib.suppress(asyncio.CancelledError):
         await core
