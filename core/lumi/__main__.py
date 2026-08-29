@@ -21,6 +21,7 @@ from lumi.audio.probe import list_devices
 from lumi.dev_probe import ENV_FLAG as DEV_PROBE_FLAG
 from lumi.dev_probe import probe_os_boundary
 from lumi.setup.coordinator import SetupCoordinator
+from lumi.tasks import spawn
 from lumi.transport.protocol import Role
 from lumi.transport.server import WsServer, tokens_from_env
 
@@ -79,16 +80,37 @@ async def _run() -> int:
         conversation = ConversationRuntime(server, setup, _audio_plan())
         await conversation.start()
 
+    #: Held for as long as they run. **The event loop keeps only a weak reference**, so
+    #: without this a connect handler's work can be collected before it finishes.
+    connect_tasks: set[asyncio.Task[None]] = set()
+
     async def on_connect(role: Role) -> None:
         # Run anything slow in a separate task so it doesn't block the connect handler.
         if role is Role.SHELL and os.environ.get(DEV_PROBE_FLAG) == "1":
-            asyncio.create_task(probe_os_boundary(server))  # noqa: RUF006
+            spawn(
+                probe_os_boundary(server),
+                name="os-probe",
+                event="dev.os_probe_crashed",
+                keep=connect_tasks,
+            )
         if role is Role.STAGE:
-            asyncio.create_task(on_stage_connected())  # noqa: RUF006
+            # **This is where Lumi gets built and started.** If it raises and nobody says
+            # so, the character never appears and the log holds no reason why.
+            spawn(
+                on_stage_connected(),
+                name="stage-connected",
+                event="core.stage_connect_crashed",
+                keep=connect_tasks,
+            )
         # **A panel window opened.** It has missed every broadcast so far, so it is handed
         # the current state rather than being left to wait for the next change (ADR-042).
         if role is Role.PANEL and conversation is not None:
-            asyncio.create_task(conversation.on_panel_connected())  # noqa: RUF006
+            spawn(
+                conversation.on_panel_connected(),
+                name="panel-connected",
+                event="panel.snapshot_crashed",
+                keep=connect_tasks,
+            )
 
     server = WsServer(tokens, port=int(os.environ.get("LUMI_WS_PORT", "0")), on_connect=on_connect)
     setup = SetupCoordinator(server, os.environ)
