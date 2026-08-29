@@ -60,7 +60,7 @@ from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
-from lumi.providers.base import ProviderError, ProviderKind
+from lumi.providers.base import EngineRuntime, ProviderError, ProviderKind
 from lumi.providers.embedding.harrier import HarrierEmbeddingProvider
 from lumi.providers.llm.base import LLMOptions, LLMProvider
 from lumi.providers.llm.ollama import OllamaProvider
@@ -68,7 +68,7 @@ from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
-from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState
+from lumi.setup.state import BootPhase, LlmSetupState
 from lumi.storage.audit import AUDIT_SCHEMA, SqliteAuditLog
 from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
 from lumi.storage.memory import EpisodeStore, open_memory

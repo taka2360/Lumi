@@ -61,6 +61,7 @@ from lumi.artifacts.models import (
     STT_MODELS,
     ModelArtifact,
 )
+from lumi.providers.base import EngineRuntime
 from lumi.setup.detect import detect_engines, detect_ollama
 from lumi.setup.ollama import (
     OLLAMA_MODELS,
@@ -76,7 +77,6 @@ from lumi.setup.state import (
     BootPhase,
     EmbeddingSetup,
     EmbeddingSetupState,
-    EngineRuntime,
     LlmSetup,
     LlmSetupState,
     SetupSnapshot,

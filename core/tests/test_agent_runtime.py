@@ -37,9 +37,10 @@ from lumi.agent.runtime import ConversationRuntime
 from lumi.audio.devices import AudioPlan
 from lumi.kernel.activity import ActivityKind, ActivityState
 from lumi.providers.base import (
+    EngineRuntime,
     ProviderKind,
 )
-from lumi.setup.state import BootPhase, EngineRuntime, LlmSetup, LlmSetupState, SetupSnapshot
+from lumi.setup.state import BootPhase, LlmSetup, LlmSetupState, SetupSnapshot
 from lumi.transport.server import RequestRefused
 
 

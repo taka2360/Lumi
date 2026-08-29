@@ -25,10 +25,10 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from lumi import logging as lumi_logging
-from lumi.providers.base import ProviderError, ProviderKind, ProviderNotConfigured
+from lumi.providers.base import EngineRuntime, ProviderError, ProviderKind, ProviderNotConfigured
 from lumi.providers.registry import ProviderRegistry
 from lumi.setup.coordinator import SetupCoordinator
-from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState, SttSetupState
+from lumi.setup.state import BootPhase, LlmSetupState, SttSetupState
 
 log = lumi_logging.get_logger(__name__)
 

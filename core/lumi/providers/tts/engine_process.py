@@ -18,9 +18,9 @@ import subprocess
 from pathlib import Path
 
 from lumi import logging as lumi_logging
+from lumi.providers.base import EngineRuntime
 from lumi.providers.device import DeviceChoice, resolve
 from lumi.providers.tts.aivisspeech import AivisSpeechClient
-from lumi.setup.state import EngineRuntime
 
 log = lumi_logging.get_logger(__name__)
 

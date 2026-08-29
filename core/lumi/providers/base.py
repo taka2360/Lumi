@@ -37,6 +37,33 @@ class ProviderKind(StrEnum):
     VISION = "vision"
 
 
+class EngineRuntime(StrEnum):
+    """The state of the engine **process**. A separate axis from the installation
+    state (`lumi.setup.state.TtsSetupState` and its siblings).
+
+    docs/architecture/setup.md "Never mix installation state and process state"
+
+    Mixing these into one enum would make it impossible to express "installed but
+    can't start," and would tell the user the false "please fetch it" guidance.
+
+    **This lives with the Providers, not with setup** (ADR-045). It describes a
+    process a Provider owns and watches, which is why a TTS Provider needs it long
+    after setup is done — and needing it was the only reason `providers/` imported
+    `lumi.setup` at all. The wire value (`enums.engine_runtime`) is unchanged;
+    only the Python definition moved.
+    """
+
+    #: Not running.
+    STOPPED = "stopped"
+    # : Starting up. Not yet responding (the first run can take minutes as the engine fetches its
+    # own model).
+    STARTING = "starting"
+    #: Can speak.
+    READY = "ready"
+    #: Installed but won't start = **broken**.
+    FAILED = "failed"
+
+
 class DevicePref(StrEnum):
     GPU_REQUIRED = "gpu_required"
     GPU_PREFERRED = "gpu_preferred"

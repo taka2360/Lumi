@@ -22,11 +22,11 @@ from typing import Any
 import pytest
 
 from lumi.character import Emotion
+from lumi.providers.base import EngineRuntime
 from lumi.providers.tts.viseme import Viseme
 from lumi.settings import Source
 from lumi.setup.state import (
     BootPhase,
-    EngineRuntime,
     LlmSetupState,
     SttSetupState,
     TtsSetupState,
