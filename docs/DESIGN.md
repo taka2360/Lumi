@@ -9,8 +9,26 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.24 |
+| Revision | rev.25 |
 | 実装フェーズ | **Phase 2（Memory）完了。2b（投機 STT）の実測だけ未取得。次は Phase 3。** → [roadmap.md](roadmap.md) |
+
+> **rev.25 の変更点**（Phase 3 の前に、依存の向きと責務境界を固定した）
+> 1. **Core のモジュール階層を決めて静的検査に載せた**
+>    → [ADR-045](decisions/ADR-045-core-module-layering.md)。
+>    `providers/` と `setup/` が**相互に import していた**——package として循環しており、
+>    **具体モジュール同士がたまたま噛み合っていないので ImportError にならないだけ**だった。
+>    モデルの pin を `lumi/artifacts/` に出し、`artifacts ← providers ← setup` の一方向にする
+> 2. **「いつ思い出すか」は `agent/`、「何を抽出するか」は `memory/`。**
+>    新しい規則ではなく、[core.md](architecture/core.md) §4 が元から禁じている
+>    **`Memory` → `Agent`** の適用である
+> 3. **記憶レコードへの write は `MemoryStore` だけ**であることを明文化した。
+>    Invariant 7 の昇格が1箇所であること（[ADR-043](decisions/ADR-043-user-edited-memories-are-confirmed.md)）は、
+>    **書き手が1つであることに乗っている**
+> 4. **[authority-matrix.md](contracts/authority-matrix.md) の静的検査が 19 → 22 項目**になった。
+>    今回の循環は「その検査が無かったから生まれた」
+> 5. **§4 のモジュール構成を実装に合わせて書き直した。** `world/` `internal/` `extensions/` が
+>    載っている一方で、実装済みの `setup/` `panel/` が載っていなかった。
+>    **〔Phase N〕注記で将来形と現在形を区別する**
 
 > **rev.24 の変更点**（表示アセットの欠落を会話停止から分離した）
 > 1. **VRM ファイルが欠けても人格と音声設定が読めるなら会話を開始する**
@@ -858,6 +876,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | `MemoryRecord` / `AssertionMode` の**型定義** | [interfaces/memory.md](interfaces/memory.md) |
 | Renderer に渡す意図の型・**リップシンクの生成方式**・`stage.speech.*` の契約 | [interfaces/renderer.md](interfaces/renderer.md) |
 | GPU / VRAM 戦略とモデル配置 | **DESIGN.md** §7 |
+| **Core 内部のモジュール構成と依存の向き** | [architecture/core.md](architecture/core.md) §4 |
 | Phase 分割と完了条件・未確定事項・リスク一覧 | [roadmap.md](roadmap.md) |
 | **外部コンポーネントのライセンス・配布物の構成・クレジット義務・ACML 特例への対応** | [licensing.md](licensing.md) |
 | **実測値**（インストーラサイズ / RAM / VRAM / レイテンシ / CPU） | `measurements/phase<N>.md` |

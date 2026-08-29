@@ -20,7 +20,7 @@ Lumi/
 ├── core/          Lumi Core — Python / asyncio。権威（判断・状態・ポリシー・記憶）
 ├── shell/         Lumi Shell — Tauri 2 / Rust。OS 特権プリミティブのみ
 ├── stage/         Stage WebView — React + TS + Zustand。表現のみ
-├── extensions/    out-of-process Capability Extension（別プロセス・任意言語）
+├── extensions/    〔Phase 5 で作る〕out-of-process Capability Extension（別プロセス・任意言語）
 └── content/       Content Pack（キャラ・モデル・音声・人格。**コードを含まない**）
 ```
 
@@ -96,7 +96,9 @@ Lumi/
 
 **必要なもの**: Rust（MSVC ツールチェイン）/ Node 24+ / pnpm 11 / uv。Python 3.12 は uv が取得する。
 
-- [ ] 静的検査（[authority-matrix.md](docs/contracts/authority-matrix.md) の19項目）— **未実装**
+**静的検査**（[authority-matrix.md](docs/contracts/authority-matrix.md) の22項目）— **10項目が実装済み**
+（#1 #2 #3 #7 #8 #9 #11 #12 #15 → `core/tests/test_kernel_boundaries.py` / #16 → `core/tests/test_audio_vad.py`）。
+残り12項目は未実装。#10 は Phase 3 と同時、#20〜22 は [ADR-045](docs/decisions/ADR-045-core-module-layering.md) で追加された。
 
 ## 進め方の原則
 
