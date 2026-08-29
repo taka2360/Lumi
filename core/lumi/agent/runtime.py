@@ -89,6 +89,7 @@ from lumi.transport.methods import (
     REASON_MODEL_NOT_IN_PACK,
     REASON_PACK_UNREADABLE,
 )
+from lumi.transport.payload import require_bool, require_str_map
 from lumi.transport.protocol import Role
 from lumi.transport.server import RequestRefused, WsServer
 
@@ -436,14 +437,7 @@ class ConversationRuntime:
         so the settings notification applies it immediately without touching a running turn.
         Swapping a loaded model out is Phase 5's `ModelResourceManager` problem.
         """
-        changes = payload.get("changes")
-        if not isinstance(changes, dict):
-            raise RequestRefused("invalid_payload")
-        readable = all(
-            isinstance(key, str) and isinstance(value, str) for key, value in changes.items()
-        )
-        if not readable:
-            raise RequestRefused("invalid_payload")
+        changes = require_str_map(payload, "changes", reason="invalid_payload")
 
         try:
             self._settings = await asyncio.to_thread(
@@ -500,9 +494,7 @@ class ConversationRuntime:
         change is the one thing here that must not be optimistic — it is the only thing
         telling the user whether the room is being listened to.
         """
-        wanted = payload.get("muted")
-        if not isinstance(wanted, bool):
-            raise RequestRefused("invalid_payload")
+        wanted = require_bool(payload, "muted", reason="invalid_payload")
         if not self._audio.can_listen:
             raise RequestRefused("no_microphone")
         try:

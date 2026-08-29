@@ -49,6 +49,7 @@ from lumi.transport.methods import (
     METHOD_PANEL_MEMORY_SEARCH,
     METHOD_PANEL_SETTINGS_UPDATE,
 )
+from lumi.transport.payload import optional_str, require_str
 from lumi.transport.server import RequestRefused, WsServer
 
 log = lumi_logging.get_logger(__name__)
@@ -104,38 +105,6 @@ def deletion_payload(deletions: Sequence[Deletion]) -> list[dict[str, Any]]:
     return [{"target": deletion.target.value, "count": deletion.count} for deletion in deletions]
 
 
-def _text(payload: dict[str, Any], key: str, *, limit: int) -> str:
-    value = payload.get(key)
-    if not isinstance(value, str):
-        raise RequestRefused(f"{key}_required")
-    text = value.strip()
-    if not text:
-        raise RequestRefused(f"{key}_required")
-    if len(text) > limit:
-        raise RequestRefused(f"{key}_too_long")
-    return text
-
-
-def _optional_text(payload: dict[str, Any], key: str, *, limit: int) -> str | None:
-    """A field the window may leave out. **Left out and malformed are different things.**
-
-    Absent — or `null`, which is how a window that has nothing to say says so — means "no
-    value", and the handler falls back. A number or an object where a string belongs means
-    the caller is broken, and reading that as "no value" answers a filter nobody asked for
-    with the whole list, or drops a correction the user typed. That is the failure this
-    file exists to avoid: a request that did something other than what it said, quietly.
-    """
-    if key not in payload or payload[key] is None:
-        return None
-    value = payload[key]
-    if not isinstance(value, str):
-        raise RequestRefused(f"{key}_invalid")
-    text = value.strip()
-    if len(text) > limit:
-        raise RequestRefused(f"{key}_too_long")
-    return text or None
-
-
 def _write_export(target: Path, document: dict[str, Any]) -> Path:
     """Serialise and write, on a thread. **Both halves, not just the write** — for a large
     memory `json.dumps` is the more expensive of the two.
@@ -159,13 +128,6 @@ def _write_export(target: Path, document: dict[str, Any]) -> Path:
             candidate = target.with_name(f"{target.stem}-{taken}{target.suffix}")
             continue
         return candidate
-
-
-def _memory_id(payload: dict[str, Any]) -> str:
-    value = payload.get("id")
-    if not isinstance(value, str) or not value:
-        raise RequestRefused("id_required")
-    return value
 
 
 class PanelService:
@@ -222,7 +184,7 @@ class PanelService:
             # view mechanics with an obvious default, but `query` decides which of the
             # user's memories they are looking at — silently ignoring one that arrived as
             # a number would show everything and read as the search box having broken.
-            query=_optional_text(payload, "query", limit=MAX_CONTENT_CHARS) or "",
+            query=optional_str(payload, "query", limit=MAX_CONTENT_CHARS) or "",
             # **Only a literal `true` opens the history.** `bool("false")` is `True`, so
             # what the window did not explicitly ask for is not shown.
             include_history=payload.get("include_history") is True,
@@ -242,11 +204,11 @@ class PanelService:
 
     async def edit(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Correct a memory. **Supersedes; the old wording stays readable.**"""
-        memory_id = _memory_id(payload)
-        content = _text(payload, "content", limit=MAX_CONTENT_CHARS)
+        memory_id = require_str(payload, "id")
+        content = require_str(payload, "content", limit=MAX_CONTENT_CHARS)
         # **`None` keeps the subject it already has** — the window edits the sentence far
         # more often than the thing it is about, and has no reason to resend it.
-        subject = _optional_text(payload, "subject", limit=MAX_CONTENT_CHARS)
+        subject = optional_str(payload, "subject", limit=MAX_CONTENT_CHARS)
         try:
             record = await self._store.rewrite(
                 memory_id, content=content, subject=subject, now=self._clock()
@@ -262,7 +224,7 @@ class PanelService:
     async def confirm(self, payload: dict[str, Any]) -> dict[str, Any]:
         """ "This is right." **The only escalation to TRUSTED** (Invariant 7)."""
         try:
-            record = await self._store.confirm(_memory_id(payload), now=self._clock())
+            record = await self._store.confirm(require_str(payload, "id"), now=self._clock())
         except MemoryRejected as refused:
             raise RequestRefused(str(refused)) from refused
         return {"memory": record_payload(record, now=self._clock())}
@@ -275,7 +237,7 @@ class PanelService:
         order leaves the memory's text in `memory_fts` after the memory is gone, which is
         the failure that matters: deleted, and still searchable.
         """
-        memory_id = _memory_id(payload)
+        memory_id = require_str(payload, "id")
         if await self._store.get(memory_id) is None:
             raise RequestRefused("no_such_memory")
         await self._index.remove([memory_id])
