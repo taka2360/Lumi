@@ -83,6 +83,86 @@ describe("Settings", () => {
     expect(container.querySelector("output")?.textContent).toBe("1.4x");
   });
 
+  it("shows the volume as a percentage, where the default reads 100%", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      useStageStore.getState().setSettings({
+        version: 1,
+        unreadable: false,
+        values: { tts_volume: { value: "1.0", source: "default" } },
+      });
+      root?.render(
+        <LocaleProvider>
+          <Settings />
+        </LocaleProvider>,
+      );
+    });
+
+    act(() => {
+      container?.querySelector<HTMLButtonElement>("button")?.click();
+    });
+
+    const slider = container.querySelector<HTMLInputElement>('input[type="range"]');
+    expect(slider?.value).toBe("1.0");
+    expect(slider?.min).toBe("0");
+    expect(slider?.max).toBe("2");
+    // **The Content Pack's own volume is 100%** (ADR-046), which is what makes the default
+    // readable as "unchanged" rather than as some arbitrary level.
+    expect(container.querySelector("output")?.textContent).toBe("100%");
+  });
+
+  it("reads an overridden volume the same way as an editable one", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      useStageStore.getState().setSettings({
+        version: 1,
+        unreadable: false,
+        values: { tts_volume: { value: "1.5", source: "env" } },
+      });
+      root?.render(
+        <LocaleProvider>
+          <Settings />
+        </LocaleProvider>,
+      );
+    });
+
+    act(() => {
+      container?.querySelector<HTMLButtonElement>("button")?.click();
+    });
+
+    // **No slider — it is overridden and must stay uneditable.** But the number still has
+    // to mean the same thing it does when editable: a multiplier, read as a percentage.
+    expect(container.querySelector('input[type="range"]')).toBeNull();
+    expect(container.querySelector(".settings__value")?.textContent).toBe("150%");
+  });
+
+  it("does not format a blank volume as zero percent", () => {
+    container = document.createElement("div");
+    document.body.appendChild(container);
+    root = createRoot(container);
+
+    act(() => {
+      useStageStore.getState().setSettings({
+        version: 1,
+        unreadable: false,
+        values: { tts_volume: { value: "", source: "env" } },
+      });
+      root?.render(
+        <LocaleProvider>
+          <Settings />
+        </LocaleProvider>,
+      );
+    });
+
+    expect(container.querySelector(".settings__value")?.textContent).toBe("");
+  });
+
   it("ignores an older save failure after a newer save starts", async () => {
     let rejectFirst: (reason: unknown) => void = () => {};
     let rejectSecond: (reason: unknown) => void = () => {};

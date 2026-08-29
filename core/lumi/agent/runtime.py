@@ -95,6 +95,11 @@ from lumi.transport.server import RequestRefused, WsServer
 
 log = lumi_logging.get_logger(__name__)
 
+#: Settings that reach a running Lumi without a restart. **Everything else needs one**, and
+#: the answer says so rather than letting a swapped-in name pretend the model changed
+#: (docs/architecture/core.md §6b).
+_APPLIED_NOW: Final = frozenset({"locale", "tts_speed", "tts_volume"})
+
 #: How often the idle pass looks [Provisional]. **A poll, not a timer**: what it waits for
 #: is the absence of turns, and absence does not raise an event.
 #:
@@ -272,6 +277,7 @@ class ConversationRuntime:
             session=Session(),
             audio=self._audio,
             tts_speed=float(self._settings.tts_speed.value),
+            tts_volume=float(self._settings.tts_volume.value),
             episodes=self._recorder,
             retriever=Retriever(
                 self._memories,
@@ -435,6 +441,7 @@ class ConversationRuntime:
 
         Model/device changes take effect on the next start. Locale is presentation-only,
         so the settings notification applies it immediately without touching a running turn.
+        Speed and volume reach the next turn's `VoiceConfig`, so they need no restart either.
         Swapping a loaded model out is Phase 5's `ModelResourceManager` problem.
         """
         changes = require_str_map(payload, "changes", reason="invalid_payload")
@@ -447,11 +454,16 @@ class ConversationRuntime:
             # **The reason travels back**, never just "failed"
             raise RequestRefused(type(error).__name__) from error
 
-        if "tts_speed" in changes and self._loop is not None:
-            self._loop.set_tts_speed(float(self._settings.tts_speed.value))
+        if self._loop is not None:
+            if "tts_speed" in changes:
+                self._loop.set_tts_speed(float(self._settings.tts_speed.value))
+            if "tts_volume" in changes:
+                self._loop.set_tts_volume(float(self._settings.tts_volume.value))
 
         await self._broadcast_settings()
-        return {"applied_at_next_start": any(key not in {"locale", "tts_speed"} for key in changes)}
+        return {
+            "applied_at_next_start": any(key not in _APPLIED_NOW for key in changes),
+        }
 
     async def _broadcast_settings(self) -> None:
         """Send the settings snapshot to **both** the character window and the panels.

@@ -77,6 +77,9 @@ class Settings:
     stt_model: Setting
     locale: Setting
     tts_speed: Setting
+    #: **A multiplier over the Content Pack's `voice.volume`**, not an absolute level —
+    #: `1.0` is exactly what the pack asked for (ADR-046)
+    tts_volume: Setting
     #: How long the conversation log, the Kernel's events and the audit log are kept, in
     #: days — or `unlimited`. **Defaults are deadlines** (docs/contracts/privacy.md §4)
     retention_episodes: Setting
@@ -109,6 +112,7 @@ KEYS: Final[dict[str, tuple[str, str]]] = {
     "stt_model": ("LUMI_STT_MODEL", "large-v3-turbo"),
     "locale": ("LUMI_LOCALE", "auto"),
     "tts_speed": ("LUMI_TTS_SPEED", "1.2"),
+    "tts_volume": ("LUMI_TTS_VOLUME", "1.0"),
     # Days, or `unlimited`. **The numbers come from docs/contracts/privacy.md §2**, which
     # is where a change to them belongs first.
     "retention_episodes": ("LUMI_RETENTION_EPISODES", "90"),
@@ -131,6 +135,17 @@ MAX_RETENTION_DAYS: Final = 36_500
 TTS_SPEED_MIN: Final = 0.5
 TTS_SPEED_MAX: Final = 2.0
 
+#: How far the user may scale the Content Pack's own volume. **`1.0` means "as authored"**
+#: (ADR-046), which is why the default is not a level but the identity.
+TTS_VOLUME_MIN: Final = 0.0
+TTS_VOLUME_MAX: Final = 2.0
+
+#: key → (minimum, maximum) for the settings that are a multiplier.
+_SCALE_RANGES: Final[dict[str, tuple[float, float]]] = {
+    "tts_speed": (TTS_SPEED_MIN, TTS_SPEED_MAX),
+    "tts_volume": (TTS_VOLUME_MIN, TTS_VOLUME_MAX),
+}
+
 #: Closed choices are validated by Core. Free-form model names intentionally are not.
 VALID_VALUES: Final[dict[str, frozenset[str]]] = {
     "inference_device": frozenset({"auto", "cuda", "cpu"}),
@@ -151,12 +166,13 @@ def _is_valid(key: str, value: object) -> bool:
         # **An upper bound, because the number becomes a `timedelta`.** Past a century the
         # honest answer is `unlimited`, and far past it the arithmetic raises instead
         return int(value) <= MAX_RETENTION_DAYS
-    if key == "tts_speed":
+    if key in _SCALE_RANGES:
+        low, high = _SCALE_RANGES[key]
         try:
-            speed = float(value)
+            scale = float(value)
         except ValueError:
             return False
-        return math.isfinite(speed) and TTS_SPEED_MIN <= speed <= TTS_SPEED_MAX
+        return math.isfinite(scale) and low <= scale <= high
     allowed = VALID_VALUES.get(key)
     return allowed is None or value in allowed
 
@@ -229,6 +245,7 @@ def load(path: Path, env: Mapping[str, str] | None = None) -> Settings:
         stt_model=_resolve("stt_model", stored, environ),
         locale=_resolve("locale", stored, environ),
         tts_speed=_resolve("tts_speed", stored, environ),
+        tts_volume=_resolve("tts_volume", stored, environ),
         retention_episodes=_resolve("retention_episodes", stored, environ),
         retention_events=_resolve("retention_events", stored, environ),
         retention_audit=_resolve("retention_audit", stored, environ),

@@ -14,6 +14,7 @@ import math
 import time
 import wave
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -219,6 +220,8 @@ class Rig:
         stt_text: str = "やあ",
         limits: LoopLimits | None = None,
         tts_speed: float = 1.2,
+        tts_volume: float = 1.0,
+        pack: CharacterPack = PACK,
         retriever: Any = None,
     ):
         self.database = Database.open(IN_MEMORY, EVENTS_SCHEMA)
@@ -254,13 +257,14 @@ class Rig:
             arbiter=self.arbiter,
             providers=providers,
             tools=self.tools,
-            pack=PACK,
+            pack=pack,
             notifier=self.notifier,
             options=LLMOptions(model="fake"),
             session=self.session,
             limits=limits,
             audio=self.audio,
             tts_speed=tts_speed,
+            tts_volume=tts_volume,
             retriever=retriever,
         )
 
@@ -380,6 +384,61 @@ def test_tts_speed_rejects_invalid_values(speed: float) -> None:
     rig = Rig(FakeLlm([text("話せるよ。")]))
     with pytest.raises(ValueError, match="tts_speed"):
         rig.loop.set_tts_speed(speed)
+
+
+async def test_the_default_volume_is_the_content_packs_own() -> None:
+    """**`1.0` changes nothing** (ADR-046). It is what makes "100%" mean today's volume."""
+    rig = Rig(FakeLlm([text("いつもの音量だよ。")]))
+    await rig.start()
+
+    await rig.loop.handle_text("やあ")
+
+    assert [voice.volume_scale for voice in rig.tts.voices] == [PACK.voice.volume]
+
+
+async def test_runtime_tts_volume_applies_to_next_turn_only() -> None:
+    rig = Rig(
+        FakeLlm([text("最初の音量だよ。"), text("次の音量だよ。")]),
+        tts_volume=1.0,
+    )
+    await rig.start()
+
+    await rig.loop.handle_text("最初のターン")
+    rig.loop.set_tts_volume(1.5)
+    await rig.loop.handle_text("次のターン")
+
+    assert [voice.volume_scale for voice in rig.tts.voices] == [
+        PACK.voice.volume,
+        pytest.approx(PACK.voice.volume * 1.5),
+    ]
+
+
+async def test_tts_volume_is_clamped_to_what_the_engine_accepts() -> None:
+    """A loud pack times a loud setting **must not leave the slider doing nothing visible**."""
+    loud = replace(
+        PACK,
+        voice=VoiceSettings(
+            speaker=0,
+            credit=Credit(name="test", credit_text="test", license_name="test"),
+            volume=1.5,
+        ),
+    )
+    rig = Rig(FakeLlm([text("大きいよ。")]), pack=loud, tts_volume=2.0)
+    await rig.start()
+
+    await rig.loop.handle_text("やあ")
+
+    assert [voice.volume_scale for voice in rig.tts.voices] == [2.0]
+
+
+@pytest.mark.parametrize("volume", [-0.01, 2.01, math.nan, math.inf, -math.inf])
+def test_tts_volume_rejects_invalid_values(volume: float) -> None:
+    with pytest.raises(ValueError, match="tts_volume"):
+        Rig(FakeLlm([text("話せないよ。")]), tts_volume=volume)
+
+    rig = Rig(FakeLlm([text("話せるよ。")]))
+    with pytest.raises(ValueError, match="tts_volume"):
+        rig.loop.set_tts_volume(volume)
 
 
 async def test_the_activity_returns_to_idle() -> None:

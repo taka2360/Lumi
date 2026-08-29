@@ -294,8 +294,11 @@ Lumi が**所有しない**プロセス。
 | 何が設定項目か | **`lumi.settings.KEYS` が唯一の定義**（キー / 環境変数 / 既定値） |
 
 Phase 1 の設定項目は、推論デバイス (`inference_device`)、LLM モデル (`llm_model`)、音声認識モデル
-(`stt_model`)、表示言語 (`locale`)、**読み上げ速度 (`tts_speed`, 0.5〜2.0 倍・既定 1.2)** である。
+(`stt_model`)、表示言語 (`locale`)、**読み上げ速度 (`tts_speed`, 0.5〜2.0 倍・既定 1.2)**、
+**音量 (`tts_volume`, 0.0〜2.0 倍・既定 1.0)** である。
 `tts_speed` は Core が各 TTS 合成へ渡し、設定変更は次のターンから反映する。
+`tts_volume` は **Content Pack の `voice.volume` に対する倍率**で、既定の `1.0` が
+「Content Pack が決めた音量そのまま」を指す（→ [ADR-046](../decisions/ADR-046-tts-volume.md)）。
 
 ### なぜ JSON か — Content Pack は TOML なのに
 
@@ -360,7 +363,7 @@ Phase 1 で登録されているのは **`stage.settings.update` の1つだけ**
 
 **この経路に Tool 実行を載せるときは、必ず新しい ADR を書く**（Invariant 2）。
 
-### モデル設定は次回起動から、表示言語と読み上げ速度は即時に効く
+### モデル設定は次回起動から、表示言語と読み上げ速度・音量は即時に効く
 
 **動作中のモデルを差し替えない。** ターンの途中でモデルが入れ替わるのは
 Phase 5 の `ModelResourceManager` の仕事であり、**今それを装うと表示値が嘘になる。**
@@ -368,8 +371,8 @@ UI はそう明記する。ただし `locale` は推論状態を変えない表�
 `stage.settings.state` を受けた Stage が即時反映する。値は `auto` / `ja` / `en` のみを受理し、
 `auto` は OS / WebView の優先言語を使う。不正な値は Core が拒否する。
 
-`tts_speed` も表示設定と同じく再起動を要しない。Core は次に作る `VoiceConfig` へ速度を反映するため、
-すでに開始したターンはそのまま再生し、次のターンから新しい速度を使う。
+`tts_speed` と `tts_volume` も表示設定と同じく再起動を要しない。Core は次に作る `VoiceConfig` へ
+速度と音量を反映するため、すでに開始したターンはそのまま再生し、次のターンから新しい値を使う。
 
 ---
 

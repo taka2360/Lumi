@@ -224,6 +224,8 @@ class TTSProvider(Provider, Protocol):
 
 `VoiceConfig` は話者 (`speaker`)、音量 (`volume_scale`)、読み上げ速度 (`speed_scale`) を持つ。
 `speed_scale` は 0.5〜2.0 の倍率で、既定値は 1.0。Provider は対応するエンジンの速度パラメータへ渡す。
+`volume_scale` は 0.0〜2.0 で、**Core が Content Pack の `voice.volume` に設定 `tts_volume` を掛けて組み立てる**
+（→ [ADR-046](../decisions/ADR-046-tts-volume.md)）。上限を超える積は Core が clamp する。
 
 > **音声だけを返す契約にできない。**〔Phase 1 実装時に確定〕
 > **リップシンクのタイムラインは合成の「あと」にしか作れない**（AivisSpeech は `audio_query` で
