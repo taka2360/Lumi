@@ -17,16 +17,16 @@ from typing import ClassVar
 import httpx
 import pytest
 
-from lumi.providers.llm import ollama
-from lumi.providers.tts import aivisspeech
-from lumi.setup import install as install_module
-from lumi.setup.engines import (
+from lumi.artifacts import install as install_module
+from lumi.artifacts.engines import (
     ALLOWED_ORIGIN_PREFIX,
     EngineArtifact,
     is_allowed_origin,
     is_allowed_redirect,
 )
-from lumi.setup.install import SetupError, _download, install_engine
+from lumi.artifacts.install import SetupError, _download, install_engine
+from lumi.providers.llm import endpoint, ollama
+from lumi.providers.tts import aivisspeech
 
 PAYLOAD = b"lumi-test-engine-payload" * 100
 
@@ -401,8 +401,8 @@ class TestNetworkOptional:
     #: Modules allowed to hold an HTTP client, and why.
     #: **When adding one, always write down "when and where it communicates."**
     ALLOWED_HTTP: ClassVar[dict[str, str]] = {
+        "artifacts/install.py": "Engine fetch. Called only when the user chooses to",
         "setup/detect.py": "Ollama recheck. 127.0.0.1:11434/api/version only",
-        "setup/install.py": "Engine fetch. Called only when the user chooses to",
         "setup/ollama.py": "Local GET /api/tags catalog; only POST /api/pull requires consent",
         "providers/tts/aivisspeech.py": "External engine. 127.0.0.1 only (pinned in test below)",
         "providers/llm/ollama.py": "External engine. 127.0.0.1 only (pinned in test below)",
@@ -443,7 +443,7 @@ class TestNetworkOptional:
             url.startswith(("http://{HOST}:", "https://github.com", "https://ollama.com"))
             for url in urls
         ), urls
-        assert ollama.HOST == "127.0.0.1"
+        assert endpoint.HOST == "127.0.0.1"
 
     def test_the_installer_is_only_reachable_through_the_coordinator(self) -> None:
         root = Path(__file__).resolve().parent.parent / "lumi"

@@ -31,6 +31,7 @@ from websockets.asyncio.server import Server, ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
 from lumi import logging as lumi_logging
+from lumi.tasks import spawn
 from lumi.transport.protocol import (
     HELLO_TIMEOUT_S,
     MULTI_CONNECTION_ROLES,
@@ -450,11 +451,12 @@ class WsServer:
                 # **Handled in its own task.** A slow handler must not stop this
                 # connection from reading the next frame (a `result` Core is waiting on
                 # could be queued behind it)
-                task = asyncio.create_task(
-                    self._serve_request(connection, message), name="ws-request"
+                spawn(
+                    self._serve_request(connection, message),
+                    name="ws-request",
+                    event="transport.request_crashed",
+                    keep=self._requests,
                 )
-                self._requests.add(task)
-                task.add_done_callback(self._requests.discard)
                 continue
 
             if not connection.resolve(message):

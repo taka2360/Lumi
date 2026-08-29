@@ -31,7 +31,7 @@ from typing import Final
 
 from lumi.agent.prompt import ContextBlock
 from lumi.memory.records import AssertionMode, MemoryRecord
-from lumi.provenance import ProvenanceClass, TrustLevel, join_all
+from lumi.provenance import ProvenanceClass, TrustLevel, join_all, provenance_from
 
 #: Header for the memories Lumi holds on its own authority.
 RECALL_HEADER: Final = "What you remember about this person:"
@@ -109,10 +109,8 @@ def to_blocks(records: Sequence[MemoryRecord]) -> tuple[ContextBlock, ...]:
                 # **`UNTRUSTED` only if a record actually says so.** Everything else that
                 # is tainted got there by derivation, and the label is what the user is
                 # shown when they ask where a belief came from.
-                provenance_class=(
-                    ProvenanceClass.UNTRUSTED
-                    if any(r.provenance_class is ProvenanceClass.UNTRUSTED for r in tainted)
-                    else ProvenanceClass.DERIVED
+                provenance_class=provenance_from(
+                    TrustLevel.TAINTED, (r.provenance_class for r in tainted)
                 ),
                 trust_level=TrustLevel.TAINTED,
                 detail="derived from external content",

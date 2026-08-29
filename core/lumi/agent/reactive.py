@@ -46,7 +46,6 @@ from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
 from lumi.agent.stt import SpeculativeStt, SttOutcome
-from lumi.agent.tasks import report_task_exit
 from lumi.audio.io import AudioIO
 from lumi.audio.playback import SpeakerPlayback
 from lumi.audio.vad import SAMPLE_RATE, VadEvent
@@ -72,6 +71,7 @@ from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import AudioBuffer, STTProvider, Transcription
 from lumi.providers.tts.base import TTSProvider, VoiceConfig
 from lumi.settings import TTS_SPEED_MAX, TTS_SPEED_MIN
+from lumi.tasks import spawn
 from lumi.tools.base import ToolContext, ToolResult
 from lumi.tools.registry import ToolRegistry
 from lumi.transport.methods import METHOD_USER_SAID
@@ -248,17 +248,16 @@ class ReactiveLoop:
                 # behind an inference (docs/architecture/audio.md §2)
                 self._stt.speculate(notification.generation, notification.audio)
             elif event is VadEvent.SPEECH_ENDED and notification.audio is not None:
-                task = asyncio.create_task(
+                spawn(
                     self.on_speech_ended(
                         notification.audio,
                         notification.audio_at,
                         generation=notification.generation,
                     ),
                     name="turn",
+                    event="reactive.turn_crashed",
+                    keep=self._turns,
                 )
-                self._turns.add(task)
-                task.add_done_callback(self._turns.discard)
-                task.add_done_callback(report_task_exit("reactive.turn_crashed"))
 
     async def shutdown(self) -> None:
         """Stop the turns still running. **Called before the databases close.**
@@ -520,12 +519,12 @@ class ReactiveLoop:
                 log.warning("memory.retrieve_failed", error=str(error))
                 return ()
         if result.selected:
-            task = asyncio.create_task(
-                self._retriever.record_use(result, now=self._clock()), name="memory.record_use"
+            spawn(
+                self._retriever.record_use(result, now=self._clock()),
+                name="memory.record_use",
+                event="memory.record_use_failed",
+                keep=self._turns,
             )
-            self._turns.add(task)
-            task.add_done_callback(self._turns.discard)
-            task.add_done_callback(report_task_exit("memory.record_use_failed"))
         return to_blocks(result.records)
 
     async def _one_step(

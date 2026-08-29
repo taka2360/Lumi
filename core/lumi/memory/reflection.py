@@ -53,7 +53,7 @@ from lumi.memory.contradiction import Resolution
 from lumi.memory.decay import SalienceInputs, correct_salience
 from lumi.memory.records import AssertionMode, MemoryCandidate, MemoryType
 from lumi.memory.store import MemoryRejected, MemoryStore
-from lumi.provenance import ProvenanceClass, join_all, propagate_from_trust
+from lumi.provenance import join_all, provenance_from
 from lumi.providers.llm.base import Finish, LLMFailure, LLMOptions, LLMProvider, Message, TextDelta
 from lumi.storage.memory import SPEAKER_USER, EpisodeStore, Utterance
 
@@ -303,11 +303,7 @@ def to_candidate(
 
     supporting = [lines[reference] for reference in evidence]
     trust = join_all(line.trust_level for line in supporting)
-    provenance = (
-        ProvenanceClass.UNTRUSTED
-        if any(line.provenance_class is ProvenanceClass.UNTRUSTED for line in supporting)
-        else propagate_from_trust(trust, is_raw_external=False)
-    )
+    provenance = provenance_from(trust, (line.provenance_class for line in supporting))
 
     kind = MemoryType.EPISODIC if str(item.get("type")) == "episodic" else MemoryType.SEMANTIC
     salience = correct_salience(

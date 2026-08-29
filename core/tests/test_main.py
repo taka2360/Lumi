@@ -103,3 +103,76 @@ async def test_two_stage_connects_start_exactly_one_conversation(
         core.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await core
+
+
+class TrackedRuntime:
+    """Records whether it was ever left running."""
+
+    created: ClassVar[list[TrackedRuntime]] = []
+
+    def __init__(self, *_args: Any) -> None:
+        TrackedRuntime.created.append(self)
+        self.running = False
+
+    async def start(self) -> None:
+        self.running = True
+
+    async def stop(self) -> None:
+        self.running = False
+
+    async def on_panel_connected(self) -> None:
+        pass
+
+
+async def test_shutdown_leaves_no_conversation_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**Nothing may come up after teardown decided there was nothing to bring down.**
+
+    `on_stage_connected` waits on detection, then assigns `conversation` and starts it.
+    Teardown reads that same variable. Without cancelling the handler first, a connect
+    still parked in detection resumes during `server.stop()` — after the check found
+    `None` — and opens the microphone and the engines of a Lumi that is already gone.
+
+    The window is real on a quit during first-run setup, where detection is the slow part.
+    """
+    TrackedRuntime.created = []
+    port = free_port()
+
+    detecting = asyncio.Event()
+
+    async def detect(_env: Any) -> list[Any]:
+        # **Says when the handler is actually parked here**, rather than letting the test
+        # guess with a sleep. The window under test is "still inside detection", so a
+        # guess that lands early tests nothing and a guess that lands late tests nothing
+        # else.
+        detecting.set()
+        await asyncio.sleep(0.2)
+        return []
+
+    async def detect_ollama(_env: Any) -> None:
+        return None
+
+    monkeypatch.setattr(coordinator_module, "detect_engines", detect)
+    monkeypatch.setattr(coordinator_module, "detect_ollama", detect_ollama)
+    monkeypatch.setattr(main_module, "ConversationRuntime", TrackedRuntime)
+    monkeypatch.setattr(
+        main_module, "_audio_plan", lambda: AudioPlan(capture=None, playback=None, warnings=())
+    )
+    monkeypatch.setenv("LUMI_WS_TOKEN_SHELL", "shell-token")
+    monkeypatch.setenv("LUMI_WS_TOKEN_STAGE", STAGE_TOKEN)
+    monkeypatch.setenv("LUMI_WS_PORT", str(port))
+
+    core = asyncio.create_task(main_module._run())
+    client = await open_stage(port)
+
+    # Quit while the connect handler is still inside detection.
+    await asyncio.wait_for(detecting.wait(), timeout=5)
+    core.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await core
+    await client.close()
+
+    # Long enough for a handler that outlived the stop to finish and start something.
+    await asyncio.sleep(0.3)
+    assert [runtime for runtime in TrackedRuntime.created if runtime.running] == []

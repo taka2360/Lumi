@@ -17,8 +17,8 @@ import httpx
 
 from lumi import logging as lumi_logging
 from lumi import paths
-from lumi.providers.llm.ollama import DEFAULT_PORT, HOST
-from lumi.setup.engines import AIVISSPEECH_ENGINE, EngineArtifact
+from lumi.artifacts.engines import AIVISSPEECH_ENGINE, EngineArtifact
+from lumi.providers.llm.endpoint import DEFAULT_PORT, HOST
 
 log = lumi_logging.get_logger(__name__)
 

@@ -25,11 +25,11 @@ from fakes import (  # noqa: F401  — `isolated_paths` / `no_ollama` are autous
 )
 
 from lumi.agent.warmup import warm_all, warm_stt, warm_tts
-from lumi.providers.base import ProviderKind
+from lumi.providers.base import EngineRuntime, ProviderKind
 from lumi.providers.registry import ProviderRegistry
 from lumi.setup import coordinator as coordinator_module
 from lumi.setup.coordinator import SetupCoordinator
-from lumi.setup.state import EngineRuntime, SttSetupState
+from lumi.setup.state import SttSetupState
 
 
 class TestEverythingIsWarmed:

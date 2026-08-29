@@ -9,6 +9,9 @@ Anything grep and AST can cover is enforced here instead of building runtime mac
 | Only the Arbiter assigns `_foreground` | .claude/rules/kernel.md |
 | Only the EventBus constructs `DomainEvent` | docs/contracts/event-model.md test 6 |
 | Where `trust_level = TRUSTED` is written | docs/contracts/provenance.md test 5 |
+| No import cycles between packages | authority-matrix #20 / ADR-045 |
+| `providers/` does not import `lumi.setup` | authority-matrix #21 / ADR-045 |
+| Background tasks are started through `spawn` | lumi/tasks.py |
 """
 
 from __future__ import annotations
@@ -21,7 +24,9 @@ KERNEL = LUMI / "kernel"
 
 #: Modules under lumi that `kernel/` may import (prefix match).
 #: **When adding one, also update docs/architecture/core.md §4's exception table.**
-KERNEL_ALLOWED_PREFIXES = ("lumi.kernel.", "lumi.provenance", "lumi.logging")
+#: Each is groundwork rather than a capability: types every module needs
+#: (`provenance`), or the plumbing every module runs on (`logging`, `tasks`).
+KERNEL_ALLOWED_PREFIXES = ("lumi.kernel.", "lumi.provenance", "lumi.logging", "lumi.tasks")
 
 
 def lumi_sources() -> list[Path]:
@@ -29,14 +34,29 @@ def lumi_sources() -> list[Path]:
 
 
 def imported_names(path: Path) -> set[str]:
-    """Picks up `from lumi import logging` as `lumi.logging`."""
+    """Picks up `from lumi import logging` as `lumi.logging`.
+
+    **Relative imports are resolved to absolute ones.** Skipping them would let
+    `from ..setup import models` slip past every check here — and the shorter spelling is
+    exactly the one someone reaches for when the import is one they half know is wrong.
+    """
+    package = ".".join(("lumi", *path.relative_to(LUMI).parts[:-1]))
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                # `from . import x` is level 1 and stays in `package`; each extra dot
+                # climbs one more.
+                base = ".".join(package.split(".")[: len(package.split(".")) - node.level + 1])
+                module = f"{base}.{node.module}" if node.module else base
+            elif node.module:
+                module = node.module
+            else:  # pragma: no cover - `from import` does not parse
+                continue
+            names.update(f"{module}.{alias.name}" for alias in node.names)
     return names
 
 
@@ -63,6 +83,149 @@ def test_storage_may_depend_on_kernel_but_not_the_reverse() -> None:
         assert not any(name.startswith("lumi.storage") for name in imported_names(source)), (
             source.name
         )
+
+
+def package_of(source: Path) -> str:
+    """The node this file belongs to: its package, or its own name if top-level."""
+    relative = source.relative_to(LUMI).as_posix()
+    head, _, tail = relative.partition("/")
+    return head if tail else head.removesuffix(".py")
+
+
+def package_graph() -> dict[str, set[str]]:
+    """`lumi` package -> the packages it imports. Self-edges dropped."""
+    edges: dict[str, set[str]] = {}
+    for source in lumi_sources():
+        importer = package_of(source)
+        for name in imported_names(source):
+            if not name.startswith("lumi."):
+                continue
+            imported = name.removeprefix("lumi.").split(".")[0]
+            if imported and imported != importer:
+                edges.setdefault(importer, set()).add(imported)
+    return edges
+
+
+def find_cycle(edges: dict[str, set[str]]) -> list[str]:
+    """One cycle as a path, or `[]`. Depth-first; the first one found is enough."""
+    visiting: list[str] = []
+    done: set[str] = set()
+
+    def walk(node: str) -> list[str]:
+        if node in visiting:
+            return [*visiting[visiting.index(node) :], node]
+        if node in done:
+            return []
+        visiting.append(node)
+        for target in sorted(edges.get(node, ())):
+            if cycle := walk(target):
+                return cycle
+        visiting.pop()
+        done.add(node)
+        return []
+
+    for start in sorted(edges):
+        if cycle := walk(start):
+            return cycle
+    return []
+
+
+def test_no_import_cycles_between_packages() -> None:
+    """**No package under `lumi` may import another that imports it back**
+    (authority-matrix #20 / ADR-045).
+
+    `providers` and `setup` were mutually importing until ADR-045. It did not raise
+    `ImportError` because the concrete modules happened not to meet — **the failure
+    was one added import line away, and invisible to whoever added it.**
+
+    A cycle is reported as a path so the offending edge is readable, not just present.
+    """
+    assert find_cycle(package_graph()) == []
+
+
+def test_providers_do_not_import_setup() -> None:
+    """**Direction, not merely acyclicity** (authority-matrix #21 / ADR-045).
+
+    `artifacts <- providers <- setup`. A Provider is told where its model is; it does
+    not know how the model got there. Checking only for cycles would accept "delete
+    the `setup -> providers` edge instead", which reverses the layering while keeping
+    the graph acyclic.
+
+    The legal direction (`setup` importing `providers`) is deliberately not checked.
+    """
+    offenders = [
+        f"{source.relative_to(LUMI).as_posix()}: {name}"
+        for source in sorted((LUMI / "providers").rglob("*.py"))
+        for name in sorted(imported_names(source))
+        if name.startswith("lumi.setup")
+    ]
+    assert offenders == []
+
+
+#: Every way to detach a coroutine from its caller. **`asyncio.create_task` is not the
+#: only one** — `get_running_loop().create_task` and `ensure_future` do the same thing
+#: with the same two problems, and a rule that names one spelling teaches the others.
+TASK_STARTERS = ("create_task", "ensure_future")
+
+
+def task_starts(path: Path) -> list[int]:
+    """Lines calling something that starts a task. **Parsed, not grepped** — a mention in
+    a docstring is not a call, and `loop.create_task` is.
+
+    Importing one counts as starting one. `from asyncio import create_task as go` renames
+    the call out of reach of any check that reads call sites, and the import is the one
+    spelling the rename cannot hide.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    lines = [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr in TASK_STARTERS)
+            or (isinstance(node.func, ast.Name) and node.func.id in TASK_STARTERS)
+        )
+    ]
+    lines += [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.ImportFrom)
+        and node.module == "asyncio"
+        and any(alias.name in TASK_STARTERS for alias in node.names)
+    ]
+    return sorted(lines)
+
+
+#: Files that may call `asyncio.create_task` directly, and why.
+#: **When adding one, write down who claims the task's result.** Everywhere else goes
+#: through `lumi.tasks.spawn`, which keeps a strong reference and reports failures.
+ALLOWED_DIRECT_CREATE_TASK: dict[str, str] = {
+    "tasks.py": "Defines spawn(). Someone has to make the call",
+    "agent/stt.py": (
+        "The result is claimed — by the awaiting caller, or by _finished. A reporter "
+        "here would log failures the consumer already handles"
+    ),
+}
+
+
+def test_background_tasks_are_started_through_spawn() -> None:
+    """**A task nobody holds can be collected mid-flight, and its exception surfaces at
+    GC time if ever.**
+
+    That is not a hypothetical: a missing `arbiter.start()` stayed invisible for a day
+    (2026-08-17) because the reactive loop died into silence. `spawn` fixes both halves
+    at once, which only helps if there is no second way to start a task.
+
+    Files are listed with a reason rather than the rule being dropped — the exceptions
+    are real, and the reason is what makes the next one arguable.
+    """
+    offenders = sorted(
+        f"{source.relative_to(LUMI).as_posix()}:{line}"
+        for source in lumi_sources()
+        if source.relative_to(LUMI).as_posix() not in ALLOWED_DIRECT_CREATE_TASK
+        for line in task_starts(source)
+    )
+    assert offenders == []
 
 
 def test_only_the_arbiter_applies_state_transitions() -> None:

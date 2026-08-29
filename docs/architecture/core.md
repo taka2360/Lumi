@@ -131,7 +131,8 @@ Core 内部:
 | 禁止 | 理由 |
 |---|---|
 | `PermissionKernel` → `Tool` | Kernel が個別ツールを知ると、ツール追加のたびに Kernel が変わる |
-| `Memory` → `Agent` | 記憶はエージェントの都合を知らない。検索クエリを受け取るだけ |
+| `Memory` → `Agent` | 記憶はエージェントの都合を知らない。検索クエリを受け取るだけ。**「いつ思い出すか」は agent 側**（[ADR-045](../decisions/ADR-045-core-module-layering.md)） |
+| `Provider` → `Setup` | Provider は「取得の手順」を知らない。**モデルの pin は `artifacts/` にあり、両方の下**（[ADR-045](../decisions/ADR-045-core-module-layering.md)）。逆（`Setup` → `Provider`）は許す |
 | `EventBus` → 何か | Bus は誰も知らない。誰でも publish/subscribe できる |
 | `World` → `Sensor` | Core は Sensor の実装を知らない。Signal を受け取るだけ |
 | `Core` → `Shell` の具体実装 | `PlatformShell` interface 越しにのみ話す |
@@ -141,30 +142,54 @@ Core 内部:
 ```
 core/lumi/
 ├── provenance.py    ProvenanceClass / TrustLevel / join / propagate（**依存ゼロ**）
-├── kernel/          arbiter, activity, job, command, event, hooks,
-│                    cancellation, inference_lease, recovery, scheduler
-├── agent/           reactive, deliberative, drives,
+├── paths.py         データ・アセット・ログの置き場所（**唯一の正**）
+├── settings.py      ユーザー設定の SSoT（env > file > default）
+├── character.py     ExpressionIntent（表情意図）
+├── logging.py       structlog の設定
+├── tasks.py         バックグラウンドタスクの生成と終了報告（`spawn` / `report_task_exit`）
+├── selfcheck.py     配布物の動作検証（`--self-check`）
+├── artifacts/       models, engines, install
+│                    モデル / エンジンの pin と取得。**providers と setup の両方の下**（ADR-045）
+├── kernel/          arbiter（Activity 調停と推論リース）, activity, job, command,
+│                    event, hooks, cancellation, recovery, ids
+├── agent/           reactive（Reactive Loop）,
+│                    runtime（会話の組み立て。**判断を持たない**）,
 │                    session（Working Memory + sticky session_trust）,
 │                    prompt（PromptAssembly）, markers（<|ACT|>）,
 │                    sentences（文分割）, speech（PlaybackScheduler → audio.md §6）,
-│                    runtime（会話の組み立て。**判断を持たない**）,
+│                    stt（投機 STT → ADR-039）, latency（ターン毎の計測）,
+│                    recall（記憶 → ContextBlock）, episodes（エピソード書き込み）,
+│                    inspector（スナップショット発行）,
 │                    warmup（エンジンの暖機と起動ゲート → ADR-033 / ADR-034）,
-│                    tasks（await されない task の終了報告）
-├── memory/          working, episodic, semantic, reflection, retrieval, decay
-├── world/           facets, snapshot, projection
-├── internal/        mood, fatigue, drives state
-├── permission/      policy, canonicalization, bind_verifier, result_verifier,
-│                    grants, audit
-├── tools/           registry, descriptors,
-│                    builtin/        fs, computer, memory, character（Class A）
-├── providers/       llm/ stt/ tts/ embedding/ vision/
-├── audio/           ring, resample, capture, vad, playback, io（EchoGuard L1 は vad 内）
-├── extensions/      host, manifest, protocol
-├── storage/         sqlite, migrations, vector store
+│                    reflection_scheduler（**いつ**思い出すか → ADR-045）
+├── memory/          store（記憶レコードへの**唯一の書き手** → ADR-045）, records,
+│                    reflection（**何を**抽出するか）, retrieval（ハイブリッド検索）,
+│                    vectors（sqlite-vec + FTS5）, indexing, decay, contradiction
+├── world/           〔Phase 3〕facets, snapshot, projection
+├── internal/        〔Phase 3〕mood, fatigue, drives state
+├── permission/      kernel, policy（`decide()`）, scope, verifiers, grants, audit
+├── tools/           registry, base,
+│                    builtin/        character（Class A）。fs / computer は〔Phase 4〕
+├── providers/       base, registry, device,
+│                    llm/ stt/ tts/ embedding/。vision/ は〔Phase 5〕
+├── audio/           ring, resample, capture, vad, playback, io, devices,
+│                    drift, probe, wav（EchoGuard L1 は vad 内）
+├── setup/           coordinator, detect, state, ollama
+│                    初回セットアップの判断と同意（→ [setup.md](setup.md)）
+├── panel/           service — 設定 / Inspector / 記憶ウィンドウへの配信（ADR-042）
+├── extensions/      〔Phase 5 / 9〕host, manifest, protocol
+├── storage/         sqlite（APSW・暗号化・マイグレーション）, memory, events, audit,
+│                    retention（**ユーザ発話を削除できる唯一のコード**）, secret
 ├── content/         Content Pack の**読み取り専用ローダ**（extension.md §9）
-└── transport/       ws server, protocol schema,
+└── transport/       server（WS）, protocol,
                     methods（線上の method 名。wire.json のミラー。**依存ゼロ**）
 ```
+
+**〔Phase N〕が付いたものはまだ存在しない。** 付いていないものは実装済みである。
+この区別を書いていなかったために、`world/` `internal/` `extensions/` が載っている一方で
+実装済みの `setup/` `panel/` が載っていない状態が rev.21〜23 の間続いた。
+**Core のモジュールを分割・追加するときは、このツリーを同じコミットで更新する**
+（[ADR-045](../decisions/ADR-045-core-module-layering.md)）。
 
 **`content/` はローダであって Content Pack ではない。** パックの実体はリポジトリ root の
 `content/characters/<name>/` に置かれ、**データのみでコードを含まない**（[extension.md](extension.md) §9）。
@@ -186,7 +211,14 @@ trust の型は kernel・permission・tools・agent・memory の**すべてが�
 規則の定義は [../contracts/provenance.md](../contracts/provenance.md)。
 
 **`kernel/` が import してよい lumi 配下のモジュールは、`lumi.kernel.*` / `lumi.provenance` /
-`lumi.logging` の3つだけ**（構造化ログは能力ではなく全モジュールの土台）。
+`lumi.logging` / `lumi.tasks` の4つだけ。**
+いずれも**能力ではなく土台**である——全モジュールが使う型（`provenance`）か、
+全モジュールが乗る足回り（構造化ログ、バックグラウンドタスクの生成と終了報告）。
+
+`lumi.tasks` がここに入るのは、**`asyncio.create_task` を直接呼んでよい場所を1つにする**ため。
+参照を保持しないタスクは GC で消え、拾われない例外は GC 時にしか出ない——
+`kernel/` を例外にすると、**最も落ちてはいけない場所だけが黙って落ちる**。
+
 永続化のような「外の世界」は Protocol（`EventStore`）で受け取り、実装は kernel の外に置く。
 **これを AST の静的検査で縛る**（`core/tests/test_kernel_boundaries.py`）。
 

@@ -30,6 +30,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Final
 
+import apsw
 import numpy as np
 
 from lumi import logging as lumi_logging
@@ -121,22 +122,21 @@ class MemoryIndex:
         """
         if not entries:
             return
-        await asyncio.to_thread(self._upsert_blocking, list(entries))
+        await self._db.in_transaction(lambda conn: self._upsert_in(conn, list(entries)))
 
-    def _upsert_blocking(self, entries: list[tuple[str, str, np.ndarray]]) -> None:
-        with self._db.transaction() as conn:
-            for memory_id, text, vector in entries:
-                blob = to_blob(vector, dimension=self._dimension)
-                conn.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
-                conn.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
-                conn.execute(
-                    "INSERT INTO memory_vectors (memory_id, embedding) VALUES (?, ?)",
-                    (memory_id, blob),
-                )
-                conn.execute(
-                    "INSERT INTO memory_fts (content, memory_id) VALUES (?, ?)",
-                    (text, memory_id),
-                )
+    def _upsert_in(self, conn: apsw.Connection, entries: list[tuple[str, str, np.ndarray]]) -> None:
+        for memory_id, text, vector in entries:
+            blob = to_blob(vector, dimension=self._dimension)
+            conn.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
+            conn.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
+            conn.execute(
+                "INSERT INTO memory_vectors (memory_id, embedding) VALUES (?, ?)",
+                (memory_id, blob),
+            )
+            conn.execute(
+                "INSERT INTO memory_fts (content, memory_id) VALUES (?, ?)",
+                (text, memory_id),
+            )
 
     async def remove(self, memory_ids: Sequence[str]) -> None:
         """Drop these from the index. **Not a deletion of anything the user owns** — the
@@ -144,13 +144,12 @@ class MemoryIndex:
         """
         if not memory_ids:
             return
-        await asyncio.to_thread(self._remove_blocking, tuple(memory_ids))
+        await self._db.in_transaction(lambda conn: self._remove_in(conn, tuple(memory_ids)))
 
-    def _remove_blocking(self, memory_ids: tuple[str, ...]) -> None:
-        with self._db.transaction() as conn:
-            for memory_id in memory_ids:
-                conn.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
-                conn.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
+    def _remove_in(self, conn: apsw.Connection, memory_ids: tuple[str, ...]) -> None:
+        for memory_id in memory_ids:
+            conn.execute("DELETE FROM memory_vectors WHERE memory_id = ?", (memory_id,))
+            conn.execute("DELETE FROM memory_fts WHERE memory_id = ?", (memory_id,))
 
     async def count(self) -> int:
         return await asyncio.to_thread(self._count_blocking)

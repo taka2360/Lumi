@@ -22,6 +22,7 @@ from lumi.kernel.cancellation import CancelToken
 from lumi.providers.base import (
     Attribution,
     DevicePref,
+    EngineRuntime,
     ProviderKind,
     ProviderNotConfigured,
     ProviderUnavailable,
@@ -45,7 +46,6 @@ from lumi.providers.tts.aivisspeech import TtsError
 from lumi.providers.tts.provider import WARM_TEXT, AivisSpeechProvider
 from lumi.setup import detect as detect_module
 from lumi.setup.detect import detect_ollama, find_on_path
-from lumi.setup.state import EngineRuntime
 from lumi.tools.base import ToolDescriptor, ToolKind
 
 

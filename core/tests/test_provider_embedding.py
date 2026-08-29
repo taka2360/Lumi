@@ -20,6 +20,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from lumi.artifacts.models import EMBEDDING_MODEL_FILE, HARRIER_OSS_V1_270M, model_directory
 from lumi.providers.base import ProviderFailed, ProviderNotConfigured
 from lumi.providers.embedding import harrier
 from lumi.providers.embedding.harrier import (
@@ -31,7 +32,6 @@ from lumi.providers.embedding.harrier import (
     to_tensors,
     truncate,
 )
-from lumi.setup.models import EMBEDDING_MODEL_FILE, HARRIER_OSS_V1_270M, model_directory
 
 PAD = 0
 EOS = 1

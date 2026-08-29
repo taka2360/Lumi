@@ -15,15 +15,15 @@ import pytest
 
 from lumi import paths as paths_module
 from lumi import settings as settings_module
+from lumi.artifacts.install import SetupError
+from lumi.providers.base import EngineRuntime
 from lumi.setup import coordinator as coordinator_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
-from lumi.setup.install import SetupError
 from lumi.setup.ollama import OllamaLocalModel
 from lumi.setup.state import (
     BootPhase,
     EmbeddingSetupState,
-    EngineRuntime,
     LlmSetup,
     LlmSetupState,
     SttSetupState,

@@ -14,8 +14,8 @@ import httpx
 import pytest
 
 from lumi import paths as paths_module
-from lumi.setup.install import SetupError, install_model, is_model_installed
-from lumi.setup.models import (
+from lumi.artifacts.install import SetupError, install_model, is_model_installed
+from lumi.artifacts.models import (
     ALLOWED_ORIGIN_PREFIX,
     STT_MODELS,
     ModelArtifact,

@@ -36,8 +36,9 @@ from lumi.agent.prompt import estimate_tokens
 from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.recall import cost_of
 from lumi.agent.session import Session
-from lumi.agent.tasks import report_task_exit
 from lumi.agent.warmup import warm_all, warm_llm
+from lumi.artifacts.install import is_model_installed
+from lumi.artifacts.models import HARRIER_OSS_V1_270M
 from lumi.audio.devices import AudioPlan
 from lumi.audio.io import AudioIO
 from lumi.character import ExpressionIntent
@@ -58,7 +59,7 @@ from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
-from lumi.providers.base import ProviderError, ProviderKind
+from lumi.providers.base import EngineRuntime, ProviderError, ProviderKind
 from lumi.providers.embedding.harrier import HarrierEmbeddingProvider
 from lumi.providers.llm.base import LLMOptions, LLMProvider
 from lumi.providers.llm.ollama import OllamaProvider
@@ -66,15 +67,14 @@ from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
 from lumi.setup.coordinator import SetupCoordinator
-from lumi.setup.install import is_model_installed
-from lumi.setup.models import HARRIER_OSS_V1_270M
-from lumi.setup.state import BootPhase, EngineRuntime, LlmSetupState
+from lumi.setup.state import BootPhase, LlmSetupState
 from lumi.storage.audit import AUDIT_SCHEMA, SqliteAuditLog
 from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
 from lumi.storage.memory import EpisodeStore, open_memory
 from lumi.storage.retention import RetentionPolicy, RetentionService
 from lumi.storage.secret import DpapiSecretStore, get_or_create_db_key
 from lumi.storage.sqlite import Database
+from lumi.tasks import spawn
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
 from lumi.transport.methods import (
@@ -89,6 +89,7 @@ from lumi.transport.methods import (
     REASON_MODEL_NOT_IN_PACK,
     REASON_PACK_UNREADABLE,
 )
+from lumi.transport.payload import require_bool, require_str_map
 from lumi.transport.protocol import Role
 from lumi.transport.server import RequestRefused, WsServer
 
@@ -436,14 +437,7 @@ class ConversationRuntime:
         so the settings notification applies it immediately without touching a running turn.
         Swapping a loaded model out is Phase 5's `ModelResourceManager` problem.
         """
-        changes = payload.get("changes")
-        if not isinstance(changes, dict):
-            raise RequestRefused("invalid_payload")
-        readable = all(
-            isinstance(key, str) and isinstance(value, str) for key, value in changes.items()
-        )
-        if not readable:
-            raise RequestRefused("invalid_payload")
+        changes = require_str_map(payload, "changes", reason="invalid_payload")
 
         try:
             self._settings = await asyncio.to_thread(
@@ -500,9 +494,7 @@ class ConversationRuntime:
         change is the one thing here that must not be optimistic — it is the only thing
         telling the user whether the room is being listened to.
         """
-        wanted = payload.get("muted")
-        if not isinstance(wanted, bool):
-            raise RequestRefused("invalid_payload")
+        wanted = require_bool(payload, "muted", reason="invalid_payload")
         if not self._audio.can_listen:
             raise RequestRefused("no_microphone")
         try:
@@ -576,10 +568,12 @@ class ConversationRuntime:
         await self._expire_old_records()
         await self._forget_faded_memories()
         # **Not awaited.** Indexing is the one maintenance job that can take seconds.
-        self._indexing = asyncio.create_task(self._index_memories(), name="memory.index")
-        self._indexing.add_done_callback(report_task_exit("memory.index_crashed"))
-        self._reflecting = asyncio.create_task(self._reflect_while_idle(), name="memory.reflect")
-        self._reflecting.add_done_callback(report_task_exit("memory.reflect_crashed"))
+        self._indexing = spawn(
+            self._index_memories(), name="memory.index", event="memory.index_crashed"
+        )
+        self._reflecting = spawn(
+            self._reflect_while_idle(), name="memory.reflect", event="memory.reflect_crashed"
+        )
         # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
         # rest of the session (observed 2026-08-17).
@@ -599,7 +593,7 @@ class ConversationRuntime:
         # **Not awaited.** The Stage connection handler must stay responsive while the engine
         # starts. `_warm` opens audio and starts the reactive loop only once all three have
         # reported and the phase has actually reached `ready` (ADR-033 / ADR-034).
-        self._warmup = asyncio.create_task(
+        self._warmup = spawn(
             warm_all(
                 self._providers,
                 self._setup,
@@ -607,11 +601,11 @@ class ConversationRuntime:
                 on_ready=self._start_listening,
             ),
             name="warmup",
+            # **Nobody awaits this task while it runs.** Without a report an unexpected
+            # failure stays invisible until GC, and `stop()` is where it would finally
+            # surface — as an exception that aborts the rest of shutdown
+            event="warmup.crashed",
         )
-        # **Nobody awaits this task while it runs.** Without a callback an unexpected failure
-        # stays invisible until GC, and `stop()` is where it would finally surface — as an
-        # exception that aborts the rest of shutdown
-        self._warmup.add_done_callback(report_task_exit("warmup.crashed"))
 
     def _schedule_llm_warmup(self) -> None:
         """Continues setup after a re-check finds Ollama's local API.
@@ -621,8 +615,9 @@ class ConversationRuntime:
         """
         if self._llm_retry is not None and not self._llm_retry.done():
             return
-        self._llm_retry = asyncio.create_task(self._warm_llm_after_detection(), name="llm-recheck")
-        self._llm_retry.add_done_callback(report_task_exit("llm.recheck_crashed"))
+        self._llm_retry = spawn(
+            self._warm_llm_after_detection(), name="llm-recheck", event="llm.recheck_crashed"
+        )
 
     async def _warm_llm_after_detection(self) -> None:
         # Ollama may appear while the initial sequence is still warming STT. Wait for
@@ -700,13 +695,15 @@ class ConversationRuntime:
         if self._loop is None:
             log.warning("conversation.disabled", reason="content pack")
             return
-        self._task = asyncio.create_task(self._loop.run(), name="reactive")
+        self._task = spawn(
+            self._loop.run(),
+            name="reactive",
+            event="reactive.crashed",
+            on_return="reactive.stopped",
+        )
         # **A dead reactive loop means Lumi is deaf, and nothing else notices.** asyncio only
         # surfaces an unretrieved task exception at GC, which is how the missing
         # `arbiter.start()` stayed invisible. **Never let this exit quietly.**
-        self._task.add_done_callback(
-            report_task_exit("reactive.crashed", on_return="reactive.stopped")
-        )
         log.info("conversation.started", can_listen=self._audio.can_listen)
 
     def _register_providers(self) -> None:

@@ -6,7 +6,7 @@
 
 ## 現在の状態
 
-**Phase 2（Memory）は 2a〜2g すべて実装済み。ただし 2b（投機 STT）の実測が未取得で、[roadmap.md](docs/roadmap.md) の完了条件はまだ満たしていない。** 設計は rev.23 まで完了し承認済み。
+**Phase 2（Memory）は 2a〜2g すべて実装済み。ただし 2b（投機 STT）の実測が未取得で、[roadmap.md](docs/roadmap.md) の完了条件はまだ満たしていない。** 設計は rev.25 まで完了し承認済み。
 コードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
 
 **Phase 3 に進む前に 2b の実測を取る。** 破棄率・`stt_overlap_ms` は**実際に喋らないと出ない**——それが残っている唯一の理由であり、コードの不足ではない。
@@ -20,7 +20,7 @@ Lumi/
 ├── core/          Lumi Core — Python / asyncio。権威（判断・状態・ポリシー・記憶）
 ├── shell/         Lumi Shell — Tauri 2 / Rust。OS 特権プリミティブのみ
 ├── stage/         Stage WebView — React + TS + Zustand。表現のみ
-├── extensions/    out-of-process Capability Extension（別プロセス・任意言語）
+├── extensions/    〔Phase 5 で作る〕out-of-process Capability Extension（別プロセス・任意言語）
 └── content/       Content Pack（キャラ・モデル・音声・人格。**コードを含まない**）
 ```
 
@@ -96,7 +96,9 @@ Lumi/
 
 **必要なもの**: Rust（MSVC ツールチェイン）/ Node 24+ / pnpm 11 / uv。Python 3.12 は uv が取得する。
 
-- [ ] 静的検査（[authority-matrix.md](docs/contracts/authority-matrix.md) の19項目）— **未実装**
+**静的検査**（[authority-matrix.md](docs/contracts/authority-matrix.md) の22項目）— **10項目が実装済み**
+（#1 #2 #3 #7 #8 #9 #11 #12 #15 → `core/tests/test_kernel_boundaries.py` / #16 → `core/tests/test_audio_vad.py`）。
+残り12項目は未実装。#10 は Phase 3 と同時、#20〜22 は [ADR-045](docs/decisions/ADR-045-core-module-layering.md) で追加された。
 
 ## 進め方の原則
 

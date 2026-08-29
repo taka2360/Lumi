@@ -39,8 +39,9 @@ holding.
 
 from __future__ import annotations
 
+import asyncio
 import threading
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -200,6 +201,33 @@ class Database:
                 self._conn.execute("ROLLBACK")
                 raise
             self._conn.execute("COMMIT")
+
+    async def in_transaction[T](self, work: Callable[[apsw.Connection], T]) -> T:
+        """One transaction, off the event loop. **`BEGIN` through `COMMIT` in one hop.**
+
+        Every DAO here was the same four lines: an `async` method that hands a
+        `_blocking` twin to `asyncio.to_thread`, and a twin whose whole body is
+        `with self.transaction() as conn`. Written out per method, the shape invites the
+        one arrangement that must never appear:
+
+            with db.transaction():              # holds a threading.Lock ...
+                await asyncio.to_thread(work)   # ... across an await
+
+        That holds the connection lock while the event loop runs other coroutines, and
+        puts the transaction boundary on a different thread from the work it wraps.
+        Passing the callable in instead makes the correct order the only expressible one.
+
+        **Cancellation does not reach `work`.** `to_thread` abandons the await, not the
+        thread, so a cancelled caller still leaves a committed transaction behind. That
+        is unchanged from doing it by hand, and `retention` depends on it — a partial
+        "erase everything" would be worse than a slow one.
+        """
+
+        def once() -> T:
+            with self.transaction() as conn:
+                return work(conn)
+
+        return await asyncio.to_thread(once)
 
     def migrate(self, now: datetime | None = None) -> None:
         """Applies unapplied migrations in order. **No downgrade path exists.**

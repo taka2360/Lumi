@@ -28,9 +28,9 @@ from pathlib import Path
 import httpx
 
 from lumi import logging as lumi_logging
-from lumi.setup import models
-from lumi.setup.engines import EngineArtifact, is_allowed_origin, is_allowed_redirect
-from lumi.setup.models import ModelArtifact, model_directory
+from lumi.artifacts import models
+from lumi.artifacts.engines import EngineArtifact, is_allowed_origin, is_allowed_redirect
+from lumi.artifacts.models import ModelArtifact, model_directory
 
 log = lumi_logging.get_logger(__name__)
 

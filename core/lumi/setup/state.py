@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from lumi.providers.base import EngineRuntime
+
 
 class TtsSetupState(StrEnum):
     #: Not checked yet.
@@ -33,27 +35,6 @@ class TtsSetupState(StrEnum):
     #: An engine Lumi installed is usable.
     INSTALLED = "installed"
     #: Attempted to fetch and failed. **Never reverts to not-configured.**
-    FAILED = "failed"
-
-
-class EngineRuntime(StrEnum):
-    """The state of the engine **process**. A separate axis from the installation
-    state (`TtsSetupState`).
-
-    docs/architecture/setup.md "Never mix installation state and process state"
-
-    Mixing these into one enum would make it impossible to express "installed but
-    can't start," and would tell the user the false "please fetch it" guidance.
-    """
-
-    #: Not running.
-    STOPPED = "stopped"
-    # : Starting up. Not yet responding (the first run can take minutes as the engine fetches its
-    # own model).
-    STARTING = "starting"
-    #: Can speak.
-    READY = "ready"
-    #: Installed but won't start = **broken**.
     FAILED = "failed"
 
 

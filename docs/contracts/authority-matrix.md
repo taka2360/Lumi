@@ -121,6 +121,9 @@ screenshot / input injection / window create / process launch。
 | 17 | **永続化先が [privacy.md](privacy.md) §2 の表に無い場所を書いていない** | Core |
 | 18 | **`DomainEvent` の payload に発話本文が入っていない** | Core |
 | 19 | **音声バッファを扱うモジュールにファイル書き込み経路が無い**（生波形を残さない） | Core |
+| 20 | **`lumi` の package 間に import の循環が無い** → [ADR-045](../decisions/ADR-045-core-module-layering.md) | Core |
+| 21 | **`providers/` が `lumi.setup` を import していない**（逆は許す） → [ADR-045](../decisions/ADR-045-core-module-layering.md) | Core |
+| 22 | **`memories` への `INSERT` / `UPDATE` / `DELETE` が `memory/store.py` 以外に無い**（保持期間ジョブと全消去は [privacy.md](privacy.md) §5 の別経路）→ [ADR-045](../decisions/ADR-045-core-module-layering.md) | Core |
 
 ---
 

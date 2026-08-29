@@ -11,11 +11,11 @@ from dataclasses import replace
 
 import pytest
 
+from lumi.providers.base import EngineRuntime
 from lumi.setup.state import (
     BootPhase,
     EmbeddingSetup,
     EmbeddingSetupState,
-    EngineRuntime,
     LlmSetup,
     LlmSetupState,
     SetupSnapshot,

@@ -20,6 +20,7 @@ from lumi.kernel.cancellation import CancelToken
 from lumi.providers.base import (
     Attribution,
     DevicePref,
+    EngineRuntime,
     ProviderFailed,
     ProviderKind,
     ProviderUnavailable,
@@ -30,7 +31,6 @@ from lumi.providers.device import DeviceChoice, resolve
 from lumi.providers.tts.aivisspeech import AivisSpeechClient, TtsError
 from lumi.providers.tts.base import SpeechAudio, VoiceConfig
 from lumi.providers.tts.engine_process import EngineProcess
-from lumi.setup.state import EngineRuntime
 
 log = lumi_logging.get_logger(__name__)
 

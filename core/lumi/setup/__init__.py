@@ -2,7 +2,9 @@
 
 Design → docs/architecture/setup.md / Decision → docs/decisions/ADR-019-tts-engine-distribution.md
 
-**No external communication until the user chooses to.** The only place in this
-package that touches HTTP is `install.py`'s `install_engine`, and it's only called
-after receiving the user's choice.
+**No external communication until the user chooses to.** Fetching lives in
+`lumi.artifacts` (ADR-045) and runs only after the user's choice has been received.
+What stays here is the judgement: what is missing, what to ask, and what the
+answer means. The HTTP this package does hold is local only — the Ollama recheck
+(`detect.py`) and the local model catalog (`ollama.py`), both 127.0.0.1.
 """

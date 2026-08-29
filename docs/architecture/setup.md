@@ -290,7 +290,7 @@ Phase 0 の `boot` は TTS だけを見ていた。**LLM / STT / TTS の3つか�
 | ライセンス | **LGPL-3.0 単独**〔2026-08-15 確認。VOICEVOX ENGINE のデュアルライセンスのうち LGPL-3.0 のみを継承〕 |
 | 配布元 | GitHub Releases `Aivis-Project/AivisSpeech-Engine` |
 | バージョン | ピン留めする（Provisional。Lumi のリリースごとに更新する） |
-| 実体 | `core/lumi/setup/engines.py` の `AIVISSPEECH_ENGINE` |
+| 実体 | `core/lumi/artifacts/engines.py` の `AIVISSPEECH_ENGINE` |
 
 ピン留めする値は **バージョン / URL / サイズ / SHA-256** の4つ。
 
@@ -305,7 +305,7 @@ Phase 0 の `boot` は TTS だけを見ていた。**LLM / STT / TTS の3つか�
 | 対象 | faster-whisper の CTranslate2 変換済みモデル |
 | 配布元 | HuggingFace。**リポジトリはモデルごとに違う**（`Systran/...` / `dropbox-dash/...`）。実体は下記 |
 | ライセンス | **MIT**（OpenAI Whisper の重みを CTranslate2 に変換したもの。変換物も MIT で配布されている） |
-| 実体 | `core/lumi/setup/models.py` の `STT_MODELS`。既定は `large-v3-turbo`（[ADR-027](../decisions/ADR-027-stt-model-large-v3-turbo.md)） |
+| 実体 | `core/lumi/artifacts/models.py` の `STT_MODELS`。既定は `large-v3-turbo`（[ADR-027](../decisions/ADR-027-stt-model-large-v3-turbo.md)） |
 | どれを取るか | **`settings.stt_model` が選んだもの。** 固定しない（下記） |
 
 #### 取りに行くものと、Provider が探すものを一致させる

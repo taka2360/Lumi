@@ -47,21 +47,22 @@ from typing import TypeVar
 
 from lumi import logging as lumi_logging
 from lumi import paths, settings
-from lumi.setup.detect import detect_engines, detect_ollama
-from lumi.setup.engines import AIVISSPEECH_ENGINE
-from lumi.setup.install import (
+from lumi.artifacts.engines import AIVISSPEECH_ENGINE
+from lumi.artifacts.install import (
     ProgressCallback,
     SetupError,
     install_engine,
     install_model,
     is_model_installed,
 )
-from lumi.setup.models import (
+from lumi.artifacts.models import (
     FASTER_WHISPER_LARGE_V3_TURBO,
     HARRIER_OSS_V1_270M,
     STT_MODELS,
     ModelArtifact,
 )
+from lumi.providers.base import EngineRuntime
+from lumi.setup.detect import detect_engines, detect_ollama
 from lumi.setup.ollama import (
     OLLAMA_MODELS,
     QWEN_35_9B,
@@ -76,7 +77,6 @@ from lumi.setup.state import (
     BootPhase,
     EmbeddingSetup,
     EmbeddingSetupState,
-    EngineRuntime,
     LlmSetup,
     LlmSetupState,
     SetupSnapshot,

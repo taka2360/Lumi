@@ -40,6 +40,7 @@ from uuid import uuid4
 from lumi import logging as lumi_logging
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.storage.memory import SPEAKER_LUMI, SPEAKER_USER, Episode, EpisodeStore, Utterance
+from lumi.tasks import spawn
 
 log = lumi_logging.get_logger(__name__)
 
@@ -151,9 +152,7 @@ class EpisodeRecorder:
         """**Tracked, not fired and forgotten.** `flush` is what makes a test able to read
         back what a turn wrote, and an untracked task is one nobody can wait for.
         """
-        task = asyncio.create_task(coroutine, name="episode-write")
-        self._writes.add(task)
-        task.add_done_callback(self._writes.discard)
+        spawn(coroutine, name="episode-write", event="episode.write_crashed", keep=self._writes)
 
     async def flush(self) -> None:
         """Wait for the writes started so far. **Called before anything reads the log.**"""
