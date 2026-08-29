@@ -83,9 +83,14 @@ async def _run() -> int:
     #: Held for as long as they run. **The event loop keeps only a weak reference**, so
     #: without this a connect handler's work can be collected before it finishes.
     connect_tasks: set[asyncio.Task[None]] = set()
+    #: Set before teardown starts. **A connection accepted while stopping starts nothing**
+    #: — the listener closes a moment later, and whatever it began would outlive the stop.
+    stopping = False
 
     async def on_connect(role: Role) -> None:
         # Run anything slow in a separate task so it doesn't block the connect handler.
+        if stopping:
+            return
         if role is Role.SHELL and os.environ.get(DEV_PROBE_FLAG) == "1":
             spawn(
                 probe_os_boundary(server),
@@ -130,6 +135,16 @@ async def _run() -> int:
         await stop.wait()
     finally:
         log.info("core.stopping")
+        stopping = True
+        # **Before deciding whether there is a conversation to stop.** `on_stage_connected`
+        # assigns `conversation` and then starts it, so a handler still in flight can bring
+        # one up during the awaits below — after the check said there was none, and with
+        # nothing left to stop it. Cancelling first closes that window; the assignment
+        # happens before the start, so anything half-built is still stopped properly.
+        for task in connect_tasks:
+            task.cancel()
+        if connect_tasks:
+            await asyncio.gather(*connect_tasks, return_exceptions=True)
         # **Only stop engines that Lumi itself started** (docs/architecture/core.md §6).
         if conversation is not None:
             await conversation.stop()
