@@ -34,14 +34,29 @@ def lumi_sources() -> list[Path]:
 
 
 def imported_names(path: Path) -> set[str]:
-    """Picks up `from lumi import logging` as `lumi.logging`."""
+    """Picks up `from lumi import logging` as `lumi.logging`.
+
+    **Relative imports are resolved to absolute ones.** Skipping them would let
+    `from ..setup import models` slip past every check here — and the shorter spelling is
+    exactly the one someone reaches for when the import is one they half know is wrong.
+    """
+    package = ".".join(("lumi", *path.relative_to(LUMI).parts[:-1]))
     tree = ast.parse(path.read_text(encoding="utf-8"))
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             names.update(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom) and node.module and node.level == 0:
-            names.update(f"{node.module}.{alias.name}" for alias in node.names)
+        elif isinstance(node, ast.ImportFrom):
+            if node.level:
+                # `from . import x` is level 1 and stays in `package`; each extra dot
+                # climbs one more.
+                base = ".".join(package.split(".")[: len(package.split(".")) - node.level + 1])
+                module = f"{base}.{node.module}" if node.module else base
+            elif node.module:
+                module = node.module
+            else:  # pragma: no cover - `from import` does not parse
+                continue
+            names.update(f"{module}.{alias.name}" for alias in node.names)
     return names
 
 
@@ -147,6 +162,28 @@ def test_providers_do_not_import_setup() -> None:
     assert offenders == []
 
 
+#: Every way to detach a coroutine from its caller. **`asyncio.create_task` is not the
+#: only one** — `get_running_loop().create_task` and `ensure_future` do the same thing
+#: with the same two problems, and a rule that names one spelling teaches the others.
+TASK_STARTERS = ("create_task", "ensure_future")
+
+
+def task_starts(path: Path) -> list[int]:
+    """Lines calling something that starts a task. **Parsed, not grepped** — a mention in
+    a docstring is not a call, and `loop.create_task` is.
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and (
+            (isinstance(node.func, ast.Attribute) and node.func.attr in TASK_STARTERS)
+            or (isinstance(node.func, ast.Name) and node.func.id in TASK_STARTERS)
+        )
+    ]
+
+
 #: Files that may call `asyncio.create_task` directly, and why.
 #: **When adding one, write down who claims the task's result.** Everywhere else goes
 #: through `lumi.tasks.spawn`, which keeps a strong reference and reports failures.
@@ -171,10 +208,10 @@ def test_background_tasks_are_started_through_spawn() -> None:
     are real, and the reason is what makes the next one arguable.
     """
     offenders = sorted(
-        source.relative_to(LUMI).as_posix()
+        f"{source.relative_to(LUMI).as_posix()}:{line}"
         for source in lumi_sources()
-        if "asyncio.create_task" in source.read_text(encoding="utf-8")
-        and source.relative_to(LUMI).as_posix() not in ALLOWED_DIRECT_CREATE_TASK
+        if source.relative_to(LUMI).as_posix() not in ALLOWED_DIRECT_CREATE_TASK
+        for line in task_starts(source)
     )
     assert offenders == []
 
