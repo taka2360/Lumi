@@ -74,7 +74,7 @@ from lumi.storage.memory import EpisodeStore, open_memory
 from lumi.storage.retention import RetentionPolicy, RetentionService
 from lumi.storage.secret import DpapiSecretStore, get_or_create_db_key
 from lumi.storage.sqlite import Database
-from lumi.tasks import report_task_exit, spawn
+from lumi.tasks import spawn
 from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
 from lumi.transport.methods import (
@@ -601,12 +601,11 @@ class ConversationRuntime:
                 on_ready=self._start_listening,
             ),
             name="warmup",
+            # **Nobody awaits this task while it runs.** Without a report an unexpected
+            # failure stays invisible until GC, and `stop()` is where it would finally
+            # surface — as an exception that aborts the rest of shutdown
             event="warmup.crashed",
         )
-        # **Nobody awaits this task while it runs.** Without a callback an unexpected failure
-        # stays invisible until GC, and `stop()` is where it would finally surface — as an
-        # exception that aborts the rest of shutdown
-        self._warmup.add_done_callback(report_task_exit("warmup.crashed"))
 
     def _schedule_llm_warmup(self) -> None:
         """Continues setup after a re-check finds Ollama's local API.
