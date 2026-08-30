@@ -51,11 +51,12 @@ from lumi.kernel.ids import new_job_id
 from lumi.kernel.job import Job, JobKind
 from lumi.memory.contradiction import Resolution
 from lumi.memory.decay import SalienceInputs, correct_salience
+from lumi.memory.phrases import explicit_marking
 from lumi.memory.records import AssertionMode, MemoryCandidate, MemoryType
 from lumi.memory.store import MemoryRejected, MemoryStore
 from lumi.provenance import join_all, provenance_from
 from lumi.providers.llm.base import Finish, LLMFailure, LLMOptions, LLMProvider, Message, TextDelta
-from lumi.storage.memory import SPEAKER_USER, EpisodeStore, Utterance
+from lumi.storage.memory import EpisodeStore, Utterance
 
 log = lumi_logging.get_logger(__name__)
 
@@ -79,18 +80,6 @@ EXTRACTABLE: Final[Mapping[str, AssertionMode]] = {
     AssertionMode.INFERRED.value: AssertionMode.INFERRED,
     AssertionMode.SELF_GENERATED.value: AssertionMode.SELF_GENERATED,
 }
-
-#: Phrases that mean "keep this". **Counted, not judged** — the deterministic half of
-#: salience (docs/architecture/memory.md §4). Japanese first because that is what Lumi is
-#: spoken to in; the English forms cost nothing to include.
-REMEMBER_PHRASES: Final = (
-    "覚えておいて",
-    "覚えといて",
-    "忘れないで",
-    "記憶しておいて",
-    "remember this",
-    "don't forget",
-)
 
 #: The extraction contract. **English, like the rest of what Core says to a model** — it
 #: is not shown to anyone, and the model is multilingual.
@@ -175,32 +164,6 @@ class ReflectionReport:
     @property
     def learned(self) -> int:
         return self.written + self.superseded
-
-
-def asked_to_remember(text: str) -> bool:
-    """Whether an utterance is the user asking for something to be remembered.
-
-    **A substring match on a short list, not a classifier.** Getting this wrong in the
-    permissive direction costs one early reflection pass; getting it wrong the other way
-    means "覚えておいて" was heard and quietly ignored, which is the failure people
-    remember. The same list decides `explicit_marking`, so what triggers a pass and what
-    counts as important within it cannot disagree.
-    """
-    # **Case-folded for the English phrases.** "Remember this" at the start of a sentence
-    # is the ordinary way to write it, and a trigger that misses the capitalised form is
-    # one that misses it exactly when someone is being deliberate. The Japanese phrases
-    # are unaffected — `casefold` leaves them as they are.
-    folded = text.casefold()
-    return any(phrase.casefold() in folded for phrase in REMEMBER_PHRASES)
-
-
-def explicit_marking(lines: Sequence[Utterance]) -> bool:
-    """Whether the user asked, in so many words, for this to be kept.
-
-    **A string check, and deliberately so.** "Did they mean it as important" is exactly the
-    judgement an LLM is unreliable at; "did they say 覚えておいて" is not a judgement.
-    """
-    return any(asked_to_remember(line.text) for line in lines if line.speaker == SPEAKER_USER)
 
 
 def render_transcript(lines: Sequence[Utterance]) -> str:

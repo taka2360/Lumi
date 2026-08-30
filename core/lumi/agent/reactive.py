@@ -47,7 +47,7 @@ from lumi.kernel.activity import ActivityKind, ActivityProposal, Actor
 from lumi.kernel.arbiter import Accepted, AttentionArbiter
 from lumi.kernel.cancellation import CancelToken
 from lumi.kernel.ids import new_correlation_id
-from lumi.memory.reflection import asked_to_remember
+from lumi.memory.phrases import asked_to_remember
 from lumi.memory.retrieval import Retriever
 from lumi.providers.base import ProviderError, ProviderKind
 from lumi.providers.llm.base import LLMOptions
