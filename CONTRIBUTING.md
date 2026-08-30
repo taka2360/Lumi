@@ -226,8 +226,8 @@ each thing is defined.
 messages are English.**
 
 Public-facing files at the repository root — this one, `README.md`, `SECURITY.md` — are the
-exception: they are written in English for the widest audience, with `README.ja.md` kept in step.
-If you change one of those, please update its counterpart in the same pull request.
+exception: they are written in English for the widest audience. `README.md` and `README.ja.md`
+are counterparts; if you change either one, please update the other in the same pull request.
 
 Within the code, it depends on the audience:
 
