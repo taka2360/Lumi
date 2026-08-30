@@ -42,7 +42,7 @@ from lumi.providers.base import (
     ProviderKind,
 )
 from lumi.setup.state import BootPhase, LlmSetup, LlmSetupState, SetupSnapshot
-from lumi.transport.server import RequestRefused
+from lumi.transport.router import RequestRefused
 
 
 class TestAssembly:

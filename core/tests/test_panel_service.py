@@ -35,7 +35,7 @@ from lumi.storage.memory import EMBEDDING_DIMENSION, Episode, EpisodeStore, Utte
 from lumi.storage.retention import RetentionService, Target
 from lumi.storage.sqlite import IN_MEMORY, Database, one
 from lumi.transport.methods import INBOUND_METHODS
-from lumi.transport.server import RequestRefused
+from lumi.transport.router import RequestRefused
 
 NOW = datetime(2026, 8, 23, 12, 0, tzinfo=UTC)
 

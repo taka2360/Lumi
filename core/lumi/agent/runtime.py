@@ -82,7 +82,8 @@ from lumi.transport.methods import (
 )
 from lumi.transport.payload import require_bool, require_str_map
 from lumi.transport.protocol import Role
-from lumi.transport.server import RequestRefused, WsServer
+from lumi.transport.router import RequestRefused
+from lumi.transport.server import WsServer
 
 log = lumi_logging.get_logger(__name__)
 

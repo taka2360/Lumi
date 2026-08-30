@@ -51,7 +51,8 @@ from lumi.transport.methods import (
     METHOD_PANEL_SETTINGS_UPDATE,
 )
 from lumi.transport.payload import optional_str, require_str
-from lumi.transport.server import RequestRefused, WsServer
+from lumi.transport.router import RequestRefused
+from lumi.transport.server import WsServer
 
 log = lumi_logging.get_logger(__name__)
 

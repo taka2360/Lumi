@@ -21,7 +21,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from lumi.transport.server import RequestRefused
+from lumi.transport.router import RequestRefused
 
 
 def require_str(
