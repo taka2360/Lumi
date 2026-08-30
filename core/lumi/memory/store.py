@@ -55,6 +55,7 @@ from lumi.memory.contradiction import (
     resolve,
 )
 from lumi.memory.records import AssertionMode, MemoryCandidate, MemoryRecord, MemoryType
+from lumi.memory.rows import COLUMNS, hydrate, read
 from lumi.provenance import (
     ProvenanceClass,
     TrustLevel,
@@ -70,12 +71,6 @@ log = lumi_logging.get_logger(__name__)
 #: Assertion modes that claim the conversation as their source, and therefore have to name
 #: at least one utterance. `self_generated` and `external` did not come from one.
 GROUNDED_IN_CONVERSATION: Final = (AssertionMode.USER_STATED, AssertionMode.INFERRED)
-
-_COLUMNS: Final = (
-    "id, type, subject, content, assertion_mode, confidence, provenance_class,"
-    " trust_level, base_salience, created_at, last_accessed, access_count,"
-    " archived_at, valid_from, superseded_by, embedding_model_id"
-)
 
 
 class MemoryRejected(ValueError):
@@ -126,7 +121,7 @@ class MemoryStore:
         self, old_id: str, candidate: MemoryCandidate, now: datetime
     ) -> Reconciled:
         with self._db.transaction() as conn:
-            existing = self._read(conn, old_id)
+            existing = read(conn, old_id)
             if existing is None:
                 raise MemoryRejected(f"No such memory to supersede: {old_id}")
             return self._supersede_in(conn, existing, candidate, now)
@@ -151,7 +146,7 @@ class MemoryStore:
                     # **Saying it again is not a second belief.** It is a reason to hold
                     # the one already there a little more firmly.
                     self._touch_in(conn, (record.id,), now)
-                    refreshed = self._read(conn, record.id)
+                    refreshed = read(conn, record.id)
                     assert refreshed is not None  # touched in this transaction
                     return Reconciled(record=refreshed, resolution=Resolution.DUPLICATE)
 
@@ -231,7 +226,7 @@ class MemoryStore:
 
     def _get_blocking(self, memory_id: str) -> MemoryRecord | None:
         with self._db.transaction() as conn:
-            return self._read(conn, memory_id)
+            return read(conn, memory_id)
 
     async def live(self, subject: str) -> Sequence[MemoryRecord]:
         """Beliefs about `subject` that are neither superseded nor archived."""
@@ -265,12 +260,12 @@ class MemoryStore:
     def _recent_blocking(self, limit: int) -> list[MemoryRecord]:
         with self._db.transaction() as conn:
             rows = conn.execute(
-                f"SELECT {_COLUMNS} FROM memories"
+                f"SELECT {COLUMNS} FROM memories"
                 " WHERE superseded_by IS NULL AND archived_at IS NULL"
                 " ORDER BY valid_from DESC, created_at DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-            return [self._hydrate(conn, row) for row in rows]
+            return [hydrate(conn, row) for row in rows]
 
     async def browse(
         self,
@@ -318,11 +313,11 @@ class MemoryStore:
         with self._db.transaction() as conn:
             total = int(one(conn.execute(f"SELECT COUNT(*) FROM memories{where}", parameters))[0])
             rows = conn.execute(
-                f"SELECT {_COLUMNS} FROM memories{where}"
+                f"SELECT {COLUMNS} FROM memories{where}"
                 " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
                 (*parameters, limit, offset),
             ).fetchall()
-            return [self._hydrate(conn, row) for row in rows], total
+            return [hydrate(conn, row) for row in rows], total
 
     async def everything_after(
         self, *, after: MemoryRecord | None, limit: int
@@ -355,10 +350,10 @@ class MemoryStore:
         parameters: tuple[Any, ...] = after if after is not None else ()
         with self._db.transaction() as conn:
             rows = conn.execute(
-                f"SELECT {_COLUMNS} FROM memories{where} ORDER BY created_at DESC, id DESC LIMIT ?",
+                f"SELECT {COLUMNS} FROM memories{where} ORDER BY created_at DESC, id DESC LIMIT ?",
                 (*parameters, limit),
             ).fetchall()
-            return [self._hydrate(conn, row) for row in rows]
+            return [hydrate(conn, row) for row in rows]
 
     async def get_many(self, memory_ids: Sequence[str]) -> dict[str, MemoryRecord]:
         """Several records at once, **by id, in no particular order.**"""
@@ -370,9 +365,9 @@ class MemoryStore:
         placeholders = ", ".join("?" * len(memory_ids))
         with self._db.transaction() as conn:
             rows = conn.execute(
-                f"SELECT {_COLUMNS} FROM memories WHERE id IN ({placeholders})", memory_ids
+                f"SELECT {COLUMNS} FROM memories WHERE id IN ({placeholders})", memory_ids
             ).fetchall()
-            records = [self._hydrate(conn, row) for row in rows]
+            records = [hydrate(conn, row) for row in rows]
         return {record.id: record for record in records}
 
     async def needing_embedding(self, model_id: str, *, limit: int) -> Sequence[MemoryRecord]:
@@ -392,12 +387,12 @@ class MemoryStore:
     def _needing_blocking(self, model_id: str, limit: int) -> list[MemoryRecord]:
         with self._db.transaction() as conn:
             rows = conn.execute(
-                f"SELECT {_COLUMNS} FROM memories"
+                f"SELECT {COLUMNS} FROM memories"
                 " WHERE superseded_by IS NULL AND embedding_model_id != ?"
                 " ORDER BY created_at LIMIT ?",
                 (model_id, limit),
             ).fetchall()
-            return [self._hydrate(conn, row) for row in rows]
+            return [hydrate(conn, row) for row in rows]
 
     async def mark_embedded(self, memory_ids: Sequence[str], model_id: str) -> None:
         """Record which model produced these vectors. **Written after the index, never
@@ -423,7 +418,7 @@ class MemoryStore:
         self, conn: apsw.Connection, subject: str, kind: MemoryType | None
     ) -> list[MemoryRecord]:
         sql = (
-            f"SELECT {_COLUMNS} FROM memories"
+            f"SELECT {COLUMNS} FROM memories"
             " WHERE subject = ? AND superseded_by IS NULL AND archived_at IS NULL"
         )
         parameters: list[Any] = [subject]
@@ -432,7 +427,7 @@ class MemoryStore:
             parameters.append(kind.value)
         sql += " ORDER BY valid_from DESC, created_at DESC"
         rows = conn.execute(sql, tuple(parameters)).fetchall()
-        return [self._hydrate(conn, row) for row in rows]
+        return [hydrate(conn, row) for row in rows]
 
     # ── decay, recall and confirmation ─────────────────────────────────────
 
@@ -481,12 +476,12 @@ class MemoryStore:
     def _archive_faded_blocking(self, now: datetime) -> Sequence[str]:
         with self._db.transaction() as conn:
             rows = conn.execute(
-                f"SELECT {_COLUMNS} FROM memories"
+                f"SELECT {COLUMNS} FROM memories"
                 " WHERE archived_at IS NULL AND superseded_by IS NULL"
             ).fetchall()
             faded = [
                 record.id
-                for record in (self._hydrate(conn, row, evidence=False) for row in rows)
+                for record in (hydrate(conn, row, evidence=False) for row in rows)
                 if decay.is_faded(record, now)
             ]
             for memory_id in faded:
@@ -509,11 +504,11 @@ class MemoryStore:
 
     def _confirm_blocking(self, memory_id: str, now: datetime) -> MemoryRecord:
         with self._db.transaction() as conn:
-            existing = self._read(conn, memory_id)
+            existing = read(conn, memory_id)
             if existing is None:
                 raise MemoryRejected(f"No such memory to confirm: {memory_id}")
             self._confirm_in(conn, memory_id, now)
-            confirmed = self._read(conn, memory_id)
+            confirmed = read(conn, memory_id)
         assert confirmed is not None  # read back inside the same transaction
         log.info("memory.confirmed", memory_id=memory_id, subject=confirmed.subject)
         return confirmed
@@ -563,7 +558,7 @@ class MemoryStore:
         self, memory_id: str, content: str, subject: str | None, now: datetime
     ) -> MemoryRecord:
         with self._db.transaction() as conn:
-            existing = self._read(conn, memory_id)
+            existing = read(conn, memory_id)
             if existing is None:
                 raise MemoryRejected(f"No such memory to rewrite: {memory_id}")
             if existing.superseded_by is not None:
@@ -601,7 +596,7 @@ class MemoryStore:
                 "UPDATE memories SET superseded_by = ? WHERE id = ?", (record.id, existing.id)
             )
             self._confirm_in(conn, record.id, now)
-            rewritten = self._read(conn, record.id)
+            rewritten = read(conn, record.id)
         assert rewritten is not None  # read back inside the same transaction
         log.info("memory.rewritten", old_id=existing.id, new_id=record.id, subject=record.subject)
         return rewritten
@@ -655,7 +650,7 @@ class MemoryStore:
             source_episode_ids=candidate.source_episode_ids,
         )
         conn.execute(
-            f"INSERT INTO memories ({_COLUMNS}) VALUES ({', '.join('?' * 16)})",
+            f"INSERT INTO memories ({COLUMNS}) VALUES ({', '.join('?' * 16)})",
             (
                 record.id,
                 record.type.value,
@@ -712,51 +707,3 @@ class MemoryStore:
 
         trust = join_all(levels)
         return trust, provenance_from(trust, [candidate.provenance_class])
-
-    def _read(self, conn: apsw.Connection, memory_id: str) -> MemoryRecord | None:
-        row = conn.execute(f"SELECT {_COLUMNS} FROM memories WHERE id = ?", (memory_id,)).fetchone()
-        return None if row is None else self._hydrate(conn, row)
-
-    def _hydrate(self, conn: apsw.Connection, row: Any, *, evidence: bool = True) -> MemoryRecord:
-        """One row as a record. **Converted explicitly** — SQLite columns are typed by
-        whoever last wrote them, not by the schema.
-        """
-        memory_id = str(row[0])
-        evidence_ref: tuple[str, ...] = ()
-        sources: tuple[str, ...] = ()
-        if evidence:
-            evidence_ref = tuple(
-                str(item[0])
-                for item in conn.execute(
-                    "SELECT utterance_id FROM memory_evidence WHERE memory_id = ?"
-                    " ORDER BY utterance_id",
-                    (memory_id,),
-                ).fetchall()
-            )
-            sources = tuple(
-                str(item[0])
-                for item in conn.execute(
-                    "SELECT episode_id FROM memory_sources WHERE memory_id = ? ORDER BY episode_id",
-                    (memory_id,),
-                ).fetchall()
-            )
-        return MemoryRecord(
-            id=memory_id,
-            type=MemoryType(str(row[1])),
-            subject=str(row[2]),
-            content=str(row[3]),
-            assertion_mode=AssertionMode(str(row[4])),
-            evidence_ref=evidence_ref,
-            confidence=float(row[5]),
-            provenance_class=ProvenanceClass(str(row[6])),
-            trust_level=TrustLevel(str(row[7])),
-            base_salience=float(row[8]),
-            created_at=datetime.fromisoformat(str(row[9])),
-            last_accessed=datetime.fromisoformat(str(row[10])),
-            access_count=int(str(row[11])),
-            archived_at=None if row[12] is None else datetime.fromisoformat(str(row[12])),
-            valid_from=datetime.fromisoformat(str(row[13])),
-            superseded_by=None if row[14] is None else str(row[14]),
-            source_episode_ids=sources,
-            embedding_model_id=str(row[15]),
-        )
