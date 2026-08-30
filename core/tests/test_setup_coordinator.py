@@ -17,8 +17,8 @@ from lumi import settings as settings_module
 from lumi.artifacts.install import SetupError
 from lumi.providers.base import EngineRuntime
 from lumi.setup import acquire as acquire_module
-from lumi.setup import coordinator as coordinator_module
 from lumi.setup import detection as detection_module
+from lumi.setup import llm_model as llm_model_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
 from lumi.setup.ollama import OllamaLocalModel
@@ -120,7 +120,7 @@ def no_real_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
     async def none() -> tuple[OllamaLocalModel, ...]:
         return ()
 
-    monkeypatch.setattr(coordinator_module, "list_ollama_models", none)
+    monkeypatch.setattr(llm_model_module, "list_ollama_models", none)
 
 
 @pytest.fixture(autouse=True)
@@ -954,7 +954,7 @@ class TestLlm:
                 await progress(1_000, 1_000)
                 await progress(3_300_000_000, 6_600_000_000)
 
-        monkeypatch.setattr(coordinator_module, "pull_ollama_model", pull)
+        monkeypatch.setattr(llm_model_module, "pull_ollama_model", pull)
         server = FakeServer([{"choice": "install", "model": "qwen3.5:9b"}])
         coordinator = SetupCoordinator(server.as_server(), {})
         coordinator.set_ollama_detected_handler(lambda: warmups.append(None))
@@ -1005,7 +1005,7 @@ class TestLlm:
                 runtime=EngineRuntime.READY,
             )
         )
-        coordinator._model_prompting = True
+        coordinator._llm_model._prompting = True
 
         result = await coordinator._recheck_ollama({})
 
@@ -1023,7 +1023,7 @@ class TestLlm:
             for completed in (100, 500, 10, 100):
                 await progress(completed, 1_000)
 
-        monkeypatch.setattr(coordinator_module, "pull_ollama_model", pull)
+        monkeypatch.setattr(llm_model_module, "pull_ollama_model", pull)
         server = FakeServer([{"choice": "install", "model": "qwen3.5:9b"}])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -1094,7 +1094,7 @@ class TestLlm:
         async def pull(*_args: Any, **_kwargs: Any) -> None:
             pytest.fail("pull must only happen after explicit consent")
 
-        monkeypatch.setattr(coordinator_module, "pull_ollama_model", pull)
+        monkeypatch.setattr(llm_model_module, "pull_ollama_model", pull)
         server = FakeServer(["skip"])
         coordinator = SetupCoordinator(server.as_server(), {})
         await coordinator.initialize()
@@ -1112,12 +1112,12 @@ class TestLlm:
     ) -> None:
         one_engine(monkeypatch)
         local = OllamaLocalModel("llama3.1:8b", "llama3.1:8b", 4_200_000_000)
-        monkeypatch.setattr(coordinator_module, "list_ollama_models", lambda: _local_models(local))
+        monkeypatch.setattr(llm_model_module, "list_ollama_models", lambda: _local_models(local))
 
         async def pull(*_args: Any, **_kwargs: Any) -> None:
             pytest.fail("a local model selection must not download")
 
-        monkeypatch.setattr(coordinator_module, "pull_ollama_model", pull)
+        monkeypatch.setattr(llm_model_module, "pull_ollama_model", pull)
         selected: list[str] = []
         server = FakeServer([{"choice": "select", "model": local.name}])
         coordinator = SetupCoordinator(server.as_server(), {})

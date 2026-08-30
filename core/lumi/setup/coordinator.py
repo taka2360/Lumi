@@ -46,7 +46,6 @@ from enum import StrEnum
 from typing import TypeVar
 
 from lumi import logging as lumi_logging
-from lumi import settings
 from lumi.artifacts.engines import AIVISSPEECH_ENGINE
 from lumi.artifacts.models import (
     FASTER_WHISPER_LARGE_V3_TURBO,
@@ -57,17 +56,13 @@ from lumi.providers.base import EngineRuntime
 from lumi.setup.acquire import Acquisition
 from lumi.setup.broadcast import SetupStateBroadcaster
 from lumi.setup.detection import ComponentDetector, selected_stt_artifact
+from lumi.setup.llm_model import LlmModelChooser
 from lumi.setup.ollama import (
     OLLAMA_MODELS,
     QWEN_35_9B,
     OllamaLocalModel,
     OllamaModelArtifact,
-    OllamaPullError,
-    OllamaTagsError,
-    list_ollama_models,
-    pull_ollama_model,
 )
-from lumi.setup.progress import LayerProgress
 from lumi.setup.prompter import Prompter, WsPrompter
 from lumi.setup.state import (
     BootPhase,
@@ -81,7 +76,6 @@ from lumi.setup.state import (
 from lumi.transport.methods import (
     CHOICE_INDIVIDUALLY,
     CHOICE_INSTALL,
-    CHOICE_SELECT,
     COMPONENT_ALL,
     COMPONENT_EMBEDDING,
     COMPONENT_LLM_MODEL,
@@ -160,9 +154,7 @@ class SetupCoordinator:
         self._detector = ComponentDetector(env, clock=clock)
         self._acquire = Acquisition(self._state, env)
         self._prompter: Prompter = WsPrompter(server, self._state)
-        self._on_ollama_detected: Callable[[], None] | None = None
-        self._on_llm_model_selected: Callable[[str], Awaitable[None]] | None = None
-        self._model_prompting = False
+        self._llm_model = LlmModelChooser(self._state, self._prompter)
         # Registering is the inbound allowlist (ADR-028). This route can only re-check
         # the fixed local Ollama endpoint; no host or URL comes from Stage.
         server.on_request(METHOD_SETUP_RECHECK_OLLAMA, self._recheck_ollama)
@@ -195,11 +187,11 @@ class SetupCoordinator:
         Detection owns only the transition to ``detected × starting``. The Provider
         remains the single place that checks model presence and loads it.
         """
-        self._on_ollama_detected = handler
+        self._llm_model.on_detected(handler)
 
     def set_llm_model_selected_handler(self, handler: Callable[[str], Awaitable[None]]) -> None:
         """Registers the runtime update needed when setup selects a different model."""
-        self._on_llm_model_selected = handler
+        self._llm_model.on_selected(handler)
 
     async def _recheck_ollama(self, _payload: dict[str, object]) -> dict[str, object]:
         """Re-checks Ollama on the local machine and starts model confirmation.
@@ -236,7 +228,7 @@ class SetupCoordinator:
                 LlmSetupState.MODEL_FAILED,
             ) or (
                 self._state.snapshot.llm.state is LlmSetupState.MODEL_MISSING
-                and self._model_prompting
+                and self._llm_model.prompting
             ):
                 return {"detected": True, "running": True}
 
@@ -252,8 +244,7 @@ class SetupCoordinator:
                     reason="model_checking",
                 )
             )
-            if self._on_ollama_detected is not None:
-                self._on_ollama_detected()
+            self._llm_model.detected()
             return {"detected": True, "running": True}
 
     # ── Broadcasting ──────────────────────────────────────────────
@@ -287,150 +278,13 @@ class SetupCoordinator:
             llm=LlmSetup(state=state, model=model, reason=reason, runtime=runtime)
         )
         if state is LlmSetupState.MODEL_MISSING:
-            await self._ask_for_llm_model()
-
-    async def _ask_for_llm_model(self) -> None:
-        """Separately asks consent for a pinned, size-labelled Ollama model pull."""
-        if self._model_prompting:
-            return
-        self._model_prompting = True
-        retry = self._state.snapshot.llm.state is LlmSetupState.MODEL_FAILED
-        detail = self._state.snapshot.llm.reason if retry else None
-        try:
-            while True:
-                current = OLLAMA_MODELS.get(self._state.snapshot.llm.model or "", QWEN_35_9B)
-                local_models = await self._list_local_ollama_models()
-                local_by_name = {model.name: model for model in local_models}
-                result = await self._prompter.ask(
-                    {
-                        "component": COMPONENT_LLM_MODEL,
-                        "retry": retry,
-                        "reason": detail,
-                        "model": (
-                            local_by_name[current.name].to_payload()
-                            if current.name in local_by_name
-                            else current.to_payload()
-                        ),
-                        "alternatives": self._model_options_payload(current.name, local_models),
-                    }
-                )
-                if result is None:
-                    return
-
-                choice = result.payload.get("choice") if result.ok else None
-                selected_name = result.payload.get("model")
-                if choice == CHOICE_SELECT:
-                    local = local_by_name.get(
-                        selected_name if isinstance(selected_name, str) else ""
-                    )
-                    if local is None:
-                        await self._state.replace(
-                            llm=LlmSetup(
-                                state=LlmSetupState.MODEL_FAILED,
-                                runtime=EngineRuntime.READY,
-                                model=current.name,
-                                reason="unknown_model",
-                            )
-                        )
-                        retry = True
-                        detail = "unknown_model"
-                        continue
-                    await self.select_local_llm_model(local)
-                    if self._state.snapshot.llm.state is not LlmSetupState.MODEL_FAILED:
-                        return
-                    retry = True
-                    detail = self._state.snapshot.llm.reason
-                    continue
-                if choice != CHOICE_INSTALL:
-                    return
-                artifact = OLLAMA_MODELS.get(
-                    selected_name if isinstance(selected_name, str) else current.name
-                )
-                if artifact is None:
-                    await self._state.replace(
-                        llm=LlmSetup(
-                            state=LlmSetupState.MODEL_FAILED,
-                            runtime=EngineRuntime.READY,
-                            model=current.name,
-                            reason="unknown_model",
-                        )
-                    )
-                else:
-                    await self.install_llm_model(artifact)
-                if self._state.snapshot.llm.state is not LlmSetupState.MODEL_FAILED:
-                    return
-                retry = True
-                detail = self._state.snapshot.llm.reason
-        finally:
-            self._model_prompting = False
-            self._state.asking(False)
-            await self._state.publish()
-
-    async def _list_local_ollama_models(self) -> tuple[OllamaLocalModel, ...]:
-        """Reads local models for the choice screen; a transient catalog error is non-fatal."""
-        try:
-            return await list_ollama_models()
-        except OllamaTagsError as error:
-            log.info("setup.ollama_model.catalog_unavailable", detail=str(error))
-            return ()
-
-    def _model_options_payload(
-        self, current_name: str, local_models: tuple[OllamaLocalModel, ...]
-    ) -> list[dict[str, object]]:
-        """Combines local models with the fixed download catalog without duplicates."""
-        options: list[dict[str, object]] = []
-        seen = {current_name}
-        for local in local_models:
-            if local.name in seen:
-                continue
-            seen.add(local.name)
-            options.append(local.to_payload())
-        for artifact in OLLAMA_MODELS.values():
-            if artifact.name in seen:
-                continue
-            seen.add(artifact.name)
-            options.append(artifact.to_payload())
-        return options
+            await self._llm_model.ask()
 
     async def select_local_llm_model(self, model: OllamaLocalModel) -> None:
-        """Selects a model already present locally, without invoking `/api/pull`."""
-        if self._on_llm_model_selected is None:
-            await self._state.replace(
-                llm=LlmSetup(
-                    state=LlmSetupState.MODEL_FAILED,
-                    runtime=EngineRuntime.READY,
-                    model=model.name,
-                    reason="model_selection_unavailable",
-                )
-            )
-            return
-        try:
-            await self._on_llm_model_selected(model.name)
-        except (settings.SettingsError, OSError) as error:
-            log.warning(
-                "setup.ollama_model.selection_failed",
-                model=model.name,
-                reason=type(error).__name__,
-            )
-            await self._state.replace(
-                llm=LlmSetup(
-                    state=LlmSetupState.MODEL_FAILED,
-                    runtime=EngineRuntime.READY,
-                    model=model.name,
-                    reason="settings_save_failed",
-                )
-            )
-            return
-        await self._state.replace(
-            llm=LlmSetup(
-                state=LlmSetupState.DETECTED,
-                runtime=EngineRuntime.STARTING,
-                model=model.name,
-                reason="model_checking",
-            )
-        )
-        if self._on_ollama_detected is not None:
-            self._on_ollama_detected()
+        await self._llm_model.select_local(model)
+
+    async def install_llm_model(self, artifact: OllamaModelArtifact) -> None:
+        await self._llm_model.pull(artifact)
 
     async def set_stt_runtime(self, runtime: EngineRuntime) -> None:
         """The STT Provider's load state changed without changing acquisition state.
@@ -700,99 +554,3 @@ class SetupCoordinator:
 
     async def install_speech_model(self) -> None:
         await self._acquire.speech_model()
-
-    async def install_llm_model(self, artifact: OllamaModelArtifact) -> None:
-        """Asks Ollama's fixed local API to pull one consented, allowlisted model."""
-        if self._on_llm_model_selected is None:
-            await self._state.replace(
-                llm=LlmSetup(
-                    state=LlmSetupState.MODEL_FAILED,
-                    runtime=EngineRuntime.READY,
-                    model=artifact.name,
-                    reason="model_selection_unavailable",
-                )
-            )
-            return
-
-        try:
-            await self._on_llm_model_selected(artifact.name)
-        except (settings.SettingsError, OSError) as error:
-            log.warning(
-                "setup.ollama_model.selection_failed",
-                model=artifact.name,
-                reason=type(error).__name__,
-            )
-            await self._state.replace(
-                llm=LlmSetup(
-                    state=LlmSetupState.MODEL_FAILED,
-                    runtime=EngineRuntime.READY,
-                    model=artifact.name,
-                    reason="settings_save_failed",
-                )
-            )
-            return
-        await self._state.replace(
-            llm=LlmSetup(
-                state=LlmSetupState.MODEL_INSTALLING,
-                runtime=EngineRuntime.READY,
-                model=artifact.name,
-                progress=0.0,
-                completed_bytes=0,
-                total_bytes=artifact.size_bytes,
-            )
-        )
-
-        layers = LayerProgress()
-
-        async def progress(completed: int, total: int) -> None:
-            fraction = layers.update(completed, total)
-            if fraction is None:
-                return
-            await self._state.replace(
-                llm=replace(
-                    self._state.snapshot.llm,
-                    progress=fraction,
-                    completed_bytes=completed,
-                    total_bytes=total,
-                )
-            )
-
-        try:
-            await pull_ollama_model(artifact, progress=progress)
-        except OllamaPullError as error:
-            log.warning(
-                "setup.ollama_model.failed",
-                model=artifact.name,
-                reason=error.reason,
-                detail=error.detail,
-            )
-            await self._state.replace(
-                llm=LlmSetup(
-                    state=LlmSetupState.MODEL_FAILED,
-                    runtime=EngineRuntime.READY,
-                    model=artifact.name,
-                    reason=error.reason,
-                )
-            )
-            return
-        except asyncio.CancelledError:
-            await self._state.replace(
-                llm=LlmSetup(
-                    state=LlmSetupState.MODEL_FAILED,
-                    runtime=EngineRuntime.READY,
-                    model=artifact.name,
-                    reason="cancelled",
-                )
-            )
-            raise
-
-        await self._state.replace(
-            llm=LlmSetup(
-                state=LlmSetupState.DETECTED,
-                runtime=EngineRuntime.STARTING,
-                model=artifact.name,
-                reason="model_checking",
-            )
-        )
-        if self._on_ollama_detected is not None:
-            self._on_ollama_detected()
