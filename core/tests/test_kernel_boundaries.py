@@ -353,7 +353,8 @@ def _literal_sql(node: ast.expr) -> str | None:
         return node.value
     if isinstance(node, ast.JoinedStr):
         return "".join(
-            part.value if isinstance(part, ast.Constant) else "?" for part in node.values
+            part.value if isinstance(part, ast.Constant) and isinstance(part.value, str) else "?"
+            for part in node.values
         )
     return None
 
