@@ -38,12 +38,11 @@ import numpy as np
 from lumi import logging as lumi_logging
 from lumi.agent.episodes import EpisodeRecorder
 from lumi.agent.latency import TurnLatency, TurnTimer, record_stt
-from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import ContextBlock, assemble
 from lumi.agent.recall import BLOCK_OVERHEAD_TOKENS, MAX_MEMORY_BLOCKS, to_blocks
-from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
+from lumi.agent.streaming import consume_stream
 from lumi.agent.stt import SpeculativeStt
 from lumi.agent.voice import VoiceResolver, VoiceScales, validate_speed, validate_volume
 from lumi.audio.io import AudioIO
@@ -58,15 +57,7 @@ from lumi.kernel.ids import new_correlation_id
 from lumi.memory.reflection import asked_to_remember
 from lumi.memory.retrieval import Retriever
 from lumi.providers.base import ProviderError, ProviderKind
-from lumi.providers.llm.base import (
-    Finish,
-    LLMFailure,
-    LLMOptions,
-    LLMProvider,
-    ReasoningDelta,
-    TextDelta,
-    ToolCall,
-)
+from lumi.providers.llm.base import LLMOptions, LLMProvider, ToolCall
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import AudioBuffer, STTProvider, Transcription
 from lumi.providers.tts.base import TTSProvider
@@ -519,62 +510,31 @@ class ReactiveLoop:
         with timer.span("assemble_ms"):
             prompt = assemble(persona=self._pack.persona, session=self._session, blocks=blocks)
 
-        markers = MarkerStream()
-        sentences = SentenceStream()
-        spoken: list[str] = []
-        calls: list[ToolCall] = []
+        async def express(intent: ExpressionIntent) -> None:
+            await self._apply_expression(activity, intent)
 
-        timer.begin("llm_first_token_ms")
-        async for event in llm.stream(
-            prompt.messages,
-            self._tools.list_exposed(),
-            self._options,
-            activity.cancel_token,
-        ):
-            if activity.cancel_token.is_set:
-                # `cooperative`. **Stops at the next checkpoint**
-                break
-            match event:
-                case TextDelta(text=text):
-                    if timer.end("llm_first_token_ms") is not None:
-                        # The wait for a full TTS-able unit starts here (audio.md §7)
-                        timer.begin("llm_first_segment_ms")
-                    chunk = markers.feed(text)
-                    spoken.append(chunk.text)
-                    for intent in chunk.intents:
-                        await self._apply_expression(activity, intent)
-                    for sentence in sentences.feed(chunk.text):
-                        timer.end("llm_first_segment_ms")
-                        scheduler.speak(sentence)
-                case ReasoningDelta():
-                    # **Reasoning is never spoken.** Not shown in the speech bubble either
-                    # (Inspector only)
-                    pass
-                case ToolCall():
-                    calls.append(event)
-                case Finish():
-                    pass
-                case LLMFailure(message=message):
-                    # Broke mid-stream. **What's already been spoken needs to stay
-                    # consistent**, so this stops here instead of raising an exception
-                    log.warning("reactive.llm_failed", error=message)
-
-        tail = markers.flush()
-        spoken.append(tail)
-        for sentence in [*sentences.feed(tail), *sentences.flush()]:
-            timer.end("llm_first_segment_ms")
-            scheduler.speak(sentence)
+        spoken = await consume_stream(
+            llm.stream(
+                prompt.messages,
+                self._tools.list_exposed(),
+                self._options,
+                activity.cancel_token,
+            ),
+            scheduler=scheduler,
+            timer=timer,
+            cancel_token=activity.cancel_token,
+            express=express,
+        )
 
         # **Inherits the join of the inputs** (not "always tainted because it's LLM output")
-        reply = "".join(spoken)
-        self._session.record_lumi_turn(reply, prompt.context.effective_trust)
+        self._session.record_lumi_turn(spoken.reply, prompt.context.effective_trust)
         if self._episodes is not None:
             self._episodes.remember_lumi(
-                reply,
+                spoken.reply,
                 prompt.context.effective_trust,
                 correlation_id=str(activity.correlation_id),
             )
-        return calls
+        return spoken.calls
 
     # ── Tools ────────────────────────────────────────────
 
