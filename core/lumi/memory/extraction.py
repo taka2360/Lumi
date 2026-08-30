@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from typing import Any, Final
 
 from lumi.memory.decay import SalienceInputs, correct_salience
@@ -122,7 +122,12 @@ def to_candidate(
     if mode is None:
         raise ReflectionRejected(f"unusable_assertion_mode: {item.get('assertion_mode')!r}")
 
-    cited = [str(reference) for reference in item.get("evidence", []) or []]
+    raw_evidence = item.get("evidence", [])
+    if not isinstance(raw_evidence, Iterable) or isinstance(
+        raw_evidence, (str, bytes, bytearray, Mapping)
+    ):
+        raise ReflectionRejected("invalid_evidence")
+    cited = [str(reference) for reference in raw_evidence]
     evidence = tuple(dict.fromkeys(reference for reference in cited if reference in lines))
     if not evidence:
         # **A citation that does not resolve is not weak evidence, it is none.** Models

@@ -18,6 +18,7 @@ Anything grep and AST can cover is enforced here instead of building runtime mac
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 LUMI = Path(__file__).resolve().parents[1] / "lumi"
@@ -341,9 +342,67 @@ AUDIT_DELETION_SITE = LUMI / "storage" / "retention.py"
 #: things and one forgets them, **and forgetting is deletion**, which privacy.md §5
 #: keeps in one file with every other `DELETE` against user data.
 MEMORY_WRITERS = {
-    LUMI / "memory" / "store.py": ("INSERT INTO MEMORIES", "UPDATE MEMORIES"),
-    LUMI / "storage" / "retention.py": ("UPDATE MEMORIES", "DELETE FROM MEMORIES"),
+    LUMI / "memory" / "store.py": ("INSERT", "UPDATE"),
+    LUMI / "storage" / "retention.py": ("UPDATE", "DELETE"),
 }
+
+
+def _literal_sql(node: ast.expr) -> str | None:
+    """Literal SQL passed to ``execute``; interpolated values become placeholders."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            part.value if isinstance(part, ast.Constant) else "?" for part in node.values
+        )
+    return None
+
+
+def _executed_sql(source: Path) -> list[str]:
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    statements: list[str] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "execute"
+            and node.args
+        ):
+            continue
+        statement = _literal_sql(node.args[0])
+        if statement is not None:
+            statements.append(statement)
+    return statements
+
+
+def _write_target(statement: str) -> tuple[str, str] | None:
+    """The normalized write operation and table, if this is a supported SQL write."""
+    normalized = re.sub(r"\s+", " ", statement).strip().upper()
+    match = re.match(
+        r"^(?P<operation>INSERT(?: OR REPLACE)?|REPLACE) INTO (?P<insert_table>[^\s(]+)"
+        r"|^(?P<update>UPDATE) (?P<update_table>[^\s(]+)"
+        r"|^(?P<delete>DELETE) FROM (?P<delete_table>[^\s(]+)",
+        normalized,
+    )
+    if match is None:
+        return None
+    operation = match.group("operation") or match.group("update") or match.group("delete")
+    table = (
+        match.group("insert_table") or match.group("update_table") or match.group("delete_table")
+    )
+    # INSERT OR REPLACE and REPLACE have the same authority boundary as INSERT.
+    canonical_operation = "INSERT" if operation in {"INSERT OR REPLACE", "REPLACE"} else operation
+    return canonical_operation, table.strip('`"[]')
+
+
+def _memory_writes(source: Path) -> set[str]:
+    return {
+        operation
+        for statement in _executed_sql(source)
+        if (target := _write_target(statement)) is not None
+        for operation, table in (target,)
+        if table == "MEMORIES"
+    }
 
 
 def test_the_audit_log_is_append_only() -> None:
@@ -451,12 +510,30 @@ def test_only_the_store_and_the_purge_write_memories() -> None:
     data, because privacy.md §5 has to be checkable by reading one file.
     """
     for source in lumi_sources():
-        text = source.read_text(encoding="utf-8").upper()
-        allowed = MEMORY_WRITERS.get(source, ())
-        for statement in ("INSERT INTO MEMORIES", "UPDATE MEMORIES", "DELETE FROM MEMORIES"):
-            if statement in allowed:
-                continue
-            assert statement not in text, f"{source.relative_to(LUMI).as_posix()}: {statement}"
+        writes = _memory_writes(source)
+        allowed = set(MEMORY_WRITERS.get(source, ()))
+        assert writes <= allowed, (
+            f"{source.relative_to(LUMI).as_posix()}: "
+            f"unauthorized {', '.join(sorted(writes - allowed))} on MEMORIES"
+        )
+
+
+def test_memory_write_parser_covers_sqlite_write_forms() -> None:
+    """Whitespace and SQLite replacement syntax must not create a boundary-test escape."""
+    statements = {
+        "INSERT": "insert\ninto memories (id) values (?)",
+        "INSERT OR REPLACE": "INSERT OR REPLACE INTO `memories` (id) VALUES (?)",
+        "REPLACE": 'REPLACE INTO "memories" (id) VALUES (?)',
+        "UPDATE": " update memories set archived_at = ? ",
+        "DELETE": "DELETE\nFROM [memories] WHERE id = ?",
+    }
+
+    for statement in statements.values():
+        assert _write_target(statement) in {
+            ("INSERT", "MEMORIES"),
+            ("UPDATE", "MEMORIES"),
+            ("DELETE", "MEMORIES"),
+        }
 
 
 def test_both_memory_writers_still_write() -> None:
@@ -466,7 +543,9 @@ def test_both_memory_writers_still_write() -> None:
     the purge stopped deleting memories, the skip above would quietly license a `DELETE`
     anywhere in `storage/retention.py`.
     """
-    for source, statements in MEMORY_WRITERS.items():
-        text = source.read_text(encoding="utf-8").upper()
-        for statement in statements:
-            assert statement in text, f"{source.relative_to(LUMI).as_posix()}: {statement}"
+    for source, operations in MEMORY_WRITERS.items():
+        writes = _memory_writes(source)
+        for operation in operations:
+            assert operation in writes, (
+                f"{source.relative_to(LUMI).as_posix()}: {operation} MEMORIES"
+            )
