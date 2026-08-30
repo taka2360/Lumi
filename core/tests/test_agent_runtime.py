@@ -32,6 +32,7 @@ from fakes import (  # noqa: F401  — `isolated_paths` / `no_ollama` are autous
 )
 
 from lumi import paths as paths_module
+from lumi.agent import reflection_scheduler as scheduler_module
 from lumi.agent import runtime as runtime_module
 from lumi.agent.runtime import ConversationRuntime
 from lumi.audio.devices import AudioPlan
@@ -423,7 +424,9 @@ class TestStartupMaintenance:
                     swept_before_start.append(False)
                 return await real.archive_faded(**kwargs)
 
-        runtime._memories = cast(Any, Watched())
+        # **Substituted where the sweep reads it.** MaintenanceJobs is handed the store
+        # at construction, so replacing the runtime's own reference no longer reaches it.
+        runtime._maintenance._memories = cast(Any, Watched())
         try:
             await runtime.start()
 
@@ -463,9 +466,9 @@ class TestReflection:
                 ran.set()
                 return type("Report", (), {"learned": 0})()
 
-        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
-        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
-        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(0))
+        monkeypatch.setattr(scheduler_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_IDLE_AFTER", timedelta(0))
         # **Registered through the same seam startup uses.** Registering directly would be
         # overwritten by `_register_providers`, which is exactly what happened first.
         monkeypatch.setattr(
@@ -496,9 +499,9 @@ class TestReflection:
                 started.append("ran")
                 return type("Report", (), {"learned": 0})()
 
-        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
-        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
-        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(minutes=5))
+        monkeypatch.setattr(scheduler_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_IDLE_AFTER", timedelta(minutes=5))
         try:
             await runtime.start()
             await asyncio.sleep(0.05)
@@ -526,11 +529,11 @@ class TestReflection:
                 ran.set()
                 return type("Report", (), {"learned": 0})()
 
-        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
-        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(scheduler_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_CHECK_SECONDS", 0.001)
         # Long enough that the ordinary trigger cannot be what fires.
-        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(days=1))
-        monkeypatch.setattr(runtime_module, "REFLECTION_ASKED_IDLE_AFTER", timedelta(0))
+        monkeypatch.setattr(scheduler_module, "REFLECTION_IDLE_AFTER", timedelta(days=1))
+        monkeypatch.setattr(scheduler_module, "REFLECTION_ASKED_IDLE_AFTER", timedelta(0))
         monkeypatch.setattr(
             runtime_module, "OllamaProvider", lambda _model: FakeTts(kind=ProviderKind.LLM)
         )
@@ -554,8 +557,8 @@ class TestReflection:
         it. **The next one tries again**, and nothing was lost in between.
         """
         runtime = await self._runtime(monkeypatch)
-        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
-        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(0))
+        monkeypatch.setattr(scheduler_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_IDLE_AFTER", timedelta(0))
         try:
             await runtime.start()
             await asyncio.sleep(0.05)
@@ -789,3 +792,76 @@ class TestPanelWindows:
         await runtime.on_panel_connected()
 
         assert [method for method, _payload in server.panel] == ["panel.settings.state"]
+
+
+class TestTheOrderShutdownReleasesThings:
+    """**Characterization test.** Every step after the task cancels releases something,
+    and each one is only safe after the one before it.
+
+    | step | why it cannot move later |
+    |---|---|
+    | `loop.shutdown` | cancelling the loop task does not stop the turns it spawned |
+    | `recorder.close` | a pending write against a closed connection loses the last utterance |
+    | `db.close` | last, for the same reason |
+
+    None of that is visible from an end state, and `stop()` is about to be split apart —
+    so the order is written down rather than left to be re-derived from the comments.
+    """
+
+    async def test_the_order(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        detects(monkeypatch, [])
+        server = FakeServer()
+        runtime = ConversationRuntime(
+            server.as_server(),
+            await make_coordinator(server),
+            AudioPlan(capture=None, playback=None, warnings=()),
+        )
+        await runtime.start()
+        assert runtime._loop is not None, "this test is about the loop being shut down too"
+
+        steps: list[str] = []
+        databases = {
+            id(runtime._memory_db): "db.close:memory",
+            id(runtime._audit_db): "db.close:audit",
+            id(runtime._events_db): "db.close:events",
+        }
+
+        def record(owner: object, name: str, label: str) -> None:
+            """**Patched on the class.** These objects use `__slots__`, so there is no
+            instance attribute to replace.
+            """
+            original = getattr(type(owner), name)
+
+            async def wrapper(this: Any, *args: Any, **kwargs: Any) -> Any:
+                steps.append(label)
+                return await original(this, *args, **kwargs)
+
+            monkeypatch.setattr(type(owner), name, wrapper)
+
+        record(runtime._inspector, "stop", "inspector.stop")
+        record(runtime._loop, "shutdown", "loop.shutdown")
+        record(runtime._recorder, "close", "recorder.close")
+        record(runtime._audio, "stop", "audio.stop")
+        record(runtime._providers, "unload_all", "providers.unload_all")
+
+        closing = type(runtime._memory_db).close
+
+        def close(this: Any) -> None:
+            # All three share a class, so which one it is comes from identity.
+            steps.append(databases.get(id(this), "db.close:unknown"))
+            closing(this)
+
+        monkeypatch.setattr(type(runtime._memory_db), "close", close)
+
+        await runtime.stop()
+
+        assert steps == [
+            "inspector.stop",
+            "loop.shutdown",
+            "recorder.close",
+            "audio.stop",
+            "providers.unload_all",
+            "db.close:memory",
+            "db.close:audit",
+            "db.close:events",
+        ]
