@@ -46,19 +46,15 @@ from enum import StrEnum
 from typing import TypeVar
 
 from lumi import logging as lumi_logging
-from lumi import paths, settings
+from lumi import settings
 from lumi.artifacts.engines import AIVISSPEECH_ENGINE
-from lumi.artifacts.install import (
-    SetupError,
-    install_engine,
-    install_model,
-)
 from lumi.artifacts.models import (
     FASTER_WHISPER_LARGE_V3_TURBO,
     HARRIER_OSS_V1_270M,
     ModelArtifact,
 )
 from lumi.providers.base import EngineRuntime
+from lumi.setup.acquire import Acquisition
 from lumi.setup.broadcast import SetupStateBroadcaster
 from lumi.setup.detection import ComponentDetector, selected_stt_artifact
 from lumi.setup.ollama import (
@@ -71,17 +67,14 @@ from lumi.setup.ollama import (
     list_ollama_models,
     pull_ollama_model,
 )
-from lumi.setup.progress import LayerProgress, throttle
+from lumi.setup.progress import LayerProgress
 from lumi.setup.state import (
     BootPhase,
-    EmbeddingSetup,
     EmbeddingSetupState,
     LlmSetup,
     LlmSetupState,
     SetupSnapshot,
-    SttSetup,
     SttSetupState,
-    TtsSetup,
     TtsSetupState,
 )
 from lumi.transport.methods import (
@@ -166,6 +159,7 @@ class SetupCoordinator:
         # into model warm-up are one serialized operation, never two warm-ups.
         self._ollama_recheck_lock = asyncio.Lock()
         self._detector = ComponentDetector(env, clock=clock)
+        self._acquire = Acquisition(self._state, env)
         self._on_ollama_detected: Callable[[], None] | None = None
         self._on_llm_model_selected: Callable[[str], Awaitable[None]] | None = None
         self._model_prompting = False
@@ -724,92 +718,14 @@ class SetupCoordinator:
 
     # ── Fetching ──────────────────────────────────────────────
 
-    async def _install(
-        self,
-        *,
-        event: str,
-        run: Callable[[], Awaitable[T]],
-        fail: Callable[[str], Awaitable[None]],
-    ) -> T | None:
-        """Runs one fetch. **Returns `None` when it failed**, having already broadcast why.
-
-        The engine and the speech model differ only in which state object they build; how a
-        fetch can end is the same for both, and was written out twice.
-
-        | outcome | what happens |
-        |---|---|
-        | `SetupError` | `fail(reason)` — the reason is what the panel shows |
-        | `CancelledError` | `fail("cancelled")`, **then re-raised** |
-        | anything else | `fail("unexpected_error")`, logged with a traceback |
-        | returned | the value is handed back |
-
-        **The `CancelledError` branch is why this exists.** Dropping the `raise` from one of
-        the two copies would swallow a cancellation during shutdown, and neither the type
-        checker nor the tests would say a word. Now there is one copy to get right.
-
-        **Never reverts to "not yet attempted."** A failure that read as `not_configured`
-        would put the user back in front of the same question with no sign anything happened.
-        """
-        try:
-            return await run()
-        except SetupError as error:
-            log.warning(f"{event}.failed", reason=error.reason, detail=error.detail)
-            await fail(error.reason)
-        except asyncio.CancelledError:
-            # **Broadcast first, then re-raise.** Shutdown still has to unwind; what it must
-            # not do is leave the Stage showing a fetch that is no longer running.
-            await fail("cancelled")
-            raise
-        except Exception:
-            # Even for the unexpected, **what happened is recorded.**
-            log.exception(f"{event}.crashed")
-            await fail("unexpected_error")
-        return None
-
     async def install_tts_engine(self) -> None:
-        """Fetches because the user chose to. **No external communication happens before this
-        point.**
-        """
-        artifact = AIVISSPEECH_ENGINE
-        await self._state.replace(
-            tts=TtsSetup(
-                state=TtsSetupState.INSTALLING,
-                engine_name=artifact.display_name,
-                version=artifact.version,
-                progress=0.0,
-            )
-        )
+        await self._acquire.tts_engine()
 
-        async def progress(fraction: float) -> None:
-            await self._state.replace(tts=replace(self._state.snapshot.tts, progress=fraction))
+    async def install_embedding_model(self) -> None:
+        await self._acquire.embedding_model()
 
-        async def fail(reason: str) -> None:
-            await self._state.replace(
-                tts=TtsSetup(
-                    state=TtsSetupState.FAILED,
-                    engine_name=artifact.display_name,
-                    version=artifact.version,
-                    reason=reason,
-                )
-            )
-
-        executable = await self._install(
-            event="setup.install",
-            run=lambda: install_engine(artifact, paths.engines_dir(), progress=throttle(progress)),
-            fail=fail,
-        )
-        if executable is None:
-            return
-
-        await self._state.replace(
-            tts=TtsSetup(
-                state=TtsSetupState.INSTALLED,
-                engine_name=artifact.display_name,
-                version=artifact.version,
-                port=artifact.default_port,
-                executable=str(executable),
-            )
-        )
+    async def install_speech_model(self) -> None:
+        await self._acquire.speech_model()
 
     async def install_llm_model(self, artifact: OllamaModelArtifact) -> None:
         """Asks Ollama's fixed local API to pull one consented, allowlisted model."""
@@ -906,73 +822,3 @@ class SetupCoordinator:
         )
         if self._on_ollama_detected is not None:
             self._on_ollama_detected()
-
-    async def install_embedding_model(self) -> None:
-        """Fetches the embedding model (ADR-041). **The same rules as every other fetch**
-        (pinned URL + size + SHA-256 + atomic install + rollback → setup.md §3b).
-
-        **Nothing waits for this.** The index picks the Provider up on the next pass; a
-        Lumi that had already started stays running, with search improving once it lands.
-        """
-        artifact = HARRIER_OSS_V1_270M
-        await self._state.replace(
-            embedding=EmbeddingSetup(
-                state=EmbeddingSetupState.INSTALLING, model=artifact.name, progress=0.0
-            )
-        )
-
-        async def progress(fraction: float) -> None:
-            await self._state.replace(
-                embedding=replace(self._state.snapshot.embedding, progress=fraction)
-            )
-
-        async def fail(reason: str) -> None:
-            await self._state.replace(
-                embedding=EmbeddingSetup(
-                    state=EmbeddingSetupState.FAILED, model=artifact.name, reason=reason
-                )
-            )
-
-        async def fetch() -> str:
-            await install_model(artifact, paths.embedding_models_dir(), progress=throttle(progress))
-            return artifact.name
-
-        if await self._install(event="setup.embedding", run=fetch, fail=fail) is None:
-            return
-
-        await self._state.replace(
-            embedding=EmbeddingSetup(state=EmbeddingSetupState.INSTALLED, model=artifact.name)
-        )
-
-    async def install_speech_model(self) -> None:
-        """Fetches the speech-recognition model. **The same rules as the engine**
-        (pinned URL + size + SHA-256 + atomic install + rollback → setup.md §3b).
-        """
-        artifact = selected_stt_artifact(self._env)
-        if artifact is None:
-            await self._state.replace(
-                stt=SttSetup(state=SttSetupState.FAILED, model=None, reason="unpinned_model")
-            )
-            return
-        await self._state.replace(
-            stt=SttSetup(state=SttSetupState.INSTALLING, model=artifact.name, progress=0.0)
-        )
-
-        async def progress(fraction: float) -> None:
-            await self._state.replace(stt=replace(self._state.snapshot.stt, progress=fraction))
-
-        async def fail(reason: str) -> None:
-            await self._state.replace(
-                stt=SttSetup(state=SttSetupState.FAILED, model=artifact.name, reason=reason)
-            )
-
-        # **Returns the name rather than `None`.** `_install` reports failure as `None`, and
-        # `install_model` returning nothing on success would make the two indistinguishable.
-        async def fetch() -> str:
-            await install_model(artifact, paths.stt_models_dir(), progress=throttle(progress))
-            return artifact.name
-
-        if await self._install(event="setup.model", run=fetch, fail=fail) is None:
-            return
-
-        await self._state.replace(stt=SttSetup(state=SttSetupState.INSTALLED, model=artifact.name))

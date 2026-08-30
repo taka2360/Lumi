@@ -343,12 +343,12 @@ class TestModelLocation:
         assert selected_stt_artifact({"LUMI_STT_MODEL": "tiny"}) is None
 
     def test_the_fetcher_and_the_provider_are_given_the_same_root(self) -> None:
-        """The fetcher (`SetupCoordinator`) and the reader (`FasterWhisperProvider`) have
+        """The fetcher (`Acquisition`) and the reader (`FasterWhisperProvider`) have
         to be handed the identical directory, or one of them is always wrong.
         """
         sources = {
             name: (Path(__file__).resolve().parents[1] / "lumi" / name).read_text(encoding="utf-8")
-            for name in ("setup/coordinator.py", "agent/runtime.py")
+            for name in ("setup/acquire.py", "agent/runtime.py")
         }
         for name, text in sources.items():
             assert "paths.stt_models_dir()" in text, f"{name} is not using shared definition"

@@ -16,6 +16,7 @@ from lumi import paths as paths_module
 from lumi import settings as settings_module
 from lumi.artifacts.install import SetupError
 from lumi.providers.base import EngineRuntime
+from lumi.setup import acquire as acquire_module
 from lumi.setup import coordinator as coordinator_module
 from lumi.setup import detection as detection_module
 from lumi.setup.coordinator import SetupCoordinator
@@ -373,7 +374,7 @@ class TestPrompt:
         async def failing_install(*_args: Any, **_kwargs: Any) -> Path:
             raise SetupError("network_unreachable")
 
-        monkeypatch.setattr(coordinator_module, "install_engine", failing_install)
+        monkeypatch.setattr(acquire_module, "install_engine", failing_install)
 
         await coordinator.initialize()
         await coordinator.on_stage_connected()
@@ -402,7 +403,7 @@ class TestPrompt:
         async def failing_install(*_args: Any, **_kwargs: Any) -> Path:
             raise exception_type("download failed")
 
-        monkeypatch.setattr(coordinator_module, "install_engine", failing_install)
+        monkeypatch.setattr(acquire_module, "install_engine", failing_install)
         coordinator = SetupCoordinator(FakeServer([]).as_server(), {})
 
         if exception_type is asyncio.CancelledError:
@@ -429,7 +430,7 @@ class TestPrompt:
             attempts += 1
             raise SetupError("network_unreachable")
 
-        monkeypatch.setattr(coordinator_module, "install_engine", failing_install)
+        monkeypatch.setattr(acquire_module, "install_engine", failing_install)
         server = FakeServer(["install", "install", "install", "install", "skip"])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -453,7 +454,7 @@ class TestPrompt:
                 raise SetupError("network_unreachable")
             return tmp_path / "engines" / "aivisspeech-1.2.0" / "run.exe"
 
-        monkeypatch.setattr(coordinator_module, "install_engine", install)
+        monkeypatch.setattr(acquire_module, "install_engine", install)
         server = FakeServer(["install", "install"])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -473,7 +474,7 @@ class TestPrompt:
         async def fake_install(*_args: Any, **_kwargs: Any) -> Path:
             return tmp_path / "engines" / "aivisspeech-1.2.0" / "run.exe"
 
-        monkeypatch.setattr(coordinator_module, "install_engine", fake_install)
+        monkeypatch.setattr(acquire_module, "install_engine", fake_install)
 
         await coordinator.initialize()
         await coordinator.on_stage_connected()
@@ -525,7 +526,7 @@ class TestPrompt:
                 await progress(fraction)
             return tmp_path / "engines" / "aivisspeech-1.2.0" / "run.exe"
 
-        monkeypatch.setattr(coordinator_module, "install_engine", fake_install)
+        monkeypatch.setattr(acquire_module, "install_engine", fake_install)
 
         await coordinator.initialize()
         await coordinator.on_stage_connected()
@@ -631,7 +632,7 @@ class TestSpeechModel:
             await progress(1.0)
             return Path("C:/models/small")
 
-        monkeypatch.setattr(coordinator_module, "install_model", fake_install)
+        monkeypatch.setattr(acquire_module, "install_model", fake_install)
         server = FakeServer(["install"])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -663,7 +664,7 @@ class TestSpeechModel:
             await progress(1.0)
             return Path("C:/models/small")
 
-        monkeypatch.setattr(coordinator_module, "install_model", fake_install)
+        monkeypatch.setattr(acquire_module, "install_model", fake_install)
         server = FakeServer(["install"])
         coordinator = SetupCoordinator(server.as_server(), {"LUMI_STT_MODEL": "small"})
 
@@ -725,7 +726,7 @@ class TestSpeechModel:
         async def fake_install(*_args: Any, **_kwargs: Any) -> Path:
             raise SetupError("hash_mismatch", "Corrupted")
 
-        monkeypatch.setattr(coordinator_module, "install_model", fake_install)
+        monkeypatch.setattr(acquire_module, "install_model", fake_install)
         server = FakeServer(["install", "skip"])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -749,7 +750,7 @@ class TestSpeechModel:
         async def failing_install(*_args: Any, **_kwargs: Any) -> Path:
             raise exception_type("download failed")
 
-        monkeypatch.setattr(coordinator_module, "install_model", failing_install)
+        monkeypatch.setattr(acquire_module, "install_model", failing_install)
         coordinator = SetupCoordinator(FakeServer([]).as_server(), {})
 
         if exception_type is asyncio.CancelledError:
@@ -772,7 +773,7 @@ class TestSpeechModel:
             del artifact, models_dir, progress
             return Path("C:/models/small")
 
-        monkeypatch.setattr(coordinator_module, "install_model", fake_install)
+        monkeypatch.setattr(acquire_module, "install_model", fake_install)
         server = FakeServer(["install"])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -1220,8 +1221,8 @@ class TestFetchingEverythingAtOnce:
         async def fake_model(artifact: Any, *_args: Any, **_kwargs: Any) -> Path:
             return tmp_path / str(artifact.name)
 
-        monkeypatch.setattr(coordinator_module, "install_engine", fake_engine)
-        monkeypatch.setattr(coordinator_module, "install_model", fake_model)
+        monkeypatch.setattr(acquire_module, "install_engine", fake_engine)
+        monkeypatch.setattr(acquire_module, "install_model", fake_model)
 
         await coordinator.initialize()
         await coordinator.on_stage_connected()
@@ -1292,7 +1293,7 @@ class TestEmbeddingModel:
         async def fake_model(artifact: Any, *_args: Any, **_kwargs: Any) -> Path:
             return tmp_path / str(artifact.name)
 
-        monkeypatch.setattr(coordinator_module, "install_model", fake_model)
+        monkeypatch.setattr(acquire_module, "install_model", fake_model)
 
         await coordinator.initialize()
         await coordinator.on_stage_connected()
@@ -1333,7 +1334,7 @@ class TestEmbeddingModel:
         async def failing(*_args: Any, **_kwargs: Any) -> Path:
             raise SetupError("network_unreachable", "no route")
 
-        monkeypatch.setattr(coordinator_module, "install_model", failing)
+        monkeypatch.setattr(acquire_module, "install_model", failing)
 
         await coordinator.initialize()
         await coordinator.on_stage_connected()
@@ -1423,8 +1424,8 @@ class TestTheSequenceTheStageSees:
         async def fake_model(artifact: Any, *_args: Any, **_kwargs: Any) -> Path:
             return tmp_path / str(artifact.name)
 
-        monkeypatch.setattr(coordinator_module, "install_engine", fake_engine)
-        monkeypatch.setattr(coordinator_module, "install_model", fake_model)
+        monkeypatch.setattr(acquire_module, "install_engine", fake_engine)
+        monkeypatch.setattr(acquire_module, "install_model", fake_model)
 
         await coordinator.initialize()
         await coordinator.on_stage_connected()

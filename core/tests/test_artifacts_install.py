@@ -445,11 +445,17 @@ class TestNetworkOptional:
         ), urls
         assert endpoint.HOST == "127.0.0.1"
 
-    def test_the_installer_is_only_reachable_through_the_coordinator(self) -> None:
+    def test_the_installer_is_only_reachable_through_the_acquisition_step(self) -> None:
+        """**One module fetches**, and it is the one that only runs after a choice.
+
+        Named by path rather than by call graph: the guarantee is that nothing else in
+        Core can start a download, and a second caller would be a second place to check
+        whether anyone consented.
+        """
         root = Path(__file__).resolve().parent.parent / "lumi"
         callers = [
             path.relative_to(root).as_posix()
             for path in root.rglob("*.py")
             if "install_engine(" in path.read_text(encoding="utf-8") and path.name != "install.py"
         ]
-        assert callers == ["setup/coordinator.py"]
+        assert callers == ["setup/acquire.py"]
