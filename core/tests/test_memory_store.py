@@ -20,6 +20,7 @@ from pathlib import Path
 
 import pytest
 
+from lumi.memory.browse import MemoryBrowser
 from lumi.memory.contradiction import Resolution
 from lumi.memory.decay import FLOOR
 from lumi.memory.records import AssertionMode, MemoryCandidate, MemoryType
@@ -38,6 +39,7 @@ class Rig:
     def __init__(self) -> None:
         self.db = open_memory(IN_MEMORY)
         self.store = MemoryStore(self.db)
+        self.browser = MemoryBrowser(self.db)
         self.episodes = EpisodeStore(self.db)
 
     async def say(
@@ -643,13 +645,13 @@ async def test_a_page_follows_the_row_it_stopped_at(rig: Rig) -> None:
         for index in range(4)
     ]
 
-    first = await rig.store.everything_after(after=None, limit=2)
+    first = await rig.browser.everything_after(after=None, limit=2)
     # What the window would be doing meanwhile: correcting the memory the cursor names.
     await rig.store.rewrite(first[-1].id, content="直した", now=NOW + timedelta(days=1))
-    rest = await rig.store.everything_after(after=first[-1], limit=10)
+    rest = await rig.browser.everything_after(after=first[-1], limit=10)
 
     assert [record.content for record in first] == ["事実 3", "事実 2"]
     # Newest first, and the correction — newer than the cursor — is not read twice.
     assert [record.content for record in rest] == ["事実 1", "事実 0"]
     assert {record.id for record in first + rest} == {record.id for record in written}
-    assert await rig.store.everything_after(after=rest[-1], limit=10) == []
+    assert await rig.browser.everything_after(after=rest[-1], limit=10) == []

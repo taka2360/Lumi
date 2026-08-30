@@ -23,6 +23,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from lumi.memory.browse import MemoryBrowser
 from lumi.memory.records import AssertionMode, MemoryCandidate, MemoryType
 from lumi.memory.store import MemoryStore
 from lumi.memory.vectors import MemoryIndex, document_text
@@ -47,12 +48,14 @@ class Rig:
         self.audit = Database.open(IN_MEMORY, AUDIT_SCHEMA)
         self.audit.migrate()
         self.store = MemoryStore(self.db)
+        self.browser = MemoryBrowser(self.db)
         self.index = MemoryIndex(self.db)
         self.episodes = EpisodeStore(self.db)
         self.retention = RetentionService(memory=self.db, events=self.events, audit=self.audit)
         self.settings_seen: list[dict[str, Any]] = []
         self.service = PanelService(
             store=self.store,
+            browser=self.browser,
             index=self.index,
             episodes=self.episodes,
             retention=self.retention,
@@ -230,6 +233,7 @@ async def test_what_is_shown_includes_how_close_it_is_to_fading(rig: Rig) -> Non
     await rig.remember("user.hobby", "ユーザーは Factorio が好き")
     later = PanelService(
         store=rig.store,
+        browser=rig.browser,
         index=rig.index,
         episodes=rig.episodes,
         retention=rig.retention,
@@ -500,13 +504,13 @@ async def test_the_export_writes_each_memory_once_while_more_are_being_written(
     ]
 
     class WritesBetweenPages:
-        """The store, with a reflection pass landing after the first page."""
+        """The browser, with a reflection pass landing after the first page."""
 
         def __init__(self) -> None:
             self.pages = 0
 
         async def everything_after(self, **kwargs: Any) -> Any:
-            page = await rig.store.everything_after(**kwargs)
+            page = await rig.browser.everything_after(**kwargs)
             self.pages += 1
             if self.pages == 1:
                 # Newest, so an offset would push every remaining row down by one.
@@ -516,7 +520,8 @@ async def test_the_export_writes_each_memory_once_while_more_are_being_written(
             return page
 
     service = PanelService(
-        store=WritesBetweenPages(),  # type: ignore[arg-type]
+        store=rig.store,
+        browser=WritesBetweenPages(),  # type: ignore[arg-type]
         index=rig.index,
         episodes=rig.episodes,
         retention=rig.retention,

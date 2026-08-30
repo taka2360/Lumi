@@ -34,6 +34,7 @@ from typing import Any, Final
 from lumi import logging as lumi_logging
 from lumi import paths
 from lumi.memory import decay
+from lumi.memory.browse import MemoryBrowser
 from lumi.memory.records import MemoryRecord
 from lumi.memory.store import MemoryRejected, MemoryStore
 from lumi.memory.vectors import MemoryIndex
@@ -137,12 +138,21 @@ class PanelService:
     view of it that can only be tested by waiting a fortnight is one that ships untested.
     """
 
-    __slots__ = ("_clock", "_episodes", "_index", "_retention", "_settings_update", "_store")
+    __slots__ = (
+        "_browser",
+        "_clock",
+        "_episodes",
+        "_index",
+        "_retention",
+        "_settings_update",
+        "_store",
+    )
 
     def __init__(
         self,
         *,
         store: MemoryStore,
+        browser: MemoryBrowser,
         index: MemoryIndex,
         episodes: EpisodeStore,
         retention: RetentionService,
@@ -150,6 +160,9 @@ class PanelService:
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
         self._store = store
+        #: Paging for the window and the export. **Reads only** — the writes stay behind
+        #: `MemoryStore`, which is the sole writer of `memories` (ADR-045)
+        self._browser = browser
         self._index = index
         #: Only ever asked how much is waiting to be reflected on. **An empty memory list
         #: with unread conversation behind it is a different fact** from an empty one
@@ -179,7 +192,7 @@ class PanelService:
         limit = raw_limit if isinstance(raw_limit, int) and raw_limit > 0 else PAGE_SIZE
         raw_offset = payload.get("offset")
         offset = raw_offset if isinstance(raw_offset, int) and raw_offset > 0 else 0
-        records, total = await self._store.browse(
+        records, total = await self._browser.browse(
             # **A malformed filter is refused, not dropped.** `limit` and `offset` are
             # view mechanics with an obvious default, but `query` decides which of the
             # user's memories they are looking at — silently ignoring one that arrived as
@@ -261,7 +274,7 @@ class PanelService:
         # would also hold the database against every other write for the whole export.
         records: list[MemoryRecord] = []
         while True:
-            page = await self._store.everything_after(
+            page = await self._browser.everything_after(
                 after=records[-1] if records else None, limit=MAX_PAGE_SIZE
             )
             records.extend(page)
