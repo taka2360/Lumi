@@ -277,8 +277,9 @@ impl CoreSupervisor {
     async fn spawn_once(&self, spec: &CoreLaunchSpec, tokens: &CoreTokens) -> std::io::Result<()> {
         let mut child = Self::build_command(spec, tokens).spawn()?;
 
-        // **Assigns it to the job immediately after launch.** If Shell dies
-        // after this point, it can't be taken down together.
+        // **Assigned to the job before anything else happens to the child.** Between
+        // `spawn` and this line is the one gap where a force-kill of Shell would leave
+        // Core running; past it, the OS takes Core down together with Shell.
         self.assign_to_job(&child);
 
         let pid = child.id();

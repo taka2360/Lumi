@@ -17,8 +17,15 @@ use tauri::{AppHandle, Manager as _, PhysicalPosition};
 
 use crate::os_command::OsCommand;
 
-/// Performs the request. `Err` is a stable reason code, never a sentence for a person
-/// (Core turns reason codes into text → ADR-036).
+/// Performs the request.
+///
+/// **`window_not_open` is a stable code; the two Tauri failures are not** — they cross the
+/// wire as whatever message Tauri produced. Nothing shows them to anyone today: the only
+/// caller is Core's `dev_probe.py`, which logs them. So ADR-036 (reasons travel as codes,
+/// the text lives in Stage) does not reach this path yet.
+///
+/// **If an `os.*` failure ever has to be shown to a user, give these codes first.** Do not
+/// assume they already are ones.
 pub fn execute(app: &AppHandle, command: &OsCommand) -> Result<Value, String> {
     match command {
         OsCommand::WindowGetPosition { window } => {
