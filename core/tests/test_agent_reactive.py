@@ -26,6 +26,7 @@ from lumi.agent.latency import TurnTimer
 from lumi.agent.prompt import ISOLATION_HEADER
 from lumi.agent.reactive import LoopLimits, ReactiveLoop
 from lumi.agent.session import Session
+from lumi.agent.speech import PlaybackScheduler
 from lumi.audio.devices import AudioPlan, Device, StreamPlan
 from lumi.audio.io import AudioIO
 from lumi.audio.vad import VadEvent, VadNotification
@@ -1106,3 +1107,61 @@ async def test_a_tainted_memory_reaches_the_turn_isolated() -> None:
     assert "ユーザーは猫を飼っている" in system
     assert system.index("ページによると") > system.index(ISOLATION_HEADER)
     assert rig.session.context().effective_trust is TrustLevel.TAINTED
+
+
+async def test_the_order_a_reply_is_spoken_recorded_and_awaited(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """**Characterization test.** One turn's four moments, in the order they happen.
+
+    Every other test here checks what came out: which sentences were spoken, what the
+    session holds. None of them says *when*, and the order is the part that carries the
+    design:
+
+    - **each sentence is handed to TTS the moment it is complete**, not when the stream
+      ends. That is what makes the first word arrive before the last token (audio.md §7),
+      and a split that collected the reply first would meet every existing assertion
+    - **the turn is recorded before playback is awaited.** Recording after would lose the
+      reply whenever a barge-in cancels the wait — the thing the user just heard would
+      not be in the history it was heard from
+
+    `_one_step` is about to be taken apart, so this is written down rather than left to
+    be re-derived.
+    """
+    rig = Rig(FakeLlm([text("こんにちは。", "げんきだよ。")]))
+    await rig.start()
+    steps: list[str] = []
+
+    def recording(owner: type, name: str, label: str) -> None:
+        original = getattr(owner, name)
+
+        def wrapper(this: Any, *args: Any, **kwargs: Any) -> Any:
+            steps.append(label)
+            return original(this, *args, **kwargs)
+
+        monkeypatch.setattr(owner, name, wrapper)
+
+    speak = PlaybackScheduler.speak
+
+    def spoke(this: Any, sentence: str) -> Any:
+        steps.append(f"speak:{sentence}")
+        return speak(this, sentence)
+
+    finish = PlaybackScheduler.finish
+
+    async def finished(this: Any, *args: Any, **kwargs: Any) -> Any:
+        steps.append("await playback")
+        return await finish(this, *args, **kwargs)
+
+    monkeypatch.setattr(PlaybackScheduler, "speak", spoke)
+    monkeypatch.setattr(PlaybackScheduler, "finish", finished)
+    recording(Session, "record_lumi_turn", "record the turn")
+
+    await rig.loop.handle_text("やあ")
+
+    assert steps == [
+        "speak:こんにちは。",
+        "speak:げんきだよ。",
+        "record the turn",
+        "await playback",
+    ]
