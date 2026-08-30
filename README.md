@@ -141,6 +141,9 @@ Windows), so you never create or manage a password, and **there is no plaintext 
 that protects against, and what it doesn't, is in
 [docs/contracts/privacy.md](docs/contracts/privacy.md) §3.
 
+That's Phase 2, on `main`. **The current release is Phase 1**, which keeps no conversation history
+on disk at all and leaves its event and audit databases unencrypted.
+
 ---
 
 ## Current progress & roadmap

@@ -222,7 +222,12 @@ each thing is defined.
 
 ## Language policy
 
-**Documents, ADRs, and implementation plans are written in Japanese. Commit messages are English.**
+**Design documents (`docs/`), ADRs, and implementation plans are written in Japanese. Commit
+messages are English.**
+
+Public-facing files at the repository root — this one, `README.md`, `SECURITY.md` — are the
+exception: they are written in English for the widest audience, with `README.ja.md` kept in step.
+If you change one of those, please update its counterpart in the same pull request.
 
 Within the code, it depends on the audience:
 
