@@ -68,6 +68,7 @@ from lumi.setup.ollama import (
     pull_ollama_model,
 )
 from lumi.setup.progress import LayerProgress
+from lumi.setup.prompter import Prompter, WsPrompter
 from lumi.setup.state import (
     BootPhase,
     EmbeddingSetupState,
@@ -86,11 +87,9 @@ from lumi.transport.methods import (
     COMPONENT_LLM_MODEL,
     COMPONENT_STT,
     COMPONENT_TTS,
-    METHOD_SETUP_PROMPT,
     METHOD_SETUP_RECHECK_OLLAMA,
 )
-from lumi.transport.protocol import Role
-from lumi.transport.server import NotConnectedError, WsServer
+from lumi.transport.server import WsServer
 
 log = lumi_logging.get_logger(__name__)
 
@@ -160,6 +159,7 @@ class SetupCoordinator:
         self._ollama_recheck_lock = asyncio.Lock()
         self._detector = ComponentDetector(env, clock=clock)
         self._acquire = Acquisition(self._state, env)
+        self._prompter: Prompter = WsPrompter(server, self._state)
         self._on_ollama_detected: Callable[[], None] | None = None
         self._on_llm_model_selected: Callable[[str], Awaitable[None]] | None = None
         self._model_prompting = False
@@ -301,29 +301,21 @@ class SetupCoordinator:
                 current = OLLAMA_MODELS.get(self._state.snapshot.llm.model or "", QWEN_35_9B)
                 local_models = await self._list_local_ollama_models()
                 local_by_name = {model.name: model for model in local_models}
-                self._state.asking(True)
-                await self._state.publish()
-                try:
-                    result = await self._server.invoke(
-                        Role.STAGE,
-                        METHOD_SETUP_PROMPT,
-                        {
-                            "component": COMPONENT_LLM_MODEL,
-                            "retry": retry,
-                            "reason": detail,
-                            "model": (
-                                local_by_name[current.name].to_payload()
-                                if current.name in local_by_name
-                                else current.to_payload()
-                            ),
-                            "alternatives": self._model_options_payload(current.name, local_models),
-                        },
-                        timeout=PROMPT_TIMEOUT_S,
-                    )
-                except (NotConnectedError, TimeoutError):
+                result = await self._prompter.ask(
+                    {
+                        "component": COMPONENT_LLM_MODEL,
+                        "retry": retry,
+                        "reason": detail,
+                        "model": (
+                            local_by_name[current.name].to_payload()
+                            if current.name in local_by_name
+                            else current.to_payload()
+                        ),
+                        "alternatives": self._model_options_payload(current.name, local_models),
+                    }
+                )
+                if result is None:
                     return
-                finally:
-                    self._state.asking(False)
 
                 choice = result.payload.get("choice") if result.ok else None
                 selected_name = result.payload.get("model")
@@ -599,26 +591,18 @@ class SetupCoordinator:
         missing = self._missing_components()
         if not missing:
             return BulkAnswer.INDIVIDUALLY
-        self._state.asking(True)
-        await self._state.publish()
-        try:
-            result = await self._server.invoke(
-                Role.STAGE,
-                METHOD_SETUP_PROMPT,
-                {
-                    "component": COMPONENT_ALL,
-                    "retry": False,
-                    "reason": None,
-                    "items": [item.to_payload() for item in missing],
-                    "total_bytes": sum(item.size_bytes for item in missing),
-                },
-                timeout=PROMPT_TIMEOUT_S,
-            )
-        except (NotConnectedError, TimeoutError):
+        result = await self._prompter.ask(
+            {
+                "component": COMPONENT_ALL,
+                "retry": False,
+                "reason": None,
+                "items": [item.to_payload() for item in missing],
+                "total_bytes": sum(item.size_bytes for item in missing),
+            }
+        )
+        if result is None:
             log.info("setup.prompt.unanswered", component=COMPONENT_ALL)
             return BulkAnswer.UNANSWERED
-        finally:
-            self._state.asking(False)
 
         choice = result.payload.get("choice") if result.ok else None
         log.info("setup.prompt.answered", component=COMPONENT_ALL, choice=choice)
@@ -679,24 +663,14 @@ class SetupCoordinator:
             # **Broadcasts the phase before showing the question.** Forgetting this
             # would leave the Stage showing a loading indicator while the question
             # sits hidden behind it.
-            self._state.asking(True)
-            await self._state.publish()
-            try:
-                result = await self._server.invoke(
-                    Role.STAGE,
-                    METHOD_SETUP_PROMPT,
-                    {"component": component, "retry": retry, "reason": detail},
-                    timeout=PROMPT_TIMEOUT_S,
-                )
-            except (NotConnectedError, TimeoutError):
+            result = await self._prompter.ask(
+                {"component": component, "retry": retry, "reason": detail}
+            )
+            if result is None:
                 # Nobody is there to answer. **Stop asking** — the next start asks again.
                 log.info("setup.prompt.unanswered", component=component)
-                self._state.asking(False)
                 return True
 
-            # **The question disappears the moment an answer arrives.** Never lets the question
-            # paint over the fetching phase.
-            self._state.asking(False)
             choice = result.payload.get("choice") if result.ok else None
             # **An unrecognized answer is treated the same as "not now"** (fail-closed).
             chose_install = choice == CHOICE_INSTALL
