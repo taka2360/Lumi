@@ -456,6 +456,10 @@ class TestNetworkOptional:
         callers = [
             path.relative_to(root).as_posix()
             for path in root.rglob("*.py")
-            if "install_engine(" in path.read_text(encoding="utf-8") and path.name != "install.py"
+            if path.name != "install.py"
+            and any(
+                call in path.read_text(encoding="utf-8")
+                for call in ("install_engine(", "install_model(")
+            )
         ]
         assert callers == ["setup/acquire.py"]

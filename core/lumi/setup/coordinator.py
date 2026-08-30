@@ -45,10 +45,6 @@ from dataclasses import replace
 from typing import TypeVar
 
 from lumi import logging as lumi_logging
-from lumi.artifacts.models import (
-    FASTER_WHISPER_LARGE_V3_TURBO,
-    ModelArtifact,
-)
 from lumi.providers.base import EngineRuntime
 from lumi.setup.acquire import Acquisition
 from lumi.setup.broadcast import SetupStateBroadcaster
@@ -81,10 +77,6 @@ T = TypeVar("T")
 PROMPT_TIMEOUT_S = 600.0
 OLLAMA_START_GRACE_S = 15.0
 
-#: What `stt_model` resolves to when nothing selects another one. **Pinned**
-#: (docs/architecture/setup.md §3b)
-DEFAULT_STT_ARTIFACT: ModelArtifact = FASTER_WHISPER_LARGE_V3_TURBO
-
 
 class SetupCoordinator:
     def __init__(
@@ -96,12 +88,6 @@ class SetupCoordinator:
     ) -> None:
         self._server = server
         self._env = env
-        # **Kept as two separate flags.** `_prompting` is "is this sequence
-        # currently in progress" (prevents duplicate runs); the broadcaster's
-        # `asking` is "is a question currently shown on screen" (boot phase).
-        # Conflating them made the question screen flash back right after
-        # fetching finished (hit this in testing).
-        self._prompting = False
         self._state = SetupStateBroadcaster(server)
         # **The Stage can connect before detection finishes.** Observed connecting
         # first in practice (2026-08-15). Deciding whether to prompt while state is
