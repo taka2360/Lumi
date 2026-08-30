@@ -3,14 +3,18 @@
 //! Design → docs/architecture/ui.md, docs/interfaces/shell.md,
 //! docs/contracts/security-boundaries.md's B3
 
+mod app;
+mod content_pack;
 mod core_endpoint;
 mod core_process;
 mod hover;
 mod job_object;
 mod locale;
 mod os_command;
+mod os_exec;
 mod tray;
 mod window;
+mod window_open;
 /// Cross-checks the names and constants on the wire against
 /// `docs/contracts/wire.json` (ADR-022). **Holds only tests**, so it's not
 /// bundled into the distributable.
@@ -18,157 +22,16 @@ mod window;
 mod wire_contract;
 mod ws_client;
 
-use std::path::PathBuf;
-
 use rand::RngCore as _;
-use tauri::{AppHandle, Manager as _, RunEvent, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{RunEvent, WebviewUrl};
 
+use crate::content_pack::{allow_content_pack, dev_core_project_dir};
 use crate::core_endpoint::{shell_core_endpoint, spawn_endpoint_notifier, CoreEndpointState};
 use crate::core_process::{find_sidecar, resolve_launch_spec, CoreSupervisor, CoreTokens};
 use crate::hover::{shell_hit_region_set, spawn_cursor_watcher, HitRegionStore};
 use crate::locale::system_locale;
-use crate::window::{
-    compute_credits_window_options, compute_panel_window_options, compute_stage_placement,
-    compute_stage_window_options, shell_window_drag_start, shell_window_scale, PanelKind,
-    ScreenArea, StageConfig, WindowKind, WindowSpec,
-};
-
-/// Opens a window per the spec.
-///
-/// **Never write conditional branching here.** "How it should look" is
-/// decided by the pure functions in `window.rs`; this function only pipes
-/// that into Tauri's API. Otherwise, window behavior ends up scattered
-/// across places that can't be tested.
-fn create_window(
-    app: &AppHandle,
-    spec: &WindowSpec,
-    url: WebviewUrl,
-) -> tauri::Result<WebviewWindow> {
-    let mut builder = WebviewWindowBuilder::new(app, spec.label, url)
-        .title(spec.title)
-        .inner_size(spec.width, spec.height)
-        .transparent(spec.transparent)
-        .decorations(spec.decorations)
-        .always_on_top(spec.always_on_top)
-        .skip_taskbar(spec.skip_taskbar)
-        .resizable(spec.resizable)
-        .shadow(spec.shadow)
-        .focused(spec.focused)
-        .visible(spec.visible);
-
-    if let Some((x, y)) = spec.position {
-        builder = builder.position(x, y);
-    }
-
-    let win = builder.build()?;
-
-    // Settings not available on the builder are applied after creation.
-    win.set_content_protected(spec.content_protected)?;
-    win.set_ignore_cursor_events(spec.click_through)?;
-
-    // **The builder's `position` alone doesn't take effect** (observed a few
-    // dozen px of drift on Windows, 2026-08-15). Repositioned once more
-    // after creation. Since it was also passed to the builder, this move isn't visible.
-    if let Some((x, y)) = spec.position {
-        win.set_position(tauri::LogicalPosition::new(x, y))?;
-    }
-
-    Ok(win)
-}
-
-/// Opens credits and licenses (tray or Stage action menu → credits).
-///
-/// **A static page that never connects to Core** (docs/architecture/ui.md).
-/// Presenting the license documents is an obligation independent of Lumi's
-/// operating state, and must be readable even if Core is down.
-///
-/// If already open, brings it forward instead of recreating it. **Two
-/// windows for the same document would be pointless.**
-fn open_credits(app: &AppHandle) {
-    let label = WindowKind::Credits.label();
-    if let Some(existing) = app.get_webview_window(label) {
-        let _ = existing.show();
-        let _ = existing.unminimize();
-        let _ = existing.set_focus();
-        return;
-    }
-
-    let spec = compute_credits_window_options(system_locale());
-    match create_window(app, &spec, WebviewUrl::App("/credits.html".into())) {
-        Ok(_) => log::info!("credits.opened"),
-        // **Never let it silently do nothing.** Logs it if it couldn't open.
-        Err(error) => log::error!("credits.open_failed {error}"),
-    }
-}
-
-/// Opens one of the auxiliary windows (ADR-042).
-///
-/// **The same shape as `open_credits`**, including bringing an existing one forward
-/// rather than making a second: two settings windows disagreeing about the current value
-/// is not a state anyone should have to reason about.
-fn open_panel(app: &AppHandle, kind: PanelKind) {
-    let label = kind.window().label();
-    if let Some(existing) = app.get_webview_window(label) {
-        // **Logged rather than discarded.** "Nothing happened when I clicked it" with a
-        // silent `Err` behind it is the hardest kind of report to act on, and bringing a
-        // window forward is exactly the operation a window manager can refuse.
-        for (what, result) in [
-            ("show", existing.show()),
-            ("unminimize", existing.unminimize()),
-            ("focus", existing.set_focus()),
-        ] {
-            if let Err(error) = result {
-                log::warn!("panel.reuse_failed label={label} op={what} {error}");
-            }
-        }
-        return;
-    }
-
-    let spec = compute_panel_window_options(kind, system_locale());
-    match create_window(app, &spec, WebviewUrl::App(kind.page().into())) {
-        Ok(_) => log::info!("panel.opened label={label}"),
-        // **Never let it silently do nothing.** Logs it if it couldn't open.
-        Err(error) => log::error!("panel.open_failed label={label} {error}"),
-    }
-}
-
-/// Decides the Stage window's size and position from the screen.
-///
-/// **How it's placed is decided by the pure functions in `window.rs`.** All
-/// this does is take the work area from Tauri and **convert it to logical
-/// pixels.** Falls back to a default if the monitor can't be obtained
-/// (logged so it **never falls back silently**).
-fn stage_placement(app: &AppHandle) -> StageConfig {
-    let monitor = match app.primary_monitor() {
-        Ok(Some(monitor)) => monitor,
-        _ => {
-            log::warn!("stage.monitor_unavailable opening with default size");
-            return StageConfig::default();
-        }
-    };
-    // Work area = the region excluding the taskbar etc. Staying within it keeps the bottom edge from being hidden.
-    let area = monitor.work_area();
-    let scale = monitor.scale_factor();
-    let placement = compute_stage_placement(ScreenArea {
-        x: f64::from(area.position.x) / scale,
-        y: f64::from(area.position.y) / scale,
-        width: f64::from(area.size.width) / scale,
-        height: f64::from(area.size.height) / scale,
-    });
-    // **Logs where it was placed.** So that if it's off, it can later be
-    // narrowed down to whether the screen values or the calculation is at fault.
-    log::info!(
-        "stage.placement work_area={}x{}+{}+{} scale={scale} size={}x{} position={:?}",
-        area.size.width,
-        area.size.height,
-        area.position.x,
-        area.position.y,
-        placement.width,
-        placement.height,
-        placement.position,
-    );
-    placement
-}
+use crate::window::{compute_stage_window_options, shell_window_drag_start, shell_window_scale};
+use crate::window_open::{create_window, stage_placement};
 
 /// Generates the WS token. **Shell creates it and passes it to Core via an
 /// environment variable** (docs/interfaces/shell.md). No other path out of the process is created.
@@ -176,53 +39,6 @@ fn generate_token() -> String {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// The project directory used to launch Core during development.
-///
-/// `None` in release builds, since the bundled sidecar is used instead.
-/// Returned only in debug, **so the repository path is never baked into the distributable.**
-fn dev_core_project_dir() -> Option<PathBuf> {
-    if !cfg!(debug_assertions) {
-        return None;
-    }
-    // **Walked up rather than joined with `../..`.** The Content Pack directory is derived
-    // from this (ADR-029) and ends up in the asset protocol's scope, where leftover parent
-    // segments make the allowed path unreadable in logs and needlessly fragile to match.
-    // `<repo>/shell/src-tauri` → `<repo>` → `<repo>/core`
-    std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(std::path::Path::parent)
-        .map(|repo| repo.join("core"))
-}
-
-/// Lets the WebView read the Content Pack **of the Core that is actually running**, and
-/// nothing else (ADR-029).
-///
-/// Core decides which model to draw and sends its path; the bytes are served by Shell,
-/// because reading a file is an OS privilege and **Core holds authority, not capabilities**.
-/// Anything outside this directory is refused by Tauri before it is opened — the Stage is
-/// never trusted with a path (docs/contracts/security-boundaries.md B2).
-///
-/// **The directory comes from the launch decision**, not from a search of its own. Searching
-/// separately pointed the WebView at a stale build's Content Pack while Core read the
-/// repository's, and the character simply never appeared (2026-08-19).
-///
-/// **Failure is not fatal.** Lumi runs with the placeholder, and the Stage says why.
-fn allow_content_pack(app: &AppHandle, dir: &std::path::Path) {
-    if !dir.is_dir() {
-        log::warn!("Content Pack not found ({}): launching with placeholder", dir.display());
-        return;
-    }
-
-    match app.asset_protocol_scope().allow_directory(dir, true) {
-        Ok(()) => log::info!("Allowed Content Pack directory: {}", dir.display()),
-        // **Never silently degrade.** Without this the character simply never appears, and
-        // the reason would exist nowhere
-        Err(error) => {
-            log::error!("Cannot allow Content Pack directory ({}): {error}", dir.display())
-        }
-    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -251,11 +67,11 @@ pub fn run() {
             shell_window_drag_start,
             shell_window_scale,
             tray::shell_locale_set,
-            tray::shell_credits_open,
-            tray::shell_panel_open,
-            tray::shell_ollama_site_open,
+            window_open::shell_credits_open,
+            window_open::shell_panel_open,
+            app::shell_ollama_site_open,
             // Credits and quitting carry no judgment, so `shell.*`'s rule holds.
-            tray::shell_app_quit
+            app::shell_app_quit
         ])
         .setup(move |app| {
             if cfg!(debug_assertions) {

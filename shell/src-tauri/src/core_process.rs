@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncBufReadExt as _, BufReader};
-use tokio::process::{Child, Command};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::sync::{watch, Mutex};
 
 use crate::job_object::KillOnCloseJob;
@@ -146,15 +146,11 @@ pub fn restart_delay(consecutive_failures: u32) -> Duration {
     Duration::from_millis(500 * 2_u64.pow(capped))
 }
 
-/// A running Core process. **Holding onto stdin matters.**
-/// Dropping stdin here makes Core's own parent-watch see EOF and exit immediately.
-struct RunningCore {
-    child: Child,
-}
-
 #[derive(Clone)]
 pub struct CoreSupervisor {
-    running: Arc<Mutex<Option<RunningCore>>>,
+    /// The Core that is running now. **Holding onto its stdin matters**: dropping stdin
+    /// makes Core's own parent-watch see EOF and exit immediately.
+    running: Arc<Mutex<Option<Child>>>,
     shutdown: Arc<std::sync::atomic::AtomicBool>,
     port_tx: watch::Sender<Option<u16>>,
     /// The job that takes Core (and its children) down together the moment
@@ -207,7 +203,8 @@ impl CoreSupervisor {
         self.shutdown.load(std::sync::atomic::Ordering::SeqCst)
     }
 
-    async fn spawn_once(&self, spec: &CoreLaunchSpec, tokens: &CoreTokens) -> std::io::Result<()> {
+    /// The command that starts Core. **Nothing has happened yet** when this returns.
+    fn build_command(spec: &CoreLaunchSpec, tokens: &CoreTokens) -> Command {
         let mut command = Command::new(&spec.program);
         command
             .args(&spec.args)
@@ -230,12 +227,17 @@ impl CoreSupervisor {
         #[cfg(windows)]
         command.creation_flags(CREATE_NO_WINDOW);
 
-        let mut child = command.spawn()?;
+        command
+    }
 
-        // **Assigns it to the job immediately after launch.** If Shell dies
-        // after this point, it can't be taken down together.
+    /// Puts the child into the kill-on-close job. **Done before anything else**, because
+    /// from here on a force-kill of Shell has to be able to take Core down with it.
+    fn assign_to_job(&self, child: &Child) {
         #[cfg(windows)]
-        if let Some(job) = self.job.as_ref() {
+        {
+            let Some(job) = self.job.as_ref() else {
+                return;
+            };
             let assigned = match child.raw_handle() {
                 Some(handle) => job.assign(handle),
                 None => false,
@@ -244,56 +246,87 @@ impl CoreSupervisor {
                 log::warn!("core.job_object.assign_failed Core process may remain on force-kill");
             }
         }
+        #[cfg(not(windows))]
+        let _ = (self, child);
+    }
 
-        if let Some(stdout) = child.stdout.take() {
-            let port_tx = self.port_tx.clone();
-            tauri::async_runtime::spawn(async move {
-                let mut lines = BufReader::new(stdout).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    if let Some(port) = parse_listening_port(&line) {
-                        log::info!("core.ws.listening port={port}");
-                        let _ = port_tx.send(Some(port));
-                    }
-                    log::info!("core: {line}");
+    /// Streams Core's stdout to the log, **and publishes the port when it appears** — the
+    /// one line Shell reads for its meaning rather than only to log it.
+    fn spawn_stdout_reader(stdout: ChildStdout, port_tx: watch::Sender<Option<u16>>) {
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                if let Some(port) = parse_listening_port(&line) {
+                    log::info!("core.ws.listening port={port}");
+                    let _ = port_tx.send(Some(port));
                 }
-            });
+                log::info!("core: {line}");
+            }
+        });
+    }
+
+    fn spawn_stderr_reader(stderr: ChildStderr) {
+        tauri::async_runtime::spawn(async move {
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log::warn!("core!: {line}");
+            }
+        });
+    }
+
+    async fn spawn_once(&self, spec: &CoreLaunchSpec, tokens: &CoreTokens) -> std::io::Result<()> {
+        let mut child = Self::build_command(spec, tokens).spawn()?;
+
+        // **Assigns it to the job immediately after launch.** If Shell dies
+        // after this point, it can't be taken down together.
+        self.assign_to_job(&child);
+
+        let pid = child.id();
+        // **Taken while the child is still local.** Once it is in `running`, reaching its
+        // pipes would mean holding the mutex for as long as Core keeps logging.
+        if let Some(stdout) = child.stdout.take() {
+            Self::spawn_stdout_reader(stdout, self.port_tx.clone());
         }
         if let Some(stderr) = child.stderr.take() {
-            tauri::async_runtime::spawn(async move {
-                let mut lines = BufReader::new(stderr).lines();
-                while let Ok(Some(line)) = lines.next_line().await {
-                    log::warn!("core!: {line}");
-                }
-            });
+            Self::spawn_stderr_reader(stderr);
         }
 
         log::info!("core.spawned program={:?}", spec.program);
 
         // Puts the child into state before waiting (so it can be killed on shutdown).
-        // `wait` needs a mutable reference, so only the handle used for waiting is taken separately.
-        let pid = child.id();
-        {
-            let mut slot = self.running.lock().await;
-            *slot = Some(RunningCore { child });
-        }
+        *self.running.lock().await = Some(child);
+        self.wait_for_exit(pid).await
+    }
+
+    /// Waits for Core to exit. `wait` needs a mutable reference, which conflicts with
+    /// holding it to `kill` on shutdown, so `try_wait` is polled at a short interval.
+    ///
+    /// **The lock is never held across the sleep.** `shutdown` has to take the child out
+    /// of this same slot in order to kill it; keeping the guard while waiting would leave
+    /// quitting blocked on a process that is still running — which is the zombie this
+    /// file exists to prevent.
+    async fn wait_for_exit(&self, pid: Option<u32>) -> std::io::Result<()> {
         loop {
-            let mut slot = self.running.lock().await;
-            let Some(running) = slot.as_mut() else {
-                // The shutdown path took it and killed it.
-                log::info!("core.taken_over_by_shutdown pid={pid:?}");
-                return Ok(());
-            };
-            match running.child.try_wait()? {
-                Some(status) => {
-                    *slot = None;
-                    log::warn!("core.exited pid={pid:?} status={status:?}");
+            let exited = {
+                let mut slot = self.running.lock().await;
+                let Some(child) = slot.as_mut() else {
+                    // The shutdown path took it and killed it.
+                    log::info!("core.taken_over_by_shutdown pid={pid:?}");
                     return Ok(());
+                };
+                match child.try_wait()? {
+                    Some(status) => {
+                        *slot = None;
+                        Some(status)
+                    }
+                    None => None,
                 }
-                None => {
-                    drop(slot);
-                    tokio::time::sleep(WAIT_POLL_INTERVAL).await;
-                }
+            };
+            if let Some(status) = exited {
+                log::warn!("core.exited pid={pid:?} status={status:?}");
+                return Ok(());
             }
+            tokio::time::sleep(WAIT_POLL_INTERVAL).await;
         }
     }
 
@@ -301,11 +334,11 @@ impl CoreSupervisor {
     pub async fn shutdown(&self) {
         self.shutdown.store(true, std::sync::atomic::Ordering::SeqCst);
         let mut slot = self.running.lock().await;
-        if let Some(mut running) = slot.take() {
-            // Closes stdin first → Core sees EOF and exits on its own (the normal path).
-            drop(running.child.stdin.take());
+        if let Some(mut child) = slot.take() {
+            // Closes stdin first -> Core sees EOF and exits on its own (the normal path).
+            drop(child.stdin.take());
             // Kills it outright if there's no response.
-            let _ = running.child.kill().await;
+            let _ = child.kill().await;
             log::info!("core.killed");
         }
     }

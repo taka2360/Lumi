@@ -20,6 +20,34 @@
 | トレイ | メニュー / 表示切替 |
 | **検証** | `os.*` の認証 / schema / allowlist / **保護対象への無条件拒否**（B3） |
 
+### モジュール構成
+
+```
+shell/src-tauri/src/
+├── lib.rs           起動シーケンスのみ。token を作り、builder を組み、setup と RunEvent を回す
+├── window.rs        ウィンドウ契約（label / 保護対象 / PanelKind）と**純粋関数**（配置・寸法）
+├── window_open.rs   実ウィンドウの生成と前面化。それを呼ぶ `shell.*` コマンドも同居する
+├── content_pack.rs  **起動する Core の** Content Pack だけを asset scope に許可する（ADR-029）
+├── app.rs           **ウィンドウにも Core にも依存しない** app-level command のみ（終了 / 外部リンク）
+├── tray.rs          トレイのメニューと、ネイティブ表示名への locale 反映
+├── hover.rs         カーソル監視。クリックスルーとホバー状態の判定（純粋関数）
+├── core_endpoint.rs 要求元ウィンドウの label でトークンと接続先を選ぶ（ADR-042）
+├── core_process.rs  Core の起動・生存監視・確実な終了
+├── os_command.rs    `os.*` の**検証**（純粋。B3 の allowlist / schema / 保護対象）
+├── os_exec.rs       **検証済みの `OsCommand` だけ**を実行する
+├── ws_client.rs     Core との WS。フレームの parse / 送受 / result の組み立て
+├── job_object.rs    Windows Job Object（force-kill でもゾンビを残さない層）
+├── locale.rs        locale の解決（純粋）
+└── wire_contract.rs `docs/contracts/wire.json` との突き合わせ（**test のみ**。配布物に入らない）
+```
+
+**`os_command` → `os_exec` → `ws_client` の3ファイルが B3 の3段そのもの**であり、
+「検証してから実行する」がファイル境界として読める。
+
+`app.rs` に置いてよいのは**ウィンドウにも Core にも依存しない**コマンドだけ。
+ウィンドウを開くものは `window_open.rs`、トレイに紐づくものは `tray.rs` に置く。
+**この条件を書いていなかったために `tray.rs` が「その他コマンド」置き場になった**という経緯がある。
+
 ### ウィンドウ一覧
 
 | ウィンドウ | 用途 | 特性 |
