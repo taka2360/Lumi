@@ -22,11 +22,11 @@ export function Help() {
   const t = (key: Parameters<typeof translate>[1]) => translate(locale, key);
 
   return (
-    <main className="help">
-      <h1 className="help__title">{t("help.title")}</h1>
+    <main className="document help">
+      <h1 className="document__title">{t("help.title")}</h1>
 
-      <section className="help__section">
-        <h2 className="help__heading">{t("help.gestures.title")}</h2>
+      <section className="document__section">
+        <h2 className="document__heading">{t("help.gestures.title")}</h2>
         <p className="help__lead">{t("help.gestures.lead")}</p>
         <table className="help__table">
           <thead>
@@ -48,8 +48,8 @@ export function Help() {
         </table>
       </section>
 
-      <section className="help__section">
-        <h2 className="help__heading">{t("help.menu.title")}</h2>
+      <section className="document__section">
+        <h2 className="document__heading">{t("help.menu.title")}</h2>
         <p className="help__lead">{t("help.menu.lead")}</p>
         <ul className="help__actions">
           {ACTION_ITEMS.map((item) => (
@@ -66,8 +66,8 @@ export function Help() {
         </ul>
       </section>
 
-      <section className="help__section">
-        <h2 className="help__heading">{t("help.tray.title")}</h2>
+      <section className="document__section">
+        <h2 className="document__heading">{t("help.tray.title")}</h2>
         <p className="help__lead">{t("help.tray.body")}</p>
       </section>
     </main>

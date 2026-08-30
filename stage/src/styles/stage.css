@@ -1,5 +1,12 @@
-/* The Stage is a transparent window. **Never paint a background.**
-   Painting a color here would defeat the point of a transparent window. */
+/* The character window only. **Never paint a background** — painting a colour here would
+   defeat the point of a transparent window.
+
+   **The panel windows must not load this file.** The reset below claims the whole
+   viewport, hides overflow and turns off text selection, which is right for a window
+   floating over the desktop and wrong for a document-shaped one. They used to load it
+   anyway, which is why the memory window's text could not be selected and the settings
+   and inspector windows clipped instead of scrolling.
+   → docs/architecture/ui.md §2 "モジュール構成" */
 :root {
   color-scheme: light dark;
 }
@@ -21,7 +28,7 @@ body,
 }
 
 body {
-  font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  font-family: var(--font-ui);
 }
 
 .stage {
@@ -93,12 +100,12 @@ body {
   box-sizing: border-box;
   padding: 14px 16px;
   border-radius: 14px;
-  background: rgba(20, 24, 34, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #f2f5fb;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  color: var(--text);
   font-size: 12px;
   line-height: 1.6;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--surface-shadow);
 }
 
 .panel--compact {
@@ -131,7 +138,7 @@ body {
 }
 
 .panel__status--bad {
-  color: #ffb4b4;
+  color: var(--status-bad);
 }
 
 /* A command to run, or where to get something. Monospace so it can be typed accurately. */
@@ -182,7 +189,7 @@ body {
 }
 
 .panel__button:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--surface-border);
 }
 
 .panel__button:disabled {
@@ -242,10 +249,10 @@ body {
   max-width: 100%;
   padding: 14px 18px;
   border-radius: 14px;
-  background: rgba(20, 24, 34, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  color: #f2f5fb;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  color: var(--text);
+  box-shadow: var(--surface-shadow);
 }
 
 .boot__spinner {
@@ -301,7 +308,7 @@ body {
   max-width: 100%;
   height: 4px;
   border-radius: 2px;
-  background: rgba(255, 255, 255, 0.18);
+  background: var(--surface-border);
   overflow: hidden;
 }
 
@@ -327,10 +334,10 @@ body {
   width: max-content;
   padding: 10px 14px;
   border-radius: 14px;
-  background: rgba(20, 24, 34, 0.92);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
-  color: #f2f5fb;
+  background: var(--surface);
+  border: 1px solid var(--surface-border);
+  box-shadow: var(--surface-shadow);
+  color: var(--text);
   font-size: 13px;
   line-height: 1.6;
   /* Japanese has no spaces, so the default would overflow rather than wrap. */
@@ -395,7 +402,7 @@ body {
   gap: 4px;
   margin: 6px;
   max-width: calc(100% - 12px);
-  color: #dfe6f5;
+  color: var(--text-dim);
   font-size: 10px;
 }
 
@@ -410,7 +417,7 @@ body {
   padding: 0;
   border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 6px;
-  background: rgba(12, 15, 22, 0.85);
+  background: var(--surface-sunken);
   color: inherit;
   font: inherit;
   font-size: 14px;
@@ -425,7 +432,7 @@ body {
 
 .app-actions__error {
   align-self: center;
-  color: #ffd9a0;
+  color: var(--warn);
 }
 
 /* ── The right-click action palette (ADR-047) ──────────────────────────────
@@ -459,162 +466,6 @@ body {
   flex-wrap: wrap;
 }
 
-/* Inspector (docs/architecture/ui.md §5). **A development view**, so it is dense and plain.
-   Sits in the corner, collapsed, and is only rendered once Core has sent something. */
-.inspect {
-  margin: 6px;
-  max-width: calc(100% - 12px);
-  font-size: 10px;
-  line-height: 1.45;
-  color: #dfe6f5;
-}
-
-.inspect__toggle {
-  padding: 2px 6px;
-  border-radius: 6px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(12, 15, 22, 0.85);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.inspect__body {
-  margin-top: 4px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(12, 15, 22, 0.92);
-  max-height: 46vh;
-  overflow: auto;
-  /* Numbers are read by eye and compared down the column. */
-  font-family: "Cascadia Mono", "Consolas", monospace;
-  user-select: text;
-  -webkit-user-select: text;
-}
-
-.inspect__acts,
-.inspect__children {
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.inspect__children {
-  margin-left: 12px;
-  opacity: 0.85;
-}
-
-.inspect__act {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 1px 0;
-}
-
-/* **The foreground Activity is always exactly one** (Invariant 4). Marked so that a
-   view showing two would be obvious at a glance rather than needing to be read. */
-.inspect__act--fg .inspect__kind {
-  color: #9fd0ff;
-  font-weight: 700;
-}
-
-.inspect__state {
-  opacity: 0.75;
-}
-
-.inspect__intent,
-.inspect__contract {
-  opacity: 0.6;
-}
-
-.inspect__lat {
-  margin-top: 6px;
-  border-collapse: collapse;
-  width: 100%;
-}
-
-.inspect__lat th {
-  text-align: left;
-  font-weight: 400;
-  opacity: 0.75;
-  padding-right: 10px;
-}
-
-.inspect__lat td {
-  text-align: right;
-}
-
-.inspect__lat-sum th,
-.inspect__lat-sum td {
-  border-top: 1px solid rgba(255, 255, 255, 0.18);
-  opacity: 1;
-}
-
-.inspect__lat-cut th {
-  color: #ffd9a0;
-}
-
-.inspect__empty {
-  margin: 6px 0 0;
-  opacity: 0.6;
-}
-
-/* Settings (roadmap open item #9). Shares the Inspector's dense look — both are
-   information panels, not places to linger. */
-.settings {
-  margin: 6px;
-  max-width: calc(100% - 12px);
-  font-size: 10px;
-  line-height: 1.45;
-  color: #dfe6f5;
-}
-
-.settings__value {
-  text-align: left;
-  padding-right: 10px;
-}
-
-.settings__src {
-  text-align: right;
-  opacity: 0.6;
-}
-
-/* **An override has to stand out.** Otherwise "I changed it and nothing happened". */
-.settings__src--env {
-  color: #ffd9a0;
-  opacity: 1;
-}
-
-.settings__input {
-  width: 100%;
-  box-sizing: border-box;
-  padding: 1px 4px;
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.25);
-  background: rgba(255, 255, 255, 0.08);
-  color: inherit;
-  font: inherit;
-}
-
-.settings__slider {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  min-width: 150px;
-}
-
-.settings__slider-input {
-  padding: 0;
-  accent-color: #a9c7ff;
-}
-
-.settings__slider output {
-  min-width: 38px;
-  text-align: right;
-  font-variant-numeric: tabular-nums;
-}
-
 /* ── Microphone (docs/architecture/ui.md §5b) ───────────────────────────────
    **Always on screen, always in the hit region.** Everything else on this window appears
    on hover; whether the microphone is open is not something the user should have to go
@@ -635,7 +486,7 @@ body {
   padding: 0;
   border-radius: 50%;
   border: 1px solid rgba(255, 255, 255, 0.22);
-  background: rgba(12, 15, 22, 0.85);
+  background: var(--surface-sunken);
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
@@ -666,7 +517,7 @@ body {
   right: 34px;
   white-space: nowrap;
   font-size: 10px;
-  color: #ffd9a0;
+  color: var(--warn);
 }
 
 /* The bulk fetch question's itemised list (docs/architecture/setup.md).
