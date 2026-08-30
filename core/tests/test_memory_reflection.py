@@ -22,17 +22,16 @@ from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.cancellation import CancelToken
 from lumi.kernel.event import EventBus
 from lumi.memory.decay import WEIGHT_EXPLICIT, WEIGHT_LLM, WEIGHT_NOVELTY
-from lumi.memory.phrases import asked_to_remember, explicit_marking
-from lumi.memory.records import AssertionMode, MemoryType
-from lumi.memory.reflection import (
+from lumi.memory.extraction import (
     CANDIDATE_LIMIT,
-    EXTRACTION_SYSTEM,
-    ReflectionJob,
     ReflectionRejected,
-    build_messages,
     parse_extractions,
     to_candidate,
 )
+from lumi.memory.extraction_prompt import EXTRACTION_SYSTEM, build_messages
+from lumi.memory.phrases import asked_to_remember, explicit_marking
+from lumi.memory.records import AssertionMode, MemoryType
+from lumi.memory.reflection import ReflectionJob
 from lumi.memory.store import MemoryStore
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.providers.llm.base import Finish, LLMEvent, LLMFailure, LLMOptions, Message, TextDelta
