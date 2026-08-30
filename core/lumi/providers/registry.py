@@ -11,11 +11,23 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import cast
 
 from lumi import logging as lumi_logging
 from lumi.providers.base import Attribution, Provider, ProviderKind, ProviderNotConfigured
 
 log = lumi_logging.get_logger(__name__)
+
+
+async def provider_of[T](registry: ProviderRegistry, kind: ProviderKind) -> T:
+    """The selected Provider of a kind, as the Protocol that kind implements.
+
+    **The cast lives here, once.** `get` is keyed by kind and can only promise `Provider`;
+    every caller wants the narrower Protocol and would otherwise write its own cast, which
+    is how a wrong one gets copied. Raises rather than returning `None` when the kind is
+    not set up — nothing downstream can do anything useful with a missing engine.
+    """
+    return cast("T", await registry.get(kind))
 
 
 @dataclass(frozen=True, slots=True)

@@ -24,9 +24,10 @@ import pytest
 
 from lumi.agent.latency import TurnTimer
 from lumi.agent.prompt import ISOLATION_HEADER
-from lumi.agent.reactive import LoopLimits, ReactiveLoop
+from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler
+from lumi.agent.turn import LoopLimits
 from lumi.audio.devices import AudioPlan, Device, StreamPlan
 from lumi.audio.io import AudioIO
 from lumi.audio.vad import VadEvent, VadNotification
@@ -758,7 +759,9 @@ async def test_each_provider_is_required(kind: ProviderKind) -> None:
     for provider in (rig.llm, rig.tts):
         if provider.kind is not kind:
             registry.register(provider)
-    rig.loop._providers = registry
+    # The turn resolves its own providers (`agent/turn.py`); the loop's registry is what
+    # STT is looked up in, and neither is what this is about
+    rig.loop._turn._providers = registry
 
     await rig.loop.handle_text("やあ")
 
