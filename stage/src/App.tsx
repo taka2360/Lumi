@@ -8,6 +8,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ActionPalette, type PalettePoint } from "./actions/ActionPalette";
 import { AppActions } from "./actions/AppActions";
 import { MicIndicator } from "./audio/MicIndicator";
 import { CharacterCanvas, type CharacterStatus } from "./character/CharacterCanvas";
@@ -45,12 +46,35 @@ function useElementRect(element: HTMLElement | null): CssRect | null {
   return rect;
 }
 
+/** The Stage window's own client rectangle. Changes whenever the wheel resizes the window. */
+function useViewportRect(): CssRect {
+  const [rect, setRect] = useState<CssRect>(() => ({
+    x: 0,
+    y: 0,
+    width: window.innerWidth,
+    height: window.innerHeight,
+  }));
+
+  useEffect(() => {
+    const measure = () =>
+      setRect({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight });
+    measure();
+    window.addEventListener("resize", measure);
+    return () => window.removeEventListener("resize", measure);
+  }, []);
+
+  return rect;
+}
+
 export function App() {
   useCoreConnection();
 
   const hover = useHoverState();
   const reportHitRegion = useHitRegionReporter();
-  const gestures = useWindowGestures();
+  // **The character reserves a plain left press** for touching it later (ADR-047); the
+  // boot and setup surface has no character to reserve it for and keeps left-drag.
+  const characterGestures = useWindowGestures("character");
+  const panelGestures = useWindowGestures("panel");
 
   // **Core decides whether the character may be shown** (docs/architecture/ui.md "Boot phases").
   const setup = useStageStore((state) => state.setup);
@@ -96,7 +120,7 @@ export function App() {
 
   // Boot/setup and normal character mode render the controls in different hosts. Their
   // child components are remounted when that host changes, so clear parent-owned flags that
-  // otherwise keep the hidden normal-mode anchor visible.
+  // otherwise keep the hidden anchor visible.
   useEffect(() => {
     if (controlsInOverlay) {
       return;
@@ -104,8 +128,9 @@ export function App() {
     setAnchorHovered(false);
   }, [controlsInOverlay]);
 
-  // **The panels are windows of their own now** (ADR-042), so nothing expands in place
-  // any more and the row's visibility follows the cursor alone.
+  // **Only the boot and setup surface reveals the actions on hover** (ADR-047). Once the
+  // character is out, hovering it does nothing: a mascot that grows a settings button when
+  // the cursor passes over it reads as a widget, not as something living on the desktop.
   const isActivelyHovered = hover === "inside" || anchorHovered;
   const [inspectVisible, setInspectVisible] = useState(false);
 
@@ -126,10 +151,45 @@ export function App() {
   const [mic, setMic] = useState<HTMLDivElement | null>(null);
   const micRect = useElementRect(mic);
 
+  // Where the palette is anchored, or null when it is closed. **This is the whole of its
+  // state** (ADR-047) — keeping it to a point leaves room for a first-run hint later
+  // without anything else on this window having to know the palette exists.
+  const [paletteOrigin, setPaletteOrigin] = useState<PalettePoint | null>(null);
+  const viewportRect = useViewportRect();
+  const dismissPalette = useCallback(() => setPaletteOrigin(null), []);
+
+  // Nothing on screen would explain a palette floating over a loading card, and a setup
+  // question that arrives while it is open must not leave it waiting to reappear.
+  useEffect(() => {
+    if (!showCharacter || controlsInOverlay) {
+      setPaletteOrigin(null);
+    }
+  }, [showCharacter, controlsInOverlay]);
+
+  // **One listener owns the right button on this window.** The WebView's own menu has
+  // nothing to act on here and would cover the character, so it is suppressed everywhere;
+  // a press that landed on the character also opens the palette. Once the palette is open
+  // its own layer sits in front and re-anchors instead, so this cannot reopen it.
+  const [grab, setGrab] = useState<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const onContextMenu = (event: MouseEvent) => {
+      event.preventDefault();
+      if (grab && event.target instanceof Node && grab.contains(event.target)) {
+        setPaletteOrigin({ x: event.clientX, y: event.clientY });
+      }
+    };
+    document.addEventListener("contextmenu", onContextMenu);
+    return () => document.removeEventListener("contextmenu", onContextMenu);
+  }, [grab]);
+
   const lastReported = useRef<string>("");
   useEffect(() => {
     const activeInspectorRect = inspectVisible ? inspectorRect : null;
-    const rects = [characterRect, panelRect, activeInspectorRect, micRect].filter(
+    // **While the palette is open, the whole window is in the hit region.** Outside it
+    // Shell clicks through, so without this a click beside the palette would land in
+    // whatever is behind Lumi and the palette would never close.
+    const paletteRect = paletteOrigin === null ? null : viewportRect;
+    const rects = [characterRect, panelRect, activeInspectorRect, micRect, paletteRect].filter(
       (rect): rect is CssRect => rect !== null,
     );
     const signature = JSON.stringify(rects);
@@ -138,7 +198,16 @@ export function App() {
     }
     lastReported.current = signature;
     reportHitRegion(rects);
-  }, [characterRect, panelRect, inspectorRect, micRect, inspectVisible, reportHitRegion]);
+  }, [
+    characterRect,
+    panelRect,
+    inspectorRect,
+    micRect,
+    inspectVisible,
+    paletteOrigin,
+    viewportRect,
+    reportHitRegion,
+  ]);
 
   const inspectorControls = <AppActions />;
 
@@ -148,13 +217,16 @@ export function App() {
         showBootScreen ? " stage--boot" : ""
       }`}
     >
-      {/* The surface for grabbing the character to move the window. Never reachable
-          from the keyboard (window move/resize follows OS conventions, not Stage UI). */}
+      {/* The character's own surface. A plain left press is deliberately unhandled and
+          reserved for touching the character (ADR-047); the wheel resizes, `alt` + left and
+          the middle button move the window, and the right button opens the action palette.
+          Never reachable from the keyboard (window move/resize follows OS conventions). */}
       {showCharacter && (
         <div
+          ref={setGrab}
           className="stage__grab"
-          onPointerDown={gestures.onPointerDown}
-          onWheel={gestures.onWheel}
+          onPointerDown={characterGestures.onPointerDown}
+          onWheel={characterGestures.onWheel}
         >
           <CharacterCanvas source={model} onStatus={onStatus} onBounds={onBounds} />
         </div>
@@ -172,8 +244,8 @@ export function App() {
       <div
         className={showBootScreen ? "overlay overlay--boot" : "overlay"}
         ref={setPanel}
-        onPointerDown={gestures.onPointerDown}
-        onWheel={gestures.onWheel}
+        onPointerDown={panelGestures.onPointerDown}
+        onWheel={panelGestures.onWheel}
       >
         {controlsInOverlay && (
           <div
@@ -198,18 +270,16 @@ export function App() {
         {/* **Never silently degrades.** Shows that a placeholder is running instead of the production VRM. */}
         {status.fallbackReason && <p className="notice">{status.fallbackReason}</p>}
       </div>
-      {/* **A development view** (docs/architecture/ui.md §5). Inside the `stage` window
-          because `WsServer` keeps one connection per role — a second window would take
-          the character's connection. Shown on hover or when expanded. */}
-      {!controlsInOverlay && (
-        <div
-          ref={setInspector}
-          className={inspectVisible ? "inspect-anchor inspect-anchor--visible" : "inspect-anchor"}
-          onPointerEnter={() => setAnchorHovered(true)}
-          onPointerLeave={() => setAnchorHovered(false)}
-        >
-          {inspectorControls}
-        </div>
+      {/* The same action row (docs/architecture/ui.md §1), now reached by right-clicking
+          the character instead of hovering it. It stays inside the `stage` window because
+          `WsServer` keeps one connection per role — a second window would take the
+          character's connection. */}
+      {!controlsInOverlay && paletteOrigin !== null && (
+        <ActionPalette
+          origin={paletteOrigin}
+          onMove={setPaletteOrigin}
+          onDismiss={dismissPalette}
+        />
       )}
     </div>
   );

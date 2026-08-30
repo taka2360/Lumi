@@ -217,17 +217,16 @@ body {
   min-width: 96px;
 }
 
-/* The surface for grabbing the character. Drag to move, wheel to resize
-   (docs/architecture/ui.md "Moving and resizing the window"). Shell makes the
-   transparent area outside this and the boot/setup overlay click-through. */
+/* The character's surface. Wheel to resize, `alt` + left or middle to move, right to open
+   the action palette (docs/architecture/ui.md "Moving and resizing the window"). Shell
+   makes the transparent area outside this and the boot/setup overlay click-through.
+
+   **No grab cursor.** A plain left press is reserved for touching the character (ADR-047),
+   so advertising a drag handle here would promise the wrong thing. */
 .stage__grab {
   width: 100%;
   height: 100%;
-  cursor: grab;
-}
-
-.stage__grab:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 /* The boot-time display. Shows what's happening before the character appears. */
@@ -492,6 +491,37 @@ body {
     width: 24px;
     height: 24px;
   }
+}
+
+/* ── The right-click action palette (ADR-047) ──────────────────────────────
+   Catches the dismissing click. **Only mounted while the palette is open**, and `App`
+   widens the hit region to the whole window for exactly as long — outside the hit region
+   Shell clicks through, so a click beside the palette would otherwise never arrive. */
+.palette-layer {
+  position: absolute;
+  inset: 0;
+  /* Above the microphone, which is the only other thing that stays on this window. */
+  z-index: 4;
+}
+
+/* The same buttons as the boot-time row, given a surface of their own so they read as one
+   object floating over the character rather than as chrome attached to the window. */
+.palette {
+  position: absolute;
+  width: max-content;
+  max-width: calc(100% - 8px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(12, 15, 22, 0.92);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+/* Shell allows the Stage down to 160px wide, and the palette is clamped inside it.
+   Wrapping keeps the last button reachable instead of clipping it at the rounded edge. */
+.palette .app-actions {
+  margin: 4px;
+  max-width: none;
+  flex-wrap: wrap;
 }
 
 @media (prefers-reduced-motion: reduce) {
