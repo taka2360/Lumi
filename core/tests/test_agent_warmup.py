@@ -27,7 +27,7 @@ from fakes import (  # noqa: F401  — `isolated_paths` / `no_ollama` are autous
 from lumi.agent.warmup import warm_all, warm_stt, warm_tts
 from lumi.providers.base import EngineRuntime, ProviderKind
 from lumi.providers.registry import ProviderRegistry
-from lumi.setup import coordinator as coordinator_module
+from lumi.setup import detection as detection_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.state import SttSetupState
 
@@ -134,7 +134,7 @@ class TestEverythingIsWarmed:
         The engine starts fine here; there is simply nothing to hear with.
         """
         detects(monkeypatch, [installed_by_lumi(tmp_path)])
-        monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: False)
+        monkeypatch.setattr(detection_module, "is_model_installed", lambda *_: False)
         server = FakeServer()
         coordinator = await make_coordinator(server)
         providers = ProviderRegistry()
@@ -232,7 +232,7 @@ class TestWarmTts:
         on it.
         """
         detects(monkeypatch, [installed_by_lumi(tmp_path)])
-        monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: False)
+        monkeypatch.setattr(detection_module, "is_model_installed", lambda *_: False)
         server = FakeServer()
         coordinator = await make_coordinator(server)
         providers = ProviderRegistry()

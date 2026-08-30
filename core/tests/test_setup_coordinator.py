@@ -17,6 +17,7 @@ from lumi import settings as settings_module
 from lumi.artifacts.install import SetupError
 from lumi.providers.base import EngineRuntime
 from lumi.setup import coordinator as coordinator_module
+from lumi.setup import detection as detection_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
 from lumi.setup.ollama import OllamaLocalModel
@@ -152,7 +153,7 @@ def ollama_present(monkeypatch: pytest.MonkeyPatch) -> None:
             running=True,
         )
 
-    monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+    monkeypatch.setattr(detection_module, "detect_ollama", detect)
 
 
 @pytest.fixture(autouse=True)
@@ -162,11 +163,11 @@ def speech_model_present(monkeypatch: pytest.MonkeyPatch) -> None:
     Otherwise every TTS test would also trip the STT question and have to account for
     it. The STT flow has its own tests below, which opt out of this.
     """
-    monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: True)
+    monkeypatch.setattr(detection_module, "is_model_installed", lambda *_: True)
 
 
 def no_speech_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: False)
+    monkeypatch.setattr(detection_module, "is_model_installed", lambda *_: False)
 
 
 def missing_models(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
@@ -178,14 +179,14 @@ def missing_models(monkeypatch: pytest.MonkeyPatch, *names: str) -> None:
     def installed(artifact: Any, *_args: Any) -> bool:
         return artifact.name not in names
 
-    monkeypatch.setattr(coordinator_module, "is_model_installed", installed)
+    monkeypatch.setattr(detection_module, "is_model_installed", installed)
 
 
 def no_engines(monkeypatch: pytest.MonkeyPatch) -> None:
     async def detect(_env: Any) -> list[DetectedEngine]:
         return []
 
-    monkeypatch.setattr(coordinator_module, "detect_engines", detect)
+    monkeypatch.setattr(detection_module, "detect_engines", detect)
 
 
 def one_engine(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -200,14 +201,14 @@ def one_engine(monkeypatch: pytest.MonkeyPatch) -> None:
             )
         ]
 
-    monkeypatch.setattr(coordinator_module, "detect_engines", detect)
+    monkeypatch.setattr(detection_module, "detect_engines", detect)
 
 
 def no_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
     async def detect(_env: Any) -> DetectedEngine | None:
         return None
 
-    monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+    monkeypatch.setattr(detection_module, "detect_ollama", detect)
 
 
 def states_of(server: FakeServer, component: str = "tts") -> list[str]:
@@ -265,7 +266,7 @@ class TestPrompt:
             await asyncio.sleep(0.05)
             return []
 
-        monkeypatch.setattr(coordinator_module, "detect_engines", slow_detect)
+        monkeypatch.setattr(detection_module, "detect_engines", slow_detect)
         server = FakeServer(["skip"])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -560,7 +561,7 @@ class TestManagedEngine:
                 )
             ]
 
-        monkeypatch.setattr(coordinator_module, "detect_engines", detect)
+        monkeypatch.setattr(detection_module, "detect_engines", detect)
         server = FakeServer([])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -639,7 +640,7 @@ class TestSpeechModel:
 
         # **Not hardcoded.** Which model ships is a decision that moves (ADR-027); that this
         # path fetches *the one the rest of Core will look for* is what must not move
-        assert fetched == [coordinator_module.DEFAULT_STT_ARTIFACT.name]
+        assert fetched == [detection_module.DEFAULT_STT_ARTIFACT.name]
         assert coordinator.state.stt.state is SttSetupState.INSTALLED
         assert states_of(server, "stt")[-1] == "installed"
 
@@ -813,7 +814,7 @@ class TestLlm:
         async def detect(_env: Any) -> DetectedEngine | None:
             return detections.pop(0)
 
-        monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+        monkeypatch.setattr(detection_module, "detect_ollama", detect)
         server = FakeServer([])
         coordinator = SetupCoordinator(server.as_server(), {})
         model_checks: list[None] = []
@@ -841,7 +842,7 @@ class TestLlm:
                 running=False,
             )
 
-        monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+        monkeypatch.setattr(detection_module, "detect_ollama", detect)
         server = FakeServer([])
         coordinator = SetupCoordinator(server.as_server(), {})
         await coordinator.initialize()
@@ -884,7 +885,7 @@ class TestLlm:
                 running=False,
             )
 
-        monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+        monkeypatch.setattr(detection_module, "detect_ollama", detect)
         server = FakeServer([])
         coordinator = SetupCoordinator(server.as_server(), {})
 
@@ -909,7 +910,7 @@ class TestLlm:
                 running=False,
             )
 
-        monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+        monkeypatch.setattr(detection_module, "detect_ollama", detect)
         server = FakeServer([])
         coordinator = SetupCoordinator(server.as_server(), {}, clock=lambda: now)
         await coordinator.initialize()

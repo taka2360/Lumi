@@ -18,7 +18,7 @@ from websockets.asyncio.client import ClientConnection, connect
 
 from lumi import __main__ as main_module
 from lumi.audio.devices import AudioPlan
-from lumi.setup import coordinator as coordinator_module
+from lumi.setup import detection as detection_module
 from lumi.transport.protocol import PROTOCOL_VERSION
 
 STAGE_TOKEN = "stage-token"
@@ -80,8 +80,8 @@ async def test_two_stage_connects_start_exactly_one_conversation(
         # under test is the Stage connection, not the provider's one-second probe.
         return None
 
-    monkeypatch.setattr(coordinator_module, "detect_engines", detect)
-    monkeypatch.setattr(coordinator_module, "detect_ollama", detect_ollama)
+    monkeypatch.setattr(detection_module, "detect_engines", detect)
+    monkeypatch.setattr(detection_module, "detect_ollama", detect_ollama)
     monkeypatch.setattr(main_module, "ConversationRuntime", SlowRuntime)
     monkeypatch.setattr(
         main_module, "_audio_plan", lambda: AudioPlan(capture=None, playback=None, warnings=())
@@ -153,8 +153,8 @@ async def test_shutdown_leaves_no_conversation_running(
     async def detect_ollama(_env: Any) -> None:
         return None
 
-    monkeypatch.setattr(coordinator_module, "detect_engines", detect)
-    monkeypatch.setattr(coordinator_module, "detect_ollama", detect_ollama)
+    monkeypatch.setattr(detection_module, "detect_engines", detect)
+    monkeypatch.setattr(detection_module, "detect_ollama", detect_ollama)
     monkeypatch.setattr(main_module, "ConversationRuntime", TrackedRuntime)
     monkeypatch.setattr(
         main_module, "_audio_plan", lambda: AudioPlan(capture=None, playback=None, warnings=())

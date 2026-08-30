@@ -53,17 +53,15 @@ from lumi.artifacts.install import (
     SetupError,
     install_engine,
     install_model,
-    is_model_installed,
 )
 from lumi.artifacts.models import (
     FASTER_WHISPER_LARGE_V3_TURBO,
     HARRIER_OSS_V1_270M,
-    STT_MODELS,
     ModelArtifact,
 )
 from lumi.providers.base import EngineRuntime
 from lumi.setup.broadcast import SetupStateBroadcaster
-from lumi.setup.detect import detect_engines, detect_ollama
+from lumi.setup.detection import ComponentDetector, selected_stt_artifact
 from lumi.setup.ollama import (
     OLLAMA_MODELS,
     QWEN_35_9B,
@@ -114,25 +112,6 @@ OLLAMA_START_GRACE_S = 15.0
 #: What `stt_model` resolves to when nothing selects another one. **Pinned**
 #: (docs/architecture/setup.md §3b)
 DEFAULT_STT_ARTIFACT: ModelArtifact = FASTER_WHISPER_LARGE_V3_TURBO
-
-
-def selected_stt_artifact(env: Mapping[str, str]) -> ModelArtifact | None:
-    """Which STT model to check for and fetch — **the one the Provider will look for.**
-
-    `FasterWhisperProvider` is built from `settings.stt_model`, so a fixed artifact here
-    lets setup install one model, report `installed`, and leave the Provider looking for
-    another: **Lumi is deaf while the screen says it is ready.** That also made
-    `LUMI_STT_MODEL=small`, which [ADR-027] keeps as the way back to a lighter model,
-    silently not work — for exactly the users who need it.
-
-    `None` when the selected name is not pinned. **Never substitutes a different model**:
-    fetching something else is the mismatch this exists to prevent.
-    """
-    name = settings.load(paths.settings_file(), env).stt_model.value
-    artifact = STT_MODELS.get(name)
-    if artifact is None:
-        log.warning("setup.stt.unpinned_model", model=name, pinned=sorted(STT_MODELS))
-    return artifact
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,8 +165,7 @@ class SetupCoordinator:
         # Automatic polling can overlap a slow local API probe. Detection and the transition
         # into model warm-up are one serialized operation, never two warm-ups.
         self._ollama_recheck_lock = asyncio.Lock()
-        self._clock = clock
-        self._ollama_start_deadline: float | None = None
+        self._detector = ComponentDetector(env, clock=clock)
         self._on_ollama_detected: Callable[[], None] | None = None
         self._on_llm_model_selected: Callable[[str], Awaitable[None]] | None = None
         self._model_prompting = False
@@ -215,56 +193,7 @@ class SetupCoordinator:
 
     async def _redetect(self) -> None:
         """Looks at all three. **Local filesystem and 127.0.0.1 only** (setup.md §6)."""
-        await self._state.replace_all(
-            SetupSnapshot(
-                tts=await self._detect_tts(),
-                llm=await self._detect_llm(),
-                stt=await asyncio.to_thread(self._detect_stt),
-                embedding=await asyncio.to_thread(self._detect_embedding),
-            )
-        )
-
-    async def _detect_tts(self) -> TtsSetup:
-        engines = await detect_engines(self._env)
-        usable = next((engine for engine in engines if engine.executable or engine.running), None)
-        if usable is None:
-            return TtsSetup(state=TtsSetupState.NOT_CONFIGURED)
-        # Distinguishes what Lumi installed from what the user installed themselves (setup.md §2).
-        return TtsSetup(
-            state=(TtsSetupState.INSTALLED if usable.managed_by_lumi else TtsSetupState.DETECTED),
-            engine_name=usable.display_name,
-            version=usable.version,
-            port=usable.port,
-            executable=str(usable.executable) if usable.executable else None,
-        )
-
-    async def _detect_llm(self) -> LlmSetup:
-        """**Only "is Ollama there".** Whether the *model* is there needs an API call, which
-        is the Provider's job — `report_llm` narrows this to `model_missing` later.
-
-        Getting these from different places is deliberate: "not installed" and "installed
-        but not running" are indistinguishable over HTTP, and telling someone to install
-        what they already have is how they start doubting their own machine
-        (docs/architecture/setup.md §2b).
-        """
-        found = await detect_ollama(self._env)
-        if found is None:
-            self._ollama_start_deadline = None
-            return LlmSetup(
-                state=LlmSetupState.NOT_CONFIGURED, reason="Ollama not found", model=None
-            )
-        if not found.running:
-            self._ollama_start_deadline = self._clock() + OLLAMA_START_GRACE_S
-            return LlmSetup(
-                state=LlmSetupState.DETECTED,
-                runtime=EngineRuntime.STARTING,
-                reason="ollama_starting",
-            )
-        self._ollama_start_deadline = None
-        return LlmSetup(
-            state=LlmSetupState.DETECTED,
-            runtime=EngineRuntime.READY,
-        )
+        await self._state.replace_all(await self._detector.everything())
 
     def set_ollama_detected_handler(self, handler: Callable[[], None]) -> None:
         """Registers the runtime's model-check trigger.
@@ -285,9 +214,8 @@ class SetupCoordinator:
         The destination stays fixed in ``detect_ollama`` (filesystem + 127.0.0.1:11434).
         """
         async with self._ollama_recheck_lock:
-            found = await detect_ollama(self._env)
-            if found is None:
-                self._ollama_start_deadline = None
+            check = await self._detector.recheck_ollama()
+            if not check.found:
                 await self._state.replace(
                     llm=LlmSetup(
                         state=LlmSetupState.NOT_CONFIGURED,
@@ -297,11 +225,8 @@ class SetupCoordinator:
                 )
                 return {"detected": False, "running": False}
 
-            if not found.running:
-                now = self._clock()
-                if self._ollama_start_deadline is None:
-                    self._ollama_start_deadline = now + OLLAMA_START_GRACE_S
-                starting = now < self._ollama_start_deadline
+            if not check.running:
+                starting = check.starting
                 await self._state.replace(
                     llm=LlmSetup(
                         state=LlmSetupState.DETECTED,
@@ -311,8 +236,6 @@ class SetupCoordinator:
                     )
                 )
                 return {"detected": True, "running": False, "starting": starting}
-
-            self._ollama_start_deadline = None
 
             if self._state.snapshot.llm.state in (
                 LlmSetupState.MODEL_INSTALLING,
@@ -338,31 +261,6 @@ class SetupCoordinator:
             if self._on_ollama_detected is not None:
                 self._on_ollama_detected()
             return {"detected": True, "running": True}
-
-    def _detect_stt(self) -> SttSetup:
-        """A file check, not a process check. **Never touches the network** — a half-fetched
-        directory reads as not-installed (`is_model_installed` checks every pinned size).
-        """
-        artifact = selected_stt_artifact(self._env)
-        if artifact is None:
-            # There is nothing to fetch, and the Provider will refuse the same name.
-            # **Said out loud** rather than installing something else and calling it done
-            return SttSetup(state=SttSetupState.NOT_CONFIGURED, model=None, reason="unpinned_model")
-        installed = is_model_installed(artifact, paths.stt_models_dir())
-        return SttSetup(
-            state=SttSetupState.INSTALLED if installed else SttSetupState.NOT_CONFIGURED,
-            model=artifact.name,
-        )
-
-    def _detect_embedding(self) -> EmbeddingSetup:
-        """Whether the embedding model is on disk (ADR-041). **A file check, like STT's.**"""
-        installed = is_model_installed(HARRIER_OSS_V1_270M, paths.embedding_models_dir())
-        return EmbeddingSetup(
-            state=(
-                EmbeddingSetupState.INSTALLED if installed else EmbeddingSetupState.NOT_CONFIGURED
-            ),
-            model=HARRIER_OSS_V1_270M.name,
-        )
 
     # ── Broadcasting ──────────────────────────────────────────────
 

@@ -319,7 +319,7 @@ class TestModelLocation:
         2026-08-17).
         """
         from lumi.settings import KEYS
-        from lumi.setup.coordinator import DEFAULT_STT_ARTIFACT
+        from lumi.setup.detection import DEFAULT_STT_ARTIFACT
 
         _variable, default = KEYS["stt_model"]
         assert default == DEFAULT_STT_ARTIFACT.name
@@ -334,7 +334,7 @@ class TestModelLocation:
         the setting. STT read `installed`, boot reached `ready`, and every utterance died in
         a log line — for exactly the users the lighter model exists for (ADR-027).
         """
-        from lumi.setup.coordinator import selected_stt_artifact
+        from lumi.setup.detection import selected_stt_artifact
 
         monkeypatch.setattr(paths_module, "settings_file", lambda: tmp_path / "settings.json")
 

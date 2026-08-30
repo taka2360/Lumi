@@ -34,7 +34,7 @@ from lumi.providers.base import (
     ResourceHint,
     UnloadPolicy,
 )
-from lumi.setup import coordinator as coordinator_module
+from lumi.setup import detection as detection_module
 from lumi.setup.coordinator import SetupCoordinator
 from lumi.setup.detect import DetectedEngine
 from lumi.transport.protocol import NAMESPACE_BY_ROLE, Role
@@ -169,7 +169,7 @@ def no_ollama(monkeypatch: pytest.MonkeyPatch) -> None:
     async def detect(_env: Any) -> DetectedEngine | None:
         return None
 
-    monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+    monkeypatch.setattr(detection_module, "detect_ollama", detect)
 
 
 def conversation_is_possible(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -180,7 +180,7 @@ def conversation_is_possible(monkeypatch: pytest.MonkeyPatch) -> None:
     already settled against it before it shows any wait** (ADR-034 / setup.md §2b), so a
     missing LLM would keep the phase at `blocked` and no `starting` would ever be broadcast.
     """
-    monkeypatch.setattr(coordinator_module, "is_model_installed", lambda *_: True)
+    monkeypatch.setattr(detection_module, "is_model_installed", lambda *_: True)
 
     async def detect(_env: Any) -> DetectedEngine | None:
         return DetectedEngine(
@@ -191,14 +191,14 @@ def conversation_is_possible(monkeypatch: pytest.MonkeyPatch) -> None:
             running=True,
         )
 
-    monkeypatch.setattr(coordinator_module, "detect_ollama", detect)
+    monkeypatch.setattr(detection_module, "detect_ollama", detect)
 
 
 def detects(monkeypatch: pytest.MonkeyPatch, engines: list[DetectedEngine]) -> None:
     async def detect(_env: Any) -> list[DetectedEngine]:
         return engines
 
-    monkeypatch.setattr(coordinator_module, "detect_engines", detect)
+    monkeypatch.setattr(detection_module, "detect_engines", detect)
 
 
 def installed_by_lumi(tmp_path: Path) -> DetectedEngine:
