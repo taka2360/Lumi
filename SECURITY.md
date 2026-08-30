@@ -1,11 +1,15 @@
 # Security Policy
 
-Lumi holds an always-open microphone, observes what is on your screen, keeps an encrypted memory
-of your conversations, and — from Phase 4 onward — will be able to operate your PC. Security is
-not a feature area here; it is the reason the architecture looks the way it does.
+Lumi holds an always-open microphone, will observe what is on your screen, will keep an encrypted
+memory of your conversations, and — from Phase 4 onward — will be able to operate your PC.
+Security is not a feature area here; it is the reason the architecture looks the way it does.
 
 This document says how to report a vulnerability, what the threat model actually covers, and —
 just as importantly — **what it does not**.
+
+> **On tense.** This policy describes the design as a whole, which runs ahead of what has shipped.
+> Where a protection is not in the current release, it says so. As of the latest release, memory
+> persistence and at-rest encryption are **not** in it — that work is on `main`, unreleased.
 
 *日本語の設計文書: [docs/contracts/security-boundaries.md](docs/contracts/security-boundaries.md) ·
 [docs/contracts/invariants.md](docs/contracts/invariants.md) ·
@@ -21,11 +25,13 @@ in the next release** — there are no maintenance branches and no backports to 
 | Version | Supported |
 |---|---|
 | `main` | ✅ |
-| [Latest release](https://github.com/taka2360/Lumi/releases/latest) | ✅ — fixed in the next release |
-| Older releases | ❌ — please upgrade |
+| [Latest release](https://github.com/taka2360/Lumi/releases/latest) | ✅ |
+| Older releases | ❌ |
 
-Reports against the latest release are welcome even if the issue is already fixed on `main`; say
-which one you tested.
+Security fixes are developed on `main` and ship in the next release. We do not backport them to
+older releases, so please upgrade before reporting against an old tag. Reports against the latest
+release are welcome even if the issue turns out to be already fixed on `main` — just say which one
+you tested.
 
 ---
 
@@ -37,7 +43,8 @@ Use GitHub's private vulnerability reporting:
 **[Report a vulnerability](https://github.com/taka2360/Lumi/security/advisories/new)**
 
 If private reporting is unavailable to you, open a public issue that contains *only* a request for
-a private channel — no details, no proof of concept.
+a private channel — no details, no proof of concept. A maintainer will reply there with a private
+contact method, and the details go in that channel rather than in the issue.
 
 ### What to include
 
@@ -71,7 +78,7 @@ Lumi's security boundaries are enumerated and each one names *who is not trusted
 | **B4** | Core ↔ capability extension | Extension | A third-party extension |
 | **B5** | Core ↔ external engines | Engine | A compromised Ollama or TTS engine |
 | **B6** | Widget ↔ Broker | Widget | AI-generated code, third-party widgets |
-| **B7** | Core ↔ OS | — | Path traversal, symlink swaps, redirect escapes |
+| **B7** | Core ↔ OS | Raw arguments, and the filesystem/network state they resolve against | Path traversal, symlink swaps, redirect escapes |
 
 Full detail: [docs/contracts/security-boundaries.md](docs/contracts/security-boundaries.md).
 
@@ -83,7 +90,9 @@ web pages, files, and game screens.
 
 **What B3 guarantees is exactly three things:**
 
-1. OS operations outside the allowlist cannot happen — the capability set is fixed.
+1. OS operations outside the allowlist cannot happen — **the Core cannot invent a new capability
+   at runtime**, because the vocabulary is fixed outside it, in the Shell. (Users can still grant
+   and revoke within that vocabulary; what is fixed is its extent, not your choices.)
 2. Input and capture targeting protected windows cannot happen (Invariant 8).
 3. Privilege escalation cannot happen by self-approval — Lumi cannot click its own Allow button.
 
@@ -123,16 +132,31 @@ Reports about **holes in that containment** are very welcome. Examples:
 
 "Append-only" means **unreachable for tampering or deletion through any of Lumi's tool paths.**
 Modification by another process running as an OS administrator is out of scope, and we do not
-claim otherwise. Phase 4a adds a hash chain, which makes external tampering **detectable** —
-not prevented.
+claim otherwise.
+
+Phase 4a adds a hash chain (`prev_hash` / `record_hash`). Be precise about what that buys:
+
+> A plain hash chain detects a **broken history** — a record altered or removed without recomputing
+> everything after it. **It does not stop an attacker with write access to the database from
+> rewriting a record and re-chaining forward from it**, producing a log that verifies cleanly.
+
+Detecting that requires something the attacker cannot recompute — an externally anchored chain
+head, a signature, or a checkpoint written somewhere they do not control. **None of that is
+designed yet**, so until it is, treat the hash chain as protection against accidental corruption
+and unsophisticated tampering, not as a guarantee of log authenticity against a privileged
+attacker.
 
 ### Data at rest
 
-Databases holding conversation-derived data are encrypted **page-level, whole-file**, using
-ChaCha20 via SQLite3 Multiple Ciphers (through APSW). The key is 256 bits of entropy generated
-once per user and held in the OS secret store — DPAPI at current-user scope on Windows — not
-managed by the user and never shown to them. **There is no plaintext fallback:** where no secret
-store implementation exists, opening the database fails and Lumi stops.
+> **Not in the current release.** The released build is Phase 1: it keeps no conversation history
+> on disk at all, and its event and audit databases are unencrypted. Everything below describes
+> Phase 2, which is implemented on `main` and has not shipped.
+
+Databases holding conversation-derived data are encrypted page-by-page across the whole file,
+using ChaCha20 via SQLite3 Multiple Ciphers (through APSW). The key is 256 bits of entropy
+generated once per user and held in the OS secret store — DPAPI at current-user scope on Windows —
+not managed by the user and never shown to them. **There is no plaintext fallback:** where no
+secret store implementation exists, opening the database fails and Lumi stops.
 
 > **Encryption at rest protects stored data. It does not protect it from software already running
 > with the same user's privileges.**
@@ -166,7 +190,10 @@ What is stored, how long it is kept, and what "delete everything" actually delet
 - Extensions exceeding their declared capabilities (Invariant 5)
 - Widget sandbox escapes
 - WebSocket authentication or namespace-isolation failures between Shell, Stage, Panel, and Core
-- Extraction of memory-database keys, or reading conversation data without the key
+- Key or conversation-data disclosure **caused by Lumi's own handling** — a key reaching a log, a
+  crash dump, an export, or any path across a Lumi security boundary; or conversation data
+  readable without the key. (Calling DPAPI as the same user is the OS security model working as
+  documented, not a finding — see [Data at rest](#data-at-rest).)
 - Fetching an external component without the explicit user choice that gates it, or accepting one
   that fails its pinned-URL and SHA-256 verification
 - Any network access occurring before the user has chosen it (the Network-optional principle)
@@ -180,7 +207,8 @@ What is stored, how long it is kept, and what "delete everything" actually delet
 - Vulnerabilities in external engines we do not ship — Ollama, AivisSpeech, VOICEVOX. Report those
   upstream. If *our* integration mishandles a compromised engine's output, that is in scope (B5).
 - Denial of service by resource exhaustion in a local, single-user application
-- Missing hardening with no demonstrated impact, or automated-scanner output with no analysis
+- Hardening suggestions with no demonstrated security impact, and automated-scanner output with no
+  analysis. These are welcome as ordinary issues — they just aren't handled as advisories
 - Anything about features that are not implemented yet — the roadmap is public, and Phase 4c is
   explicitly gated on settling its remaining questions first
 
@@ -202,6 +230,7 @@ the contract disagree, **that is itself a defect** — even when the code behave
 A subset of the invariants is enforced by static checks in CI
 (`core/tests/test_kernel_boundaries.py`). Passing them is necessary, not sufficient.
 
-**When you find a violation: fix it now.** Do not add it to a "fix later" list, and do not quietly
-loosen an invariant to make a change fit. If an invariant genuinely is wrong, that requires an ADR
-and a survey of what it affects — see [CONTRIBUTING.md](CONTRIBUTING.md).
+**Violations get fixed when they're found**, rather than going on a "fix later" list or being
+worked around by loosening the invariant. If an invariant turns out to be wrong, that's a fair
+conclusion — it just wants an ADR and a look at what it affects first, see
+[CONTRIBUTING.md](CONTRIBUTING.md).

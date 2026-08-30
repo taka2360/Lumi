@@ -8,9 +8,9 @@ unusual and it shapes everything else here:
 > `docs/` is the single source of truth. **If your change alters the design, the design document
 > changes before the code does** — in the same pull request, not afterwards.
 
-This is not ceremony. Lumi is an agent with a microphone, screen access, memory of your
-conversations, and — from Phase 4 — the ability to operate your PC. The constraints that keep that
-safe only work if they are written down somewhere more durable than a diff.
+There's a reason for the ceremony: Lumi is an agent with a microphone, screen access, memory of
+your conversations, and — from Phase 4 — the ability to operate your PC. The constraints that keep
+that safe only work if they live somewhere more durable than a diff.
 
 *Design documents are in Japanese. Code, comments, and commit messages are in English —
 [see the language policy below](#language-policy).*
@@ -55,11 +55,16 @@ no ✓ in that table, it is a design violation, not a judgement call.
 **Prerequisites** — Rust (MSVC toolchain) · Node 24+ · pnpm 11 ·
 [uv](https://docs.astral.sh/uv/) (uv fetches Python 3.12 itself). Windows only for now.
 
-```bash
+The commands below are written one per line so they work as-is in PowerShell (including Windows
+PowerShell 5.1, where `&&` is a syntax error) as well as in Git Bash.
+
+```text
 git clone https://github.com/taka2360/Lumi.git
 cd Lumi
 pnpm install
-cd core && uv sync && cd ..
+cd core
+uv sync
+cd ..
 
 pnpm dev            # launch the app (Shell + Stage, with Core as a sidecar)
 pnpm stage:dev      # Stage alone
@@ -70,15 +75,22 @@ pnpm stage:dev      # Stage alone
 CI runs three jobs — Core (Python), Shell (Rust), Stage (TypeScript). Run the relevant ones before
 pushing:
 
-```bash
-# core/
-uv run ruff check && uv run ruff format --check && uv run mypy && uv run pytest
+```text
+# in core/
+uv run ruff check
+uv run ruff format --check
+uv run mypy
+uv run pytest
 
-# shell/src-tauri/
-cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+# in shell/src-tauri/
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
+cargo test
 
-# stage/
-pnpm lint && pnpm typecheck && pnpm test
+# in stage/
+pnpm lint
+pnpm typecheck
+pnpm test
 ```
 
 **Never skip hooks with `--no-verify`.** If a hook fails, fix the cause.
@@ -102,13 +114,14 @@ How a change is treated depends on its confidence level in [docs/DESIGN.md](docs
 
 | Level | Treatment |
 |---|---|
-| **Confirmed** | **Write a new ADR and survey the blast radius before changing anything.** Do not change it unilaterally. Everything in `contracts/` and all eight invariants are Confirmed. |
+| **Confirmed** | **Open an issue and reach agreement with the maintainer first**, then write a new ADR and survey the blast radius before any code changes. Everything in `contracts/` and all eight invariants are Confirmed. |
 | Provisional | Ordinary design change — record it and update the docs. |
 | Deferred | Not being decided at this stage. If you want to decide it, check which phase it belongs to first. |
 
 ### 2. Writing an ADR
 
-`docs/decisions/ADR-NNN-<kebab-case-title>.md`, following the structure of the existing 46:
+`docs/decisions/ADR-NNN-<kebab-case-title>.md`, following the structure of the
+[existing ADRs](docs/decisions/):
 
 ```
 Status / Date / Related (table)
@@ -158,8 +171,8 @@ invariant, a boundary, or the permission path, say so explicitly — that change
 
 ## What reviewers look for
 
-- **Invariant violations.** These are not weighed against convenience. "It's just for debugging"
-  and "we can call it directly here, it's faster" are violations, not trade-offs.
+- **Invariant violations.** These aren't weighed against convenience — "it's just for debugging"
+  and "we can call it directly here, it's faster" don't work as trade-offs here.
 - **Code that disagrees with `docs/`.** Even when the code behaves fine, the disagreement is the
   defect. Either the code or the document is wrong; decide which, and fix that.
 - **Abstractions that no design asked for.** Design principle 7: abstraction is justified by
@@ -167,22 +180,30 @@ invariant, a boundary, or the permission path, say so explicitly — that change
   not justification.
 - **Anything that degrades silently.** Things that do not work must fail explicitly. When in
   doubt, fail closed.
-- **Decisions handed to the LLM.** Judgement is deterministic code; generation is the LLM. "Should
-  this happen?" is never an LLM's call.
-- **Testability without an LLM.** If something can only be tested by calling a model, the design
-  is wrong.
+- **Decisions handed to the LLM.** Judgement is deterministic code; generation is the LLM.
+  The LLM may *propose* — extract memory candidates, suggest a plan, classify intent — but
+  **authorization, safety, and state-transition decisions are code**. "Is this allowed?" and
+  "should this run?" are never an LLM's call.
+- **Testability without a live LLM.** Every deterministic path — policy, drives, salience and
+  decay, retrieval cutoffs, state machines — has to be testable with no model in the loop; if it
+  can't be, the design is wrong. Where the LLM genuinely is involved, the test asserts on the
+  **prompt we build**, not on what comes back.
 
 ### Mistakes that are easy to make
 
-- `trust_level = TRUSTED` may be written in exactly **two** places — the direct user-input handler,
-  and `MemoryStore._confirm_in()` (reached from the memory UI's "confirm" and "correct" actions,
-  per [ADR-043](docs/decisions/ADR-043-user-edited-memories-are-confirmed.md)).
-- Only the **EventBus** assigns `sequence_id`.
-- Only the **Attention Arbiter** performs Activity state transitions.
-- Only the **Tool Registry** performs Tool state transitions.
-- Exactly one function returns a `Decision`: `decide()`.
-- At most one Activity is `running`.
-- A Job's `actor` is always `system` (L0 only).
+Most rejected changes break a **sole-writer rule**: some piece of authority belongs to exactly one
+component, and the change adds a second writer. The recurring ones involve **trust-level
+assignment**, **event sequence numbering**, **Activity and Tool state transitions**, **who may
+return a permission decision**, and **the actor a Job runs as**.
+
+Rather than restate those rules here — where they would quietly drift out of date — they live in
+their defining documents:
+
+- [contracts/invariants.md](docs/contracts/invariants.md) — the eight invariants in full
+- [contracts/authority-matrix.md](docs/contracts/authority-matrix.md) — who may do what, per
+  component. **If what you are writing has no ✓ in that table, that is the answer**
+- [.claude/rules/00-invariants.md](.claude/rules/00-invariants.md) — the same rules condensed,
+  including the specific spots people get wrong
 
 ---
 
@@ -225,7 +246,7 @@ setting.**
 - Skip a phase. If a 🔴 "decide before starting" item in [docs/roadmap.md](docs/roadmap.md) is
   unresolved, that gets settled first
 - Commit build outputs, model files, voice libraries, or Cubism Core
-- **Put non-OSS material in the repository** — the Core's MIT boundary is not negotiable
+- Put non-OSS material in the repository — the Core's MIT boundary is one we keep firmly
 - Commit anyone's memory database, audit log, or `CLAUDE.local.md`
 
 ---
