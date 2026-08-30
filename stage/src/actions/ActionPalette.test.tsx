@@ -18,6 +18,7 @@ vi.stubGlobal(
 
 vi.mock("../platform/useStageShell", () => ({
   useOpenCredits: () => () => {},
+  useOpenHelp: () => () => {},
   useOpenPanel: () => () => {},
   useQuit: () => () => {},
   getPlatformShell: () => ({ setLocale: async () => {} }),
@@ -98,13 +99,16 @@ describe("action palette", () => {
     return found;
   }
 
-  it("carries the same actions as the boot-time row", () => {
+  it("carries every application action", () => {
+    // **The only way to reach them.** Nothing else on the character window opens these
+    // any more (ADR-047), so a button missing here is a window nobody can open.
     const buttons = [...render().querySelectorAll("button")];
 
     expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
       "設定",
       "インスペクター",
       "記憶",
+      "使いかた",
       "クレジットとライセンス",
       "終了",
     ]);

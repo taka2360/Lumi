@@ -2,35 +2,38 @@ import { describe, expect, it } from "vitest";
 
 import { canStartWindowDrag, windowScaleFactor } from "./useStageShell";
 
-/** A press with no modifier held, over `target`. */
+/** A press over `target`, with no modifier held unless one is named. */
 function press(button: number, target: EventTarget | null, altKey = false) {
   return { button, altKey, target };
 }
 
 describe("window drag surface", () => {
-  it("lets the boot and setup surface move the window with a plain left press", () => {
-    const panel = document.createElement("div");
-    const title = document.createElement("h1");
-    panel.appendChild(title);
-
-    expect(canStartWindowDrag(press(0, panel), "panel")).toBe(true);
-    expect(canStartWindowDrag(press(0, title), "panel")).toBe(true);
-  });
-
-  it("reserves a plain left press on the character for touching it", () => {
+  it("reserves a plain left press for touching the character", () => {
     // ★ **ADR-047.** Petting, poking and click reactions are all left-button gestures.
     // If a left press still moved the window, adding them later would mean guessing which
     // of the two the user meant — and the window drag is handed to the OS on press.
     const character = document.createElement("div");
 
-    expect(canStartWindowDrag(press(0, character), "character")).toBe(false);
+    expect(canStartWindowDrag(press(0, character))).toBe(false);
   });
 
-  it("moves the window from the character with alt or the middle button", () => {
-    const character = document.createElement("div");
+  it("reserves it on the boot and setup surface too", () => {
+    // ★ The loading and setup cards stand in for a character that cannot be shown yet.
+    // A window whose gestures change depending on what Lumi happens to be doing is one
+    // nobody can learn, so the same rule holds before the character appears.
+    const panel = document.createElement("div");
+    const title = document.createElement("h1");
+    panel.appendChild(title);
 
-    expect(canStartWindowDrag(press(0, character, true), "character")).toBe(true);
-    expect(canStartWindowDrag(press(1, character), "character")).toBe(true);
+    expect(canStartWindowDrag(press(0, panel))).toBe(false);
+    expect(canStartWindowDrag(press(0, title))).toBe(false);
+  });
+
+  it("moves the window with alt or the middle button", () => {
+    const surface = document.createElement("div");
+
+    expect(canStartWindowDrag(press(0, surface, true))).toBe(true);
+    expect(canStartWindowDrag(press(1, surface))).toBe(true);
   });
 
   it("does not steal presses from setup controls", () => {
@@ -40,11 +43,10 @@ describe("window drag surface", () => {
     button.appendChild(label);
     panel.appendChild(button);
 
-    expect(canStartWindowDrag(press(0, button), "panel")).toBe(false);
-    expect(canStartWindowDrag(press(0, label), "panel")).toBe(false);
-    // The exclusion wins over the gestures that are allowed on the character too.
-    expect(canStartWindowDrag(press(1, button), "character")).toBe(false);
-    expect(canStartWindowDrag(press(0, button, true), "character")).toBe(false);
+    // The exclusion wins over both gestures that would otherwise move the window.
+    expect(canStartWindowDrag(press(1, button))).toBe(false);
+    expect(canStartWindowDrag(press(1, label))).toBe(false);
+    expect(canStartWindowDrag(press(0, button, true))).toBe(false);
   });
 
   it("keeps setup commands selectable", () => {
@@ -53,8 +55,8 @@ describe("window drag surface", () => {
     command.dataset.windowGesture = "exclude";
     command.appendChild(text);
 
-    expect(canStartWindowDrag(press(0, command), "panel")).toBe(false);
-    expect(canStartWindowDrag(press(0, text), "panel")).toBe(false);
+    expect(canStartWindowDrag(press(1, command))).toBe(false);
+    expect(canStartWindowDrag(press(0, text, true))).toBe(false);
   });
 
   it("does not resize for wheel events over setup controls or commands", () => {
@@ -78,7 +80,7 @@ describe("window drag surface", () => {
     // window out from under the menu that is about to appear.
     const surface = document.createElement("div");
 
-    expect(canStartWindowDrag(press(2, surface), "panel")).toBe(false);
-    expect(canStartWindowDrag(press(2, surface, true), "character")).toBe(false);
+    expect(canStartWindowDrag(press(2, surface))).toBe(false);
+    expect(canStartWindowDrag(press(2, surface, true))).toBe(false);
   });
 });

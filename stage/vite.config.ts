@@ -17,8 +17,10 @@ export default defineConfig({
     // No source maps in the distributable (observed at 5 MB. No reason to ship originals in the distributable either).
     sourcemap: false,
     rollupOptions: {
-      // Credits get their own page. **So it never loads the Stage code that
+      // Credits and help get their own pages. **So they never load the Stage code that
       // connects to Core** (docs/architecture/ui.md "Why `credits` doesn't connect to Core").
+      // Help has the same requirement for a reason of its own: it explains the gestures
+      // that reach the setup screen, which is shown when Core has not come up.
       //
       // The three panels get their own pages for a related but different reason
       // (ADR-042): they do connect, as `panel`, and loading the character's entry point
@@ -26,6 +28,7 @@ export default defineConfig({
       input: {
         main: "index.html",
         credits: "credits.html",
+        help: "help.html",
         settings: "settings.html",
         inspector: "inspector.html",
         memory: "memory.html",

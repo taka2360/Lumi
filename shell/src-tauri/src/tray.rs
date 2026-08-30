@@ -1,4 +1,4 @@
-//! The tray — Phase 0 only has "credits" and "quit."
+//! The tray — "help", "credits" and "quit."
 //!
 //! Design → docs/architecture/ui.md "Tray menu"
 //!
@@ -22,6 +22,8 @@ const TRAY_ICON: &[u8] = include_bytes!("../icons/32x32.png");
 /// testable without opening the menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrayAction {
+    /// Opens the operating guide (ADR-047).
+    OpenHelp,
     /// Opens credits and licenses (the "somewhere findable with a bit of effort" from docs/licensing.md §6).
     OpenCredits,
     /// Quits Lumi.
@@ -30,11 +32,19 @@ pub enum TrayAction {
 
 /// The (id, display name) pairs in menu order.
 ///
+/// **Help is placed first.** Since the action palette is opened by right-clicking the
+/// character (ADR-047), someone who has not found that gesture has the tray and nothing
+/// else — and the guide is what tells them the gesture exists.
+///
 /// **Quit is placed last.** Crashing from a misclick would be the worst outcome.
-fn menu_items(locale: Locale) -> [(&'static str, &'static str); 2] {
+fn menu_items(locale: Locale) -> [(&'static str, &'static str); 3] {
     match locale {
-        Locale::Ja => [("credits", "クレジットとライセンス"), ("quit", "終了")],
-        Locale::En => [("credits", "Credits and licenses"), ("quit", "Quit")],
+        Locale::Ja => {
+            [("help", "使いかた"), ("credits", "クレジットとライセンス"), ("quit", "終了")]
+        }
+        Locale::En => {
+            [("help", "How to use Lumi"), ("credits", "Credits and licenses"), ("quit", "Quit")]
+        }
     }
 }
 
@@ -56,6 +66,7 @@ fn build_menu(app: &AppHandle, locale: Locale) -> tauri::Result<Menu<tauri::Wry>
 /// happens if one does.**
 fn resolve_tray_action(id: &str) -> Option<TrayAction> {
     match id {
+        "help" => Some(TrayAction::OpenHelp),
         "credits" => Some(TrayAction::OpenCredits),
         "quit" => Some(TrayAction::Quit),
         _ => None,
@@ -78,6 +89,7 @@ pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match resolve_tray_action(event.id.as_ref()) {
+            Some(TrayAction::OpenHelp) => crate::window_open::open_help(app),
             Some(TrayAction::OpenCredits) => crate::window_open::open_credits(app),
             // Quit goes through RunEvent::Exit, so Core goes down with it.
             Some(TrayAction::Quit) => app.exit(0),
@@ -100,6 +112,9 @@ pub fn shell_locale_set(app: AppHandle, locale: &str) -> Result<(), String> {
             .set_title(crate::window::credits_title(locale))
             .map_err(|error| error.to_string())?;
     }
+    if let Some(help) = app.get_webview_window(crate::window::WindowKind::Help.label()) {
+        help.set_title(crate::window::help_title(locale)).map_err(|error| error.to_string())?;
+    }
     Ok(())
 }
 
@@ -119,11 +134,14 @@ mod tests {
     }
 
     #[test]
-    fn credits_and_quit_are_both_present() {
+    fn help_credits_and_quit_are_all_present() {
         // Credits are a distribution obligation (docs/licensing.md §6), and quit
-        // has no other means besides the tray (docs/architecture/ui.md). Neither can be dropped.
+        // has no other means besides the tray (docs/architecture/ui.md). Help is how
+        // someone who never right-clicks the character learns that they can (ADR-047),
+        // so the tray is the one place it must not be missing. None can be dropped.
         let actions: Vec<_> =
             menu_items(Locale::Ja).iter().filter_map(|(id, _)| resolve_tray_action(id)).collect();
+        assert!(actions.contains(&TrayAction::OpenHelp));
         assert!(actions.contains(&TrayAction::OpenCredits));
         assert!(actions.contains(&TrayAction::Quit));
     }
@@ -136,8 +154,9 @@ mod tests {
 
     #[test]
     fn english_menu_is_localized() {
-        assert_eq!(menu_items(Locale::En)[0].1, "Credits and licenses");
-        assert_eq!(menu_items(Locale::En)[1].1, "Quit");
+        assert_eq!(menu_items(Locale::En)[0].1, "How to use Lumi");
+        assert_eq!(menu_items(Locale::En)[1].1, "Credits and licenses");
+        assert_eq!(menu_items(Locale::En)[2].1, "Quit");
     }
 
     #[test]

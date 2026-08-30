@@ -71,6 +71,7 @@
     "shell_window_scale",
     "shell_locale_set",
     "shell_credits_open",
+    "shell_help_open",
     "shell_panel_open",
     "shell_ollama_site_open",
     "shell_app_quit"
@@ -78,6 +79,7 @@
   "window_labels": [
     "stage",
     "credits",
+    "help",
     "permission",
     "settings",
     "inspector",

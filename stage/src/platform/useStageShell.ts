@@ -23,6 +23,7 @@ const noopShell: PlatformShell = {
   startWindowDrag: async () => {},
   scaleWindow: async () => {},
   openCredits: async () => {},
+  openHelp: async () => {},
   // **Rejects rather than resolving.** There is no window to open outside Tauri, and a
   // silent success would leave the action row looking like it worked (`useOpenPanel`
   // never reaches its error state).
@@ -108,6 +109,14 @@ export function useOpenCredits(onError?: (error: unknown) => void): () => void {
   }, [onError, shell]);
 }
 
+/** Returns a function that opens the bundled static operating guide. */
+export function useOpenHelp(onError?: (error: unknown) => void): () => void {
+  const shell = useMemo(getPlatformShell, []);
+  return useCallback(() => {
+    void shell.openHelp().catch((error: unknown) => onError?.(error));
+  }, [onError, shell]);
+}
+
 /**
  * Returns a function that opens one of Lumi's auxiliary windows (ADR-042).
  *
@@ -144,17 +153,6 @@ function isWindowGestureTarget(target: EventTarget | null): target is Element {
 const LEFT_BUTTON = 0;
 const MIDDLE_BUTTON = 1;
 
-/**
- * Which surface is being pressed, and therefore which presses may move the window.
- *
- * `character` **reserves a plain left press for touching the character** (ADR-047): the
- * window is dragged with `alt` + left or with the middle button instead. `panel` keeps
- * the plain left press, because the boot and setup surface stands in for a character that
- * is not on screen yet and has nothing to reserve it for — and someone stopped there has
- * not met Lumi, so a modifier they were never told about would leave the window stuck.
- */
-export type DragSurface = "character" | "panel";
-
 /** The part of a pointer press that decides whether the window may be dragged. */
 export interface DragIntent {
   button: number;
@@ -162,18 +160,24 @@ export interface DragIntent {
   target: EventTarget | null;
 }
 
-/** Whether a pointer press is allowed to start native window dragging. Exported for regression tests. */
-export function canStartWindowDrag(intent: DragIntent, surface: DragSurface): boolean {
+/**
+ * Whether a pointer press is allowed to start native window dragging.
+ *
+ * **A plain left press never moves the window** (ADR-047) — it is reserved for touching
+ * the character. The rule is the same on the loading and setup cards: they stand in for
+ * a character that cannot be shown yet, and a window whose gestures change depending on
+ * what Lumi happens to be doing is one nobody can learn.
+ *
+ * Exported for regression tests.
+ */
+export function canStartWindowDrag(intent: DragIntent): boolean {
   if (!isWindowGestureTarget(intent.target)) {
     return false;
   }
   if (intent.button === MIDDLE_BUTTON) {
     return true;
   }
-  if (intent.button !== LEFT_BUTTON) {
-    return false;
-  }
-  return intent.altKey || surface === "panel";
+  return intent.button === LEFT_BUTTON && intent.altKey;
 }
 
 /** Returns the bounded Shell request for a wheel interaction, or null over an excluded control. */
@@ -186,20 +190,20 @@ export function windowScaleFactor(deltaY: number, target: EventTarget | null): n
 
 /**
  * Handlers for moving and resizing the window. Used over the character and over the
- * temporary boot/setup surface shown before the character is available.
+ * temporary boot/setup surface shown before the character is available — **the same
+ * handlers on both** (ADR-047).
  *
- * Which presses may move the window depends on `surface` (ADR-047); the wheel behaves the
- * same on both. The decision (how small / large it's allowed to get) lives on the Shell side
+ * The decision (how small / large it's allowed to get) lives on the Shell side
  * → docs/architecture/ui.md "Moving and resizing the window"
  */
-export function useWindowGestures(surface: DragSurface) {
+export function useWindowGestures() {
   const shell = useMemo(getPlatformShell, []);
 
   const onPointerDown = useCallback(
     (event: React.PointerEvent) => {
-      // Buttons and selectable setup commands keep their native interaction. Everything
-      // else on the visible surface can move the window, as far as `surface` allows.
-      if (!canStartWindowDrag(event, surface)) {
+      // Buttons and selectable setup commands keep their native interaction, and a plain
+      // left press is reserved for the character.
+      if (!canStartWindowDrag(event)) {
         return;
       }
       // A middle press would otherwise start the WebView's autoscroll, which fights the
@@ -207,7 +211,7 @@ export function useWindowGestures(surface: DragSurface) {
       event.preventDefault();
       void shell.startWindowDrag();
     },
-    [shell, surface],
+    [shell],
   );
 
   const onWheel = useCallback(

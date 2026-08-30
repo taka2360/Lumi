@@ -76,6 +76,15 @@ export interface PlatformShell {
   openCredits(): Promise<void>;
 
   /**
+   * Opens the bundled static operating guide, or brings it forward.
+   *
+   * **Static, like credits, and for a reason of its own**: the gestures it explains are
+   * how the setup screen's controls are reached, and that screen is on display exactly
+   * when Core has not come up (docs/architecture/ui.md §1).
+   */
+  openHelp(): Promise<void>;
+
+  /**
    * Opens one of Lumi's own auxiliary windows — settings, inspector, memory — or brings
    * it forward (ADR-042).
    *

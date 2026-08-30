@@ -22,6 +22,7 @@ import { VISEMES } from "../character/lipsync";
 import {
   CMD_DRAG_START,
   CMD_OPEN_CREDITS,
+  CMD_OPEN_HELP,
   CMD_OPEN_OLLAMA_SITE,
   CMD_OPEN_PANEL,
   CMD_QUIT,
@@ -225,6 +226,7 @@ describe("wire contract", () => {
         CMD_SCALE,
         CMD_SET_LOCALE,
         CMD_OPEN_CREDITS,
+        CMD_OPEN_HELP,
         CMD_OPEN_OLLAMA_SITE,
         CMD_QUIT,
         CMD_OPEN_PANEL,

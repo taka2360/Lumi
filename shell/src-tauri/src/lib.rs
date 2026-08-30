@@ -68,6 +68,7 @@ pub fn run() {
             shell_window_scale,
             tray::shell_locale_set,
             window_open::shell_credits_open,
+            window_open::shell_help_open,
             window_open::shell_panel_open,
             app::shell_ollama_site_open,
             // Credits and quitting carry no judgment, so `shell.*`'s rule holds.
