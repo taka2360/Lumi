@@ -175,7 +175,7 @@ class ConversationRuntime:
             memory=self._memory_db, events=self._events_db, audit=self._audit_db
         )
         self._maintenance = MaintenanceJobs(
-            settings=self._settings,
+            settings=lambda: self._settings,
             retention=self._retention,
             memories=self._memories,
             index=self._index,

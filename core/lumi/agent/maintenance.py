@@ -17,6 +17,8 @@ be deleted would trade the whole product for a chore.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from lumi import logging as lumi_logging
 from lumi import settings as settings_module
 from lumi.kernel.cancellation import Cancellation
@@ -56,12 +58,15 @@ class MaintenanceJobs:
     def __init__(
         self,
         *,
-        settings: Settings,
+        settings: Callable[[], Settings],
         retention: RetentionService,
         memories: MemoryStore,
         index: MemoryIndex,
         embedder: HarrierEmbeddingProvider | None,
     ) -> None:
+        #: **Read per sweep, not captured.** The runtime rebinds this whole object when
+        #: the Stage changes a setting, and a snapshot taken at construction would keep
+        #: sweeping to a retention policy the user has already changed.
         self._settings = settings
         self._retention = retention
         self._memories = memories
@@ -84,13 +89,12 @@ class MaintenanceJobs:
         old records could not be deleted would trade the whole product for a chore.**
         """
         job = Job(id=new_job_id(), kind=JobKind.MAINTENANCE, cancellation=Cancellation.COOPERATIVE)
+        settings = self._settings()
         default = RetentionPolicy()
         policy = RetentionPolicy(
-            episode_days=_retention_days(
-                self._settings.retention_episodes.value, default.episode_days
-            ),
-            event_days=_retention_days(self._settings.retention_events.value, default.event_days),
-            audit_days=_retention_days(self._settings.retention_audit.value, default.audit_days),
+            episode_days=_retention_days(settings.retention_episodes.value, default.episode_days),
+            event_days=_retention_days(settings.retention_events.value, default.event_days),
+            audit_days=_retention_days(settings.retention_audit.value, default.audit_days),
         )
         try:
             deletions = await self._retention.run(policy)
