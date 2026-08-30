@@ -28,9 +28,10 @@ from __future__ import annotations
 from typing import Protocol
 
 from lumi.setup.broadcast import SetupStateBroadcaster
+from lumi.transport.connections import NotConnectedError
 from lumi.transport.methods import METHOD_SETUP_PROMPT
 from lumi.transport.protocol import Result, Role
-from lumi.transport.server import NotConnectedError, WsServer
+from lumi.transport.server import WsServer
 
 #: How long to wait for the user's choice. **Human time**, so it's long.
 PROMPT_TIMEOUT_S = 600.0

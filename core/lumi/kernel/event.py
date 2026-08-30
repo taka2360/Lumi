@@ -41,19 +41,31 @@ def activity_stream(activity_id: ActivityId) -> str:
     return f"activity:{activity_id}"
 
 
+#: The streams below are **named but not yet published to.** They are the ordering
+#: boundaries the event model already fixes (docs/contracts/event-model.md), and a stream
+#: key invented later by whoever happens to need one first is how two producers end up
+#: writing the same events under two names. Kept rather than deleted, and tagged so that
+#: "unused" reads as "not this Phase" rather than as "dead".
+
+
 def session_stream(session_id: str) -> str:
+    """〔Phase 3〕Per-session ordering."""
     return f"session:{session_id}"
 
 
 def memory_stream(subject: str) -> str:
+    """〔Phase 3〕Per-subject ordering — one belief's history is one stream."""
     return f"memory:{subject}"
 
 
 def world_stream(facet_key: str) -> str:
+    """〔Phase 3〕Per-facet ordering (docs/architecture/world-state.md)."""
     return f"world:{facet_key}"
 
 
+#: 〔Phase 4〕Grants and refusals, in the order they were decided.
 PERMISSION_STREAM = "permission"
+#: 〔Phase 6〕What Lumi decided to do of its own accord, and why.
 AUTONOMY_STREAM = "autonomy"
 
 

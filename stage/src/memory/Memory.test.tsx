@@ -36,13 +36,12 @@ function memory(overrides: Record<string, unknown> = {}) {
 /**
  * Lets the effects that load a page settle before assertions.
  *
- * **Waits out the search debounce.** Real time rather than fake timers: the component
- * also awaits promises, and interleaving those with a fake clock is more machinery than
- * a fifth of a second is worth.
+ * **Advances past the search debounce without depending on CI scheduling.** The promises
+ * returned by Core's mock are flushed by the async timer advancement too.
  */
 async function settle(): Promise<void> {
   await act(async () => {
-    await new Promise((resolve) => setTimeout(resolve, SEARCH_DEBOUNCE_MS + 20));
+    await vi.advanceTimersByTimeAsync(SEARCH_DEBOUNCE_MS);
   });
 }
 
@@ -51,6 +50,7 @@ describe("memory window", () => {
   let container: HTMLDivElement | null = null;
 
   beforeEach(() => {
+    vi.useFakeTimers();
     localStorage.setItem("lumi.locale", "ja");
     useStageStore.setState({ connected: true, memoryRevision: 0 });
     callCore.mockResolvedValue({ items: [memory()], total: 1 });
@@ -63,6 +63,7 @@ describe("memory window", () => {
     container = null;
     callCore.mockReset();
     useStageStore.setState({ connected: false, memoryRevision: 0 });
+    vi.useRealTimers();
   });
 
   async function render(): Promise<HTMLDivElement> {

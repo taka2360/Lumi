@@ -48,6 +48,7 @@ from lumi.content.pack import CharacterPack, ContentPackError, load_character
 from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.event import EventBus
 from lumi.kernel.hooks import HookRegistry
+from lumi.memory.browse import MemoryBrowser
 from lumi.memory.retrieval import Retriever
 from lumi.memory.store import MemoryStore
 from lumi.memory.vectors import MemoryIndex
@@ -81,7 +82,8 @@ from lumi.transport.methods import (
 )
 from lumi.transport.payload import require_bool, require_str_map
 from lumi.transport.protocol import Role
-from lumi.transport.server import RequestRefused, WsServer
+from lumi.transport.router import RequestRefused
+from lumi.transport.server import WsServer
 
 log = lumi_logging.get_logger(__name__)
 
@@ -231,6 +233,7 @@ class ConversationRuntime:
         # connected, and a route that appeared when a window opened would be a race.
         self._panel = PanelService(
             store=self._memories,
+            browser=MemoryBrowser(self._memory_db),
             index=self._index,
             episodes=self._episodes,
             retention=self._retention,

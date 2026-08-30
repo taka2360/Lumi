@@ -10,16 +10,15 @@ import pytest
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 
-from lumi.transport import server as server_module
-from lumi.transport.protocol import PROTOCOL_VERSION, Role
-from lumi.transport.server import (
+from lumi.transport import router as router_module
+from lumi.transport.connections import (
     CLOSE_PROTOCOL_ERROR,
     CLOSE_UNAUTHORIZED,
     NotConnectedError,
-    RequestRefused,
-    WsServer,
-    tokens_from_env,
 )
+from lumi.transport.protocol import PROTOCOL_VERSION, Role
+from lumi.transport.router import RequestRefused
+from lumi.transport.server import WsServer, tokens_from_env
 
 TOKENS = {Role.SHELL: "shell-token", Role.STAGE: "stage-token", Role.PANEL: "panel-token"}
 
@@ -487,7 +486,7 @@ class TestInboundRequests:
         makes Core indistinguishable from a dead one — from the Stage's side there is simply
         no reply, ever.
         """
-        monkeypatch.setattr(server_module, "INBOUND_REQUEST_TIMEOUT_S", 0.05)
+        monkeypatch.setattr(router_module, "INBOUND_REQUEST_TIMEOUT_S", 0.05)
 
         async def hangs(_payload: dict[str, object]) -> dict[str, object]:
             await asyncio.sleep(30.0)

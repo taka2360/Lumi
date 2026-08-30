@@ -22,18 +22,16 @@ from lumi.kernel.arbiter import AttentionArbiter
 from lumi.kernel.cancellation import CancelToken
 from lumi.kernel.event import EventBus
 from lumi.memory.decay import WEIGHT_EXPLICIT, WEIGHT_LLM, WEIGHT_NOVELTY
-from lumi.memory.records import AssertionMode, MemoryType
-from lumi.memory.reflection import (
+from lumi.memory.extraction import (
     CANDIDATE_LIMIT,
-    EXTRACTION_SYSTEM,
-    ReflectionJob,
     ReflectionRejected,
-    asked_to_remember,
-    build_messages,
-    explicit_marking,
     parse_extractions,
     to_candidate,
 )
+from lumi.memory.extraction_prompt import EXTRACTION_SYSTEM, build_messages
+from lumi.memory.phrases import asked_to_remember, explicit_marking
+from lumi.memory.records import AssertionMode, MemoryType
+from lumi.memory.reflection import ReflectionJob
 from lumi.memory.store import MemoryStore
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.providers.llm.base import Finish, LLMEvent, LLMFailure, LLMOptions, Message, TextDelta
@@ -490,6 +488,37 @@ async def test_an_extraction_the_store_refuses_does_not_stop_the_pass(rig: Rig) 
 
     assert report.written == 1
     assert report.rejected
+
+
+async def test_invalid_evidence_rejects_only_that_extraction(rig: Rig) -> None:
+    """A scalar is not a citation list, and one malformed item must not stop the pass."""
+    import json
+
+    rig.llm._answers = [
+        json.dumps(
+            [
+                {
+                    "subject": "user.hobby",
+                    "content": "ユーザーは Factorio が好き",
+                    "assertion_mode": "user_stated",
+                    "evidence": 1,
+                },
+                {
+                    "subject": "user.pet",
+                    "content": "ユーザーは猫を飼っている",
+                    "assertion_mode": "user_stated",
+                    "evidence": ["u1"],
+                },
+            ],
+            ensure_ascii=False,
+        )
+    ]
+    await rig.conversation(said("u1", "猫がいるんだ"))
+
+    report = await rig.job.run()
+
+    assert report.written == 1
+    assert report.rejected == ("invalid_evidence",)
 
 
 # ── Yielding to the conversation ─────────────────────────────

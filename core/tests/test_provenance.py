@@ -15,7 +15,6 @@ from lumi.provenance import (
     join_all,
     propagate,
     propagate_from_trust,
-    propagate_trust,
     provenance_from,
     taint,
 )
@@ -63,21 +62,21 @@ def test_join_all_of_nothing_is_trusted() -> None:
 def test_output_of_a_process_containing_untrusted_is_tainted() -> None:
     inputs = [block(ProvenanceClass.TRUSTED), block(ProvenanceClass.UNTRUSTED)]
     assert propagate(inputs, is_raw_external=False) is ProvenanceClass.DERIVED
-    assert propagate_trust(inputs) is TrustLevel.TAINTED
+    assert join_all(item.trust_level for item in inputs) is TrustLevel.TAINTED
 
 
 def test_output_of_a_process_containing_derived_stays_tainted() -> None:
     """**Mixing in derived never gets downgraded.** Loosening this creates a laundering path."""
     inputs = [block(ProvenanceClass.TRUSTED), block(ProvenanceClass.DERIVED)]
     assert propagate(inputs, is_raw_external=False) is ProvenanceClass.DERIVED
-    assert propagate_trust(inputs) is TrustLevel.TAINTED
+    assert join_all(item.trust_level for item in inputs) is TrustLevel.TAINTED
 
 
 def test_output_of_trusted_only_inputs_stays_trusted() -> None:
     """A small-talk turn (persona + user utterance + internal state) never becomes tainted."""
     inputs = [block(ProvenanceClass.TRUSTED), block(ProvenanceClass.TRUSTED)]
     assert propagate(inputs, is_raw_external=False) is ProvenanceClass.TRUSTED
-    assert propagate_trust(inputs) is TrustLevel.TRUSTED
+    assert join_all(item.trust_level for item in inputs) is TrustLevel.TRUSTED
 
 
 def test_raw_external_is_untrusted_even_with_trusted_inputs() -> None:

@@ -12,11 +12,13 @@ Anything grep and AST can cover is enforced here instead of building runtime mac
 | No import cycles between packages | authority-matrix #20 / ADR-045 |
 | `providers/` does not import `lumi.setup` | authority-matrix #21 / ADR-045 |
 | Background tasks are started through `spawn` | lumi/tasks.py |
+| Who writes `memories` | authority-matrix #22 / ADR-045 |
 """
 
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 LUMI = Path(__file__).resolve().parents[1] / "lumi"
@@ -336,6 +338,73 @@ def test_only_decide_returns_a_decision() -> None:
 #: everything" are the user's own doing; every other route is Lumi's, and there is none.
 AUDIT_DELETION_SITE = LUMI / "storage" / "retention.py"
 
+#: The only two files that may write the `memories` table (ADR-045). One believes
+#: things and one forgets them, **and forgetting is deletion**, which privacy.md §5
+#: keeps in one file with every other `DELETE` against user data.
+MEMORY_WRITERS = {
+    LUMI / "memory" / "store.py": ("INSERT", "UPDATE"),
+    LUMI / "storage" / "retention.py": ("UPDATE", "DELETE"),
+}
+
+
+def _literal_sql(node: ast.expr) -> str | None:
+    """Literal SQL passed to ``execute``; interpolated values become placeholders."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    if isinstance(node, ast.JoinedStr):
+        return "".join(
+            part.value if isinstance(part, ast.Constant) and isinstance(part.value, str) else "?"
+            for part in node.values
+        )
+    return None
+
+
+def _executed_sql(source: Path) -> list[str]:
+    tree = ast.parse(source.read_text(encoding="utf-8"))
+    statements: list[str] = []
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "execute"
+            and node.args
+        ):
+            continue
+        statement = _literal_sql(node.args[0])
+        if statement is not None:
+            statements.append(statement)
+    return statements
+
+
+def _write_target(statement: str) -> tuple[str, str] | None:
+    """The normalized write operation and table, if this is a supported SQL write."""
+    normalized = re.sub(r"\s+", " ", statement).strip().upper()
+    match = re.match(
+        r"^(?P<operation>INSERT(?: OR REPLACE)?|REPLACE) INTO (?P<insert_table>[^\s(]+)"
+        r"|^(?P<update>UPDATE) (?P<update_table>[^\s(]+)"
+        r"|^(?P<delete>DELETE) FROM (?P<delete_table>[^\s(]+)",
+        normalized,
+    )
+    if match is None:
+        return None
+    operation = match.group("operation") or match.group("update") or match.group("delete")
+    table = (
+        match.group("insert_table") or match.group("update_table") or match.group("delete_table")
+    )
+    # INSERT OR REPLACE and REPLACE have the same authority boundary as INSERT.
+    canonical_operation = "INSERT" if operation in {"INSERT OR REPLACE", "REPLACE"} else operation
+    return canonical_operation, table.strip('`"[]')
+
+
+def _memory_writes(source: Path) -> set[str]:
+    return {
+        operation
+        for statement in _executed_sql(source)
+        if (target := _write_target(statement)) is not None
+        for operation, table in (target,)
+        if table == "MEMORIES"
+    }
+
 
 def test_the_audit_log_is_append_only() -> None:
     """**Append-only means "no `DELETE` / `UPDATE` outside the deletion service."**
@@ -423,3 +492,61 @@ def test_trust_level_trusted_is_only_written_where_allowed() -> None:
         source.relative_to(LUMI).as_posix() for source in lumi_sources() if grants_trusted(source)
     }
     assert granters == allowed
+
+
+def test_only_the_store_and_the_purge_write_memories() -> None:
+    """**One writer for what Lumi believes** (ADR-045 / authority-matrix #22).
+
+    `MemoryStore` is where every rule about a belief is enforced: `user_confirmed` refused,
+    evidence checked, trust joined with the utterances it came from, supersession writing
+    the contradiction note in the same transaction. **A second writer would not be a
+    shortcut past one of those, it would be past all of them** — and the symptom is a
+    memory that reads fine and was never checked.
+
+    The reads are deliberately not restricted. `memory/rows.py` and `memory/browse.py`
+    both `SELECT`, and that is the point of them: a query builder that could also write
+    would make this check unable to tell the two apart.
+
+    Physical deletion is `storage/retention.py`, with every other `DELETE` against user
+    data, because privacy.md §5 has to be checkable by reading one file.
+    """
+    for source in lumi_sources():
+        writes = _memory_writes(source)
+        allowed = set(MEMORY_WRITERS.get(source, ()))
+        assert writes <= allowed, (
+            f"{source.relative_to(LUMI).as_posix()}: "
+            f"unauthorized {', '.join(sorted(writes - allowed))} on MEMORIES"
+        )
+
+
+def test_memory_write_parser_covers_sqlite_write_forms() -> None:
+    """Whitespace and SQLite replacement syntax must not create a boundary-test escape."""
+    statements = {
+        "INSERT": "insert\ninto memories (id) values (?)",
+        "INSERT OR REPLACE": "INSERT OR REPLACE INTO `memories` (id) VALUES (?)",
+        "REPLACE": 'REPLACE INTO "memories" (id) VALUES (?)',
+        "UPDATE": " update memories set archived_at = ? ",
+        "DELETE": "DELETE\nFROM [memories] WHERE id = ?",
+    }
+
+    for statement in statements.values():
+        assert _write_target(statement) in {
+            ("INSERT", "MEMORIES"),
+            ("UPDATE", "MEMORIES"),
+            ("DELETE", "MEMORIES"),
+        }
+
+
+def test_both_memory_writers_still_write() -> None:
+    """★ The other half: **an exception that stopped being used is a hole nobody watches.**
+
+    Skipping a file is only safe while it is the file documented to hold the exception. If
+    the purge stopped deleting memories, the skip above would quietly license a `DELETE`
+    anywhere in `storage/retention.py`.
+    """
+    for source, operations in MEMORY_WRITERS.items():
+        writes = _memory_writes(source)
+        for operation in operations:
+            assert operation in writes, (
+                f"{source.relative_to(LUMI).as_posix()}: {operation} MEMORIES"
+            )

@@ -106,11 +106,6 @@ def propagate(inputs: Iterable[Provenanced], *, is_raw_external: bool) -> Proven
     return ProvenanceClass.DERIVED
 
 
-def propagate_trust(inputs: Iterable[Provenanced]) -> TrustLevel:
-    """The `TrustLevel` of a processing step's output. The join of its inputs."""
-    return join_all(i.trust_level for i in inputs)
-
-
 def propagate_from_trust(trust: TrustLevel, *, is_raw_external: bool) -> ProvenanceClass:
     """`propagate()` for when only the input's `TrustLevel` is on hand.
 

@@ -18,14 +18,10 @@ from __future__ import annotations
 
 from enum import StrEnum
 from functools import lru_cache
-from typing import Final
 
 from lumi import logging as lumi_logging
 
 log = lumi_logging.get_logger(__name__)
-
-#: Force a device regardless of what is present. **A setting, not a guess.**
-DEVICE_ENV: Final = "LUMI_INFERENCE_DEVICE"
 
 
 class DeviceChoice(StrEnum):

@@ -47,7 +47,7 @@ from lumi.kernel.activity import ActivityKind, ActivityProposal, Actor
 from lumi.kernel.arbiter import Accepted, AttentionArbiter
 from lumi.kernel.cancellation import CancelToken
 from lumi.kernel.ids import new_correlation_id
-from lumi.memory.reflection import asked_to_remember
+from lumi.memory.phrases import asked_to_remember
 from lumi.memory.retrieval import Retriever
 from lumi.providers.base import ProviderError, ProviderKind
 from lumi.providers.llm.base import LLMOptions
@@ -90,6 +90,7 @@ class ReactiveLoop:
         "_tts_volume",
         "_turn",
         "_turns",
+        "_writes",
     )
 
     def __init__(
@@ -140,6 +141,11 @@ class ReactiveLoop:
         #: has to be able to reach them, and a turn that outlives the databases writes an
         #: episode into a closed connection
         self._turns: set[asyncio.Task[None]] = set()
+        #: Memory bookkeeping started by a turn and outliving it. **Not turns**: a set
+        #: named "the turns currently running" is the obvious thing to consult for "is
+        #: Lumi mid-conversation", and counting a recall tally as one would make Lumi
+        #: look busy to whoever asks next
+        self._writes: set[asyncio.Task[None]] = set()
         #: **The only place STT is started** (ADR-039). Speculations begin while VAD is
         #: still waiting out the silence, and `SPEECH_ENDED` adopts one instead of starting
         #: its own — two entry points would mean two inferences in flight
@@ -245,8 +251,12 @@ class ReactiveLoop:
         started: a turn blocked on an uncancellable STT keeps going, and finishes by
         writing to resources that are being torn down. Each turn's cancellation is
         cooperative, so this waits for them rather than assuming they stopped.
+
+        **The recall tallies are stopped too.** They are the same hazard — a write into a
+        connection that is closing — and being not-a-turn is a reason to hold them apart,
+        not a reason to leave them running.
         """
-        turns = tuple(self._turns)
+        turns = tuple(self._turns) + tuple(self._writes)
         for task in turns:
             task.cancel()
         for task in turns:
@@ -422,6 +432,6 @@ class ReactiveLoop:
                 self._retriever.record_use(result, now=self._clock()),
                 name="memory.record_use",
                 event="memory.record_use_failed",
-                keep=self._turns,
+                keep=self._writes,
             )
         return to_blocks(result.records)
