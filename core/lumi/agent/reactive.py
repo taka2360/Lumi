@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -46,6 +45,7 @@ from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
 from lumi.agent.stt import SpeculativeStt, SttOutcome
+from lumi.agent.voice import VoiceResolver, VoiceScales, validate_speed, validate_volume
 from lumi.audio.io import AudioIO
 from lumi.audio.playback import SpeakerPlayback
 from lumi.audio.vad import SAMPLE_RATE, VadEvent
@@ -69,13 +69,7 @@ from lumi.providers.llm.base import (
 )
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import AudioBuffer, STTProvider, Transcription
-from lumi.providers.tts.base import VOLUME_SCALE_MAX, TTSProvider, VoiceConfig
-from lumi.settings import (
-    TTS_SPEED_MAX,
-    TTS_SPEED_MIN,
-    TTS_VOLUME_MAX,
-    TTS_VOLUME_MIN,
-)
+from lumi.providers.tts.base import TTSProvider
 from lumi.tasks import spawn
 from lumi.tools.base import ToolContext, ToolResult
 from lumi.tools.registry import ToolRegistry
@@ -91,39 +85,6 @@ MEMORY_BUDGET_TOKENS: Final = 400
 
 #: Language passed to STT. Fixed to Japanese in Phase 1 [Provisional]
 LANGUAGE: Final = "ja"
-
-
-def _validate_tts_speed(speed: float) -> float:
-    """Keeps the runtime API aligned with the Core-owned settings contract."""
-    if not math.isfinite(speed) or not TTS_SPEED_MIN <= speed <= TTS_SPEED_MAX:
-        raise ValueError(
-            f"tts_speed must be finite and between {TTS_SPEED_MIN} and {TTS_SPEED_MAX}"
-        )
-    return speed
-
-
-def _validate_tts_volume(volume: float) -> float:
-    """Same contract for the volume multiplier (ADR-046).
-
-    **A multiplier, not a level.** `1.0` leaves the Content Pack's own volume alone.
-    """
-    if not math.isfinite(volume) or not TTS_VOLUME_MIN <= volume <= TTS_VOLUME_MAX:
-        raise ValueError(
-            f"tts_volume must be finite and between {TTS_VOLUME_MIN} and {TTS_VOLUME_MAX}"
-        )
-    return volume
-
-
-@dataclass(frozen=True, slots=True)
-class VoiceScales:
-    """The speed and volume **as they were when the turn started** (ADR-032 / ADR-046).
-
-    A turn keeps what it began with: a slider moved while Lumi is mid-sentence changes the
-    next reply, never the one already being spoken.
-    """
-
-    speed: float
-    volume: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -158,6 +119,7 @@ class ReactiveLoop:
         "_tts_speed",
         "_tts_volume",
         "_turns",
+        "_voices",
     )
 
     def __init__(
@@ -182,6 +144,7 @@ class ReactiveLoop:
         self._providers = providers
         self._tools = tools
         self._pack = pack
+        self._voices = VoiceResolver(pack)
         self._notifier = notifier
         self._options = options
         self._session = session or Session()
@@ -198,9 +161,9 @@ class ReactiveLoop:
         #: is monotonic — right for spans, **meaningless as a date**, and decay and recency
         #: are both functions of a date.
         self._clock = clock
-        self._tts_speed = _validate_tts_speed(tts_speed)
+        self._tts_speed = validate_speed(tts_speed)
         #: **Scales the Content Pack's volume**, so `1.0` is whatever the pack asked for
-        self._tts_volume = _validate_tts_volume(tts_volume)
+        self._tts_volume = validate_volume(tts_volume)
         self._last_latency: TurnLatency | None = None
         #: When the last turn finished. **Starts at construction**, so a Lumi nobody has
         #: spoken to yet counts as idle — which is what makes the first idle pass pick up
@@ -245,11 +208,11 @@ class ReactiveLoop:
 
     def set_tts_speed(self, speed: float) -> None:
         """Uses a new Core-owned speed for the next scheduler that is created."""
-        self._tts_speed = _validate_tts_speed(speed)
+        self._tts_speed = validate_speed(speed)
 
     def set_tts_volume(self, volume: float) -> None:
         """Uses a new Core-owned volume multiplier for the next scheduler that is created."""
-        self._tts_volume = _validate_tts_volume(volume)
+        self._tts_volume = validate_volume(volume)
 
     def set_llm_model(self, model: str) -> None:
         """Uses a setup-selected model for subsequent turns without rebuilding the loop."""
@@ -498,7 +461,7 @@ class ReactiveLoop:
             tts,
             self._require_playback(),
             self._notifier,
-            voice=self._voice(tts, scales),
+            voice=self._voices.resolve(tts, scales),
             cancel_token=activity.cancel_token,
             timer=timer,
         )
@@ -675,50 +638,6 @@ class ReactiveLoop:
     async def _get[T](self, kind: ProviderKind) -> T:
         """`ProviderRegistry` returns one per kind. **Raises if not set up.**"""
         return cast("T", await self._providers.get(kind))
-
-    def _voice(self, tts: TTSProvider, scales: VoiceScales) -> VoiceConfig:
-        """If the Content Pack doesn't specify a speaker, **defer to the engine's default.**
-
-        Core doesn't hardcode a default because **which models are installed varies by
-        environment** (AivisSpeech fetches models at runtime).
-        """
-        speaker = self._pack.voice.speaker
-        volume = self._volume_scale(scales.volume)
-        if speaker is not None:
-            return VoiceConfig(
-                speaker=speaker,
-                name=self._pack.voice.credit.name,
-                volume_scale=volume,
-                speed_scale=scales.speed,
-            )
-        default = getattr(tts, "default_voice", None)
-        if default is None:
-            raise ProviderError("no_voice", "Cannot determine speaker")
-        voice = cast("VoiceConfig", default())
-        return VoiceConfig(
-            speaker=voice.speaker,
-            name=voice.name,
-            volume_scale=volume,
-            speed_scale=scales.speed,
-        )
-
-    def _volume_scale(self, multiplier: float) -> float:
-        """The Content Pack's volume, scaled by the Core-owned setting (ADR-046).
-
-        **Clamped to what the engine accepts, and said out loud when it is.** A pack loud
-        enough to run past the ceiling would otherwise let the slider move with nothing
-        happening — which is indistinguishable from a broken control.
-        """
-        scaled = self._pack.voice.volume * multiplier
-        if scaled > VOLUME_SCALE_MAX:
-            log.info(
-                "reactive.volume_clamped",
-                requested=scaled,
-                maximum=VOLUME_SCALE_MAX,
-                pack_volume=self._pack.voice.volume,
-            )
-            return VOLUME_SCALE_MAX
-        return scaled
 
     def _require_playback(self) -> SpeakerPlayback:
         """If there's no output, **fail explicitly.** Never silently converse in silence."""
