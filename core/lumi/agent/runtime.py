@@ -38,6 +38,7 @@ from lumi.agent.recall import cost_of
 from lumi.agent.reflection_scheduler import ReflectionScheduler
 from lumi.agent.session import Session
 from lumi.agent.warmup import warm_all, warm_llm
+from lumi.agent.windows import WindowAnnouncer
 from lumi.artifacts.install import is_model_installed
 from lumi.artifacts.models import HARRIER_OSS_V1_270M
 from lumi.audio.devices import AudioPlan
@@ -75,14 +76,8 @@ from lumi.tools.builtin.character import SetExpressionTool
 from lumi.tools.registry import ToolRegistry
 from lumi.transport.methods import (
     METHOD_EXPRESSION,
-    METHOD_MIC,
     METHOD_MIC_MUTE,
-    METHOD_MODEL,
-    METHOD_PANEL_SETTINGS,
-    METHOD_SETTINGS,
     METHOD_SETTINGS_UPDATE,
-    REASON_MODEL_NOT_IN_PACK,
-    REASON_PACK_UNREADABLE,
 )
 from lumi.transport.payload import require_bool, require_str_map
 from lumi.transport.protocol import Role
@@ -134,6 +129,7 @@ class ConversationRuntime:
         "_setup",
         "_task",
         "_warmup",
+        "_windows",
     )
 
     def __init__(self, server: WsServer, setup: SetupCoordinator, plan: AudioPlan) -> None:
@@ -197,6 +193,13 @@ class ConversationRuntime:
         #: One per session. **Holds the episode open** for as long as the process runs;
         #: sessions do not end while Lumi is up (Phase 3 gives them boundaries)
         self._recorder = EpisodeRecorder(self._episodes)
+        self._windows = WindowAnnouncer(
+            server,
+            settings=lambda: self._settings,
+            audio=self._audio,
+            pack=self._pack,
+            listening=lambda: self._listening,
+        )
         self._loop = self._build_loop(server, tools)
         #: **"When may Lumi go and think" is an agent question** (ADR-045). What to extract
         #: from a transcript stays in `memory/reflection.py`.
@@ -320,22 +323,10 @@ class ConversationRuntime:
             if "tts_volume" in changes:
                 self._loop.set_tts_volume(float(self._settings.tts_volume.value))
 
-        await self._broadcast_settings()
+        await self._windows.settings()
         return {
             "applied_at_next_start": any(key not in _APPLIED_NOW for key in changes),
         }
-
-    async def _broadcast_settings(self) -> None:
-        """Send the settings snapshot to **both** the character window and the panels.
-
-        The settings window is where they are read and changed; the character window
-        needs `locale`, which decides the language of everything it draws. Sending to one
-        and not the other would leave the bubble in the language the app started in
-        (ADR-042).
-        """
-        payload = self._settings.to_payload()
-        await self._server.notify(Role.STAGE, METHOD_SETTINGS, payload)
-        await self._server.notify(Role.PANEL, METHOD_PANEL_SETTINGS, payload)
 
     async def on_panel_connected(self) -> None:
         """A settings, inspector or memory window just opened. **Give it the current state.**
@@ -353,7 +344,7 @@ class ConversationRuntime:
         next change will reach it.
         """
         try:
-            await self._broadcast_settings()
+            await self._windows.settings()
             await self._inspector.publish()
         except Exception:
             log.warning("panel.snapshot_failed", exc_info=True)
@@ -375,50 +366,10 @@ class ConversationRuntime:
             # Unmuting reopens the device, and the device may be gone. **Say so and stay
             # muted**; reporting success would leave the light on over a dead stream.
             log.warning("audio.mute_failed", muted=wanted, error=str(error))
-            await self._announce_mic()
+            await self._windows.microphone()
             raise RequestRefused("microphone_unavailable") from error
-        await self._announce_mic()
+        await self._windows.microphone()
         return {"muted": self._audio.input_muted}
-
-    async def _announce_mic(self) -> None:
-        """Whether the microphone is open, and whether the user muted it (ui.md §5b).
-
-        **Open means a stream is actually being read**, so a muted microphone is not open:
-        muting closes it (`AudioIO.set_input_muted`).
-        """
-        await self._server.notify(
-            Role.STAGE,
-            METHOD_MIC,
-            {
-                "open": (
-                    self._listening and self._audio.can_listen and not self._audio.input_muted
-                ),
-                "muted": self._audio.input_muted,
-            },
-        )
-
-    async def _announce_model(self) -> None:
-        """Tells the Stage **which model to draw, and the credit that goes with it** (ADR-029).
-
-        **Sent even when there is no model** (`path: null`). "Nothing has arrived yet" and
-        "this Content Pack ships no model" are different states, and only the second one
-        should put the placeholder on screen with a reason (docs/architecture/ui.md).
-
-        An absolute path, not a URL — **Core does not serve files** and does not know how
-        Shell addresses them. The reason is a code for the same kind of reason: **Core
-        does not render, either** (ADR-036).
-        """
-        model = self._pack.model if self._pack else None
-        if model is None:
-            # **A code, not a sentence** (ADR-036). Core does not know the Stage's locale,
-            # and a display string sent from here would be the one line on screen that
-            # switching language never reaches.
-            reason = REASON_MODEL_NOT_IN_PACK if self._pack else REASON_PACK_UNREADABLE
-            await self._server.notify(Role.STAGE, METHOD_MODEL, {"path": None, "reason": reason})
-            log.info("character.model.absent", reason=reason)
-            return
-        await self._server.notify(Role.STAGE, METHOD_MODEL, model.to_payload())
-        log.info("character.model", path=str(model.path), format=model.format)
 
     @property
     def arbiter(self) -> AttentionArbiter:
@@ -453,8 +404,8 @@ class ConversationRuntime:
         self._inspector.start()
         # **Sent once at startup.** The Stage shows values, not judgments — including
         # which of them an environment variable is currently overriding
-        await self._broadcast_settings()
-        await self._announce_model()
+        await self._windows.settings()
+        await self._windows.character_model()
         # **The engine is started here, not at the first utterance.** The boot phase the
         # Stage shows is derived from this process state, so with nobody starting it and
         # reporting back, `installed × stopped` keeps rendering "starting" forever
@@ -538,7 +489,7 @@ class ConversationRuntime:
         self._providers.register(OllamaProvider(model))
         if self._loop is not None:
             self._loop.set_llm_model(model)
-        await self._broadcast_settings()
+        await self._windows.settings()
 
     async def _start_listening(self) -> None:
         """Open voice input only after Core has broadcast `boot: ready` (ADR-033).
@@ -562,7 +513,7 @@ class ConversationRuntime:
         # **Announced as soon as the stream is open**, before the early return below.
         # A Lumi with no Content Pack still has an open microphone, and the indicator is
         # the only thing on screen saying so.
-        await self._announce_mic()
+        await self._windows.microphone()
 
         if self._loop is None:
             log.warning("conversation.disabled", reason="content pack")
