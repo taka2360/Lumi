@@ -10,14 +10,15 @@
  *
  * **The glyphs themselves are not translated.** A symbol has no Japanese and no English,
  * and putting it through i18n would create a string that must not differ per locale but
- * technically can.
+ * technically can. They live in `items.ts`, which the help window reads as well.
  */
 
 import { useCallback, useMemo, useState } from "react";
 
 import { translate } from "../i18n";
 import { useLocale } from "../i18n/provider";
-import { useOpenCredits, useOpenPanel, useQuit } from "../platform/useStageShell";
+import { useOpenCredits, useOpenHelp, useOpenPanel, useQuit } from "../platform/useStageShell";
+import { actionGlyph } from "./items";
 
 function ActionButton({
   glyph,
@@ -29,6 +30,7 @@ function ActionButton({
     | "actions.settings"
     | "actions.inspector"
     | "actions.memory"
+    | "actions.help"
     | "actions.credits"
     | "actions.quit";
   onClick: () => void;
@@ -72,6 +74,7 @@ export function AppActions() {
   const openInspector = useOpenPanel("inspector", onOpenError);
   const openMemory = useOpenPanel("memory", onOpenError);
   const openCredits = useOpenCredits(onCreditsError);
+  const openHelp = useOpenHelp(onOpenError);
   const quit = useQuit();
 
   const clearThen = (open: () => void) => () => {
@@ -81,11 +84,32 @@ export function AppActions() {
 
   return (
     <nav className="app-actions" aria-label={translate(locale, "actions.menu")}>
-      <ActionButton glyph="⚙" labelKey="actions.settings" onClick={clearThen(openSettings)} />
-      <ActionButton glyph="◎" labelKey="actions.inspector" onClick={clearThen(openInspector)} />
-      <ActionButton glyph="✿" labelKey="actions.memory" onClick={clearThen(openMemory)} />
-      <ActionButton glyph="ⓘ" labelKey="actions.credits" onClick={clearThen(openCredits)} />
-      <ActionButton glyph="⏻" labelKey="actions.quit" onClick={quit} />
+      <ActionButton
+        glyph={actionGlyph("settings")}
+        labelKey="actions.settings"
+        onClick={clearThen(openSettings)}
+      />
+      <ActionButton
+        glyph={actionGlyph("inspector")}
+        labelKey="actions.inspector"
+        onClick={clearThen(openInspector)}
+      />
+      <ActionButton
+        glyph={actionGlyph("memory")}
+        labelKey="actions.memory"
+        onClick={clearThen(openMemory)}
+      />
+      <ActionButton
+        glyph={actionGlyph("help")}
+        labelKey="actions.help"
+        onClick={clearThen(openHelp)}
+      />
+      <ActionButton
+        glyph={actionGlyph("credits")}
+        labelKey="actions.credits"
+        onClick={clearThen(openCredits)}
+      />
+      <ActionButton glyph={actionGlyph("quit")} labelKey="actions.quit" onClick={quit} />
       {failed && (
         <span className="app-actions__error" role="alert">
           {translate(locale, failed)}

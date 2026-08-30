@@ -24,6 +24,7 @@ export const CMD_DRAG_START = "shell_window_drag_start";
 export const CMD_SCALE = "shell_window_scale";
 export const CMD_SET_LOCALE = "shell_locale_set";
 export const CMD_OPEN_CREDITS = "shell_credits_open";
+export const CMD_OPEN_HELP = "shell_help_open";
 export const CMD_OPEN_PANEL = "shell_panel_open";
 export const CMD_OPEN_OLLAMA_SITE = "shell_ollama_site_open";
 export const CMD_QUIT = "shell_app_quit";
@@ -73,6 +74,10 @@ export function createTauriPlatformShell(): PlatformShell {
 
     async openCredits(): Promise<void> {
       await invoke(CMD_OPEN_CREDITS);
+    },
+
+    async openHelp(): Promise<void> {
+      await invoke(CMD_OPEN_HELP);
     },
 
     async openOllamaSite(): Promise<void> {

@@ -1,0 +1,135 @@
+/* Help is a **normal window.** Unlike the Stage it paints a background, and it follows
+   the credits window's typography — the two are the only pages Lumi opens that do not
+   connect to Core, and they should not look like they came from different applications. */
+:root {
+  color-scheme: light dark;
+  --help-bg: #ffffff;
+  --help-fg: #1a1a1a;
+  --help-muted: #5c5c5c;
+  --help-line: #d8d8d8;
+  --help-glyph-bg: #f4f4f4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --help-bg: #1c1c1e;
+    --help-fg: #eaeaea;
+    --help-muted: #a0a0a0;
+    --help-line: #3a3a3c;
+    --help-glyph-bg: #2a2a2c;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--help-bg);
+  color: var(--help-fg);
+  font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+.help {
+  max-width: 620px;
+  margin: 0 auto;
+  padding: 24px 24px 48px;
+}
+
+.help__title {
+  font-size: 20px;
+  margin: 0 0 24px;
+}
+
+.help__section {
+  margin: 0 0 32px;
+}
+
+.help__heading {
+  font-size: 16px;
+  margin: 0 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--help-line);
+}
+
+.help__lead {
+  margin: 4px 0 12px;
+  color: var(--help-muted);
+}
+
+.help__table {
+  border-collapse: collapse;
+  width: 100%;
+  text-align: left;
+}
+
+.help__table th,
+.help__table td {
+  padding: 6px 12px 6px 0;
+  border-bottom: 1px solid var(--help-line);
+  vertical-align: top;
+  font-weight: normal;
+}
+
+.help__table thead th {
+  color: var(--help-muted);
+  font-size: 13px;
+}
+
+/* The gesture is the column people scan, so it stays on one line and keeps its weight. */
+.help__gesture {
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.help__actions {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.help__action {
+  display: grid;
+  /* Glyph, name, and what it opens. The description takes whatever is left so a long
+     sentence wraps under itself instead of pushing the name column around. */
+  grid-template-columns: 28px minmax(6em, max-content) 1fr;
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--help-line);
+}
+
+/* The same glyph as the button on the character, boxed the same way so it is recognised
+   as the thing to press rather than as decoration in a sentence. */
+.help__glyph {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--help-line);
+  border-radius: 6px;
+  background: var(--help-glyph-bg);
+  font-size: 14px;
+  line-height: 1;
+}
+
+.help__action-name {
+  font-weight: 600;
+}
+
+.help__action-about {
+  color: var(--help-muted);
+}
+
+/* At the window's minimum width the three columns stop fitting; the description drops
+   under the name rather than shrinking to one word per line. */
+@media (max-width: 420px) {
+  .help__action {
+    grid-template-columns: 28px 1fr;
+  }
+
+  .help__action-about {
+    grid-column: 2;
+  }
+}

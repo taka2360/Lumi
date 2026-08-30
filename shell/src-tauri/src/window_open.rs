@@ -13,8 +13,8 @@ use tauri::{AppHandle, Manager as _, WebviewUrl, WebviewWindow, WebviewWindowBui
 
 use crate::locale::system_locale;
 use crate::window::{
-    compute_credits_window_options, compute_panel_window_options, compute_stage_placement,
-    PanelKind, ScreenArea, StageConfig, WindowSpec,
+    compute_credits_window_options, compute_help_window_options, compute_panel_window_options,
+    compute_stage_placement, PanelKind, ScreenArea, StageConfig, WindowSpec,
 };
 
 /// Opens a window per the spec.
@@ -108,6 +108,19 @@ pub(crate) fn open_credits(app: &AppHandle) {
     }
 }
 
+/// Opens the operating guide (tray or Stage action palette → help).
+///
+/// **A static page that never connects to Core**, for the same reason as credits and one
+/// of its own: the gestures it explains are how someone reaches the setup screen's
+/// controls, and that screen is shown precisely when Core has not come up.
+pub(crate) fn open_help(app: &AppHandle) -> tauri::Result<()> {
+    let spec = compute_help_window_options(system_locale());
+    if open_or_focus(app, "help", &spec, WebviewUrl::App("/help.html".into()))?.is_some() {
+        log::info!("help.opened");
+    }
+    Ok(())
+}
+
 /// Opens one of the auxiliary windows (ADR-042).
 ///
 /// **The same shape as `open_credits`**, including bringing an existing one forward
@@ -176,6 +189,21 @@ pub fn shell_credits_open(app: AppHandle) {
     open_credits(&app);
 }
 
+/// Opens the operating guide from the Stage's action palette.
+///
+/// **The same shape as `shell_credits_open`**: no URL and no label come from the Stage,
+/// and the only possible result is the same bundled page the tray opens.
+// `async` for the same reason as `shell_credits_open`: creating a window from a
+// synchronous IPC handler deadlocks the Windows event loop.
+#[tauri::command(async)]
+pub fn shell_help_open(app: AppHandle) -> Result<(), String> {
+    log::info!("shell.help_open requested by stage");
+    open_help(&app).map_err(|error| {
+        log::error!("help.open_failed {error}");
+        error.to_string()
+    })
+}
+
 /// Opens one of Lumi's own auxiliary windows from the Stage's action row (ADR-042).
 ///
 /// **The argument is one of three names, not a label or a URL.** An unrecognised value
@@ -204,11 +232,19 @@ mod tests {
     #[test]
     fn window_opening_commands_never_run_inline_in_the_ipc_handler() {
         let source = include_str!("window_open.rs").replace("\r\n", "\n");
-        for command in ["shell_credits_open", "shell_panel_open"] {
+        for command in ["shell_credits_open", "shell_help_open", "shell_panel_open"] {
             assert!(
                 source.contains(&format!("#[tauri::command(async)]\npub fn {command}")),
                 "{command} must be async to avoid the Windows event-loop deadlock"
             );
         }
+    }
+
+    /// The Help action already has an on-screen error path in Stage. The command must
+    /// reject when creation fails so that path is reachable rather than silently succeeding.
+    #[test]
+    fn help_open_command_returns_failures_to_stage() {
+        let source = include_str!("window_open.rs");
+        assert!(source.contains("pub fn shell_help_open(app: AppHandle) -> Result<(), String>"));
     }
 }

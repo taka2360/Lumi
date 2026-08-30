@@ -217,17 +217,16 @@ body {
   min-width: 96px;
 }
 
-/* The surface for grabbing the character. Drag to move, wheel to resize
-   (docs/architecture/ui.md "Moving and resizing the window"). Shell makes the
-   transparent area outside this and the boot/setup overlay click-through. */
+/* The character's surface. Wheel to resize, `alt` + left or middle to move, right to open
+   the action palette (docs/architecture/ui.md "Moving and resizing the window"). Shell
+   makes the transparent area outside this and the boot/setup overlay click-through.
+
+   **No grab cursor.** A plain left press is reserved for touching the character (ADR-047),
+   so advertising a drag handle here would promise the wrong thing. */
 .stage__grab {
   width: 100%;
   height: 100%;
-  cursor: grab;
-}
-
-.stage__grab:active {
-  cursor: grabbing;
+  cursor: default;
 }
 
 /* The boot-time display. Shows what's happening before the character appears. */
@@ -391,56 +390,6 @@ body {
   border-radius: 6px;
 }
 
-/* Wrapper whose rectangle is handed to Shell as part of the hit region.
-   **Shrinks to its contents** — any wider and it would release click-through over
-   empty desktop for no reason.
-   Hidden by default and shown only on hover or when focused/expanded to preserve immersion. */
-.inspect-anchor {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  width: max-content;
-  max-width: 100%;
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity 180ms ease-out;
-}
-
-.inspect-anchor--visible,
-.inspect-anchor:focus-within {
-  opacity: 1;
-  pointer-events: auto;
-}
-
-/* Setup confirmation commands must remain reachable while the download question is open.
-   The anchor is rendered inside the overlay in this mode, so normal flow puts it above the
-   confirmation card instead of behind the transparent window's lower edge. */
-.inspect-anchor--setup {
-  position: relative;
-  left: auto;
-  bottom: auto;
-  /* The overlay is content-sized, so stretch this wrapper to the same width as
-     the setup card. This keeps the controls anchored to the card's left edge
-     instead of centering a narrow group above it. */
-  align-self: stretch;
-  width: 100%;
-  max-width: none;
-  opacity: 1;
-  pointer-events: auto;
-  order: -1;
-}
-
-/* The boot controls remain hover-only, but share the loading overlay's width and
-   therefore its left edge. This is deliberately separate from `--setup`, whose
-   actions must stay visible while Lumi is waiting for a user decision. */
-.inspect-anchor--boot {
-  position: absolute;
-  left: 0;
-  bottom: 100%;
-  width: 100%;
-  max-width: none;
-}
-
 .app-actions {
   display: flex;
   gap: 4px;
@@ -479,25 +428,35 @@ body {
   color: #ffd9a0;
 }
 
-/* Shell allows the Stage down to 160px wide. Keep all five boot controls on the same
-   row even at that boundary instead of letting the last button drift outside the card. */
-@media (max-width: 190px) {
-  .inspect-anchor--boot .app-actions {
-    gap: 2px;
-    margin-inline: 0;
-    max-width: 100%;
-  }
-
-  .inspect-anchor--boot .app-actions__button {
-    width: 24px;
-    height: 24px;
-  }
+/* ── The right-click action palette (ADR-047) ──────────────────────────────
+   Catches the dismissing click. **Only mounted while the palette is open**, and `App`
+   widens the hit region to the whole window for exactly as long — outside the hit region
+   Shell clicks through, so a click beside the palette would otherwise never arrive. */
+.palette-layer {
+  position: absolute;
+  inset: 0;
+  /* Above the microphone, which is the only other thing that stays on this window. */
+  z-index: 4;
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .inspect-anchor {
-    transition: none;
-  }
+/* The same buttons as the boot-time row, given a surface of their own so they read as one
+   object floating over the character rather than as chrome attached to the window. */
+.palette {
+  position: absolute;
+  width: max-content;
+  max-width: calc(100% - 8px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 8px;
+  background: rgba(12, 15, 22, 0.92);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45);
+}
+
+/* Shell allows the Stage down to 160px wide, and the palette is clamped inside it.
+   Wrapping keeps the last button reachable instead of clipping it at the rounded edge. */
+.palette .app-actions {
+  margin: 4px;
+  max-width: none;
+  flex-wrap: wrap;
 }
 
 /* Inspector (docs/architecture/ui.md §5). **A development view**, so it is dense and plain.

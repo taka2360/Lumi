@@ -8,14 +8,20 @@ import { AppActions } from "./AppActions";
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
 const openCredits = vi.fn();
+const openHelp = vi.fn();
 const openPanel = vi.fn();
 const quit = vi.fn();
 let onCreditsError: ((error: unknown) => void) | undefined;
+let onHelpError: ((error: unknown) => void) | undefined;
 let onPanelError: ((error: unknown) => void) | undefined;
 vi.mock("../platform/useStageShell", () => ({
   useOpenCredits: (onError?: (error: unknown) => void) => {
     onCreditsError = onError;
     return openCredits;
+  },
+  useOpenHelp: (onError?: (error: unknown) => void) => {
+    onHelpError = onError;
+    return openHelp;
   },
   useOpenPanel: (kind: string, onError?: (error: unknown) => void) => {
     onPanelError = onError;
@@ -41,9 +47,11 @@ describe("Stage application actions", () => {
     container?.remove();
     container = null;
     openCredits.mockReset();
+    openHelp.mockReset();
     openPanel.mockReset();
     quit.mockReset();
     onCreditsError = undefined;
+    onHelpError = undefined;
     onPanelError = undefined;
     if (previousLocale === null) {
       localStorage.removeItem("lumi.locale");
@@ -76,6 +84,7 @@ describe("Stage application actions", () => {
       "設定",
       "インスペクター",
       "記憶",
+      "使いかた",
       "クレジットとライセンス",
       "終了",
     ]);
@@ -98,10 +107,20 @@ describe("Stage application actions", () => {
     expect(openPanel.mock.calls).toEqual([["settings"], ["inspector"], ["memory"]]);
   });
 
-  it("opens credits and licenses from the Stage window", () => {
+  it("opens the operating guide from the Stage window", () => {
+    // The gesture that opened this palette is the one nothing on screen suggests
+    // (ADR-047), so the page explaining it has to be reachable from the palette itself.
     const buttons = render().querySelectorAll("button");
 
     act(() => buttons[3]?.click());
+
+    expect(openHelp).toHaveBeenCalledOnce();
+  });
+
+  it("opens credits and licenses from the Stage window", () => {
+    const buttons = render().querySelectorAll("button");
+
+    act(() => buttons[4]?.click());
 
     expect(openCredits).toHaveBeenCalledOnce();
   });
@@ -109,7 +128,7 @@ describe("Stage application actions", () => {
   it("quits Lumi from the Stage window", () => {
     const buttons = render().querySelectorAll("button");
 
-    act(() => buttons[4]?.click());
+    act(() => buttons[5]?.click());
 
     expect(quit).toHaveBeenCalledOnce();
   });
@@ -124,6 +143,16 @@ describe("Stage application actions", () => {
     expect(view.querySelector('[role="alert"]')?.textContent).toBe(
       "クレジット画面を開けませんでした",
     );
+    consoleError.mockRestore();
+  });
+
+  it("shows a failure when Shell cannot open the operating guide", () => {
+    const view = render();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    act(() => onHelpError?.(new Error("window unavailable")));
+
+    expect(view.querySelector('[role="alert"]')?.textContent).toBe("画面を開けませんでした");
     consoleError.mockRestore();
   });
 

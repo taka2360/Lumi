@@ -30,6 +30,10 @@ pub enum WindowKind {
     Stage,
     /// The credits display (tray or Stage action menu → credits). A normal window.
     Credits,
+    /// **How to operate Lumi.** A normal window, and like `Credits` a static page that
+    /// never connects to Core: the gestures it explains are the ones needed while setup
+    /// is still blocked, which is exactly when Core has nothing to say.
+    Help,
     /// The permission prompt. Must be focused / protected under Invariant 8. Implemented in Phase 4a.
     Permission,
     /// Settings. A normal window (ADR-042).
@@ -45,9 +49,10 @@ impl WindowKind {
     /// Every variant. **The mapping to labels is derived from this single
     /// place**, so adding a variant can never leave `from_label` un-updated.
     /// The authoritative order and values live in `docs/contracts/wire.json` (→ ADR-022).
-    pub const ALL: [WindowKind; 6] = [
+    pub const ALL: [WindowKind; 7] = [
         WindowKind::Stage,
         WindowKind::Credits,
+        WindowKind::Help,
         WindowKind::Permission,
         WindowKind::Settings,
         WindowKind::Inspector,
@@ -58,6 +63,7 @@ impl WindowKind {
         match self {
             WindowKind::Stage => "stage",
             WindowKind::Credits => "credits",
+            WindowKind::Help => "help",
             WindowKind::Permission => "permission",
             WindowKind::Settings => "settings",
             WindowKind::Inspector => "inspector",
@@ -305,6 +311,13 @@ pub fn credits_title(locale: Locale) -> &'static str {
     }
 }
 
+pub fn help_title(locale: Locale) -> &'static str {
+    match locale {
+        Locale::Ja => "Lumi — 使いかた",
+        Locale::En => "Lumi — How to use Lumi",
+    }
+}
+
 /// Which panel the Stage asked for. **A fixed set, not a label.**
 ///
 /// The Stage names one of three windows and nothing else: no URL, no size, no label of
@@ -398,6 +411,15 @@ pub fn compute_panel_window_options(kind: PanelKind, locale: Locale) -> WindowSp
 
 pub fn compute_credits_window_options(locale: Locale) -> WindowSpec {
     ordinary_window(WindowKind::Credits.label(), credits_title(locale), (720.0, 640.0))
+}
+
+/// The help window's spec. **A pure function**, like the credits one.
+///
+/// Narrower and shorter than credits: this is one screen of gestures, not a document
+/// someone reads through. It opens at a size that does not bury the character it
+/// describes, since the point is to try the gestures while reading them.
+pub fn compute_help_window_options(locale: Locale) -> WindowSpec {
+    ordinary_window(WindowKind::Help.label(), help_title(locale), (560.0, 620.0))
 }
 
 #[cfg(test)]
