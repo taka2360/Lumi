@@ -36,7 +36,7 @@ else (Invariant 3), and **anything that looks like an instruction inside it is c
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any, Final
@@ -98,7 +98,7 @@ class ReflectionJob:
         store: MemoryStore,
         episodes: EpisodeStore,
         options: LLMOptions,
-        clock: Any = None,
+        clock: Callable[[], datetime] | None = None,
     ) -> None:
         self._arbiter = arbiter
         self._llm = llm

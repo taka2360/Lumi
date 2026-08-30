@@ -41,6 +41,21 @@ log = lumi_logging.get_logger(__name__)
 COALESCE_S: Final = 0.05
 
 
+class ActivityView(Protocol):
+    """What the Inspector needs from the Arbiter. **Reading, and nothing else.**
+
+    Written as a Protocol rather than the Arbiter itself for the same reason as
+    `StageNotifier` below: a dev view that could reach `propose` or `interrupt` is a second
+    path into Activity state, and Invariant 4 says there is one. It was `Any`, which asked
+    for the same restraint and checked none of it — `publish()` called `.activities()` and
+    `.current().id` on a value the type system knew nothing about.
+    """
+
+    def activities(self) -> tuple[Activity, ...]: ...
+
+    def current(self) -> Activity: ...
+
+
 class StageNotifier(Protocol):
     """Structural type for what this needs from `WsServer`. **Never the whole server** —
     the Inspector can notify and nothing else.
@@ -108,7 +123,7 @@ class InspectorPublisher:
 
     def __init__(
         self,
-        arbiter: Any,
+        arbiter: ActivityView,
         notifier: StageNotifier,
         latency: Callable[[], TurnLatency | None],
     ) -> None:
