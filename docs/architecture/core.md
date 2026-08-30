@@ -174,8 +174,13 @@ core/lumi/
 │                    llm/ stt/ tts/ embedding/。vision/ は〔Phase 5〕
 ├── audio/           ring, resample, capture, vad, playback, io, devices,
 │                    drift, probe, wav（EchoGuard L1 は vad 内）
-├── setup/           coordinator, detect, state, ollama
-│                    初回セットアップの判断と同意（→ [setup.md](setup.md)）
+├── setup/           coordinator（ファサード）, state, detect, ollama,
+│                    detection（何があるか見る。**ネットワークに触れない**）,
+│                    broadcast（状態の唯一の所有者と出口）,
+│                    prompter（質問の Protocol と WS 実装）,
+│                    consent（同意シーケンス）, acquire（取得）,
+│                    llm_model（モデル選択と pull）, progress（進捗の間引き）
+│                    → [setup.md](setup.md)
 ├── panel/           service — 設定 / Inspector / 記憶ウィンドウへの配信（ADR-042）
 ├── extensions/      〔Phase 5 / 9〕host, manifest, protocol
 ├── storage/         sqlite（APSW・暗号化・マイグレーション）, memory, events, audit,
