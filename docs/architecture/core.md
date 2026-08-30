@@ -168,7 +168,13 @@ core/lumi/
 │                    maintenance（起動時の DB sweep。Job / actor=system）,
 │                    reflection_scheduler（**いつ**思い出すか → ADR-045）
 ├── memory/          store（記憶レコードへの**唯一の書き手** → ADR-045）, records,
-│                    reflection（**何を**抽出するか）, retrieval（ハイブリッド検索）,
+│                    rows（行 ↔ レコード変換。列順を1箇所に閉じる）,
+│                    browse（記憶ウィンドウと書き出しのページング。**read only**）,
+│                    reflection（**いつ**走らせ、結果をどうするか）,
+│                    extraction_prompt（**何を訊くか**。値なのでスナップショットできる）,
+│                    extraction（**返ってきたものを検査する**。信頼・根拠・salience）,
+│                    phrases（「覚えておいて」。会話ターンと抽出の両方が読む）,
+│                    retrieval（ハイブリッド検索）,
 │                    vectors（sqlite-vec + FTS5）, indexing, decay, contradiction
 ├── world/           〔Phase 3〕facets, snapshot, projection
 ├── internal/        〔Phase 3〕mood, fatigue, drives state
@@ -191,7 +197,10 @@ core/lumi/
 ├── storage/         sqlite（APSW・暗号化・マイグレーション）, memory, events, audit,
 │                    retention（**ユーザ発話を削除できる唯一のコード**）, secret
 ├── content/         Content Pack の**読み取り専用ローダ**（extension.md §9）
-└── transport/       server（WS）, protocol,
+└── transport/       server（WS ソケット・ハンドシェイク・invoke / notify）,
+                    router（**inbound の allowlist** → ADR-028。名前空間検査もここ）,
+                    connections（role ごとの接続。panel だけ複数 → ADR-042）,
+                    payload（受信ペイロードの検証。理由コードは ADR-036）, protocol,
                     methods（線上の method 名。wire.json のミラー。**依存ゼロ**）
 ```
 
