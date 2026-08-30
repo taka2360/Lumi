@@ -113,14 +113,12 @@ pub(crate) fn open_credits(app: &AppHandle) {
 /// **A static page that never connects to Core**, for the same reason as credits and one
 /// of its own: the gestures it explains are how someone reaches the setup screen's
 /// controls, and that screen is shown precisely when Core has not come up.
-pub(crate) fn open_help(app: &AppHandle) {
+pub(crate) fn open_help(app: &AppHandle) -> tauri::Result<()> {
     let spec = compute_help_window_options(system_locale());
-    match open_or_focus(app, "help", &spec, WebviewUrl::App("/help.html".into())) {
-        Ok(Some(_)) => log::info!("help.opened"),
-        Ok(None) => {}
-        // **Never let it silently do nothing.** Logs it if it couldn't open.
-        Err(error) => log::error!("help.open_failed {error}"),
+    if open_or_focus(app, "help", &spec, WebviewUrl::App("/help.html".into()))?.is_some() {
+        log::info!("help.opened");
     }
+    Ok(())
 }
 
 /// Opens one of the auxiliary windows (ADR-042).
@@ -198,9 +196,12 @@ pub fn shell_credits_open(app: AppHandle) {
 // `async` for the same reason as `shell_credits_open`: creating a window from a
 // synchronous IPC handler deadlocks the Windows event loop.
 #[tauri::command(async)]
-pub fn shell_help_open(app: AppHandle) {
+pub fn shell_help_open(app: AppHandle) -> Result<(), String> {
     log::info!("shell.help_open requested by stage");
-    open_help(&app);
+    open_help(&app).map_err(|error| {
+        log::error!("help.open_failed {error}");
+        error.to_string()
+    })
 }
 
 /// Opens one of Lumi's own auxiliary windows from the Stage's action row (ADR-042).
@@ -237,5 +238,13 @@ mod tests {
                 "{command} must be async to avoid the Windows event-loop deadlock"
             );
         }
+    }
+
+    /// The Help action already has an on-screen error path in Stage. The command must
+    /// reject when creation fails so that path is reachable rather than silently succeeding.
+    #[test]
+    fn help_open_command_returns_failures_to_stage() {
+        let source = include_str!("window_open.rs");
+        assert!(source.contains("pub fn shell_help_open(app: AppHandle) -> Result<(), String>"));
     }
 }

@@ -89,7 +89,11 @@ pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match resolve_tray_action(event.id.as_ref()) {
-            Some(TrayAction::OpenHelp) => crate::window_open::open_help(app),
+            Some(TrayAction::OpenHelp) => {
+                if let Err(error) = crate::window_open::open_help(app) {
+                    log::error!("help.open_failed {error}");
+                }
+            }
             Some(TrayAction::OpenCredits) => crate::window_open::open_credits(app),
             // Quit goes through RunEvent::Exit, so Core goes down with it.
             Some(TrayAction::Quit) => app.exit(0),

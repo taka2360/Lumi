@@ -12,13 +12,17 @@ const openHelp = vi.fn();
 const openPanel = vi.fn();
 const quit = vi.fn();
 let onCreditsError: ((error: unknown) => void) | undefined;
+let onHelpError: ((error: unknown) => void) | undefined;
 let onPanelError: ((error: unknown) => void) | undefined;
 vi.mock("../platform/useStageShell", () => ({
   useOpenCredits: (onError?: (error: unknown) => void) => {
     onCreditsError = onError;
     return openCredits;
   },
-  useOpenHelp: () => openHelp,
+  useOpenHelp: (onError?: (error: unknown) => void) => {
+    onHelpError = onError;
+    return openHelp;
+  },
   useOpenPanel: (kind: string, onError?: (error: unknown) => void) => {
     onPanelError = onError;
     return () => openPanel(kind);
@@ -47,6 +51,7 @@ describe("Stage application actions", () => {
     openPanel.mockReset();
     quit.mockReset();
     onCreditsError = undefined;
+    onHelpError = undefined;
     onPanelError = undefined;
     if (previousLocale === null) {
       localStorage.removeItem("lumi.locale");
@@ -138,6 +143,16 @@ describe("Stage application actions", () => {
     expect(view.querySelector('[role="alert"]')?.textContent).toBe(
       "クレジット画面を開けませんでした",
     );
+    consoleError.mockRestore();
+  });
+
+  it("shows a failure when Shell cannot open the operating guide", () => {
+    const view = render();
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    act(() => onHelpError?.(new Error("window unavailable")));
+
+    expect(view.querySelector('[role="alert"]')?.textContent).toBe("画面を開けませんでした");
     consoleError.mockRestore();
   });
 
