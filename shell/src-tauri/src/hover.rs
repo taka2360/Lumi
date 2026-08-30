@@ -178,7 +178,7 @@ pub fn spawn_cursor_watcher(app: AppHandle) {
 
             let point =
                 Point { x: cursor.x - f64::from(origin.x), y: cursor.y - f64::from(origin.y) };
-            let region = store_of(&app).snapshot();
+            let region = app.state::<HitRegionStore>().snapshot();
 
             let click_through = decide_click_through(point, &region);
             if applied_click_through != Some(click_through) {
@@ -198,10 +198,6 @@ pub fn spawn_cursor_watcher(app: AppHandle) {
             }
         }
     });
-}
-
-fn store_of(app: &AppHandle) -> tauri::State<'_, HitRegionStore> {
-    app.state::<HitRegionStore>()
 }
 
 #[cfg(test)]

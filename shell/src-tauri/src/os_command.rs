@@ -24,7 +24,15 @@ use serde_json::Value;
 
 use crate::window::WindowKind;
 
-/// An `os.*` request that passed verification. **Only `validate` may construct this type.**
+/// An `os.*` request that passed verification.
+///
+/// **`os_exec::execute` accepts only this type**, so an unverified wire payload cannot
+/// reach execution. That much the type guarantees.
+///
+/// **What it does not guarantee**: the variants are `pub`, so another module in this
+/// crate can build one without asking. "`validate` is the only thing that constructs
+/// these" is a rule this crate keeps, not something the compiler checks — don't skip a
+/// check elsewhere on the strength of it.
 #[derive(Debug, Clone, PartialEq)]
 pub enum OsCommand {
     WindowGetPosition { window: WindowKind },

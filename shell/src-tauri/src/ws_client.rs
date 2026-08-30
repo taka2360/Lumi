@@ -11,12 +11,13 @@ use std::time::Duration;
 
 use futures_util::{SinkExt as _, StreamExt as _};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Manager as _, PhysicalPosition};
+use tauri::AppHandle;
 use tokio::sync::watch;
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message;
 
-use crate::os_command::{validate, OsCommand};
+use crate::os_command::validate;
+use crate::os_exec::execute;
 
 /// Uses the same value as Core (`PROTOCOL_VERSION` in core/lumi/transport/protocol.py).
 pub(crate) const PROTOCOL_VERSION: u64 = 1;
@@ -156,21 +157,6 @@ fn handle(app: &AppHandle, command: &IncomingCommand) -> String {
                 error_result(&command.id, &reason)
             }
         },
-    }
-}
-
-fn execute(app: &AppHandle, command: &OsCommand) -> Result<Value, String> {
-    match command {
-        OsCommand::WindowGetPosition { window } => {
-            let win = app.get_webview_window(window.label()).ok_or("window_not_open")?;
-            let position = win.outer_position().map_err(|e| e.to_string())?;
-            Ok(json!({"x": position.x, "y": position.y}))
-        }
-        OsCommand::WindowSetPosition { window, x, y } => {
-            let win = app.get_webview_window(window.label()).ok_or("window_not_open")?;
-            win.set_position(PhysicalPosition::new(*x, *y)).map_err(|e| e.to_string())?;
-            Ok(json!({}))
-        }
     }
 }
 

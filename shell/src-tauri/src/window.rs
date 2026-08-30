@@ -14,6 +14,8 @@
 //! "anything about the window" — but their only caller is the cursor watcher, and a
 //! rule read in one place belongs next to it.
 
+use crate::locale::Locale;
+
 /// Window list → docs/architecture/ui.md §1
 ///
 /// Phase 0 only builds `Stage` and `Credits`. `Permission` is Phase 4a, but
@@ -296,10 +298,10 @@ fn require_stage(window: &tauri::WebviewWindow) -> Result<(), String> {
 ///
 /// Credits are a required Phase 0 item (docs/licensing.md §6). They need to
 /// live somewhere "findable with a bit of effort," so it's a normal window opened from the tray menu.
-pub fn credits_title(locale: crate::locale::Locale) -> &'static str {
+pub fn credits_title(locale: Locale) -> &'static str {
     match locale {
-        crate::locale::Locale::Ja => "Lumi — クレジットとライセンス",
-        crate::locale::Locale::En => "Lumi — Credits and licenses",
+        Locale::Ja => "Lumi — クレジットとライセンス",
+        Locale::En => "Lumi — Credits and licenses",
     }
 }
 
@@ -342,14 +344,39 @@ impl PanelKind {
     }
 }
 
-pub fn panel_title(kind: PanelKind, locale: crate::locale::Locale) -> &'static str {
+pub fn panel_title(kind: PanelKind, locale: Locale) -> &'static str {
     match (kind, locale) {
-        (PanelKind::Settings, crate::locale::Locale::Ja) => "Lumi — 設定",
-        (PanelKind::Settings, crate::locale::Locale::En) => "Lumi — Settings",
-        (PanelKind::Inspector, crate::locale::Locale::Ja) => "Lumi — インスペクタ",
-        (PanelKind::Inspector, crate::locale::Locale::En) => "Lumi — Inspector",
-        (PanelKind::Memory, crate::locale::Locale::Ja) => "Lumi — 記憶",
-        (PanelKind::Memory, crate::locale::Locale::En) => "Lumi — Memory",
+        (PanelKind::Settings, Locale::Ja) => "Lumi — 設定",
+        (PanelKind::Settings, Locale::En) => "Lumi — Settings",
+        (PanelKind::Inspector, Locale::Ja) => "Lumi — インスペクタ",
+        (PanelKind::Inspector, Locale::En) => "Lumi — Inspector",
+        (PanelKind::Memory, Locale::Ja) => "Lumi — 記憶",
+        (PanelKind::Memory, Locale::En) => "Lumi — Memory",
+    }
+}
+
+/// A window the user reads, types in, and arranges themselves.
+///
+/// **No transparency, no always-on-top, no click-through.** Those belong to the
+/// character, which is decoration that must not steal focus; everything else Lumi opens
+/// is an ordinary window, and they differ only in name and size.
+fn ordinary_window(label: &'static str, title: &'static str, size: (f64, f64)) -> WindowSpec {
+    WindowSpec {
+        label,
+        title,
+        width: size.0,
+        height: size.1,
+        position: None,
+        transparent: false,
+        decorations: true,
+        always_on_top: false,
+        skip_taskbar: false,
+        resizable: true,
+        shadow: true,
+        focused: true,
+        visible: true,
+        content_protected: false,
+        click_through: false,
     }
 }
 
@@ -359,50 +386,18 @@ pub fn panel_title(kind: PanelKind, locale: crate::locale::Locale) -> &'static s
 /// arranges themselves. They are still protected from `os.input.*` — every window Lumi
 /// owns is (`WindowKind::is_protected`), which is what stops Lumi from pressing the
 /// buttons in its own memory window (Invariant 8).
-pub fn compute_panel_window_options(kind: PanelKind, locale: crate::locale::Locale) -> WindowSpec {
-    let (width, height) = match kind {
+pub fn compute_panel_window_options(kind: PanelKind, locale: Locale) -> WindowSpec {
+    let size = match kind {
         PanelKind::Settings => (640.0, 560.0),
         PanelKind::Inspector => (720.0, 640.0),
         // The widest of the three: a list of sentences with their grounds beside them.
         PanelKind::Memory => (860.0, 680.0),
     };
-    WindowSpec {
-        label: kind.window().label(),
-        title: panel_title(kind, locale),
-        width,
-        height,
-        position: None,
-        transparent: false,
-        decorations: true,
-        always_on_top: false,
-        skip_taskbar: false,
-        resizable: true,
-        shadow: true,
-        focused: true,
-        visible: true,
-        content_protected: false,
-        click_through: false,
-    }
+    ordinary_window(kind.window().label(), panel_title(kind, locale), size)
 }
 
-pub fn compute_credits_window_options(locale: crate::locale::Locale) -> WindowSpec {
-    WindowSpec {
-        label: WindowKind::Credits.label(),
-        title: credits_title(locale),
-        width: 720.0,
-        height: 640.0,
-        position: None,
-        transparent: false,
-        decorations: true,
-        always_on_top: false,
-        skip_taskbar: false,
-        resizable: true,
-        shadow: true,
-        focused: true,
-        visible: true,
-        content_protected: false,
-        click_through: false,
-    }
+pub fn compute_credits_window_options(locale: Locale) -> WindowSpec {
+    ordinary_window(WindowKind::Credits.label(), credits_title(locale), (720.0, 640.0))
 }
 
 #[cfg(test)]
@@ -421,7 +416,7 @@ mod tests {
     fn a_panel_is_an_ordinary_window_the_user_arranges() {
         // Not always-on-top and not click-through: these are windows someone reads and
         // types in, unlike the character, which is decoration that must not steal focus.
-        let spec = compute_panel_window_options(PanelKind::Memory, crate::locale::Locale::Ja);
+        let spec = compute_panel_window_options(PanelKind::Memory, Locale::Ja);
         assert_eq!(spec.label, "memory");
         assert!(spec.decorations);
         assert!(spec.resizable);
@@ -579,7 +574,7 @@ mod tests {
 
     #[test]
     fn credits_window_is_a_normal_focusable_window() {
-        let spec = compute_credits_window_options(crate::locale::Locale::Ja);
+        let spec = compute_credits_window_options(Locale::Ja);
         assert!(!spec.transparent);
         assert!(spec.decorations);
         assert!(spec.focused);

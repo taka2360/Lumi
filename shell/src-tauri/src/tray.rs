@@ -11,9 +11,6 @@ use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Manager as _};
 
-/// Fixed by Shell: Stage never gets an arbitrary-URL capability.
-const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
-
 use crate::locale::Locale;
 
 /// The native tray icon is kept at the Windows notification-area size.
@@ -81,7 +78,7 @@ pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(true)
         .on_menu_event(|app, event| match resolve_tray_action(event.id.as_ref()) {
-            Some(TrayAction::OpenCredits) => crate::open_credits(app),
+            Some(TrayAction::OpenCredits) => crate::window_open::open_credits(app),
             // Quit goes through RunEvent::Exit, so Core goes down with it.
             Some(TrayAction::Quit) => app.exit(0),
             None => log::warn!("tray.unknown_item id={}", event.id.as_ref()),
@@ -90,76 +87,6 @@ pub fn init(app: &AppHandle, locale: Locale) -> tauri::Result<()> {
 
     Ok(())
 }
-
-/// Quits Lumi, from the Stage.
-///
-/// **Exists for the setup screen's quit button** (ADR-034): someone stopped before Lumi
-/// has ever started has not met the tray, which was the only way out
-/// (docs/architecture/ui.md "Tray menu").
-///
-/// **Carries no judgment** — no arguments, nothing to decide. Goes through the same
-/// `app.exit(0)` as the tray item, so Core goes down with it via `RunEvent::Exit`.
-#[tauri::command]
-pub fn shell_app_quit(app: AppHandle) {
-    log::info!("shell.app_quit requested by stage");
-    app.exit(0);
-}
-
-/// Opens the static credits and licenses window from the Stage action menu.
-///
-/// **No URL or window label comes from Stage.** The only possible result is the same
-/// bundled document opened by the tray, so exposing this does not grant arbitrary
-/// navigation or window creation.
-// A synchronous IPC command runs inline on the event-loop thread. Window creation then
-// dispatches back to that same loop and waits, deadlocking the app on Windows. `async`
-// runs this synchronous function on Tauri's thread pool, leaving the loop free to create
-// and paint the WebView (observed as a blank credits window plus frozen quit actions).
-#[tauri::command(async)]
-pub fn shell_credits_open(app: AppHandle) {
-    log::info!("shell.credits_open requested by stage");
-    crate::open_credits(&app);
-}
-
-/// Opens one of Lumi's own auxiliary windows from the Stage's action row (ADR-042).
-///
-/// **The argument is one of three names, not a label or a URL.** An unrecognised value
-/// opens nothing and is logged — a compromised Stage gets "open Lumi's settings window
-/// repeatedly", which is where this ends (docs/interfaces/shell.md).
-// `async` for the same reason as `shell_credits_open`: creating a window from a
-// synchronous IPC handler deadlocks the Windows event loop.
-#[tauri::command(async)]
-pub fn shell_panel_open(app: AppHandle, kind: String) {
-    match crate::window::PanelKind::from_request(&kind) {
-        Some(panel) => {
-            log::info!("shell.panel_open requested by stage kind={kind}");
-            crate::open_panel(&app, panel);
-        }
-        // **fail-closed, and loudly.** Silence here would look like a window that opens
-        // sometimes, which is far harder to diagnose than one that never does.
-        None => log::warn!("shell.panel_open.unknown kind={kind}"),
-    }
-}
-
-/// Opens Ollama's fixed official download page in the user's default browser.
-///
-/// The URL is not an argument, so a compromised Stage cannot redirect this command.
-#[tauri::command]
-pub fn shell_ollama_site_open() -> Result<(), String> {
-    log::info!("shell.ollama_site_open requested by stage");
-    #[cfg(target_os = "windows")]
-    {
-        std::process::Command::new("explorer.exe")
-            .arg(OLLAMA_DOWNLOAD_URL)
-            .spawn()
-            .map(|_| ())
-            .map_err(|error| error.to_string())
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        Err("unsupported_platform".to_owned())
-    }
-}
-
 /// Updates native Shell-owned labels after Core accepted a locale setting.
 #[tauri::command]
 pub fn shell_locale_set(app: AppHandle, locale: &str) -> Result<(), String> {
@@ -216,13 +143,5 @@ mod tests {
     #[test]
     fn unknown_locale_is_refused() {
         assert_eq!(Locale::from_code("fr"), None);
-    }
-
-    #[test]
-    fn credits_open_never_runs_inline_in_the_ipc_handler() {
-        // Regression: a synchronous command deadlocks Windows while window creation
-        // dispatches back to the event loop, leaving a blank window and freezing quit.
-        let source = include_str!("tray.rs").replace("\r\n", "\n");
-        assert!(source.contains("#[tauri::command(async)]\npub fn shell_credits_open"));
     }
 }
