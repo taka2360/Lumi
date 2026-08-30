@@ -1,10 +1,12 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
-import { cachedLocale, setDocumentLocale } from "../i18n";
+import { cachedLocale, setDocumentLocale, translate } from "../i18n";
 import { Help } from "./Help";
 import "./help.css";
 
-setDocumentLocale(cachedLocale());
+const locale = cachedLocale();
+setDocumentLocale(locale);
+document.title = `Lumi — ${translate(locale, "help.title")}`;
 
 const container = document.getElementById("root");
 if (!container) {

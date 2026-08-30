@@ -326,7 +326,8 @@ const en: Record<keyof typeof ja, string> = {
   "help.action.credits": "The software Lumi is built on, and its licenses",
   "help.action.quit": "Quit Lumi",
   "help.tray.title": "If you cannot find the menu",
-  "help.tray.body": "Lumi's icon in the notification area opens this guide, the credits, and quit.",
+  "help.tray.body":
+    "From Lumi's icon in the notification area, you can open this guide or the credits, or quit Lumi.",
   "actions.creditsFailed": "Could not open the credits window",
   "actions.quit": "Quit",
   "actions.settings": "Settings",
