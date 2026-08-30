@@ -183,4 +183,28 @@ describe("action palette", () => {
 
     expect(onDismiss).toHaveBeenCalledOnce();
   });
+
+  it("keeps keyboard focus inside the palette", () => {
+    const buttons = [...render().querySelectorAll("button")];
+    const first = buttons[0];
+    const last = buttons[buttons.length - 1];
+    if (!first || !last) {
+      throw new Error("palette actions are missing");
+    }
+
+    act(() => last.focus());
+    const forwards = new KeyboardEvent("keydown", { key: "Tab", cancelable: true });
+    act(() => window.dispatchEvent(forwards));
+    expect(forwards.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(first);
+
+    const backwards = new KeyboardEvent("keydown", {
+      key: "Tab",
+      shiftKey: true,
+      cancelable: true,
+    });
+    act(() => window.dispatchEvent(backwards));
+    expect(backwards.defaultPrevented).toBe(true);
+    expect(document.activeElement).toBe(last);
+  });
 });

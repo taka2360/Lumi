@@ -99,6 +99,26 @@ export function ActionPalette({
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         onDismiss();
+        return;
+      }
+      if (event.key !== "Tab" || !node) {
+        return;
+      }
+      // **Focus stays inside while the full-window layer is present.** Otherwise Tab
+      // reaches the microphone or setup controls behind that layer, where Enter can
+      // activate something the palette is still visibly covering.
+      const focusable = [...node.querySelectorAll<HTMLButtonElement>("button:not(:disabled)")];
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) {
+        return;
+      }
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
       }
     };
     // **Also on blur.** Every action here opens a window of its own, which takes the
@@ -111,7 +131,7 @@ export function ActionPalette({
       window.removeEventListener("keydown", onKeyDown);
       window.removeEventListener("blur", onDismiss);
     };
-  }, [onDismiss]);
+  }, [node, onDismiss]);
 
   // Gives the palette the keyboard as well as the pointer. Without this the first Tab
   // would walk the document from the top, which on this window is the character.
