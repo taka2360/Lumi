@@ -26,6 +26,19 @@ place in this file that writes `TrustLevel.TRUSTED` is `confirm()`.
 other `DELETE` against user data, because the boundary in docs/contracts/privacy.md §5 has
 to be checkable by reading one file.
 
+## One call is one transaction, and `_..._in` says so
+
+Every public method hands one function to `Database.in_transaction`, which opens the
+transaction, runs it and commits **inside a single thread hop.** The `_..._in` suffix marks
+the ones that run there: they take the `conn` and never open their own, so `reconcile` can
+read, touch and insert without any of it racing another pass.
+
+**The shape this rules out is `with transaction(): await ...`** — the connection is shared
+and guarded by a `threading.Lock`, so holding it across an await blocks every other caller
+for as long as the await takes, and the transaction outlives the thread that opened it.
+Written by hand that shape is one line away from the right one; there is no way to write it
+through `in_transaction` at all.
+
 ## Superseding writes two rows and edits one column
 
 The new belief is inserted, the old row's `superseded_by` is pointed at it, and **an
@@ -36,7 +49,6 @@ produces a silent overwrite (docs/architecture/memory.md §6).
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
@@ -104,27 +116,24 @@ class MemoryStore:
     ) -> MemoryRecord:
         """Believe this. Raises `MemoryRejected` if the candidate does not check out."""
         moment = now or datetime.now(UTC)
-        return await asyncio.to_thread(self._write_blocking, candidate, moment)
-
-    def _write_blocking(self, candidate: MemoryCandidate, now: datetime) -> MemoryRecord:
-        with self._db.transaction() as conn:
-            return self._insert(conn, candidate, now)
+        return await self._db.in_transaction(lambda conn: self._insert(conn, candidate, moment))
 
     async def supersede(
         self, old_id: str, candidate: MemoryCandidate, *, now: datetime | None = None
     ) -> Reconciled:
         """Replace a belief **without overwriting it.** The old row stays as it was."""
         moment = now or datetime.now(UTC)
-        return await asyncio.to_thread(self._supersede_blocking, old_id, candidate, moment)
+        return await self._db.in_transaction(
+            lambda conn: self._supersede_by_id(conn, old_id, candidate, moment)
+        )
 
-    def _supersede_blocking(
-        self, old_id: str, candidate: MemoryCandidate, now: datetime
+    def _supersede_by_id(
+        self, conn: apsw.Connection, old_id: str, candidate: MemoryCandidate, now: datetime
     ) -> Reconciled:
-        with self._db.transaction() as conn:
-            existing = read(conn, old_id)
-            if existing is None:
-                raise MemoryRejected(f"No such memory to supersede: {old_id}")
-            return self._supersede_in(conn, existing, candidate, now)
+        existing = read(conn, old_id)
+        if existing is None:
+            raise MemoryRejected(f"No such memory to supersede: {old_id}")
+        return self._supersede_in(conn, existing, candidate, now)
 
     async def reconcile(
         self, candidate: MemoryCandidate, *, now: datetime | None = None
@@ -136,47 +145,46 @@ class MemoryStore:
         then both write a live belief about the same subject.
         """
         moment = now or datetime.now(UTC)
-        return await asyncio.to_thread(self._reconcile_blocking, candidate, moment)
+        return await self._db.in_transaction(
+            lambda conn: self._reconcile_in(conn, candidate, moment)
+        )
 
-    def _reconcile_blocking(self, candidate: MemoryCandidate, now: datetime) -> Reconciled:
+    def _reconcile_in(
+        self, conn: apsw.Connection, candidate: MemoryCandidate, now: datetime
+    ) -> Reconciled:
         content = normalize(candidate.content)
-        with self._db.transaction() as conn:
-            for record in self._live_rows(conn, candidate.subject, candidate.type):
-                if normalize(record.content) == content:
-                    # **Saying it again is not a second belief.** It is a reason to hold
-                    # the one already there a little more firmly.
-                    self._touch_in(conn, (record.id,), now)
-                    refreshed = read(conn, record.id)
-                    assert refreshed is not None  # touched in this transaction
-                    return Reconciled(record=refreshed, resolution=Resolution.DUPLICATE)
+        for record in self._live_rows(conn, candidate.subject, candidate.type):
+            if normalize(record.content) == content:
+                # **Saying it again is not a second belief.** It is a reason to hold
+                # the one already there a little more firmly.
+                self._touch_in(conn, (record.id,), now)
+                refreshed = read(conn, record.id)
+                assert refreshed is not None  # touched in this transaction
+                return Reconciled(record=refreshed, resolution=Resolution.DUPLICATE)
 
-            # **Only a belief can contradict a belief.** An episodic record about the same
-            # subject is a thing that happened, and letting one into this comparison would
-            # let 「月曜に Factorio の話をした」 supersede 「ユーザーは Factorio が好き」 —
-            # a moment quietly replacing what Lumi knows.
-            conflicts = (
-                [
-                    record
-                    for record in self._live_rows(conn, candidate.subject, MemoryType.SEMANTIC)
-                    if normalize(record.content) != content
-                ]
-                if candidate.type is MemoryType.SEMANTIC
-                else []
-            )
-            if not conflicts:
-                return Reconciled(
-                    record=self._insert(conn, candidate, now), resolution=Resolution.NEW
-                )
+        # **Only a belief can contradict a belief.** An episodic record about the same
+        # subject is a thing that happened, and letting one into this comparison would
+        # let 「月曜に Factorio の話をした」 supersede 「ユーザーは Factorio が好き」 —
+        # a moment quietly replacing what Lumi knows.
+        conflicts = (
+            [
+                record
+                for record in self._live_rows(conn, candidate.subject, MemoryType.SEMANTIC)
+                if normalize(record.content) != content
+            ]
+            if candidate.type is MemoryType.SEMANTIC
+            else []
+        )
+        if not conflicts:
+            return Reconciled(record=self._insert(conn, candidate, now), resolution=Resolution.NEW)
 
-            existing = conflicts[0]
-            if resolve(existing, candidate) is Resolution.SUPERSEDE:
-                return self._supersede_in(conn, existing, candidate, now)
-            # **Kept, not dropped.** A weaker claim that turns out to be right should still
-            # be findable; it just does not get to outrank what the user said.
-            weakened = replace(candidate, confidence=candidate.confidence * WEAK_CONFIDENCE_FACTOR)
-            return Reconciled(
-                record=self._insert(conn, weakened, now), resolution=Resolution.KEEP_WEAK
-            )
+        existing = conflicts[0]
+        if resolve(existing, candidate) is Resolution.SUPERSEDE:
+            return self._supersede_in(conn, existing, candidate, now)
+        # **Kept, not dropped.** A weaker claim that turns out to be right should still
+        # be findable; it just does not get to outrank what the user said.
+        weakened = replace(candidate, confidence=candidate.confidence * WEAK_CONFIDENCE_FACTOR)
+        return Reconciled(record=self._insert(conn, weakened, now), resolution=Resolution.KEEP_WEAK)
 
     def _supersede_in(
         self,
@@ -222,15 +230,11 @@ class MemoryStore:
     # ── reading ────────────────────────────────────────────────────────────
 
     async def get(self, memory_id: str) -> MemoryRecord | None:
-        return await asyncio.to_thread(self._get_blocking, memory_id)
-
-    def _get_blocking(self, memory_id: str) -> MemoryRecord | None:
-        with self._db.transaction() as conn:
-            return read(conn, memory_id)
+        return await self._db.in_transaction(lambda conn: read(conn, memory_id))
 
     async def live(self, subject: str) -> Sequence[MemoryRecord]:
         """Beliefs about `subject` that are neither superseded nor archived."""
-        return await asyncio.to_thread(self._live_blocking, subject, None)
+        return await self._db.in_transaction(lambda conn: self._live_rows(conn, subject, None))
 
     async def find_conflicts(self, subject: str, content: str) -> Sequence[MemoryRecord]:
         """Live semantic beliefs about the same subject that say something else.
@@ -242,7 +246,9 @@ class MemoryStore:
         (2e). Until then this compares text: it **cannot** tell, as opposed to having
         checked and found nothing.
         """
-        records = await asyncio.to_thread(self._live_blocking, subject, MemoryType.SEMANTIC)
+        records = await self._db.in_transaction(
+            lambda conn: self._live_rows(conn, subject, MemoryType.SEMANTIC)
+        )
         target = normalize(content)
         return [record for record in records if normalize(record.content) != target]
 
@@ -255,32 +261,31 @@ class MemoryStore:
         """
         if limit <= 0:
             return []
-        return await asyncio.to_thread(self._recent_blocking, limit)
+        return await self._db.in_transaction(lambda conn: self._recent_in(conn, limit))
 
-    def _recent_blocking(self, limit: int) -> list[MemoryRecord]:
-        with self._db.transaction() as conn:
-            rows = conn.execute(
-                f"SELECT {COLUMNS} FROM memories"
-                " WHERE superseded_by IS NULL AND archived_at IS NULL"
-                " ORDER BY valid_from DESC, created_at DESC LIMIT ?",
-                (limit,),
-            ).fetchall()
-            return [hydrate(conn, row) for row in rows]
+    def _recent_in(self, conn: apsw.Connection, limit: int) -> list[MemoryRecord]:
+        rows = conn.execute(
+            f"SELECT {COLUMNS} FROM memories"
+            " WHERE superseded_by IS NULL AND archived_at IS NULL"
+            " ORDER BY valid_from DESC, created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [hydrate(conn, row) for row in rows]
 
     async def get_many(self, memory_ids: Sequence[str]) -> dict[str, MemoryRecord]:
         """Several records at once, **by id, in no particular order.**"""
         if not memory_ids:
             return {}
-        return await asyncio.to_thread(self._get_many_blocking, tuple(dict.fromkeys(memory_ids)))
-
-    def _get_many_blocking(self, memory_ids: tuple[str, ...]) -> dict[str, MemoryRecord]:
-        placeholders = ", ".join("?" * len(memory_ids))
-        with self._db.transaction() as conn:
-            rows = conn.execute(
-                f"SELECT {COLUMNS} FROM memories WHERE id IN ({placeholders})", memory_ids
-            ).fetchall()
-            records = [hydrate(conn, row) for row in rows]
+        wanted = tuple(dict.fromkeys(memory_ids))
+        records = await self._db.in_transaction(lambda conn: self._by_ids_in(conn, wanted))
         return {record.id: record for record in records}
+
+    def _by_ids_in(self, conn: apsw.Connection, memory_ids: tuple[str, ...]) -> list[MemoryRecord]:
+        placeholders = ", ".join("?" * len(memory_ids))
+        rows = conn.execute(
+            f"SELECT {COLUMNS} FROM memories WHERE id IN ({placeholders})", memory_ids
+        ).fetchall()
+        return [hydrate(conn, row) for row in rows]
 
     async def needing_embedding(self, model_id: str, *, limit: int) -> Sequence[MemoryRecord]:
         """Records whose vector is missing or was made by a different model.
@@ -294,17 +299,16 @@ class MemoryStore:
         """
         if limit <= 0:
             return []
-        return await asyncio.to_thread(self._needing_blocking, model_id, limit)
+        return await self._db.in_transaction(lambda conn: self._needing_in(conn, model_id, limit))
 
-    def _needing_blocking(self, model_id: str, limit: int) -> list[MemoryRecord]:
-        with self._db.transaction() as conn:
-            rows = conn.execute(
-                f"SELECT {COLUMNS} FROM memories"
-                " WHERE superseded_by IS NULL AND embedding_model_id != ?"
-                " ORDER BY created_at LIMIT ?",
-                (model_id, limit),
-            ).fetchall()
-            return [hydrate(conn, row) for row in rows]
+    def _needing_in(self, conn: apsw.Connection, model_id: str, limit: int) -> list[MemoryRecord]:
+        rows = conn.execute(
+            f"SELECT {COLUMNS} FROM memories"
+            " WHERE superseded_by IS NULL AND embedding_model_id != ?"
+            " ORDER BY created_at LIMIT ?",
+            (model_id, limit),
+        ).fetchall()
+        return [hydrate(conn, row) for row in rows]
 
     async def mark_embedded(self, memory_ids: Sequence[str], model_id: str) -> None:
         """Record which model produced these vectors. **Written after the index, never
@@ -312,19 +316,15 @@ class MemoryStore:
         """
         if not memory_ids:
             return
-        await asyncio.to_thread(self._mark_blocking, tuple(memory_ids), model_id)
+        wanted = tuple(memory_ids)
+        await self._db.in_transaction(lambda conn: self._mark_in(conn, wanted, model_id))
 
-    def _mark_blocking(self, memory_ids: tuple[str, ...], model_id: str) -> None:
-        with self._db.transaction() as conn:
-            for memory_id in memory_ids:
-                conn.execute(
-                    "UPDATE memories SET embedding_model_id = ? WHERE id = ?",
-                    (model_id, memory_id),
-                )
-
-    def _live_blocking(self, subject: str, kind: MemoryType | None) -> list[MemoryRecord]:
-        with self._db.transaction() as conn:
-            return self._live_rows(conn, subject, kind)
+    def _mark_in(self, conn: apsw.Connection, memory_ids: tuple[str, ...], model_id: str) -> None:
+        for memory_id in memory_ids:
+            conn.execute(
+                "UPDATE memories SET embedding_model_id = ? WHERE id = ?",
+                (model_id, memory_id),
+            )
 
     def _live_rows(
         self, conn: apsw.Connection, subject: str, kind: MemoryType | None
@@ -348,11 +348,8 @@ class MemoryStore:
         if not memory_ids:
             return
         moment = now or datetime.now(UTC)
-        await asyncio.to_thread(self._touch_blocking, tuple(memory_ids), moment)
-
-    def _touch_blocking(self, memory_ids: tuple[str, ...], now: datetime) -> None:
-        with self._db.transaction() as conn:
-            self._touch_in(conn, memory_ids, now)
+        wanted = tuple(memory_ids)
+        await self._db.in_transaction(lambda conn: self._touch_in(conn, wanted, moment))
 
     def _touch_in(self, conn: apsw.Connection, memory_ids: tuple[str, ...], now: datetime) -> None:
         for memory_id in memory_ids:
@@ -365,15 +362,16 @@ class MemoryStore:
     async def archive(self, memory_id: str, *, now: datetime | None = None) -> None:
         """Stop recalling it. **Nothing is deleted** (docs/architecture/memory.md §5)."""
         moment = now or datetime.now(UTC)
-        await asyncio.to_thread(self._archive_blocking, (memory_id,), moment)
+        await self._db.in_transaction(lambda conn: self._archive_in(conn, (memory_id,), moment))
 
-    def _archive_blocking(self, memory_ids: tuple[str, ...], now: datetime) -> None:
-        with self._db.transaction() as conn:
-            for memory_id in memory_ids:
-                conn.execute(
-                    "UPDATE memories SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
-                    (now.isoformat(), memory_id),
-                )
+    def _archive_in(
+        self, conn: apsw.Connection, memory_ids: tuple[str, ...], now: datetime
+    ) -> None:
+        for memory_id in memory_ids:
+            conn.execute(
+                "UPDATE memories SET archived_at = ? WHERE id = ? AND archived_at IS NULL",
+                (now.isoformat(), memory_id),
+            )
 
     async def archive_faded(self, *, now: datetime | None = None) -> Sequence[str]:
         """Archive everything that has decayed below the floor. **Returns what faded.**
@@ -383,25 +381,24 @@ class MemoryStore:
         thing to keep in agreement with the design doc.
         """
         moment = now or datetime.now(UTC)
-        return await asyncio.to_thread(self._archive_faded_blocking, moment)
-
-    def _archive_faded_blocking(self, now: datetime) -> Sequence[str]:
-        with self._db.transaction() as conn:
-            rows = conn.execute(
-                f"SELECT {COLUMNS} FROM memories"
-                " WHERE archived_at IS NULL AND superseded_by IS NULL"
-            ).fetchall()
-            faded = [
-                record.id
-                for record in (hydrate(conn, row, evidence=False) for row in rows)
-                if decay.is_faded(record, now)
-            ]
-            for memory_id in faded:
-                conn.execute(
-                    "UPDATE memories SET archived_at = ? WHERE id = ?", (now.isoformat(), memory_id)
-                )
+        faded = await self._db.in_transaction(lambda conn: self._fade_in(conn, moment))
         if faded:
             log.info("memory.archived", count=len(faded))
+        return faded
+
+    def _fade_in(self, conn: apsw.Connection, now: datetime) -> Sequence[str]:
+        rows = conn.execute(
+            f"SELECT {COLUMNS} FROM memories WHERE archived_at IS NULL AND superseded_by IS NULL"
+        ).fetchall()
+        faded = [
+            record.id
+            for record in (hydrate(conn, row, evidence=False) for row in rows)
+            if decay.is_faded(record, now)
+        ]
+        for memory_id in faded:
+            conn.execute(
+                "UPDATE memories SET archived_at = ? WHERE id = ?", (now.isoformat(), memory_id)
+            )
         return faded
 
     async def confirm(self, memory_id: str, *, now: datetime | None = None) -> MemoryRecord:
@@ -412,17 +409,19 @@ class MemoryStore:
         something the user just vouched for is not something Lumi has stopped recalling.
         """
         moment = now or datetime.now(UTC)
-        return await asyncio.to_thread(self._confirm_blocking, memory_id, moment)
-
-    def _confirm_blocking(self, memory_id: str, now: datetime) -> MemoryRecord:
-        with self._db.transaction() as conn:
-            existing = read(conn, memory_id)
-            if existing is None:
-                raise MemoryRejected(f"No such memory to confirm: {memory_id}")
-            self._confirm_in(conn, memory_id, now)
-            confirmed = read(conn, memory_id)
-        assert confirmed is not None  # read back inside the same transaction
+        confirmed = await self._db.in_transaction(
+            lambda conn: self._confirm_one(conn, memory_id, moment)
+        )
         log.info("memory.confirmed", memory_id=memory_id, subject=confirmed.subject)
+        return confirmed
+
+    def _confirm_one(self, conn: apsw.Connection, memory_id: str, now: datetime) -> MemoryRecord:
+        existing = read(conn, memory_id)
+        if existing is None:
+            raise MemoryRejected(f"No such memory to confirm: {memory_id}")
+        self._confirm_in(conn, memory_id, now)
+        confirmed = read(conn, memory_id)
+        assert confirmed is not None  # read back inside the same transaction
         return confirmed
 
     def _confirm_in(self, conn: apsw.Connection, memory_id: str, now: datetime) -> None:
@@ -464,54 +463,62 @@ class MemoryStore:
         a typo.
         """
         moment = now or datetime.now(UTC)
-        return await asyncio.to_thread(self._rewrite_blocking, memory_id, content, subject, moment)
-
-    def _rewrite_blocking(
-        self, memory_id: str, content: str, subject: str | None, now: datetime
-    ) -> MemoryRecord:
-        with self._db.transaction() as conn:
-            existing = read(conn, memory_id)
-            if existing is None:
-                raise MemoryRejected(f"No such memory to rewrite: {memory_id}")
-            if existing.superseded_by is not None:
-                # ★ **A superseded belief has already been replaced.** Correcting it would
-                # give one row two successors, and `_live_rows` would then return two live
-                # beliefs about the same subject — a contradiction Lumi made by itself.
-                # The window shows history read-only; the thing to correct is the current
-                # belief (docs/architecture/memory.md §8).
-                raise MemoryRejected(f"Already superseded, correct its successor: {memory_id}")
-            record = self._insert(
-                conn,
-                MemoryCandidate(
-                    type=existing.type,
-                    subject=subject if subject is not None else existing.subject,
-                    content=content,
-                    # **Written as `user_stated`, then escalated.** `_insert` refuses
-                    # `user_confirmed` on purpose (Invariant 7), and routing around that
-                    # check here would put a second escalation path in the codebase.
-                    assertion_mode=AssertionMode.USER_STATED,
-                    provenance_class=existing.provenance_class,
-                    trust_level=existing.trust_level,
-                    evidence_ref=existing.evidence_ref,
-                    confidence=existing.confidence,
-                    base_salience=existing.base_salience,
-                    valid_from=now,
-                    source_episode_ids=existing.source_episode_ids,
-                ),
-                now,
-                # The memory being corrected may cite utterances that have since expired.
-                # **A correction is not refused because the conversation it came from is
-                # past its retention** — that is exactly when a correction is needed.
-                require_evidence=False,
-            )
-            conn.execute(
-                "UPDATE memories SET superseded_by = ? WHERE id = ?", (record.id, existing.id)
-            )
-            self._confirm_in(conn, record.id, now)
-            rewritten = read(conn, record.id)
-        assert rewritten is not None  # read back inside the same transaction
-        log.info("memory.rewritten", old_id=existing.id, new_id=record.id, subject=record.subject)
+        old_id, rewritten = await self._db.in_transaction(
+            lambda conn: self._rewrite_in(conn, memory_id, content, subject, moment)
+        )
+        log.info("memory.rewritten", old_id=old_id, new_id=rewritten.id, subject=rewritten.subject)
         return rewritten
+
+    def _rewrite_in(
+        self,
+        conn: apsw.Connection,
+        memory_id: str,
+        content: str,
+        subject: str | None,
+        now: datetime,
+    ) -> tuple[str, MemoryRecord]:
+        """The correction itself. **Returns the superseded id alongside the new record** —
+        the log line names both, and it is written after the commit rather than before it.
+        """
+        existing = read(conn, memory_id)
+        if existing is None:
+            raise MemoryRejected(f"No such memory to rewrite: {memory_id}")
+        if existing.superseded_by is not None:
+            # ★ **A superseded belief has already been replaced.** Correcting it would
+            # give one row two successors, and `_live_rows` would then return two live
+            # beliefs about the same subject — a contradiction Lumi made by itself.
+            # The window shows history read-only; the thing to correct is the current
+            # belief (docs/architecture/memory.md §8).
+            raise MemoryRejected(f"Already superseded, correct its successor: {memory_id}")
+        record = self._insert(
+            conn,
+            MemoryCandidate(
+                type=existing.type,
+                subject=subject if subject is not None else existing.subject,
+                content=content,
+                # **Written as `user_stated`, then escalated.** `_insert` refuses
+                # `user_confirmed` on purpose (Invariant 7), and routing around that
+                # check here would put a second escalation path in the codebase.
+                assertion_mode=AssertionMode.USER_STATED,
+                provenance_class=existing.provenance_class,
+                trust_level=existing.trust_level,
+                evidence_ref=existing.evidence_ref,
+                confidence=existing.confidence,
+                base_salience=existing.base_salience,
+                valid_from=now,
+                source_episode_ids=existing.source_episode_ids,
+            ),
+            now,
+            # The memory being corrected may cite utterances that have since expired.
+            # **A correction is not refused because the conversation it came from is
+            # past its retention** — that is exactly when a correction is needed.
+            require_evidence=False,
+        )
+        conn.execute("UPDATE memories SET superseded_by = ? WHERE id = ?", (record.id, existing.id))
+        self._confirm_in(conn, record.id, now)
+        rewritten = read(conn, record.id)
+        assert rewritten is not None  # read back inside the same transaction
+        return existing.id, rewritten
 
     # ── internals ──────────────────────────────────────────────────────────
 
