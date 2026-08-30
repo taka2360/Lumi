@@ -12,6 +12,7 @@ Anything grep and AST can cover is enforced here instead of building runtime mac
 | No import cycles between packages | authority-matrix #20 / ADR-045 |
 | `providers/` does not import `lumi.setup` | authority-matrix #21 / ADR-045 |
 | Background tasks are started through `spawn` | lumi/tasks.py |
+| Who writes `memories` | authority-matrix #22 / ADR-045 |
 """
 
 from __future__ import annotations
@@ -336,6 +337,14 @@ def test_only_decide_returns_a_decision() -> None:
 #: everything" are the user's own doing; every other route is Lumi's, and there is none.
 AUDIT_DELETION_SITE = LUMI / "storage" / "retention.py"
 
+#: The only two files that may write the `memories` table (ADR-045). One believes
+#: things and one forgets them, **and forgetting is deletion**, which privacy.md §5
+#: keeps in one file with every other `DELETE` against user data.
+MEMORY_WRITERS = {
+    LUMI / "memory" / "store.py": ("INSERT INTO MEMORIES", "UPDATE MEMORIES"),
+    LUMI / "storage" / "retention.py": ("UPDATE MEMORIES", "DELETE FROM MEMORIES"),
+}
+
 
 def test_the_audit_log_is_append_only() -> None:
     """**Append-only means "no `DELETE` / `UPDATE` outside the deletion service."**
@@ -423,3 +432,41 @@ def test_trust_level_trusted_is_only_written_where_allowed() -> None:
         source.relative_to(LUMI).as_posix() for source in lumi_sources() if grants_trusted(source)
     }
     assert granters == allowed
+
+
+def test_only_the_store_and_the_purge_write_memories() -> None:
+    """**One writer for what Lumi believes** (ADR-045 / authority-matrix #22).
+
+    `MemoryStore` is where every rule about a belief is enforced: `user_confirmed` refused,
+    evidence checked, trust joined with the utterances it came from, supersession writing
+    the contradiction note in the same transaction. **A second writer would not be a
+    shortcut past one of those, it would be past all of them** — and the symptom is a
+    memory that reads fine and was never checked.
+
+    The reads are deliberately not restricted. `memory/rows.py` and `memory/browse.py`
+    both `SELECT`, and that is the point of them: a query builder that could also write
+    would make this check unable to tell the two apart.
+
+    Physical deletion is `storage/retention.py`, with every other `DELETE` against user
+    data, because privacy.md §5 has to be checkable by reading one file.
+    """
+    for source in lumi_sources():
+        text = source.read_text(encoding="utf-8").upper()
+        allowed = MEMORY_WRITERS.get(source, ())
+        for statement in ("INSERT INTO MEMORIES", "UPDATE MEMORIES", "DELETE FROM MEMORIES"):
+            if statement in allowed:
+                continue
+            assert statement not in text, f"{source.relative_to(LUMI).as_posix()}: {statement}"
+
+
+def test_both_memory_writers_still_write() -> None:
+    """★ The other half: **an exception that stopped being used is a hole nobody watches.**
+
+    Skipping a file is only safe while it is the file documented to hold the exception. If
+    the purge stopped deleting memories, the skip above would quietly license a `DELETE`
+    anywhere in `storage/retention.py`.
+    """
+    for source, statements in MEMORY_WRITERS.items():
+        text = source.read_text(encoding="utf-8").upper()
+        for statement in statements:
+            assert statement in text, f"{source.relative_to(LUMI).as_posix()}: {statement}"
