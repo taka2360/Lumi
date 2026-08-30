@@ -47,6 +47,7 @@ from dataclasses import dataclass
 from typing import Final
 
 from lumi import logging as lumi_logging
+from lumi.agent.stt import SttOutcome
 from lumi.kernel.ids import CorrelationId
 
 log = lumi_logging.get_logger(__name__)
@@ -281,3 +282,32 @@ def _check(span: str) -> None:
 
 def _ms(seconds: float) -> int:
     return round(seconds * 1000)
+
+
+def record_stt(timer: TurnTimer, outcome: SttOutcome, *, vad_ended_at: float) -> None:
+    """Write `stt_ms` and what speculation did with it.
+
+    **The overlap is measured**, not assumed to be the whole span: on CPU, STT is longer
+    than the VAD wait and the remainder is genuinely on the critical path
+    (docs/architecture/audio.md §7).
+    """
+    timer.record("stt_ms", outcome.stt_ms)
+    overlap = outcome.overlap_ms(vad_started_at=timer.started_at, vad_ended_at=vad_ended_at)
+    timer.record_speculation(
+        Speculation(
+            speculative=outcome.speculative,
+            overlap_ms=overlap,
+            wait_ms=outcome.wait_ms,
+            discarded_ms=outcome.discarded_ms,
+            discarded=outcome.discarded,
+        )
+    )
+    log.info(
+        "reactive.stt",
+        speculative=outcome.speculative,
+        capped=outcome.capped,
+        stt_ms=outcome.stt_ms,
+        overlap_ms=overlap,
+        wait_ms=outcome.wait_ms,
+        discarded=outcome.discarded,
+    )

@@ -37,14 +37,14 @@ import numpy as np
 
 from lumi import logging as lumi_logging
 from lumi.agent.episodes import EpisodeRecorder
-from lumi.agent.latency import Speculation, TurnLatency, TurnTimer
+from lumi.agent.latency import TurnLatency, TurnTimer, record_stt
 from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import ContextBlock, assemble
 from lumi.agent.recall import BLOCK_OVERHEAD_TOKENS, MAX_MEMORY_BLOCKS, to_blocks
 from lumi.agent.sentences import SentenceStream
 from lumi.agent.session import Session
 from lumi.agent.speech import PlaybackScheduler, StageNotifier
-from lumi.agent.stt import SpeculativeStt, SttOutcome
+from lumi.agent.stt import SpeculativeStt
 from lumi.agent.voice import VoiceResolver, VoiceScales, validate_speed, validate_volume
 from lumi.audio.io import AudioIO
 from lumi.audio.playback import SpeakerPlayback
@@ -336,7 +336,7 @@ class ReactiveLoop:
             log.warning("reactive.stt_failed", error=str(error))
             return
 
-        self._record_stt(timer, outcome, vad_ended_at=vad_ended_at)
+        record_stt(timer, outcome, vad_ended_at=vad_ended_at)
         text = outcome.transcription.text.strip()
         if not text:
             log.info("reactive.empty_transcription")
@@ -352,34 +352,6 @@ class ReactiveLoop:
         # `CancelToken` is passed for the interface's sake. **STT is `non_cancellable`**:
         # the inference runs in a thread and finishes regardless (ADR-039)
         return await stt.transcribe(audio, LANGUAGE, CancelToken())
-
-    def _record_stt(self, timer: TurnTimer, outcome: SttOutcome, *, vad_ended_at: float) -> None:
-        """Write `stt_ms` and what speculation did with it.
-
-        **The overlap is measured**, not assumed to be the whole span: on CPU, STT is longer
-        than the VAD wait and the remainder is genuinely on the critical path
-        (docs/architecture/audio.md §7).
-        """
-        timer.record("stt_ms", outcome.stt_ms)
-        overlap = outcome.overlap_ms(vad_started_at=timer.started_at, vad_ended_at=vad_ended_at)
-        timer.record_speculation(
-            Speculation(
-                speculative=outcome.speculative,
-                overlap_ms=overlap,
-                wait_ms=outcome.wait_ms,
-                discarded_ms=outcome.discarded_ms,
-                discarded=outcome.discarded,
-            )
-        )
-        log.info(
-            "reactive.stt",
-            speculative=outcome.speculative,
-            capped=outcome.capped,
-            stt_ms=outcome.stt_ms,
-            overlap_ms=overlap,
-            wait_ms=outcome.wait_ms,
-            discarded=outcome.discarded,
-        )
 
     async def handle_text(self, text: str, *, timer: TurnTimer | None = None) -> None:
         """One turn from text input. **Takes the same path as the voice route.**
