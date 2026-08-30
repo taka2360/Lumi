@@ -62,6 +62,7 @@ from lumi.artifacts.models import (
     ModelArtifact,
 )
 from lumi.providers.base import EngineRuntime
+from lumi.setup.broadcast import SetupStateBroadcaster
 from lumi.setup.detect import detect_engines, detect_ollama
 from lumi.setup.ollama import (
     OLLAMA_MODELS,
@@ -84,7 +85,6 @@ from lumi.setup.state import (
     SttSetupState,
     TtsSetup,
     TtsSetupState,
-    boot_phase,
 )
 from lumi.transport.methods import (
     CHOICE_INDIVIDUALLY,
@@ -97,7 +97,6 @@ from lumi.transport.methods import (
     COMPONENT_TTS,
     METHOD_SETUP_PROMPT,
     METHOD_SETUP_RECHECK_OLLAMA,
-    METHOD_SETUP_STATE,
 )
 from lumi.transport.protocol import Role
 from lumi.transport.server import NotConnectedError, WsServer
@@ -173,14 +172,13 @@ class SetupCoordinator:
     ) -> None:
         self._server = server
         self._env = env
-        self._snapshot = SetupSnapshot()
         # **Kept as two separate flags.** `_prompting` is "is this sequence
-        # currently in progress" (prevents duplicate runs); `_awaiting_answer` is
-        # "is a question currently shown on screen" (boot phase). Conflating them
-        # made the question screen flash back right after fetching finished (hit
-        # this in testing).
+        # currently in progress" (prevents duplicate runs); the broadcaster's
+        # `asking` is "is a question currently shown on screen" (boot phase).
+        # Conflating them made the question screen flash back right after
+        # fetching finished (hit this in testing).
         self._prompting = False
-        self._awaiting_answer = False
+        self._state = SetupStateBroadcaster(server)
         # **The Stage can connect before detection finishes.** Observed connecting
         # first in practice (2026-08-15). Deciding whether to prompt while state is
         # still unknown would skip asking when it should.
@@ -199,15 +197,11 @@ class SetupCoordinator:
 
     @property
     def state(self) -> SetupSnapshot:
-        return self._snapshot
+        return self._state.snapshot
 
     @property
     def boot(self) -> BootPhase:
-        """The phase the Stage is currently being shown. **The same derivation, not a
-        second one** — `_broadcast` and this read the one pure function, so what the
-        runtime acts on and what the user sees can never disagree (ADR-034).
-        """
-        return boot_phase(self._snapshot, prompting=self._awaiting_answer)
+        return self._state.boot
 
     async def initialize(self) -> None:
         """Called exactly once at startup. **No external communication.**"""
@@ -221,13 +215,14 @@ class SetupCoordinator:
 
     async def _redetect(self) -> None:
         """Looks at all three. **Local filesystem and 127.0.0.1 only** (setup.md §6)."""
-        self._snapshot = SetupSnapshot(
-            tts=await self._detect_tts(),
-            llm=await self._detect_llm(),
-            stt=await asyncio.to_thread(self._detect_stt),
-            embedding=await asyncio.to_thread(self._detect_embedding),
+        await self._state.replace_all(
+            SetupSnapshot(
+                tts=await self._detect_tts(),
+                llm=await self._detect_llm(),
+                stt=await asyncio.to_thread(self._detect_stt),
+                embedding=await asyncio.to_thread(self._detect_embedding),
+            )
         )
-        await self._broadcast()
 
     async def _detect_tts(self) -> TtsSetup:
         engines = await detect_engines(self._env)
@@ -293,11 +288,11 @@ class SetupCoordinator:
             found = await detect_ollama(self._env)
             if found is None:
                 self._ollama_start_deadline = None
-                await self._update(
+                await self._state.replace(
                     llm=LlmSetup(
                         state=LlmSetupState.NOT_CONFIGURED,
                         reason="Ollama not found",
-                        model=self._snapshot.llm.model,
+                        model=self._state.snapshot.llm.model,
                     )
                 )
                 return {"detected": False, "running": False}
@@ -307,11 +302,11 @@ class SetupCoordinator:
                 if self._ollama_start_deadline is None:
                     self._ollama_start_deadline = now + OLLAMA_START_GRACE_S
                 starting = now < self._ollama_start_deadline
-                await self._update(
+                await self._state.replace(
                     llm=LlmSetup(
                         state=LlmSetupState.DETECTED,
                         runtime=(EngineRuntime.STARTING if starting else EngineRuntime.STOPPED),
-                        model=self._snapshot.llm.model,
+                        model=self._state.snapshot.llm.model,
                         reason="ollama_starting" if starting else "ollama_not_running",
                     )
                 )
@@ -319,23 +314,24 @@ class SetupCoordinator:
 
             self._ollama_start_deadline = None
 
-            if self._snapshot.llm.state in (
+            if self._state.snapshot.llm.state in (
                 LlmSetupState.MODEL_INSTALLING,
                 LlmSetupState.MODEL_FAILED,
             ) or (
-                self._snapshot.llm.state is LlmSetupState.MODEL_MISSING and self._model_prompting
+                self._state.snapshot.llm.state is LlmSetupState.MODEL_MISSING
+                and self._model_prompting
             ):
                 return {"detected": True, "running": True}
 
             # An untrusted Stage may still send this request after the panel is gone.
             # Re-checking must never downgrade a working conversation to `starting`.
-            if self._snapshot.llm.ready:
+            if self._state.snapshot.llm.ready:
                 return {"detected": True, "running": True}
-            await self._update(
+            await self._state.replace(
                 llm=LlmSetup(
                     state=LlmSetupState.DETECTED,
                     runtime=EngineRuntime.STARTING,
-                    model=self._snapshot.llm.model,
+                    model=self._state.snapshot.llm.model,
                     reason="model_checking",
                 )
             )
@@ -370,34 +366,6 @@ class SetupCoordinator:
 
     # ── Broadcasting ──────────────────────────────────────────────
 
-    async def _update(
-        self,
-        *,
-        tts: TtsSetup | None = None,
-        llm: LlmSetup | None = None,
-        stt: SttSetup | None = None,
-        embedding: EmbeddingSetup | None = None,
-    ) -> None:
-        """Replaces one component and broadcasts. **The single exit point for state changes.**"""
-        self._snapshot = SetupSnapshot(
-            tts=tts if tts is not None else self._snapshot.tts,
-            llm=llm if llm is not None else self._snapshot.llm,
-            stt=stt if stt is not None else self._snapshot.stt,
-            embedding=embedding if embedding is not None else self._snapshot.embedding,
-        )
-        await self._broadcast()
-
-    async def _broadcast(self) -> None:
-        """Broadcasts the current state. **Includes the boot phase** (docs/architecture/ui.md).
-
-        The phase also depends on "is a question currently being asked," so
-        **it's rebroadcast whenever asking starts / finishes**, even if the state
-        itself hasn't changed.
-        """
-        payload = self._snapshot.to_payload(prompting=self._awaiting_answer)
-        log.info("setup.state", **payload)
-        await self._server.notify(Role.STAGE, METHOD_SETUP_STATE, payload)
-
     async def set_tts_runtime(self, runtime: EngineRuntime) -> None:
         """The TTS engine **process**'s state changed.
 
@@ -409,7 +377,7 @@ class SetupCoordinator:
         was the only thing with a process; once STT gained a runtime axis (ADR-035) the
         bare name stopped saying which of the two it moved.
         """
-        await self._update(tts=replace(self._snapshot.tts, runtime=runtime))
+        await self._state.replace(tts=replace(self._state.snapshot.tts, runtime=runtime))
 
     async def report_llm(self, state: LlmSetupState, *, reason: str | None, model: str) -> None:
         """What actually happened when the Provider tried to load.
@@ -423,7 +391,9 @@ class SetupCoordinator:
             if state in (LlmSetupState.DETECTED, LlmSetupState.MODEL_MISSING)
             else EngineRuntime.STOPPED
         )
-        await self._update(llm=LlmSetup(state=state, model=model, reason=reason, runtime=runtime))
+        await self._state.replace(
+            llm=LlmSetup(state=state, model=model, reason=reason, runtime=runtime)
+        )
         if state is LlmSetupState.MODEL_MISSING:
             await self._ask_for_llm_model()
 
@@ -432,15 +402,15 @@ class SetupCoordinator:
         if self._model_prompting:
             return
         self._model_prompting = True
-        retry = self._snapshot.llm.state is LlmSetupState.MODEL_FAILED
-        detail = self._snapshot.llm.reason if retry else None
+        retry = self._state.snapshot.llm.state is LlmSetupState.MODEL_FAILED
+        detail = self._state.snapshot.llm.reason if retry else None
         try:
             while True:
-                current = OLLAMA_MODELS.get(self._snapshot.llm.model or "", QWEN_35_9B)
+                current = OLLAMA_MODELS.get(self._state.snapshot.llm.model or "", QWEN_35_9B)
                 local_models = await self._list_local_ollama_models()
                 local_by_name = {model.name: model for model in local_models}
-                self._awaiting_answer = True
-                await self._broadcast()
+                self._state.asking(True)
+                await self._state.publish()
                 try:
                     result = await self._server.invoke(
                         Role.STAGE,
@@ -461,7 +431,7 @@ class SetupCoordinator:
                 except (NotConnectedError, TimeoutError):
                     return
                 finally:
-                    self._awaiting_answer = False
+                    self._state.asking(False)
 
                 choice = result.payload.get("choice") if result.ok else None
                 selected_name = result.payload.get("model")
@@ -470,7 +440,7 @@ class SetupCoordinator:
                         selected_name if isinstance(selected_name, str) else ""
                     )
                     if local is None:
-                        await self._update(
+                        await self._state.replace(
                             llm=LlmSetup(
                                 state=LlmSetupState.MODEL_FAILED,
                                 runtime=EngineRuntime.READY,
@@ -482,10 +452,10 @@ class SetupCoordinator:
                         detail = "unknown_model"
                         continue
                     await self.select_local_llm_model(local)
-                    if self._snapshot.llm.state is not LlmSetupState.MODEL_FAILED:
+                    if self._state.snapshot.llm.state is not LlmSetupState.MODEL_FAILED:
                         return
                     retry = True
-                    detail = self._snapshot.llm.reason
+                    detail = self._state.snapshot.llm.reason
                     continue
                 if choice != CHOICE_INSTALL:
                     return
@@ -493,7 +463,7 @@ class SetupCoordinator:
                     selected_name if isinstance(selected_name, str) else current.name
                 )
                 if artifact is None:
-                    await self._update(
+                    await self._state.replace(
                         llm=LlmSetup(
                             state=LlmSetupState.MODEL_FAILED,
                             runtime=EngineRuntime.READY,
@@ -503,14 +473,14 @@ class SetupCoordinator:
                     )
                 else:
                     await self.install_llm_model(artifact)
-                if self._snapshot.llm.state is not LlmSetupState.MODEL_FAILED:
+                if self._state.snapshot.llm.state is not LlmSetupState.MODEL_FAILED:
                     return
                 retry = True
-                detail = self._snapshot.llm.reason
+                detail = self._state.snapshot.llm.reason
         finally:
             self._model_prompting = False
-            self._awaiting_answer = False
-            await self._broadcast()
+            self._state.asking(False)
+            await self._state.publish()
 
     async def _list_local_ollama_models(self) -> tuple[OllamaLocalModel, ...]:
         """Reads local models for the choice screen; a transient catalog error is non-fatal."""
@@ -541,7 +511,7 @@ class SetupCoordinator:
     async def select_local_llm_model(self, model: OllamaLocalModel) -> None:
         """Selects a model already present locally, without invoking `/api/pull`."""
         if self._on_llm_model_selected is None:
-            await self._update(
+            await self._state.replace(
                 llm=LlmSetup(
                     state=LlmSetupState.MODEL_FAILED,
                     runtime=EngineRuntime.READY,
@@ -558,7 +528,7 @@ class SetupCoordinator:
                 model=model.name,
                 reason=type(error).__name__,
             )
-            await self._update(
+            await self._state.replace(
                 llm=LlmSetup(
                     state=LlmSetupState.MODEL_FAILED,
                     runtime=EngineRuntime.READY,
@@ -567,7 +537,7 @@ class SetupCoordinator:
                 )
             )
             return
-        await self._update(
+        await self._state.replace(
             llm=LlmSetup(
                 state=LlmSetupState.DETECTED,
                 runtime=EngineRuntime.STARTING,
@@ -584,7 +554,7 @@ class SetupCoordinator:
         `state: failed` means fetching or verification failed. CTranslate2 failing to load
         an installed model is instead `state: installed × runtime: failed` (ADR-035).
         """
-        await self._update(stt=replace(self._snapshot.stt, runtime=runtime))
+        await self._state.replace(stt=replace(self._state.snapshot.stt, runtime=runtime))
 
     # ── Asking ──────────────────────────────────────────────
 
@@ -596,7 +566,7 @@ class SetupCoordinator:
         need to ask."
         """
         await self._initialized.wait()
-        await self._broadcast()
+        await self._state.publish()
 
         if self._prompting:
             return
@@ -622,32 +592,32 @@ class SetupCoordinator:
             await self._ask_for_embedding()
         finally:
             self._prompting = False
-            self._awaiting_answer = False
+            self._state.asking(False)
             # Broadcasts that answering is done (or was given up on). **Never left hanging.**
-            await self._broadcast()
+            await self._state.publish()
 
     async def _ask_for_tts(self) -> bool:
-        if self._snapshot.tts.state is not TtsSetupState.NOT_CONFIGURED:
+        if self._state.snapshot.tts.state is not TtsSetupState.NOT_CONFIGURED:
             return False
         return await self._ask_and_maybe_install(
             component=COMPONENT_TTS,
             install=self.install_tts_engine,
-            failed=lambda: self._snapshot.tts.state is TtsSetupState.FAILED,
-            reason=lambda: self._snapshot.tts.reason,
+            failed=lambda: self._state.snapshot.tts.state is TtsSetupState.FAILED,
+            reason=lambda: self._state.snapshot.tts.reason,
         )
 
     async def _ask_for_stt(self) -> bool:
-        if self._snapshot.stt.state is not SttSetupState.NOT_CONFIGURED:
+        if self._state.snapshot.stt.state is not SttSetupState.NOT_CONFIGURED:
             return False
-        if self._snapshot.stt.model is None:
+        if self._state.snapshot.stt.model is None:
             # The selected name is not pinned, so there is nothing this could fetch.
             # **A question with no good answer is worse than no question**
             return False
         return await self._ask_and_maybe_install(
             component=COMPONENT_STT,
             install=self.install_speech_model,
-            failed=lambda: self._snapshot.stt.state is SttSetupState.FAILED,
-            reason=lambda: self._snapshot.stt.reason,
+            failed=lambda: self._state.snapshot.stt.state is SttSetupState.FAILED,
+            reason=lambda: self._state.snapshot.stt.reason,
         )
 
     async def _ask_for_embedding(self) -> bool:
@@ -657,13 +627,13 @@ class SetupCoordinator:
         question whose "not now" leaves Lumi fully usable — which is also why it is asked
         after the three that do not.
         """
-        if self._snapshot.embedding.state is not EmbeddingSetupState.NOT_CONFIGURED:
+        if self._state.snapshot.embedding.state is not EmbeddingSetupState.NOT_CONFIGURED:
             return False
         return await self._ask_and_maybe_install(
             component=COMPONENT_EMBEDDING,
             install=self.install_embedding_model,
-            failed=lambda: self._snapshot.embedding.state is EmbeddingSetupState.FAILED,
-            reason=lambda: self._snapshot.embedding.reason,
+            failed=lambda: self._state.snapshot.embedding.state is EmbeddingSetupState.FAILED,
+            reason=lambda: self._state.snapshot.embedding.reason,
         )
 
     def _missing_components(self) -> list[MissingComponent]:
@@ -673,7 +643,7 @@ class SetupCoordinator:
         it under a button that fetches things would promise something this cannot do.
         """
         missing: list[MissingComponent] = []
-        if self._snapshot.tts.state is TtsSetupState.NOT_CONFIGURED:
+        if self._state.snapshot.tts.state is TtsSetupState.NOT_CONFIGURED:
             missing.append(
                 MissingComponent(
                     component=COMPONENT_TTS,
@@ -682,7 +652,10 @@ class SetupCoordinator:
                 )
             )
         stt_artifact = selected_stt_artifact(self._env)
-        if self._snapshot.stt.state is SttSetupState.NOT_CONFIGURED and stt_artifact is not None:
+        if (
+            self._state.snapshot.stt.state is SttSetupState.NOT_CONFIGURED
+            and stt_artifact is not None
+        ):
             missing.append(
                 MissingComponent(
                     component=COMPONENT_STT,
@@ -696,7 +669,10 @@ class SetupCoordinator:
         # which would turn a missing model into an `AttributeError` in the one build where
         # nobody is watching.
         recommended = self._recommended_llm()
-        if self._snapshot.llm.state is LlmSetupState.MODEL_MISSING and recommended is not None:
+        if (
+            self._state.snapshot.llm.state is LlmSetupState.MODEL_MISSING
+            and recommended is not None
+        ):
             missing.append(
                 MissingComponent(
                     component=COMPONENT_LLM_MODEL,
@@ -704,7 +680,7 @@ class SetupCoordinator:
                     size_bytes=recommended.size_bytes,
                 )
             )
-        if self._snapshot.embedding.state is EmbeddingSetupState.NOT_CONFIGURED:
+        if self._state.snapshot.embedding.state is EmbeddingSetupState.NOT_CONFIGURED:
             missing.append(
                 MissingComponent(
                     component=COMPONENT_EMBEDDING,
@@ -715,7 +691,7 @@ class SetupCoordinator:
         return missing
 
     def _recommended_llm(self) -> OllamaModelArtifact | None:
-        return OLLAMA_MODELS.get(self._snapshot.llm.model or "", QWEN_35_9B)
+        return OLLAMA_MODELS.get(self._state.snapshot.llm.model or "", QWEN_35_9B)
 
     async def _ask_for_everything(self) -> BulkAnswer:
         """Offers to fetch everything missing at once, with the total.
@@ -731,8 +707,8 @@ class SetupCoordinator:
         missing = self._missing_components()
         if not missing:
             return BulkAnswer.INDIVIDUALLY
-        self._awaiting_answer = True
-        await self._broadcast()
+        self._state.asking(True)
+        await self._state.publish()
         try:
             result = await self._server.invoke(
                 Role.STAGE,
@@ -750,7 +726,7 @@ class SetupCoordinator:
             log.info("setup.prompt.unanswered", component=COMPONENT_ALL)
             return BulkAnswer.UNANSWERED
         finally:
-            self._awaiting_answer = False
+            self._state.asking(False)
 
         choice = result.payload.get("choice") if result.ok else None
         log.info("setup.prompt.answered", component=COMPONENT_ALL, choice=choice)
@@ -811,8 +787,8 @@ class SetupCoordinator:
             # **Broadcasts the phase before showing the question.** Forgetting this
             # would leave the Stage showing a loading indicator while the question
             # sits hidden behind it.
-            self._awaiting_answer = True
-            await self._broadcast()
+            self._state.asking(True)
+            await self._state.publish()
             try:
                 result = await self._server.invoke(
                     Role.STAGE,
@@ -823,12 +799,12 @@ class SetupCoordinator:
             except (NotConnectedError, TimeoutError):
                 # Nobody is there to answer. **Stop asking** — the next start asks again.
                 log.info("setup.prompt.unanswered", component=component)
-                self._awaiting_answer = False
+                self._state.asking(False)
                 return True
 
             # **The question disappears the moment an answer arrives.** Never lets the question
             # paint over the fetching phase.
-            self._awaiting_answer = False
+            self._state.asking(False)
             choice = result.payload.get("choice") if result.ok else None
             # **An unrecognized answer is treated the same as "not now"** (fail-closed).
             chose_install = choice == CHOICE_INSTALL
@@ -917,7 +893,7 @@ class SetupCoordinator:
         point.**
         """
         artifact = AIVISSPEECH_ENGINE
-        await self._update(
+        await self._state.replace(
             tts=TtsSetup(
                 state=TtsSetupState.INSTALLING,
                 engine_name=artifact.display_name,
@@ -927,10 +903,10 @@ class SetupCoordinator:
         )
 
         async def progress(fraction: float) -> None:
-            await self._update(tts=replace(self._snapshot.tts, progress=fraction))
+            await self._state.replace(tts=replace(self._state.snapshot.tts, progress=fraction))
 
         async def fail(reason: str) -> None:
-            await self._update(
+            await self._state.replace(
                 tts=TtsSetup(
                     state=TtsSetupState.FAILED,
                     engine_name=artifact.display_name,
@@ -949,7 +925,7 @@ class SetupCoordinator:
         if executable is None:
             return
 
-        await self._update(
+        await self._state.replace(
             tts=TtsSetup(
                 state=TtsSetupState.INSTALLED,
                 engine_name=artifact.display_name,
@@ -962,7 +938,7 @@ class SetupCoordinator:
     async def install_llm_model(self, artifact: OllamaModelArtifact) -> None:
         """Asks Ollama's fixed local API to pull one consented, allowlisted model."""
         if self._on_llm_model_selected is None:
-            await self._update(
+            await self._state.replace(
                 llm=LlmSetup(
                     state=LlmSetupState.MODEL_FAILED,
                     runtime=EngineRuntime.READY,
@@ -980,7 +956,7 @@ class SetupCoordinator:
                 model=artifact.name,
                 reason=type(error).__name__,
             )
-            await self._update(
+            await self._state.replace(
                 llm=LlmSetup(
                     state=LlmSetupState.MODEL_FAILED,
                     runtime=EngineRuntime.READY,
@@ -989,7 +965,7 @@ class SetupCoordinator:
                 )
             )
             return
-        await self._update(
+        await self._state.replace(
             llm=LlmSetup(
                 state=LlmSetupState.MODEL_INSTALLING,
                 runtime=EngineRuntime.READY,
@@ -1025,9 +1001,9 @@ class SetupCoordinator:
             if fraction - last_sent < 0.01 and fraction < 1.0:
                 return
             last_sent = fraction
-            await self._update(
+            await self._state.replace(
                 llm=replace(
-                    self._snapshot.llm,
+                    self._state.snapshot.llm,
                     progress=fraction,
                     completed_bytes=completed,
                     total_bytes=total,
@@ -1043,7 +1019,7 @@ class SetupCoordinator:
                 reason=error.reason,
                 detail=error.detail,
             )
-            await self._update(
+            await self._state.replace(
                 llm=LlmSetup(
                     state=LlmSetupState.MODEL_FAILED,
                     runtime=EngineRuntime.READY,
@@ -1053,7 +1029,7 @@ class SetupCoordinator:
             )
             return
         except asyncio.CancelledError:
-            await self._update(
+            await self._state.replace(
                 llm=LlmSetup(
                     state=LlmSetupState.MODEL_FAILED,
                     runtime=EngineRuntime.READY,
@@ -1063,7 +1039,7 @@ class SetupCoordinator:
             )
             raise
 
-        await self._update(
+        await self._state.replace(
             llm=LlmSetup(
                 state=LlmSetupState.DETECTED,
                 runtime=EngineRuntime.STARTING,
@@ -1082,17 +1058,19 @@ class SetupCoordinator:
         Lumi that had already started stays running, with search improving once it lands.
         """
         artifact = HARRIER_OSS_V1_270M
-        await self._update(
+        await self._state.replace(
             embedding=EmbeddingSetup(
                 state=EmbeddingSetupState.INSTALLING, model=artifact.name, progress=0.0
             )
         )
 
         async def progress(fraction: float) -> None:
-            await self._update(embedding=replace(self._snapshot.embedding, progress=fraction))
+            await self._state.replace(
+                embedding=replace(self._state.snapshot.embedding, progress=fraction)
+            )
 
         async def fail(reason: str) -> None:
-            await self._update(
+            await self._state.replace(
                 embedding=EmbeddingSetup(
                     state=EmbeddingSetupState.FAILED, model=artifact.name, reason=reason
                 )
@@ -1107,7 +1085,7 @@ class SetupCoordinator:
         if await self._install(event="setup.embedding", run=fetch, fail=fail) is None:
             return
 
-        await self._update(
+        await self._state.replace(
             embedding=EmbeddingSetup(state=EmbeddingSetupState.INSTALLED, model=artifact.name)
         )
 
@@ -1117,19 +1095,19 @@ class SetupCoordinator:
         """
         artifact = selected_stt_artifact(self._env)
         if artifact is None:
-            await self._update(
+            await self._state.replace(
                 stt=SttSetup(state=SttSetupState.FAILED, model=None, reason="unpinned_model")
             )
             return
-        await self._update(
+        await self._state.replace(
             stt=SttSetup(state=SttSetupState.INSTALLING, model=artifact.name, progress=0.0)
         )
 
         async def progress(fraction: float) -> None:
-            await self._update(stt=replace(self._snapshot.stt, progress=fraction))
+            await self._state.replace(stt=replace(self._state.snapshot.stt, progress=fraction))
 
         async def fail(reason: str) -> None:
-            await self._update(
+            await self._state.replace(
                 stt=SttSetup(state=SttSetupState.FAILED, model=artifact.name, reason=reason)
             )
 
@@ -1144,4 +1122,4 @@ class SetupCoordinator:
         if await self._install(event="setup.model", run=fetch, fail=fail) is None:
             return
 
-        await self._update(stt=SttSetup(state=SttSetupState.INSTALLED, model=artifact.name))
+        await self._state.replace(stt=SttSetup(state=SttSetupState.INSTALLED, model=artifact.name))

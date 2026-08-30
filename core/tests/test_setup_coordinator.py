@@ -7,7 +7,6 @@ a race condition found in practice.
 from __future__ import annotations
 
 import asyncio
-from dataclasses import replace
 from pathlib import Path
 from typing import Any, cast
 
@@ -997,13 +996,12 @@ class TestLlm:
         server = FakeServer([])
         coordinator = SetupCoordinator(server.as_server(), {})
         await coordinator.initialize()
-        coordinator._snapshot = replace(
-            coordinator.state,
+        await coordinator._state.replace(
             llm=LlmSetup(
                 state=LlmSetupState.MODEL_MISSING,
                 model="qwen3.5:9b",
                 runtime=EngineRuntime.READY,
-            ),
+            )
         )
         coordinator._model_prompting = True
 
