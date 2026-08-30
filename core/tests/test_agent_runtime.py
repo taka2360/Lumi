@@ -32,6 +32,7 @@ from fakes import (  # noqa: F401  — `isolated_paths` / `no_ollama` are autous
 )
 
 from lumi import paths as paths_module
+from lumi.agent import reflection_scheduler as scheduler_module
 from lumi.agent import runtime as runtime_module
 from lumi.agent.runtime import ConversationRuntime
 from lumi.audio.devices import AudioPlan
@@ -423,7 +424,9 @@ class TestStartupMaintenance:
                     swept_before_start.append(False)
                 return await real.archive_faded(**kwargs)
 
-        runtime._memories = cast(Any, Watched())
+        # **Substituted where the sweep reads it.** MaintenanceJobs is handed the store
+        # at construction, so replacing the runtime's own reference no longer reaches it.
+        runtime._maintenance._memories = cast(Any, Watched())
         try:
             await runtime.start()
 
@@ -463,9 +466,9 @@ class TestReflection:
                 ran.set()
                 return type("Report", (), {"learned": 0})()
 
-        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
-        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
-        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(0))
+        monkeypatch.setattr(scheduler_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_IDLE_AFTER", timedelta(0))
         # **Registered through the same seam startup uses.** Registering directly would be
         # overwritten by `_register_providers`, which is exactly what happened first.
         monkeypatch.setattr(
@@ -496,9 +499,9 @@ class TestReflection:
                 started.append("ran")
                 return type("Report", (), {"learned": 0})()
 
-        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
-        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
-        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(minutes=5))
+        monkeypatch.setattr(scheduler_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_IDLE_AFTER", timedelta(minutes=5))
         try:
             await runtime.start()
             await asyncio.sleep(0.05)
@@ -526,11 +529,11 @@ class TestReflection:
                 ran.set()
                 return type("Report", (), {"learned": 0})()
 
-        monkeypatch.setattr(runtime_module, "ReflectionJob", Reflecting)
-        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(scheduler_module, "ReflectionJob", Reflecting)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_CHECK_SECONDS", 0.001)
         # Long enough that the ordinary trigger cannot be what fires.
-        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(days=1))
-        monkeypatch.setattr(runtime_module, "REFLECTION_ASKED_IDLE_AFTER", timedelta(0))
+        monkeypatch.setattr(scheduler_module, "REFLECTION_IDLE_AFTER", timedelta(days=1))
+        monkeypatch.setattr(scheduler_module, "REFLECTION_ASKED_IDLE_AFTER", timedelta(0))
         monkeypatch.setattr(
             runtime_module, "OllamaProvider", lambda _model: FakeTts(kind=ProviderKind.LLM)
         )
@@ -554,8 +557,8 @@ class TestReflection:
         it. **The next one tries again**, and nothing was lost in between.
         """
         runtime = await self._runtime(monkeypatch)
-        monkeypatch.setattr(runtime_module, "REFLECTION_CHECK_SECONDS", 0.001)
-        monkeypatch.setattr(runtime_module, "REFLECTION_IDLE_AFTER", timedelta(0))
+        monkeypatch.setattr(scheduler_module, "REFLECTION_CHECK_SECONDS", 0.001)
+        monkeypatch.setattr(scheduler_module, "REFLECTION_IDLE_AFTER", timedelta(0))
         try:
             await runtime.start()
             await asyncio.sleep(0.05)

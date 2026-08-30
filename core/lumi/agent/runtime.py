@@ -23,18 +23,19 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from datetime import timedelta
 from pathlib import Path
-from typing import Final, cast
+from typing import Final
 
 from lumi import logging as lumi_logging
 from lumi import paths
 from lumi import settings as settings_module
 from lumi.agent.episodes import EpisodeRecorder
 from lumi.agent.inspector import InspectorPublisher
+from lumi.agent.maintenance import MaintenanceJobs
 from lumi.agent.prompt import estimate_tokens
 from lumi.agent.reactive import ReactiveLoop
 from lumi.agent.recall import cost_of
+from lumi.agent.reflection_scheduler import ReflectionScheduler
 from lumi.agent.session import Session
 from lumi.agent.warmup import warm_all, warm_llm
 from lumi.artifacts.install import is_model_installed
@@ -44,13 +45,8 @@ from lumi.audio.io import AudioIO
 from lumi.character import ExpressionIntent
 from lumi.content.pack import CharacterPack, ContentPackError, load_character
 from lumi.kernel.arbiter import AttentionArbiter
-from lumi.kernel.cancellation import Cancellation
 from lumi.kernel.event import EventBus
 from lumi.kernel.hooks import HookRegistry
-from lumi.kernel.ids import new_job_id
-from lumi.kernel.job import Job, JobKind
-from lumi.memory.indexing import Indexer
-from lumi.memory.reflection import ReflectionJob
 from lumi.memory.retrieval import Retriever
 from lumi.memory.store import MemoryStore
 from lumi.memory.vectors import MemoryIndex
@@ -59,9 +55,9 @@ from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
-from lumi.providers.base import EngineRuntime, ProviderError, ProviderKind
+from lumi.providers.base import EngineRuntime, ProviderKind
 from lumi.providers.embedding.harrier import HarrierEmbeddingProvider
-from lumi.providers.llm.base import LLMOptions, LLMProvider
+from lumi.providers.llm.base import LLMOptions
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
@@ -71,7 +67,7 @@ from lumi.setup.state import BootPhase, LlmSetupState
 from lumi.storage.audit import AUDIT_SCHEMA, SqliteAuditLog
 from lumi.storage.events import EVENTS_SCHEMA, SqliteEventStore
 from lumi.storage.memory import EpisodeStore, open_memory
-from lumi.storage.retention import RetentionPolicy, RetentionService
+from lumi.storage.retention import RetentionService
 from lumi.storage.secret import DpapiSecretStore, get_or_create_db_key
 from lumi.storage.sqlite import Database
 from lumi.tasks import spawn
@@ -82,7 +78,6 @@ from lumi.transport.methods import (
     METHOD_MIC,
     METHOD_MIC_MUTE,
     METHOD_MODEL,
-    METHOD_PANEL_MEMORY,
     METHOD_PANEL_SETTINGS,
     METHOD_SETTINGS,
     METHOD_SETTINGS_UPDATE,
@@ -99,25 +94,6 @@ log = lumi_logging.get_logger(__name__)
 #: the answer says so rather than letting a swapped-in name pretend the model changed
 #: (docs/architecture/core.md §6b).
 _APPLIED_NOW: Final = frozenset({"locale", "tts_speed", "tts_volume"})
-
-#: How often the idle pass looks [Provisional]. **A poll, not a timer**: what it waits for
-#: is the absence of turns, and absence does not raise an event.
-#:
-#: **Shorter than `REFLECTION_ASKED_IDLE_AFTER`**, or 「覚えておいて」 would wait out a
-#: whole poll interval past the threshold it was given — a 20-second promise answered in
-#: a minute. The check itself is one attribute read and a subtraction.
-REFLECTION_CHECK_SECONDS: Final = 15.0
-
-#: How quiet it has to be before Lumi thinks about what was said [Provisional]. Short
-#: enough that a session usually gets reflected on while it is still open; long enough that
-#: **a pause for breath is not mistaken for the end of a conversation.**
-REFLECTION_IDLE_AFTER: Final = timedelta(seconds=120)
-
-#: How quiet it has to be **after the user asked for something to be remembered**
-#: [Provisional]. Long enough not to run inside the pause between two sentences of the
-#: same thought; short enough that 「覚えておいて」 is acted on while the conversation it
-#: belongs to is still the one happening (docs/architecture/memory.md §4).
-REFLECTION_ASKED_IDLE_AFTER: Final = timedelta(seconds=20)
 
 #: What is configurable, and each key's environment override and default, live in
 #: `lumi.settings.KEYS`. **Declared once** — a second copy here drifted the moment the
@@ -142,6 +118,7 @@ class ConversationRuntime:
         "_listening",
         "_llm_retry",
         "_loop",
+        "_maintenance",
         "_memories",
         "_memory_db",
         "_model",
@@ -149,8 +126,8 @@ class ConversationRuntime:
         "_panel",
         "_providers",
         "_recorder",
-        "_reflect_asked",
         "_reflecting",
+        "_reflection",
         "_retention",
         "_server",
         "_settings",
@@ -172,7 +149,6 @@ class ConversationRuntime:
         #: The user asked to be remembered and the pass has not run yet. **Held here
         #: rather than on the loop** so that a request survives the checks that find
         #: the conversation still going.
-        self._reflect_asked = False
         self._reflecting: asyncio.Task[None] | None = None
         self._warmup: asyncio.Task[None] | None = None
         self._llm_retry: asyncio.Task[None] | None = None
@@ -198,6 +174,13 @@ class ConversationRuntime:
         self._retention = RetentionService(
             memory=self._memory_db, events=self._events_db, audit=self._audit_db
         )
+        self._maintenance = MaintenanceJobs(
+            settings=self._settings,
+            retention=self._retention,
+            memories=self._memories,
+            index=self._index,
+            embedder=self._embedder,
+        )
 
         bus = EventBus(SqliteEventStore(self._events_db))
         tools = self._build_tools(server, bus)
@@ -215,6 +198,18 @@ class ConversationRuntime:
         #: sessions do not end while Lumi is up (Phase 3 gives them boundaries)
         self._recorder = EpisodeRecorder(self._episodes)
         self._loop = self._build_loop(server, tools)
+        #: **"When may Lumi go and think" is an agent question** (ADR-045). What to extract
+        #: from a transcript stays in `memory/reflection.py`.
+        self._reflection = ReflectionScheduler(
+            loop=self._loop,
+            arbiter=self._arbiter,
+            providers=self._providers,
+            memories=self._memories,
+            episodes=self._episodes,
+            maintenance=self._maintenance,
+            server=server,
+            model=lambda: self._model,
+        )
 
         # **Subscribed, not called from the Arbiter.** The Arbiter does not know the Stage
         # exists, and the send must stay off the barge-in path (`agent/inspector.py`)
@@ -300,141 +295,6 @@ class ConversationRuntime:
             log.info("memory.embedding_absent", model=HARRIER_OSS_V1_270M.name)
             return None
         return HarrierEmbeddingProvider(paths.embedding_models_dir())
-
-    async def _expire_old_records(self) -> None:
-        """Delete what is past its deadline. **Every start, before anything is written.**
-
-        Run as a `Job`: it is background work with `actor=system`, so it never takes
-        foreground and never touches an L1 tool (ADR-018). It needs no inference and
-        therefore takes no lease — there is nothing here for barge-in to compete with.
-
-        **Once per start rather than on a timer.** A machine that is on for a week keeps
-        records a few days past their deadline; a timer that fires while Lumi is asleep
-        does nothing at all. The honest description is "expired records are removed when
-        Lumi runs", and that is what docs/contracts/privacy.md §4 promises.
-
-        A failure here is logged and does not stop startup. **Refusing to start because
-        old records could not be deleted would trade the whole product for a chore.**
-        """
-        job = Job(id=new_job_id(), kind=JobKind.MAINTENANCE, cancellation=Cancellation.COOPERATIVE)
-        default = RetentionPolicy()
-        policy = RetentionPolicy(
-            episode_days=_retention_days(
-                self._settings.retention_episodes.value, default.episode_days
-            ),
-            event_days=_retention_days(self._settings.retention_events.value, default.event_days),
-            audit_days=_retention_days(self._settings.retention_audit.value, default.audit_days),
-        )
-        try:
-            deletions = await self._retention.run(policy)
-        except Exception:
-            log.exception("retention.failed", job=str(job.id))
-            return
-        removed = sum(deletion.count for deletion in deletions)
-        log.info("retention.done", job=str(job.id), removed=removed)
-
-    async def _forget_faded_memories(self) -> None:
-        """Archive memories that have decayed below the floor. **Not a deletion.**
-
-        The rows stay; they stop turning up in ordinary retrieval
-        (docs/architecture/memory.md §5). Deleting them would be destruction — forgetting
-        is supposed to be recoverable by a strong enough cue.
-
-        Runs in the same `Job` shape as retention, and for the same reason as its timing:
-        decay is a function of elapsed time, so a sweep at each start is what "expired
-        while Lumi was off" means in practice.
-        """
-        job = Job(id=new_job_id(), kind=JobKind.MAINTENANCE, cancellation=Cancellation.COOPERATIVE)
-        try:
-            faded = await self._memories.archive_faded()
-        except Exception:
-            log.exception("memory.archive_failed", job=str(job.id))
-            return
-        log.info("memory.archive_done", job=str(job.id), archived=len(faded))
-
-    async def _reflect_while_idle(self) -> None:
-        """Extract memories from what has been said, **while nobody is talking.**
-
-        docs/architecture/memory.md §4 lists three triggers: session end, a long idle, and
-        an explicit request. **Two of them are the same mechanism with a different
-        threshold**, and the third falls out of it: a session that ends leaves its
-        transcript for the next start, where "no turn yet" is already an idle period.
-        Holding shutdown open for an inference would trade a clean exit for a chore.
-
-        | trigger | what it waits for |
-        |---|---|
-        | a long idle | `REFLECTION_IDLE_AFTER` of quiet |
-        | 「覚えておいて」 | `REFLECTION_ASKED_IDLE_AFTER` of quiet — **still quiet, not now** |
-        | session end | the next start's first idle period |
-
-        **The explicit request does not skip the wait.** Reflection takes an inference
-        lease, and starting one while the user is mid-sentence would put the extraction in
-        contention with the reply to the very sentence that asked for it.
-
-        The interval is a poll rather than a timer reset per turn, because what is being
-        waited for is the *absence* of turns — there is no event for that.
-        """
-        if self._loop is None:
-            return
-        while True:
-            await asyncio.sleep(REFLECTION_CHECK_SECONDS)
-            # **Read once per pass**, because reading it clears it: a request must not be
-            # dropped by a loop that checked, decided it was too soon, and moved on.
-            asked = self._loop.take_remember_request()
-            if asked:
-                self._reflect_asked = True
-            wait = REFLECTION_ASKED_IDLE_AFTER if self._reflect_asked else REFLECTION_IDLE_AFTER
-            if self._loop.idle_for() < wait:
-                continue
-            self._reflect_asked = False
-            try:
-                llm = cast(LLMProvider, await self._providers.get(ProviderKind.LLM))
-            except ProviderError as error:
-                # **Not an error worth a stack trace.** The engine is not up yet; the next
-                # idle period will try again, and nothing was lost.
-                log.info("reflection.llm_unavailable", reason=error.reason)
-                continue
-            job = ReflectionJob(
-                arbiter=self._arbiter,
-                llm=llm,
-                store=self._memories,
-                episodes=self._episodes,
-                options=LLMOptions(model=self._model),
-            )
-            report = await job.run()
-            if report.learned:
-                # **What was just learned should be findable.** Indexing is cheap and this
-                # is already the idle path, so it costs the user nothing.
-                await self._index_memories()
-                # **A nudge, not the memories themselves.** An open memory window asks for
-                # what it wants to show; sending the records here would mean guessing
-                # which page it is on (ADR-042).
-                await self._server.notify(
-                    Role.PANEL,
-                    METHOD_PANEL_MEMORY,
-                    {"written": report.written, "superseded": report.superseded},
-                )
-
-    async def _index_memories(self) -> None:
-        """Embed anything unindexed, and re-embed after a model change.
-
-        A `Job` like the other two, and **not awaited by startup**: the first run against a
-        long history is seconds of CPU, and what shares that CPU is capture, VAD and
-        barge-in. Retrieval works throughout — an unindexed memory is reachable through
-        recency and keywords, just not by similarity.
-        """
-        if self._embedder is None:
-            return
-        job = Job(id=new_job_id(), kind=JobKind.MAINTENANCE, cancellation=Cancellation.COOPERATIVE)
-        try:
-            await self._embedder.load()
-            report = await Indexer(self._memories, self._index, self._embedder).run_until_done()
-        except Exception:
-            # **The conversation does not depend on this.** Memory search stays degraded
-            # until the next start, and the reason is in the log rather than in a silence.
-            log.exception("memory.index_failed", job=str(job.id))
-            return
-        log.info("memory.index_done", job=str(job.id), embedded=report.embedded)
 
     async def _update_settings(self, payload: dict[str, object]) -> dict[str, object]:
         """The Stage asked to change a setting. **Core validates and decides** (ADR-028).
@@ -577,14 +437,14 @@ class ConversationRuntime:
         # **Before anything writes.** Starting the Arbiter publishes the idle Activity's
         # DomainEvent, and a pass that runs after that has already let this session's first
         # record in before deciding what is too old to keep
-        await self._expire_old_records()
-        await self._forget_faded_memories()
+        await self._maintenance.expire_old_records()
+        await self._maintenance.forget_faded_memories()
         # **Not awaited.** Indexing is the one maintenance job that can take seconds.
         self._indexing = spawn(
-            self._index_memories(), name="memory.index", event="memory.index_crashed"
+            self._maintenance.index_memories(), name="memory.index", event="memory.index_crashed"
         )
         self._reflecting = spawn(
-            self._reflect_while_idle(), name="memory.reflect", event="memory.reflect_crashed"
+            self._reflection.run(), name="memory.reflect", event="memory.reflect_crashed"
         )
         # **Before anything can arbitrate.** `current()` raises while foreground is unset, so
         # without this the first VAD event kills the reactive loop and Lumi goes deaf for the
@@ -792,22 +652,6 @@ class ConversationRuntime:
             log.warning("providers.unload_timeout")
         for database in (self._memory_db, self._audit_db, self._events_db):
             database.close()
-
-
-def _retention_days(value: str, default: int | None) -> int | None:
-    """A settings value as a number of days. **`unlimited` is `None`, not a large number.**
-
-    `lumi.settings` already refuses anything else, so reaching the fallback means the two
-    have drifted. It **keeps the deadline** rather than removing it: the failure mode of
-    guessing "unlimited" is a database that grows forever because of a typo.
-    """
-    if value == settings_module.UNLIMITED:
-        return None
-    try:
-        return int(value)
-    except ValueError:
-        log.warning("retention.invalid_setting", value=value)
-        return default
 
 
 def _load_pack() -> CharacterPack | None:
