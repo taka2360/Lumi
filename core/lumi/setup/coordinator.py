@@ -49,7 +49,6 @@ from lumi import logging as lumi_logging
 from lumi import paths, settings
 from lumi.artifacts.engines import AIVISSPEECH_ENGINE
 from lumi.artifacts.install import (
-    ProgressCallback,
     SetupError,
     install_engine,
     install_model,
@@ -72,6 +71,7 @@ from lumi.setup.ollama import (
     list_ollama_models,
     pull_ollama_model,
 )
+from lumi.setup.progress import LayerProgress, throttle
 from lumi.setup.state import (
     BootPhase,
     EmbeddingSetup,
@@ -724,26 +724,6 @@ class SetupCoordinator:
 
     # ── Fetching ──────────────────────────────────────────────
 
-    def _throttled(self, report: ProgressCallback) -> ProgressCallback:
-        """Broadcasts progress at most every 1%. **Sending on every chunk would flood the WS.**
-
-        **Broadcasting always goes through `_update`.** Calling `notify` directly would mean
-        choosing the flag passed to `to_payload(prompting=...)` by hand, and risk conflating
-        `_prompting` (is this sequence in progress) with `_awaiting_answer` (is a question
-        currently shown). Conflating them would stream `boot=setup` for the entire 200 MB
-        fetch with no progress shown.
-        """
-        last_sent = -1.0
-
-        async def throttled(fraction: float) -> None:
-            nonlocal last_sent
-            if fraction - last_sent < 0.01 and fraction < 1.0:
-                return
-            last_sent = fraction
-            await report(fraction)
-
-        return throttled
-
     async def _install(
         self,
         *,
@@ -815,9 +795,7 @@ class SetupCoordinator:
 
         executable = await self._install(
             event="setup.install",
-            run=lambda: install_engine(
-                artifact, paths.engines_dir(), progress=self._throttled(progress)
-            ),
+            run=lambda: install_engine(artifact, paths.engines_dir(), progress=throttle(progress)),
             fail=fail,
         )
         if executable is None:
@@ -874,31 +852,12 @@ class SetupCoordinator:
             )
         )
 
-        last_sent = -1.0
-        tracked_total = 0
-        last_completed = -1
+        layers = LayerProgress()
 
         async def progress(completed: int, total: int) -> None:
-            nonlocal last_completed, last_sent, tracked_total
-            # Ollama reports each layer separately. Ignore completed metadata layers once a
-            # larger model layer appears; otherwise the bar reaches 100%, then freezes while
-            # the multi-gigabyte layer downloads.
-            if total < tracked_total:
+            fraction = layers.update(completed, total)
+            if fraction is None:
                 return
-            if total > tracked_total:
-                tracked_total = total
-                last_sent = -1.0
-                last_completed = -1
-            # A new Ollama layer can reuse the same total and restart its completed byte
-            # count. Let that first update through instead of comparing it with the previous
-            # layer's fraction forever.
-            if completed < last_completed:
-                last_sent = -1.0
-            last_completed = completed
-            fraction = min(1.0, max(0.0, completed / total))
-            if fraction - last_sent < 0.01 and fraction < 1.0:
-                return
-            last_sent = fraction
             await self._state.replace(
                 llm=replace(
                     self._state.snapshot.llm,
@@ -975,9 +934,7 @@ class SetupCoordinator:
             )
 
         async def fetch() -> str:
-            await install_model(
-                artifact, paths.embedding_models_dir(), progress=self._throttled(progress)
-            )
+            await install_model(artifact, paths.embedding_models_dir(), progress=throttle(progress))
             return artifact.name
 
         if await self._install(event="setup.embedding", run=fetch, fail=fail) is None:
@@ -1012,9 +969,7 @@ class SetupCoordinator:
         # **Returns the name rather than `None`.** `_install` reports failure as `None`, and
         # `install_model` returning nothing on success would make the two indistinguishable.
         async def fetch() -> str:
-            await install_model(
-                artifact, paths.stt_models_dir(), progress=self._throttled(progress)
-            )
+            await install_model(artifact, paths.stt_models_dir(), progress=throttle(progress))
             return artifact.name
 
         if await self._install(event="setup.model", run=fetch, fail=fail) is None:
