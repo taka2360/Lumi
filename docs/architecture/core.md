@@ -152,15 +152,20 @@ core/lumi/
 │                    モデル / エンジンの pin と取得。**providers と setup の両方の下**（ADR-045）
 ├── kernel/          arbiter（Activity 調停と推論リース）, activity, job, command,
 │                    event, hooks, cancellation, recovery, ids
-├── agent/           reactive（Reactive Loop）,
+├── agent/           reactive（**ターンが在るか**を決める。VAD → STT → Activity 提案）,
+│                    turn（**受理された後**。ツールループ・発話・記録。音声/文字で同一）,
+│                    streaming（LLM ストリーム → 話したこと + 呼ばれたツール）,
 │                    runtime（会話の組み立て。**判断を持たない**）,
 │                    session（Working Memory + sticky session_trust）,
 │                    prompt（PromptAssembly）, markers（<|ACT|>）,
 │                    sentences（文分割）, speech（PlaybackScheduler → audio.md §6）,
+│                    voice（パックの声 × ユーザーのスライダー → ADR-032 / ADR-046）,
 │                    stt（投機 STT → ADR-039）, latency（ターン毎の計測）,
 │                    recall（記憶 → ContextBlock）, episodes（エピソード書き込み）,
 │                    inspector（スナップショット発行）,
 │                    warmup（エンジンの暖機と起動ゲート → ADR-033 / ADR-034）,
+│                    windows（Core → 各ウィンドウへの push）,
+│                    maintenance（起動時の DB sweep。Job / actor=system）,
 │                    reflection_scheduler（**いつ**思い出すか → ADR-045）
 ├── memory/          store（記憶レコードへの**唯一の書き手** → ADR-045）, records,
 │                    reflection（**何を**抽出するか）, retrieval（ハイブリッド検索）,
