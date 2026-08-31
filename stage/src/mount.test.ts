@@ -1,39 +1,8 @@
-import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { extractModuleSpecifiers, relativeToSrc, resolveModule, SRC } from "./test/imports";
-
-/** Every source file reachable from `entry`, following relative imports only. */
-function reachableFrom(entry: string): Map<string, string[]> {
-  const seen = new Map<string, string[]>();
-  const queue = [entry];
-  while (queue.length > 0) {
-    const file = queue.pop();
-    if (file === undefined || seen.has(file)) {
-      continue;
-    }
-    let text: string;
-    try {
-      text = readFileSync(file, "utf8");
-    } catch {
-      continue;
-    }
-    const specifiers = extractModuleSpecifiers(text);
-    seen.set(file, specifiers);
-    for (const specifier of specifiers) {
-      if (!specifier.startsWith(".")) {
-        continue;
-      }
-      const next = resolveModule(file, specifier);
-      if (next !== null) {
-        queue.push(next);
-      }
-    }
-  }
-  return seen;
-}
+import { extractModuleSpecifiers, reachableFrom, relativeToSrc, SRC } from "./test/imports";
 
 describe("extractModuleSpecifiers", () => {
   it("extracts static and literal dynamic module specifiers", () => {

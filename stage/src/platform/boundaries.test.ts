@@ -17,22 +17,22 @@ import { describe, expect, it } from "vitest";
 import {
   extractModuleSpecifiers,
   productionSources,
+  reachableFrom,
   relativeToSrc,
-  resolveModule,
 } from "../test/imports";
 
 describe("platform does not depend on Core", () => {
-  it("imports no core module", () => {
+  it("reaches no core module", () => {
     const offenders: string[] = [];
-    for (const [file, text] of productionSources()) {
+    for (const [file] of productionSources()) {
       const where = relativeToSrc(file);
       if (!where.startsWith("/platform/")) {
         continue;
       }
-      for (const specifier of extractModuleSpecifiers(text)) {
-        const target = resolveModule(file, specifier);
-        if (target !== null && relativeToSrc(target).startsWith("/core/")) {
-          offenders.push(`${where} -> ${relativeToSrc(target)}`);
+      for (const target of reachableFrom(file).keys()) {
+        const dependency = relativeToSrc(target);
+        if (dependency.startsWith("/core/")) {
+          offenders.push(`${where} -> ${dependency}`);
         }
       }
     }

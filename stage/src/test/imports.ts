@@ -60,6 +60,36 @@ export function resolveModule(fromFile: string, specifier: string): string | nul
   return null;
 }
 
+/** Every source module reachable from `entry`, following resolved relative imports. */
+export function reachableFrom(entry: string): Map<string, string[]> {
+  const seen = new Map<string, string[]>();
+  const queue = [entry];
+  while (queue.length > 0) {
+    const file = queue.pop();
+    if (file === undefined || seen.has(file)) {
+      continue;
+    }
+    let text: string;
+    try {
+      text = readFileSync(file, "utf8");
+    } catch {
+      continue;
+    }
+    const specifiers = extractModuleSpecifiers(text);
+    seen.set(file, specifiers);
+    for (const specifier of specifiers) {
+      if (!specifier.startsWith(".")) {
+        continue;
+      }
+      const next = resolveModule(file, specifier);
+      if (next !== null) {
+        queue.push(next);
+      }
+    }
+  }
+  return seen;
+}
+
 /** A path relative to `src`, with forward slashes, for readable assertion messages. */
 export function relativeToSrc(file: string): string {
   return file.slice(SRC.length).split(sep).join("/");
