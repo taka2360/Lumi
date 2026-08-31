@@ -780,3 +780,4 @@ Stage は Core が送った識別子・数値・エラー理由を、選んだ�
 | 19 | **`platform/tauri.ts` 以外が `@tauri-apps` を import していない**（静的検査）→ `stage/src/platform/boundaries.test.ts` |
 | 20 | **`credits` / `help` の import グラフが `core/` `platform/` `@tauri-apps` に到達しない**（静的検査）→ `stage/src/mount.test.ts` |
 | 21 | 要求と応答の対応づけ — 相関・タイムアウト・拒否・切断時の後始末 → `stage/src/core/pending.test.ts` |
+| 22 | **`platform/` が `core/` を import していない**（静的検査）→ `stage/src/platform/boundaries.test.ts` |

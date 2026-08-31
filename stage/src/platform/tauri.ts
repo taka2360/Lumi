@@ -8,8 +8,14 @@
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
-import type { PanelKind } from "../core/methods";
-import type { CoreEndpoint, Disposable, HitRect, HoverState, PlatformShell } from "./PlatformShell";
+import type {
+  CoreEndpoint,
+  Disposable,
+  HitRect,
+  HoverState,
+  PanelKind,
+  PlatformShell,
+} from "./PlatformShell";
 
 /**
  * Command names registered in Shell's `shell.*` allowlist.

@@ -19,6 +19,7 @@ import { describe, expect, it } from "vitest";
 
 import { EMOTIONS } from "../character/expression";
 import { VISEMES } from "../character/lipsync";
+import { PANEL_KINDS } from "../platform/PlatformShell";
 import {
   CMD_CORE_ENDPOINT,
   CMD_DRAG_START,
@@ -63,7 +64,6 @@ import {
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
   METHOD_USER_SAID,
-  PANEL_KINDS,
 } from "./methods";
 import {
   BOOT_PHASES,

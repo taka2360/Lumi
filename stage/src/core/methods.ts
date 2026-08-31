@@ -55,12 +55,6 @@ export const METHOD_PANEL_MEMORY_EXPORT = "panel.memory.export";
 export const METHOD_PANEL_MEMORY_ERASE_PREVIEW = "panel.memory.erase_preview";
 export const METHOD_PANEL_MEMORY_ERASE = "panel.memory.erase";
 
-/**
- * The windows `openPanel` can open. **Shell holds the same three**, and an unknown value
- * opens nothing (docs/interfaces/shell.md).
- */
-export const PANEL_KINDS = ["settings", "inspector", "memory"] as const;
-export type PanelKind = (typeof PANEL_KINDS)[number];
 /** Re-runs the fixed local Ollama detection; no URL or host is supplied by Stage. */
 export const METHOD_SETUP_RECHECK_OLLAMA = "stage.setup.recheck_ollama";
 

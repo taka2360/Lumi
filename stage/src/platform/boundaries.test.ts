@@ -5,6 +5,7 @@
  * |---|---|---|
  * | 1 | Only `platform/tauri.ts` imports Tauri | docs/interfaces/shell.md |
  * | 2 | `stage/` never references `os.*` | authority-matrix.md check #4, ui.md §7 test #4 |
+ * | 3 | `platform/` does not import `core/` | ui.md §6 |
  *
  * Both were previously only asserted for the credits window (`credits/content.test.ts`),
  * which is the one place they happened to be written down — so the rest of the tree was
@@ -13,7 +14,31 @@
 
 import { describe, expect, it } from "vitest";
 
-import { extractStaticSpecifiers, productionSources, relativeToSrc } from "../test/imports";
+import {
+  extractStaticSpecifiers,
+  productionSources,
+  relativeToSrc,
+  resolveModule,
+} from "../test/imports";
+
+describe("platform does not depend on Core", () => {
+  it("imports no core module", () => {
+    const offenders: string[] = [];
+    for (const [file, text] of productionSources()) {
+      const where = relativeToSrc(file);
+      if (!where.startsWith("/platform/")) {
+        continue;
+      }
+      for (const specifier of extractStaticSpecifiers(text)) {
+        const target = resolveModule(file, specifier);
+        if (target !== null && relativeToSrc(target).startsWith("/core/")) {
+          offenders.push(`${where} -> ${relativeToSrc(target)}`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+  });
+});
 
 describe("only platform/tauri.ts knows which shell is underneath", () => {
   it("no other module imports Tauri", () => {

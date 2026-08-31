@@ -9,9 +9,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { PanelKind } from "../core/methods";
 import { type CssRect, normalizeHitRects } from "./geometry";
-import type { HoverState, PlatformShell } from "./PlatformShell";
+import type { HoverState, PanelKind, PlatformShell } from "./PlatformShell";
 import { createTauriPlatformShell, isTauri } from "./tauri";
 
 /** A no-op implementation used outside Tauri (when opened in a browser). Placed explicitly **so it never silently breaks**. */

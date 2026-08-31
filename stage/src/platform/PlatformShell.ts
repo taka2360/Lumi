@@ -18,8 +18,6 @@
  * The character's speech, expressions, and memory come from Core via `stage.*` (WS).
  */
 
-import type { PanelKind } from "../core/methods";
-
 /** A rectangle with its origin at the window's client area. **Physical pixels** (not CSS pixels). */
 export interface HitRect {
   x: number;
@@ -34,6 +32,15 @@ export type HoverState = "inside" | "outside";
 export interface Disposable {
   dispose(): void;
 }
+
+/**
+ * The auxiliary windows Stage may ask Shell to open.
+ *
+ * This is a Shell-facing contract rather than a Core wire method: Shell holds the same
+ * three names and refuses anything else (docs/interfaces/shell.md).
+ */
+export const PANEL_KINDS = ["settings", "inspector", "memory"] as const;
+export type PanelKind = (typeof PANEL_KINDS)[number];
 
 /**
  * Where Core is listening, and the token for **this window's role**.
