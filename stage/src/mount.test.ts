@@ -3,8 +3,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import {
+  extractExportedDeclarations,
   extractModuleBindings,
   extractModuleSpecifiers,
+  extractWildcardReExports,
   reachableFrom,
   relativeToSrc,
   SRC,
@@ -54,6 +56,42 @@ describe("extractModuleBindings", () => {
       "CoreCommand",
       "OsTypes",
     ]);
+  });
+});
+
+describe("extractExportedDeclarations", () => {
+  it("extracts names a module declares and exports itself", () => {
+    const source = `
+      export interface OsCommand { id: string }
+      export type OsResult = { ok: boolean };
+      export const osChannel = "channel";
+      export default class Renderer {}
+      export async function connect() {}
+      export type { OsInput } from "../commands";
+      export * from "./shared";
+      const notExported = 1;
+    `;
+
+    expect(extractExportedDeclarations(source)).toEqual([
+      "OsCommand",
+      "OsResult",
+      "osChannel",
+      "Renderer",
+      "connect",
+    ]);
+  });
+});
+
+describe("extractWildcardReExports", () => {
+  it("extracts the re-exports that name nothing", () => {
+    const source = `
+      export * from "./shared";
+      export type * from "../protocol";
+      export * as OsTypes from "../os-types";
+      export { OsInput } from "../commands";
+    `;
+
+    expect(extractWildcardReExports(source)).toEqual(["./shared", "../protocol"]);
   });
 });
 

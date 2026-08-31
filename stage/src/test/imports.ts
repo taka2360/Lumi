@@ -16,6 +16,11 @@ import { dirname, join, resolve, sep } from "node:path";
 /** The `src` directory, wherever this test happens to run from. */
 export const SRC = resolve(__dirname, "..");
 
+/** Source with comments stripped, so a rule *discussing* a construct is not read as one. */
+export function withoutComments(text: string): string {
+  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+}
+
 /**
  * Literal module specifiers from static imports/exports and dynamic `import()` calls.
  *
@@ -53,6 +58,12 @@ export function extractModuleSpecifiers(text: string): string[] {
  * `import type { OsCommand as Command } from "./protocol"`, even though the local name
  * is harmless-looking. This intentionally parses only the binding clause; module paths
  * remain the responsibility of `extractModuleSpecifiers` above.
+ *
+ * **A bare `export * from` names nothing, so nothing is returned for it.** The forwarded
+ * names live in the other module, and are found there instead — by this function if that
+ * module re-imports them, by `extractExportedDeclarations` if it declares them. That only
+ * holds while the wildcard resolves inside the tree, which is what `extractWildcardReExports`
+ * exists to let a caller insist on.
  */
 export function extractModuleBindings(text: string): string[] {
   const found: string[] = [];
@@ -66,10 +77,9 @@ export function extractModuleBindings(text: string): string[] {
     }
   };
 
-  const declarations = text
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\/\/[^\n]*/g, "")
-    .matchAll(/\b(?:import|export)\s+(?:type\s+)?([^"'`;]*?)\s+from\s+["'][^"']+["']/g);
+  const declarations = withoutComments(text).matchAll(
+    /\b(?:import|export)\s+(?:type\s+)?([^"'`;]*?)\s+from\s+["'][^"']+["']/g,
+  );
   for (const declaration of declarations) {
     const clause = declaration[1];
     if (clause === undefined) {
@@ -94,6 +104,47 @@ export function extractModuleBindings(text: string): string[] {
     }
   }
 
+  return found;
+}
+
+/**
+ * Names a module declares and exports itself, as opposed to forwarding from elsewhere.
+ *
+ * Needed because a re-export can hide a name: `export * from "./protocol"` puts every one
+ * of that module's exports onto this module's surface without writing any of them down.
+ * The name is written down where it is *declared*, so that is where a boundary sees it.
+ */
+export function extractExportedDeclarations(text: string): string[] {
+  const found: string[] = [];
+  const declarations = withoutComments(text).matchAll(
+    /\bexport\s+(?:declare\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(?:const\s+enum|class|function\s*\*?|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g,
+  );
+  for (const declaration of declarations) {
+    const name = declaration[1];
+    if (name !== undefined) {
+      found.push(name);
+    }
+  }
+  return found;
+}
+
+/**
+ * Specifiers of the re-exports that name nothing: `export * from "./x"`, `export type * from "./x"`.
+ *
+ * `export * as Name from "./x"` is not one of them — it does name what it introduces, and
+ * `extractModuleBindings` returns that name.
+ */
+export function extractWildcardReExports(text: string): string[] {
+  const found: string[] = [];
+  const reExports = withoutComments(text).matchAll(
+    /\bexport\s+(?:type\s+)?\*\s+from\s+["']([^"']+)["']/g,
+  );
+  for (const reExport of reExports) {
+    const specifier = reExport[1];
+    if (specifier !== undefined) {
+      found.push(specifier);
+    }
+  }
   return found;
 }
 
