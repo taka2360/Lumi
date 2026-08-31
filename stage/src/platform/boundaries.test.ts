@@ -15,7 +15,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  extractStaticSpecifiers,
+  extractModuleSpecifiers,
   productionSources,
   relativeToSrc,
   resolveModule,
@@ -29,7 +29,7 @@ describe("platform does not depend on Core", () => {
       if (!where.startsWith("/platform/")) {
         continue;
       }
-      for (const specifier of extractStaticSpecifiers(text)) {
+      for (const specifier of extractModuleSpecifiers(text)) {
         const target = resolveModule(file, specifier);
         if (target !== null && relativeToSrc(target).startsWith("/core/")) {
           offenders.push(`${where} -> ${relativeToSrc(target)}`);
@@ -45,7 +45,7 @@ describe("only platform/tauri.ts knows which shell is underneath", () => {
     const offenders: string[] = [];
     for (const [file, text] of productionSources()) {
       const where = relativeToSrc(file);
-      const importsTauri = extractStaticSpecifiers(text).some((specifier) =>
+      const importsTauri = extractModuleSpecifiers(text).some((specifier) =>
         specifier.startsWith("@tauri-apps"),
       );
       if (importsTauri && where !== "/platform/tauri.ts") {
@@ -62,7 +62,7 @@ describe("only platform/tauri.ts knows which shell is underneath", () => {
     // pass by finding nothing at all.
     const tauriImporters = [...productionSources()]
       .filter(([, text]) =>
-        extractStaticSpecifiers(text).some((specifier) => specifier.startsWith("@tauri-apps")),
+        extractModuleSpecifiers(text).some((specifier) => specifier.startsWith("@tauri-apps")),
       )
       .map(([file]) => relativeToSrc(file));
     expect(tauriImporters).toContain("/platform/tauri.ts");
@@ -80,7 +80,7 @@ describe("only platform/tauri.ts knows which shell is underneath", () => {
 describe("the Stage cannot reach os.*", () => {
   it("imports no os.* type", () => {
     for (const [file, text] of productionSources()) {
-      for (const specifier of extractStaticSpecifiers(text)) {
+      for (const specifier of extractModuleSpecifiers(text)) {
         expect(specifier, `${relativeToSrc(file)} imports an os.* module`).not.toMatch(
           /(^|\/)os\./,
         );

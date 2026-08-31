@@ -3,7 +3,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { extractStaticSpecifiers, relativeToSrc, resolveModule, SRC } from "./test/imports";
+import { extractModuleSpecifiers, relativeToSrc, resolveModule, SRC } from "./test/imports";
 
 /** Every source file reachable from `entry`, following relative imports only. */
 function reachableFrom(entry: string): Map<string, string[]> {
@@ -20,7 +20,7 @@ function reachableFrom(entry: string): Map<string, string[]> {
     } catch {
       continue;
     }
-    const specifiers = extractStaticSpecifiers(text);
+    const specifiers = extractModuleSpecifiers(text);
     seen.set(file, specifiers);
     for (const specifier of specifiers) {
       if (!specifier.startsWith(".")) {
@@ -35,21 +35,26 @@ function reachableFrom(entry: string): Map<string, string[]> {
   return seen;
 }
 
-describe("extractStaticSpecifiers", () => {
-  it("extracts regular, side-effect, and re-export specifiers", () => {
+describe("extractModuleSpecifiers", () => {
+  it("extracts static and literal dynamic module specifiers", () => {
     const source = `
       import { connect } from "../core/client";
       import "../core/connection";
       export { invoke } from '../platform/shell';
       export * from "./shared";
       const lazy = import("../core/lazy");
+      const lazyTemplate = import(\`../core/lazy-template\`);
+      const computedName = "../core/computed";
+      const computed = import(computedName);
     `;
 
-    expect(extractStaticSpecifiers(source)).toEqual([
+    expect(extractModuleSpecifiers(source)).toEqual([
       "../core/client",
       "../core/connection",
       "../platform/shell",
       "./shared",
+      "../core/lazy",
+      "../core/lazy-template",
     ]);
   });
 });

@@ -16,12 +16,34 @@ import { dirname, join, resolve, sep } from "node:path";
 /** The `src` directory, wherever this test happens to run from. */
 export const SRC = resolve(__dirname, "..");
 
-/** Static import/export specifiers, including side-effect-only imports. */
-export function extractStaticSpecifiers(text: string): string[] {
-  return Array.from(
-    text.matchAll(/(?:import|export)\s+(?:type\s+)?(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/g),
-    (match) => match[1],
-  ).filter((specifier): specifier is string => specifier !== undefined);
+/**
+ * Literal module specifiers from static imports/exports and dynamic `import()` calls.
+ *
+ * Computed dynamic imports cannot be resolved by this source-tree walk, but a string or
+ * no-substitution template literal is a concrete dependency and must not bypass a boundary.
+ */
+export function extractModuleSpecifiers(text: string): string[] {
+  const found: Array<{ index: number; specifier: string }> = [];
+  const addMatches = (pattern: RegExp, specifierGroup: number): void => {
+    for (const match of text.matchAll(pattern)) {
+      const specifier = match[specifierGroup];
+      if (specifier !== undefined) {
+        found.push({ index: match.index, specifier });
+      }
+    }
+  };
+
+  addMatches(/(?:import|export)\s+(?:type\s+)?(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/g, 1);
+  addMatches(/\bimport\s*\(\s*(["'])([^"']+)\1\s*(?:,|\))/g, 2);
+
+  for (const match of text.matchAll(/\bimport\s*\(\s*`([^`]*)`\s*(?:,|\))/g)) {
+    const specifier = match[1];
+    if (specifier !== undefined && !specifier.includes("${")) {
+      found.push({ index: match.index, specifier });
+    }
+  }
+
+  return found.sort((left, right) => left.index - right.index).map(({ specifier }) => specifier);
 }
 
 /** Resolves a relative specifier the way the bundler does, trying each extension. */
