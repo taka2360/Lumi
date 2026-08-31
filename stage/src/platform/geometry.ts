@@ -38,3 +38,31 @@ export function normalizeHitRects(rects: CssRect[], devicePixelRatio: number): H
     .filter((r) => r.width > 0 && r.height > 0)
     .map((r) => toPhysicalRect(r, devicePixelRatio));
 }
+
+/**
+ * Whether a hit region differs from the one last handed to Shell.
+ *
+ * The character window recomputes its rectangles on every frame that moves anything, and
+ * **most frames produce the identical region**. Comparing before sending keeps a 60Hz
+ * render loop from becoming 60 IPC calls a second on the `shell.*` path, which is the one
+ * with a 1ms budget (docs/architecture/ui.md §2).
+ *
+ * Compared field by field rather than by serialising: `NaN` never appears here (the rects
+ * come from `getBoundingClientRect`), and this says what "the same region" means instead
+ * of leaving it to a string.
+ */
+export function sameHitRegion(a: readonly CssRect[], b: readonly CssRect[]): boolean {
+  if (a.length !== b.length) {
+    return false;
+  }
+  return a.every((rect, index) => {
+    const other = b[index];
+    return (
+      other !== undefined &&
+      rect.x === other.x &&
+      rect.y === other.y &&
+      rect.width === other.width &&
+      rect.height === other.height
+    );
+  });
+}

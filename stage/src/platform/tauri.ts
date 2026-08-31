@@ -9,7 +9,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 import type { PanelKind } from "../core/methods";
-import type { Disposable, HitRect, HoverState, PlatformShell } from "./PlatformShell";
+import type { CoreEndpoint, Disposable, HitRect, HoverState, PlatformShell } from "./PlatformShell";
 
 /**
  * Command names registered in Shell's `shell.*` allowlist.
@@ -28,6 +28,8 @@ export const CMD_OPEN_HELP = "shell_help_open";
 export const CMD_OPEN_PANEL = "shell_panel_open";
 export const CMD_OPEN_OLLAMA_SITE = "shell_ollama_site_open";
 export const CMD_QUIT = "shell_app_quit";
+/** Where Core is listening. **Shell picks the token from the window's label** (ADR-042). */
+export const CMD_CORE_ENDPOINT = "shell_core_endpoint";
 
 /**
  * The event name for hover-state notifications.
@@ -37,6 +39,12 @@ export const CMD_QUIT = "shell_app_quit";
  * `.` with `:`. The corresponding constant on the Shell side is in `shell/src-tauri/src/hover.rs`.
  */
 export const EVENT_HOVER_STATE = "shell:hover:state";
+
+/**
+ * Core's endpoint changed — it restarted on a new port. Same dot-to-colon rule as above.
+ * The corresponding constant on the Shell side is in `shell/src-tauri/src/core_endpoint.rs`.
+ */
+export const EVENT_CORE_ENDPOINT = "shell:core:endpoint";
 
 export function createTauriPlatformShell(): PlatformShell {
   return {
@@ -56,6 +64,17 @@ export function createTauriPlatformShell(): PlatformShell {
       const unlisten = await getCurrentWebviewWindow().listen<HoverState>(
         EVENT_HOVER_STATE,
         (event) => callback(event.payload),
+      );
+      return { dispose: unlisten };
+    },
+
+    async coreEndpoint(): Promise<CoreEndpoint | null> {
+      return (await invoke<CoreEndpoint | null>(CMD_CORE_ENDPOINT)) ?? null;
+    },
+
+    async onCoreEndpointChanged(callback: () => void): Promise<Disposable> {
+      const unlisten = await getCurrentWebviewWindow().listen(EVENT_CORE_ENDPOINT, () =>
+        callback(),
       );
       return { dispose: unlisten };
     },

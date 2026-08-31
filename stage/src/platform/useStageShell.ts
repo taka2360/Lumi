@@ -20,6 +20,11 @@ const noopShell: PlatformShell = {
   toAssetUrl: (path) => path,
   setHitRegion: async () => {},
   onHoverState: async () => ({ dispose: () => {} }),
+  // **No Core to reach outside Tauri.** `null` is the same answer Shell gives while Core
+  // is still starting, so the WS client's existing retry path handles this without a
+  // second branch for "not running under Tauri at all".
+  coreEndpoint: async () => null,
+  onCoreEndpointChanged: async () => ({ dispose: () => {} }),
   startWindowDrag: async () => {},
   scaleWindow: async () => {},
   openCredits: async () => {},

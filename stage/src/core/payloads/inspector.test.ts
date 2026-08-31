@@ -8,7 +8,7 @@
 
 import { describe, expect, it } from "vitest";
 
-import { toInspectorSnapshot } from "../core/payloads";
+import { toInspectorSnapshot } from "./inspector";
 
 const ACTIVITY = {
   id: "a1",
