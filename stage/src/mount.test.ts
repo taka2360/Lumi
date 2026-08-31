@@ -2,7 +2,13 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
-import { extractModuleSpecifiers, reachableFrom, relativeToSrc, SRC } from "./test/imports";
+import {
+  extractModuleBindings,
+  extractModuleSpecifiers,
+  reachableFrom,
+  relativeToSrc,
+  SRC,
+} from "./test/imports";
 
 describe("extractModuleSpecifiers", () => {
   it("extracts static and literal dynamic module specifiers", () => {
@@ -24,6 +30,29 @@ describe("extractModuleSpecifiers", () => {
       "./shared",
       "../core/lazy",
       "../core/lazy-template",
+    ]);
+  });
+});
+
+describe("extractModuleBindings", () => {
+  it("extracts original and local names from static imports and exports", () => {
+    const source = `
+      import DefaultCommand, * as Protocol from "../protocol";
+      import type { OsCommand, OsCapture as Capture } from "../shared";
+      export { type OsInput as Input, CoreCommand } from "../commands";
+      export type * as OsTypes from "../os-types";
+    `;
+
+    expect(extractModuleBindings(source)).toEqual([
+      "DefaultCommand",
+      "Protocol",
+      "OsCommand",
+      "OsCapture",
+      "Capture",
+      "OsInput",
+      "Input",
+      "CoreCommand",
+      "OsTypes",
     ]);
   });
 });

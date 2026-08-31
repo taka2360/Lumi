@@ -15,6 +15,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  extractModuleBindings,
   extractModuleSpecifiers,
   productionSources,
   reachableFrom,
@@ -80,6 +81,11 @@ describe("only platform/tauri.ts knows which shell is underneath", () => {
 describe("the Stage cannot reach os.*", () => {
   it("imports no os.* type", () => {
     for (const [file, text] of productionSources()) {
+      for (const binding of extractModuleBindings(text)) {
+        expect(binding, `${relativeToSrc(file)} imports or exports an os.* type`).not.toMatch(
+          /^Os[A-Z]/,
+        );
+      }
       for (const specifier of extractModuleSpecifiers(text)) {
         expect(specifier, `${relativeToSrc(file)} imports an os.* module`).not.toMatch(
           /(^|\/)os\./,

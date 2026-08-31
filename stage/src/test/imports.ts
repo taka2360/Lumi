@@ -46,6 +46,57 @@ export function extractModuleSpecifiers(text: string): string[] {
   return found.sort((left, right) => left.index - right.index).map(({ specifier }) => specifier);
 }
 
+/**
+ * Names introduced or forwarded by static imports and exports.
+ *
+ * Both sides of an alias are returned. A boundary must still see `OsCommand` in
+ * `import type { OsCommand as Command } from "./protocol"`, even though the local name
+ * is harmless-looking. This intentionally parses only the binding clause; module paths
+ * remain the responsibility of `extractModuleSpecifiers` above.
+ */
+export function extractModuleBindings(text: string): string[] {
+  const found: string[] = [];
+  const addBinding = (binding: string): void => {
+    const withoutType = binding.trim().replace(/^type\s+/, "");
+    const names = withoutType.split(/\s+as\s+/);
+    for (const name of names) {
+      if (/^[A-Za-z_$][\w$]*$/.test(name)) {
+        found.push(name);
+      }
+    }
+  };
+
+  const declarations = text
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/[^\n]*/g, "")
+    .matchAll(/\b(?:import|export)\s+(?:type\s+)?([^"'`;]*?)\s+from\s+["'][^"']+["']/g);
+  for (const declaration of declarations) {
+    const clause = declaration[1];
+    if (clause === undefined) {
+      continue;
+    }
+
+    const named = clause.match(/\{([\s\S]*?)\}/);
+    if (named?.[1] !== undefined) {
+      for (const binding of named[1].split(",")) {
+        addBinding(binding);
+      }
+    }
+
+    const outsideNamed = clause.replace(/\{[\s\S]*?\}/, "");
+    for (const binding of outsideNamed.split(",")) {
+      const namespace = binding.trim().match(/^\*\s+as\s+([A-Za-z_$][\w$]*)$/);
+      if (namespace?.[1] !== undefined) {
+        found.push(namespace[1]);
+      } else {
+        addBinding(binding);
+      }
+    }
+  }
+
+  return found;
+}
+
 /** Resolves a relative specifier the way the bundler does, trying each extension. */
 export function resolveModule(fromFile: string, specifier: string): string | null {
   const base = resolve(dirname(fromFile), specifier);
