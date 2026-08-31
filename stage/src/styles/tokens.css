@@ -1,4 +1,4 @@
-/* Design tokens. **Every entry point loads this first, and nothing else invents a colour.**
+/* Design tokens. **Every entry point loads this first for shared semantic colours.**
    → docs/architecture/ui.md §2 "モジュール構成"
 
    These are values, not rules. A token earns its place by being used in more than one

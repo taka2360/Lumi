@@ -412,7 +412,7 @@ stage/src/
 ├── mount.tsx       `#root` を見つけて render するだけ。**Core も locale も知らない**
 ├── App.tsx         キャラクター窓の組み立て（当たり判定の合成・パレットの開閉）
 ├── styles/
-│   ├── tokens.css  デザイントークン。**各 entry が最初に読む。色を素で書くのはここだけ**
+│   ├── tokens.css  デザイントークン。**各 entry が最初に読む。共有する意味色・反復する値を置く**
 │   ├── stage.css   **キャラクター窓専用。** 透過ウィンドウの reset を含む
 │   └── document.css `credits` と `help` が共有する文書レイアウト
 ├── mount.test.ts   **Core に繋がない窓が Core に到達しない**ことの静的検査
