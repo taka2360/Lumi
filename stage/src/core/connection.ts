@@ -197,6 +197,12 @@ export function connectToCore(
       } else {
         endpointSubscription = subscription;
       }
+    })
+    .catch((error: unknown) => {
+      // The socket's own retry path remains usable without this listener, but losing the
+      // restart nudge must stay observable instead of becoming an unhandled rejection.
+      // biome-ignore lint/suspicious/noConsole: Stage has no shared telemetry sink yet.
+      console.error("Failed to subscribe to Core endpoint changes", error);
     });
 
   void openSocket();

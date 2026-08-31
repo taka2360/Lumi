@@ -3,7 +3,7 @@
  *
  * | # | Rule | Where it comes from |
  * |---|---|---|
- * | 1 | Only `platform/` imports Tauri | docs/interfaces/shell.md, `platform/tauri.ts` |
+ * | 1 | Only `platform/tauri.ts` imports Tauri | docs/interfaces/shell.md |
  * | 2 | `stage/` never references `os.*` | authority-matrix.md check #4, ui.md §7 test #4 |
  *
  * Both were previously only asserted for the credits window (`credits/content.test.ts`),
@@ -15,7 +15,7 @@ import { describe, expect, it } from "vitest";
 
 import { extractStaticSpecifiers, productionSources, relativeToSrc } from "../test/imports";
 
-describe("only platform/ knows which shell is underneath", () => {
+describe("only platform/tauri.ts knows which shell is underneath", () => {
   it("no other module imports Tauri", () => {
     const offenders: string[] = [];
     for (const [file, text] of productionSources()) {
@@ -23,7 +23,7 @@ describe("only platform/ knows which shell is underneath", () => {
       const importsTauri = extractStaticSpecifiers(text).some((specifier) =>
         specifier.startsWith("@tauri-apps"),
       );
-      if (importsTauri && !where.startsWith("/platform/")) {
+      if (importsTauri && where !== "/platform/tauri.ts") {
         offenders.push(where);
       }
     }

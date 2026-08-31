@@ -422,7 +422,7 @@ stage/src/
 │   ├── pending.ts     要求と応答の対応づけ（相関 ID・タイムアウト・切断時の後始末）
 │   └── payloads.ts    入口。実体は `payloads/`（read / setup / character / inspector / settings）
 ├── platform/       `PlatformShell` と Tauri 実装（`shell.*`）
-│   └── boundaries.test.ts  **`platform/` 以外が Tauri を import しない**ことの静的検査
+│   └── boundaries.test.ts  **`platform/tauri.ts` 以外が Tauri を import しない**ことの静的検査
 ├── character/      VRM の読み込みと描画、表情・リップシンク・アイドル
 ├── speech/ audio/ actions/ setup/ settings/ memory/ inspector/  各画面
 ├── panel/          3つのパネル窓の共通枠と entry（ADR-042）
@@ -777,6 +777,6 @@ Stage は Core が送った識別子・数値・エラー理由を、選んだ�
 | 16 | **`blocked` のとき、不足している要素すべてが解決方法つきで並ぶ**（1つだけ出して終わらない）〔ADR-034〕 |
 | 17 | **未知の `boot` 値を `ready` に丸めない**（キャラクターを出す側に倒さない） |
 | 18 | `stage` の操作メニューからクレジット画面を開け、Lumi を終了できる |
-| 19 | **`platform/` 以外が `@tauri-apps` を import していない**（静的検査）→ `stage/src/platform/boundaries.test.ts` |
+| 19 | **`platform/tauri.ts` 以外が `@tauri-apps` を import していない**（静的検査）→ `stage/src/platform/boundaries.test.ts` |
 | 20 | **`credits` / `help` の import グラフが `core/` `platform/` `@tauri-apps` に到達しない**（静的検査）→ `stage/src/mount.test.ts` |
 | 21 | 要求と応答の対応づけ — 相関・タイムアウト・拒否・切断時の後始末 → `stage/src/core/pending.test.ts` |
