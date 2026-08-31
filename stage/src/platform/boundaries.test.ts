@@ -83,6 +83,8 @@ describe("only platform/tauri.ts knows which shell is underneath", () => {
  * look like here is a method name on the wire, so the names are checked too. And a name
  * can arrive without being imported — declared here, or forwarded by a wildcard re-export
  * — so declarations are checked, and wildcards are held to modules this walk can read.
+ * Finally the bare name is refused anywhere in the source, because type syntax can reach
+ * a type without ever naming it in an import clause.
  */
 describe("the Stage cannot reach os.*", () => {
   it("imports, re-exports or declares no os.* type", () => {
@@ -96,6 +98,20 @@ describe("the Stage cannot reach os.*", () => {
           /(^|\/)os\./,
         );
       }
+    }
+  });
+
+  it("mentions no os.* type by any syntax", () => {
+    // The binding parser above reads *declarations*, so it sees a name only where a name is
+    // written in an import or export clause. TypeScript can reference a type without one:
+    // `type Command = import("../protocol").OsCommand`, or `Protocol.OsCommand` after a
+    // namespace import. Both reach the prohibited type while the clause parser stays green.
+    // Rather than teach that parser type syntax, the name itself is refused anywhere in the
+    // source — an `Os*` identifier in the Stage is a violation whatever spells it.
+    for (const [file, text] of productionSources()) {
+      expect(withoutComments(text), `${relativeToSrc(file)} names an os.* type`).not.toMatch(
+        /\bOs[A-Z]/,
+      );
     }
   });
 

@@ -66,6 +66,10 @@ interface PlatformShell {
   // ── サイドカー ─────────────────────────────
   spawnSidecar(spec: SidecarSpec): Promise<SidecarHandle>
   onSidecarExit(h: SidecarHandle, cb: (code: number) => void): Disposable
+
+  // ── Core への接続先 ────────────────────────
+  coreEndpoint(): Promise<CoreEndpoint | null>          // Core が未起動なら null
+  onCoreEndpointChanged(cb: () => void): Promise<Disposable>  // Core が別ポートで起動し直した
 }
 ```
 
@@ -119,12 +123,26 @@ Rust 側で ~60Hz でカーソル位置を取得（GetCursorPos 相当）
 | 分類 | 呼ぶ主体 | 経路 |
 |---|---|---|
 | `setHitRegion` / `onHoverState` / ウィンドウ操作 / `openCredits` / **`openPanel`** / `openOllamaSite` / `quit` | Stage | `shell.*`（Tauri IPC） |
+| **`coreEndpoint` / `onCoreEndpointChanged`** | Stage | `shell.*`（Tauri IPC / event） |
 | `toAssetUrl` | Stage | PlatformShell adapter（Tauri asset protocol） |
 | `captureScreen` / `injectInput` / `launchProcess` / `spawnSidecar` | **Core** | `os.*`（WS） |
 
 **Stage 側の TypeScript の `PlatformShell` には OS 特権を載せない。**
 `stage.*` は絶対に OS 特権を要求しない、という規則を型で守るため
 （実装: `stage/src/platform/PlatformShell.ts`）。
+
+#### `coreEndpoint` / `onCoreEndpointChanged` が Shell 側に要る理由〔[ADR-042](../decisions/ADR-042-panel-windows-and-panel-role.md)〕
+
+Stage は Core の待ち受けポートを知らないので、Shell に訊く。**トークンと接続先を選ぶのは
+Shell であり、要求元ウィンドウの label から選ぶ**——呼び出し側が名乗った役割からではない。
+そうでなければ、窓が与えられていない役割を自称できてしまう。
+
+Core は再起動すると別のポートに載るため、変更の通知が要る。**`onCoreEndpointChanged` は
+`onHoverState` と同じく `Disposable` を返す。** 解除できないと、再接続のたびにリスナーが積み上がる。
+
+**これが無いと退避路が成立しない。** ここが欠けている間、`core/connection.ts` は `invoke` と
+`listen` を直接呼んでおり、「Electron に移るときは `platform/tauri.ts` だけ差し替えればよい」
+という前提が実際には崩れていた（[../architecture/ui.md](../architecture/ui.md)「2. Stage」）。
 
 #### `quit` を Stage に露出してよい理由〔Phase 1・[ADR-034](../decisions/ADR-034-gate-startup-on-complete-setup.md)〕
 

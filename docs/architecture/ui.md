@@ -449,9 +449,8 @@ stage/src/
 [interfaces/shell.md](../interfaces/shell.md) の前提が実際には崩れていた。**
 接続先の取得と変更通知を `PlatformShell.coreEndpoint()` /
 `onCoreEndpointChanged()` として足し、`platform/boundaries.test.ts` で固定した。
-
-**購読は必ず解除できる形にする。** `onCoreEndpointChanged` は `onHoverState` と同じく
-`Disposable` を返す。解除できないと、再接続のたびにリスナーが積み上がる。
+**2つのシグネチャと、購読が解除できる形である理由は
+[../interfaces/shell.md](../interfaces/shell.md) にある。**
 
 **CSS は entry が読む順序がカスケード順そのものなので、`@import` で引き込まない。**
 
@@ -762,7 +761,7 @@ Stage は Core が送った識別子・数値・エラー理由を、選んだ�
 | 1 | **ウィンドウ設定の純粋関数のユニットテスト**（透過 / 最前面 / クリックスルーの組み合わせ） |
 | 2 | ホバー判定の純粋関数のユニットテスト |
 | 3 | `shell.*` に AI 判断の型が含まれない（静的検査） |
-| 4 | `stage/` から `os.*` を参照していない（静的検査）→ `stage/src/platform/boundaries.test.ts`。**型の import / re-export / 宣言と、`os.*` という method 名の両方**を見る（型は Core / Rust 側にしかないため、import だけでは何も守らない）。名前を書かない `export * from` は、走査できるモジュール宛てのものだけ許す |
+| 4 | `stage/` から `os.*` を参照していない（静的検査）→ `stage/src/platform/boundaries.test.ts`。**型の import / re-export / 宣言と、`os.*` という method 名の両方**を見る（型は Core / Rust 側にしかないため、import だけでは何も守らない）。名前を書かない `export * from` は、走査できるモジュール宛てのものだけ許す。さらに **`Os*` という名前を構文に関係なくソース全体で拒む**——`import("...").OsCommand` や `NS.OsCommand` は import 句に名前を書かずに型へ届くため、句の解析だけでは素通りする |
 | 5 | Stage のストアが Core 配信以外の値を持たない |
 | 6 | `<|ACT|>` マーカーが音声化テキストから除去される |
 | 7 | パース失敗したマーカーが読み上げられない |
