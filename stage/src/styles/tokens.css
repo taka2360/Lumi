@@ -1,0 +1,38 @@
+/* Design tokens. **Every entry point loads this first for shared semantic colours.**
+   → docs/architecture/ui.md §2 "モジュール構成"
+
+   These are values, not rules. A token earns its place by being used in more than one
+   place: the same card surface was written out three times before this file existed, so
+   changing it meant finding all three. Anything used once stays where it is used. */
+:root {
+  /* ── The character window's surfaces ──────────────────────────────────────
+     Painted over the desktop rather than over a page, so they are dark by design
+     regardless of the OS colour scheme. */
+  --surface: rgba(20, 24, 34, 0.92);
+  /* Inset areas (fetch lists, the palette's own backdrop). Reads as "below" the card. */
+  --surface-sunken: rgba(12, 15, 22, 0.85);
+  --surface-border: rgba(255, 255, 255, 0.18);
+  --surface-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  --surface-radius: 14px;
+
+  --text: #f2f5fb;
+  /* The dense information views (inspector, settings) sit a step back from the text
+     the user is meant to read first. */
+  --text-dim: #dfe6f5;
+
+  /* A failure the user has to act on. */
+  --status-bad: #ffb4b4;
+
+  /* **Two amber shades, deliberately kept apart for now.** They were written
+     independently — `--warn` for a caveat or a failed action, `--warn-strong` for a state
+     that must not read as normal (disconnected, env-overridden, untrusted provenance).
+     Both are used from more than one window, so they are named for the shade rather than
+     for a window. Unifying them would change how the panels look, which this refactor
+     does not do; naming them makes the discrepancy visible instead of hiding it in
+     seven literals. */
+  --warn: #ffd9a0;
+  --warn-strong: #ffab6b;
+
+  --font-ui: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  --font-mono: "Consolas", "Courier New", monospace;
+}

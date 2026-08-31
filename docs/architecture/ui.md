@@ -404,6 +404,59 @@ Electron への退避路を確保する。→ [../interfaces/shell.md](../interf
 | 権限プロンプト | 独立ウィンドウ |
 | Inspector | 開発時のみ |
 
+### モジュール構成
+
+```
+stage/src/
+├── main.tsx        `stage` ウィンドウの entry。**ここだけが stage.css を読む**
+├── mount.tsx       `#root` を見つけて render するだけ。**Core も locale も知らない**
+├── App.tsx         キャラクター窓の組み立て（当たり判定の合成・パレットの開閉）
+├── styles/
+│   ├── tokens.css  デザイントークン。**各 entry が最初に読む。共有する意味色・反復する値を置く**
+│   ├── stage.css   **キャラクター窓専用。** 透過ウィンドウの reset を含む
+│   └── document.css `credits` と `help` が共有する文書レイアウト
+├── mount.test.ts   **Core に繋がない窓が Core に到達しない**ことの静的検査
+├── core/           Core との WS・protocol・payload・ストア（`stage.*` / `panel.*`）
+├── platform/       `PlatformShell` と Tauri 実装（`shell.*`）
+├── character/      VRM の読み込みと描画、表情・リップシンク・アイドル
+├── speech/ audio/ actions/ setup/ settings/ memory/ inspector/  各画面
+├── panel/          3つのパネル窓の共通枠と entry（ADR-042）
+├── credits/ help/  **Core に繋がない2枚**（§1）
+└── i18n/           翻訳カタログとロケール解決
+```
+
+**どこに置いてよいかの条件**（`shell/` 側で「条件を書かなかったために `tray.rs` が
+その他コマンド置き場になった」のと同じことを繰り返さないために書いておく）。
+
+| 置き場所 | 置いてよいもの | 置いてはいけないもの |
+|---|---|---|
+| `mount.tsx` | **すべての entry が共通で行うこと**だけ | **`core/*` と `i18n/provider` への import。** ここに1行足すと `credits` と `help` が Core 接続コードを抱き込む |
+| `styles/tokens.css` | 2箇所以上で使う値 | ルール（セレクタ）。ここは値だけ |
+| `styles/stage.css` | キャラクター窓だけが使うもの | パネル窓が使うクラス |
+| `panel/panel.css` | パネル窓が使うもの | キャラクター窓だけのもの |
+| `credits/` `help/` | その画面固有のもの | `core/` `platform/` `@tauri-apps` への import |
+
+**CSS は entry が読む順序がカスケード順そのものなので、`@import` で引き込まない。**
+
+```text
+main.tsx         → tokens.css, stage.css
+panel/main.tsx   → tokens.css, panel.css
+credits/main.tsx → tokens.css, document.css, credits.css
+help/main.tsx    → tokens.css, document.css, help.css
+```
+
+**`stage.css` をパネル窓が読んではいけない。** `stage.css` の reset は
+`html, body, #root` に「ビューポート全体・overflow 隠し・テキスト選択不可」を与える。
+デスクトップに浮く窓には正しく、文書型の窓には誤りである。
+実際、パネル窓がこれを読んでいたために **記憶窓の本文が選択・コピーできず、
+設定窓とインスペクター窓は内容が切れていた**（スクロールの復帰が
+`#root[data-panel="memory"]` にだけ書かれていた）。
+分離によって両方とも解消し、その場しのぎの上書きも不要になった。
+
+**`.settings__src` は `styles.css` と `panel.css` の両方に別の値で定義されていた。**
+パネル窓は両方を読むので、どちらが勝つかは `main.tsx` の import 順だけで決まっていた。
+分離のとき `panel.css` の1箇所に統合した。
+
 ### AIRI から借りないこと
 
 AIRI は Pinia ストアにビジネスロジックを置いている（`stage-ui/src/stores/` に Agent オーケストレーション、記憶、自律スケジューラが同居）。

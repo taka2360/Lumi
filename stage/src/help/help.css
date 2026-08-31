@@ -1,61 +1,14 @@
-/* Help is a **normal window.** Unlike the Stage it paints a background, and it follows
-   the credits window's typography — the two are the only pages Lumi opens that do not
-   connect to Core, and they should not look like they came from different applications. */
-:root {
-  color-scheme: light dark;
-  --help-bg: #ffffff;
-  --help-fg: #1a1a1a;
-  --help-muted: #5c5c5c;
-  --help-line: #d8d8d8;
-  --help-glyph-bg: #f4f4f4;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --help-bg: #1c1c1e;
-    --help-fg: #eaeaea;
-    --help-muted: #a0a0a0;
-    --help-line: #3a3a3c;
-    --help-glyph-bg: #2a2a2c;
-  }
-}
-
-html,
-body {
-  margin: 0;
-  padding: 0;
-  background: var(--help-bg);
-  color: var(--help-fg);
-  font-family: "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
-  font-size: 14px;
-  line-height: 1.7;
-}
+/* What the help page adds to the shared document layout (`../styles/document.css`).
+   **Only what differs from the credits window belongs here.** */
 
 .help {
-  max-width: 620px;
-  margin: 0 auto;
-  padding: 24px 24px 48px;
-}
-
-.help__title {
-  font-size: 20px;
-  margin: 0 0 24px;
-}
-
-.help__section {
-  margin: 0 0 32px;
-}
-
-.help__heading {
-  font-size: 16px;
-  margin: 0 0 8px;
-  padding-bottom: 4px;
-  border-bottom: 1px solid var(--help-line);
+  --document-width: 620px;
+  --document-pad-bottom: 48px;
 }
 
 .help__lead {
   margin: 4px 0 12px;
-  color: var(--help-muted);
+  color: var(--document-muted);
 }
 
 .help__table {
@@ -67,13 +20,13 @@ body {
 .help__table th,
 .help__table td {
   padding: 6px 12px 6px 0;
-  border-bottom: 1px solid var(--help-line);
+  border-bottom: 1px solid var(--document-line);
   vertical-align: top;
   font-weight: normal;
 }
 
 .help__table thead th {
-  color: var(--help-muted);
+  color: var(--document-muted);
   font-size: 13px;
 }
 
@@ -97,7 +50,7 @@ body {
   gap: 4px 12px;
   align-items: baseline;
   padding: 6px 0;
-  border-bottom: 1px solid var(--help-line);
+  border-bottom: 1px solid var(--document-line);
 }
 
 /* The same glyph as the button on the character, boxed the same way so it is recognised
@@ -107,9 +60,9 @@ body {
   place-items: center;
   width: 26px;
   height: 26px;
-  border: 1px solid var(--help-line);
+  border: 1px solid var(--document-line);
   border-radius: 6px;
-  background: var(--help-glyph-bg);
+  background: var(--document-inset);
   font-size: 14px;
   line-height: 1;
 }
@@ -119,7 +72,7 @@ body {
 }
 
 .help__action-about {
-  color: var(--help-muted);
+  color: var(--document-muted);
 }
 
 /* At the window's minimum width the three columns stop fitting; the description drops

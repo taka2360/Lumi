@@ -54,7 +54,7 @@ body {
 /* **Not a quiet grey.** An edit made while disconnected goes nowhere, so this has to
    read as a problem rather than as a status. */
 .panel-window__link--down {
-  color: #ffab6b;
+  color: var(--warn-strong);
 }
 
 .panel-window__body {
@@ -109,25 +109,22 @@ body {
   padding: 6px 12px 6px 0;
 }
 
+/* **One definition.** This used to be written here and again in the character window's
+   stylesheet with different values; both loaded, and the cascade decided. `text-align`
+   came from that other copy, so it is kept here to preserve how the column reads. */
 .settings__src {
+  text-align: right;
   font-size: 12px;
   opacity: 0.7;
 }
 
+/* **An override has to stand out.** Otherwise "I changed it and nothing happened". */
 .settings__src--env {
-  color: #ffab6b;
+  color: var(--warn-strong);
   opacity: 1;
 }
 
 /* ── Memory ─────────────────────────────────────────────── */
-
-/* The shared Stage stylesheet locks every root to the viewport and hides overflow so
-   the transparent character window never grows a document scrollbar. The memory panel
-   can contain an arbitrary number of records, so its own root must be the scrollport. */
-#root[data-panel="memory"] {
-  overflow-x: hidden;
-  overflow-y: auto;
-}
 
 .memory__controls {
   display: flex;
@@ -199,7 +196,7 @@ body {
    outside text can look exactly like one the user said. */
 .memory__taint {
   font-size: 11px;
-  color: #ffab6b;
+  color: var(--warn-strong);
 }
 
 .memory__content {
@@ -270,4 +267,146 @@ body {
 .memory__erase ul {
   margin: 0 0 12px;
   padding-left: 20px;
+}
+
+/* ── Inspector and settings ─────────────────────────────────────────────────
+   Moved out of the character window's stylesheet: these views are only ever rendered
+   in a panel window (ADR-042), so the character window has no reason to carry them.
+   **This is also what stopped `.settings__src` being defined twice** — it used to exist
+   here and there, and which one won depended on the order `main.tsx` imported them. */
+
+/* Inspector (docs/architecture/ui.md §5). **A development view**, so it is dense and plain.
+   Lives in its own window since ADR-042; these rules moved here out of the character
+   window's stylesheet along with it. */
+.inspect {
+  margin: 6px;
+  max-width: calc(100% - 12px);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.inspect__acts,
+.inspect__children {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.inspect__children {
+  margin-left: 12px;
+  opacity: 0.85;
+}
+
+.inspect__act {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 1px 0;
+}
+
+/* **The foreground Activity is always exactly one** (Invariant 4). Marked so that a
+   view showing two would be obvious at a glance rather than needing to be read. */
+.inspect__act--fg .inspect__kind {
+  color: #9fd0ff;
+  font-weight: 700;
+}
+
+.inspect__state {
+  opacity: 0.75;
+}
+
+.inspect__intent,
+.inspect__contract {
+  opacity: 0.6;
+}
+
+.inspect__lat {
+  margin-top: 6px;
+  border-collapse: collapse;
+  width: 100%;
+}
+
+.inspect__lat th {
+  text-align: left;
+  font-weight: 400;
+  opacity: 0.75;
+  padding-right: 10px;
+}
+
+.inspect__lat td {
+  text-align: right;
+}
+
+.inspect__lat-sum th,
+.inspect__lat-sum td {
+  border-top: 1px solid var(--surface-border);
+  opacity: 1;
+}
+
+.inspect__lat-cut th {
+  color: var(--warn);
+}
+
+.inspect__empty {
+  margin: 6px 0 0;
+  opacity: 0.6;
+}
+
+/* Settings (roadmap open item #9). Shares the Inspector's dense look — both are
+   information panels, not places to linger. */
+.settings {
+  margin: 6px;
+  max-width: calc(100% - 12px);
+  font-size: 10px;
+  line-height: 1.45;
+  color: var(--text-dim);
+}
+
+.settings__value {
+  text-align: left;
+  padding-right: 10px;
+}
+
+.settings__input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 1px 4px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+}
+
+.settings__slider {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 150px;
+}
+
+.settings__slider-input {
+  padding: 0;
+  accent-color: #a9c7ff;
+}
+
+.settings__slider output {
+  min-width: 38px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── Status lines ───────────────────────────────────────────────────────────
+   The same two rules exist in `../styles/stage.css`, because the setup card on the
+   character window shows failures the same way. **The colour is the part that matters
+   and it comes from one token**, so the two copies cannot drift apart in the way that
+   `.settings__src` did. Sharing the class name across both windows predates this split
+   and is left alone: it is queried by name in the setup tests. */
+.panel__status {
+  margin: 0;
+}
+
+.panel__status--bad {
+  color: var(--status-bad);
 }

@@ -34,8 +34,8 @@ function Section({
   children: React.ReactNode;
 }) {
   return (
-    <section className="credits__section" id={id}>
-      <h2 className="credits__heading">{title}</h2>
+    <section className="document__section" id={id}>
+      <h2 className="document__heading">{title}</h2>
       {lead && <p className="credits__lead">{lead}</p>}
       {children}
     </section>
@@ -46,8 +46,8 @@ export function Credits() {
   const locale = useStandaloneLocale();
   const ct = (text: string) => creditText(locale, text);
   return (
-    <main className="credits">
-      <h1 className="credits__title">{translate(locale, "credits.title")}</h1>
+    <main className="document credits">
+      <h1 className="document__title">{translate(locale, "credits.title")}</h1>
 
       <Section id="lumi" title={LUMI.name} lead={ct(LUMI.description)}>
         <p className="credits__lead">

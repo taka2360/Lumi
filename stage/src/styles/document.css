@@ -1,0 +1,72 @@
+/* The two **document windows** — credits and help.
+
+   They are the only pages Lumi opens that do not connect to Core, they are read rather
+   than operated, and they should not look like they came from different applications.
+   That last sentence used to be a comment at the top of `help.css` while the file itself
+   was a copy of `credits.css` with the variables renamed. **This file is that intent,
+   implemented once.**
+
+   Unlike the character window these paint a background and follow the OS colour scheme.
+   Page-specific wording of the layout lives in `credits.css` / `help.css`; what is here
+   is what both pages agree on. */
+:root {
+  color-scheme: light dark;
+  --document-bg: #ffffff;
+  --document-fg: #1a1a1a;
+  --document-muted: #5c5c5c;
+  --document-line: #d8d8d8;
+  /* Behind inline code, license bodies, and the help window's glyph chips. */
+  --document-inset: #f4f4f4;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --document-bg: #1c1c1e;
+    --document-fg: #eaeaea;
+    --document-muted: #a0a0a0;
+    --document-line: #3a3a3c;
+    --document-inset: #2a2a2c;
+  }
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--document-bg);
+  color: var(--document-fg);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.7;
+}
+
+/* The column both pages read in. **The width and the bottom padding are the only things
+   they disagree on**, so each page sets those two and inherits the rest. */
+.document {
+  max-width: var(--document-width);
+  margin: 0 auto;
+  padding: 24px 24px var(--document-pad-bottom);
+}
+
+.document__title {
+  font-size: 20px;
+  margin: 0 0 24px;
+}
+
+.document__section {
+  margin: 0 0 32px;
+}
+
+.document__heading {
+  font-size: 16px;
+  margin: 0 0 8px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--document-line);
+}
+
+code {
+  background: var(--document-inset);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+}
