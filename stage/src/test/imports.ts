@@ -148,10 +148,22 @@ export function extractWildcardReExports(text: string): string[] {
   return found;
 }
 
-/** Resolves a relative specifier the way the bundler does, trying each extension. */
+/**
+ * Resolves a relative specifier the way the bundler does, trying each extension.
+ *
+ * **Directory indexes are included, `.tsx` as well as `.ts`.** A specifier that resolves
+ * to nothing is treated as a package and the walk stops there, so a candidate this misses
+ * is not an error — it is a boundary check that quietly inspects less than it claims.
+ */
 export function resolveModule(fromFile: string, specifier: string): string | null {
   const base = resolve(dirname(fromFile), specifier);
-  for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, "index.ts")]) {
+  for (const candidate of [
+    base,
+    `${base}.ts`,
+    `${base}.tsx`,
+    join(base, "index.ts"),
+    join(base, "index.tsx"),
+  ]) {
     try {
       readFileSync(candidate, "utf8");
       return candidate;

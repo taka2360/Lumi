@@ -1,6 +1,8 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   extractExportedDeclarations,
@@ -9,6 +11,7 @@ import {
   extractWildcardReExports,
   reachableFrom,
   relativeToSrc,
+  resolveModule,
   SRC,
 } from "./test/imports";
 
@@ -92,6 +95,58 @@ describe("extractWildcardReExports", () => {
     `;
 
     expect(extractWildcardReExports(source)).toEqual(["./shared", "../protocol"]);
+  });
+});
+
+/**
+ * A tree the walk can be held to, rather than the real one.
+ *
+ * The boundaries are only worth what the traversal sees. A specifier the resolver misses
+ * looks exactly like a package — the walk stops, and every rule downstream of that module
+ * passes by never having looked. Directory indexes are the easy way to lose one, so both
+ * spellings are laid out here and the walk is required to reach through them.
+ */
+describe("walking a directory-index dependency", () => {
+  let root: string;
+
+  beforeAll(() => {
+    root = mkdtempSync(join(tmpdir(), "lumi-import-walk-"));
+    mkdirSync(join(root, "shared"));
+    mkdirSync(join(root, "widgets"));
+    writeFileSync(
+      join(root, "entry.tsx"),
+      ['import "./shared";', 'import "./widgets";'].join("\n"),
+    );
+    writeFileSync(join(root, "shared", "index.ts"), 'import "../leaf";');
+    writeFileSync(join(root, "widgets", "index.tsx"), 'import "../leaf";');
+    writeFileSync(join(root, "leaf.ts"), "export const leaf = 1;");
+  });
+
+  afterAll(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("resolves both index spellings", () => {
+    const entry = join(root, "entry.tsx");
+    expect(resolveModule(entry, "./shared")).toBe(join(root, "shared", "index.ts"));
+    expect(resolveModule(entry, "./widgets")).toBe(join(root, "widgets", "index.tsx"));
+  });
+
+  it("reaches what an index forwards to", () => {
+    // Without the `.tsx` candidate the walk ends at `entry.tsx`, and anything `widgets/`
+    // imports — Core, the Shell, Tauri — is invisible to every rule built on this walk.
+    expect([...reachableFrom(join(root, "entry.tsx")).keys()].sort()).toEqual(
+      [
+        join(root, "entry.tsx"),
+        join(root, "leaf.ts"),
+        join(root, "shared", "index.ts"),
+        join(root, "widgets", "index.tsx"),
+      ].sort(),
+    );
+  });
+
+  it("still treats an unresolvable specifier as a package", () => {
+    expect(resolveModule(join(root, "entry.tsx"), "./nowhere")).toBeNull();
   });
 });
 
