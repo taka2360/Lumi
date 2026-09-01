@@ -16,14 +16,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { updateSettings } from "../core/request";
 import type { SettingsSource } from "../core/store";
 import { useStageStore } from "../core/store";
-import { translate } from "../i18n";
+import { type LocaleSetting, SUPPORTED_LOCALES, translate } from "../i18n";
 import { useLocale } from "../i18n/provider";
 
+/** The `locale` setting's choices. **One definition** — the type is `LocaleSetting`. */
+const LOCALE_CHOICES: readonly LocaleSetting[] = ["auto", ...SUPPORTED_LOCALES];
+
 /** Values with a fixed set of choices. Anything else is free text (model names vary). */
-const CHOICES: Record<string, string[]> = {
+const CHOICES: Record<string, readonly string[]> = {
   inference_device: ["auto", "cuda", "cpu"],
-  locale: ["auto", "ja", "en"],
+  locale: LOCALE_CHOICES,
 };
+
+/**
+ * Whether a choice is one this screen has wording for.
+ *
+ * **Was written out as `choice === "auto" || choice === "ja" || choice === "en"`**, which
+ * is `LocaleSetting` spelled a second time — and the place a third locale would be
+ * forgotten, leaving the new language showing as a bare `de` beside two named ones.
+ */
+function isLocaleChoice(value: string): value is LocaleSetting {
+  return LOCALE_CHOICES.some((choice) => choice === value);
+}
 
 /**
  * The settings shown as a slider, with the range Core validates against.
@@ -170,7 +184,7 @@ function Row({ name, value, source }: { name: string; value: string; source: Set
           >
             {choices.map((choice) => (
               <option key={choice} value={choice}>
-                {name === "locale" && (choice === "auto" || choice === "ja" || choice === "en")
+                {name === "locale" && isLocaleChoice(choice)
                   ? translate(locale, `settings.choice.${choice}`)
                   : choice}
               </option>

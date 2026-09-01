@@ -75,7 +75,7 @@ const FAILURE_KEYS: Record<string, MessageKey> = Object.fromEntries(
   ].map((reason) => [reason, `status.failure.${reason}` as MessageKey]),
 );
 
-export function failureText(reason: string | null, locale: Locale = "ja"): string {
+export function failureText(reason: string | null, locale: Locale): string {
   if (!reason) {
     return translate(locale, "status.failure.generic");
   }
@@ -88,7 +88,7 @@ function percent(progress: number | null): number {
 }
 
 /** `null` means "nothing worth saying" — this component is fine. */
-export function ttsStatus(tts: TtsSetupSnapshot, locale: Locale = "ja"): StatusLine | null {
+export function ttsStatus(tts: TtsSetupSnapshot, locale: Locale): StatusLine | null {
   const engine = tts.engine_name ?? translate(locale, "setup.engine.generic");
   // **The process state is checked first.** Painting over "installed but won't start" with
   // "installed" would leave the user with nothing to act on
@@ -133,7 +133,7 @@ export function ttsStatus(tts: TtsSetupSnapshot, locale: Locale = "ja"): StatusL
  * Lumi never installs or starts Ollama. It can fetch an allowlisted model only after an
  * explicit setup choice (ADR-037).
  */
-export function llmStatus(llm: LlmSetupSnapshot, locale: Locale = "ja"): StatusLine | null {
+export function llmStatus(llm: LlmSetupSnapshot, locale: Locale): StatusLine | null {
   switch (llm.state) {
     case "not_configured":
       return {
@@ -165,7 +165,7 @@ export function llmStatus(llm: LlmSetupSnapshot, locale: Locale = "ja"): StatusL
   }
 }
 
-export function sttStatus(stt: SttSetupSnapshot, locale: Locale = "ja"): StatusLine | null {
+export function sttStatus(stt: SttSetupSnapshot, locale: Locale): StatusLine | null {
   if (stt.runtime === "failed") {
     return { tone: "bad", text: translate(locale, "status.stt.failed") };
   }
@@ -188,16 +188,6 @@ export function sttStatus(stt: SttSetupSnapshot, locale: Locale = "ja"): StatusL
 }
 
 /**
- * Every line worth showing, in a fixed order. **Empty means everything is fine**, and the
- * panel is then not drawn at all.
- *
- * Order is TTS → LLM → STT, matching the order the pipeline fails in from the user's
- * point of view: not speaking is noticed first, then not answering, then not hearing.
- *
- * **All of them, not the first one.** Fixing what one line asks for and then being handed
- * the next is how a two-minute setup turns into three restarts.
- */
-/**
  * The embedding model (ADR-041).
  *
  * **Never a `bad` tone, even when the fetch failed.** Every other line here is a reason
@@ -206,7 +196,7 @@ export function sttStatus(stt: SttSetupSnapshot, locale: Locale = "ja"): StatusL
  */
 export function embeddingStatus(
   embedding: EmbeddingSetupSnapshot,
-  locale: Locale = "ja",
+  locale: Locale,
 ): StatusLine | null {
   switch (embedding.state) {
     case "installing":
@@ -225,7 +215,17 @@ export function embeddingStatus(
   }
 }
 
-export function statusLines(setup: SetupSnapshot, locale: Locale = "ja"): StatusLine[] {
+/**
+ * Every line worth showing, in a fixed order. **Empty means everything is fine**, and the
+ * panel is then not drawn at all.
+ *
+ * Order is TTS → LLM → STT, matching the order the pipeline fails in from the user's
+ * point of view: not speaking is noticed first, then not answering, then not hearing.
+ *
+ * **All of them, not the first one.** Fixing what one line asks for and then being handed
+ * the next is how a two-minute setup turns into three restarts.
+ */
+export function statusLines(setup: SetupSnapshot, locale: Locale): StatusLine[] {
   return [
     ttsStatus(setup.tts, locale),
     llmStatus(setup.llm, locale),

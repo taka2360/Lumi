@@ -428,6 +428,10 @@ stage/src/
 ├── panel/          3つのパネル窓の共通枠と entry（ADR-042）
 ├── credits/ help/  **Core に繋がない2枚**（§1）
 └── i18n/           翻訳カタログとロケール解決
+    ├── index.ts        入口。`translate` / `hasMessage`（ADR-036 が名指ししている）
+    ├── messages.ja.ts  **日本語カタログ。これが鍵の集合**（`MessageKey = keyof typeof ja`）
+    ├── messages.en.ts  英語カタログ。`Record<MessageKey, string>` なので**過不足は tsc が落とす**
+    └── locale.ts       ロケール解決（`auto` / `ja` / `en`）
 ```
 
 **どこに置いてよいかの条件**（`shell/` 側で「条件を書かなかったために `tray.rs` が
@@ -440,6 +444,19 @@ stage/src/
 | `styles/stage.css` | キャラクター窓だけが使うもの | パネル窓が使うクラス |
 | `panel/panel.css` | パネル窓が使うもの | キャラクター窓だけのもの |
 | `credits/` `help/` | その画面固有のもの | `core/` `platform/` `@tauri-apps` への import |
+| `i18n/messages.*.ts` | ユーザーに見える文言 | 製品名・モデル名・ライセンス全文（訳さない） |
+| 画面のデータ（`credits/content.ts` など） | **`MessageKey`** | 文そのもの |
+
+**文ではなく鍵を置く。** `credits/content.ts` は以前、日本語の原文を持ち、
+`localize.ts` が**その原文を検索キーにして**英訳を引いていた。
+同じ文が2箇所にあるため、句読点を1つ直すだけで英語表示が日本語に戻る形になっていた
+（当時のテストが検出していたので実害には至っていない）。
+`help/content.ts` が先に採っていた「鍵を置く」やり方に揃え、`localize.ts` は削除した。
+**カタログが単一定義になり、過不足は型で落ちる。**
+
+生成物も同じ規則に従う。`third-party.generated.json` は表示用の日本語ラベルではなく
+**`id`（`shell` / `core` / `stage` / `undeclared`）を持ち**、文言は
+`credits.ecosystem.*` にある（`scripts/generate-oss-notice.mjs`）。
 | `platform/` | Shell に触るもの全部 | **`core/*` への import。** 依存は一方向（`core/` → `platform/`）に保つ |
 | `core/payloads/read.ts` | 受信値を読む素材 | ドメインの知識。どの payload かを知ってよいのは各ドメインのファイル |
 

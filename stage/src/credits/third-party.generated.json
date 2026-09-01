@@ -2,7 +2,7 @@
   "total": 306,
   "ecosystems": [
     {
-      "name": "Lumi Shell（Rust / exe にリンクされるもの）",
+      "id": "shell",
       "packages": [
         {
           "name": "adler2",
@@ -1237,7 +1237,7 @@
       ]
     },
     {
-      "name": "Lumi Core（Python / サイドカーに固められるもの）",
+      "id": "core",
       "packages": [
         {
           "name": "anyio",
@@ -1402,7 +1402,7 @@
       ]
     },
     {
-      "name": "Stage（JavaScript / 配布物に入るもの）",
+      "id": "stage",
       "packages": [
         {
           "name": "@pixiv/three-vrm",
@@ -1517,7 +1517,7 @@
       ]
     },
     {
-      "name": "依存グラフに現れないが配布されるもの",
+      "id": "undeclared",
       "packages": [
         {
           "name": "CPython",

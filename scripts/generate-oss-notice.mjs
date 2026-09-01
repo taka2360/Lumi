@@ -190,18 +190,21 @@ function refuse(packages, ecosystem) {
 	}
 }
 
+// **Ids, not labels.** The wording lives in the Stage's message catalog
+// (`credits.ecosystem.*`), so this generated file carries no display text and the
+// credits screen changes language with the rest of Lumi.
 const ecosystems = [
-	{ name: "Lumi Shell（Rust / exe にリンクされるもの）", packages: rustPackages() },
-	{ name: "Lumi Core（Python / サイドカーに固められるもの）", packages: pythonPackages() },
-	{ name: "Stage（JavaScript / 配布物に入るもの）", packages: jsPackages() },
+	{ id: "shell", packages: rustPackages() },
+	{ id: "core", packages: pythonPackages() },
+	{ id: "stage", packages: jsPackages() },
 ];
 
 for (const ecosystem of ecosystems) {
 	ecosystem.packages.sort((a, b) => a.name.localeCompare(b.name));
-	refuse(ecosystem.packages, ecosystem.name);
+	refuse(ecosystem.packages, ecosystem.id);
 }
 ecosystems.push({
-	name: "依存グラフに現れないが配布されるもの",
+	id: "undeclared",
 	packages: MANUAL,
 });
 

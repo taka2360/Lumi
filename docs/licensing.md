@@ -402,6 +402,10 @@ Lumi の既存の設計要素で満たせるものを使い、足りない分だ
 `scripts/generate-oss-notice.mjs` が3つの依存グラフから
 `stage/src/credits/third-party.generated.json` を生成する。**配布物に入るものだけを見る。**
 
+**生成物は表示用の文言を持たない。** 各グループは `id`（`shell` / `core` / `stage` /
+`undeclared`）で、画面に出る名前は Stage の翻訳カタログ（`credits.ecosystem.*`）にある。
+以前はここに日本語のラベルが入っており、英語表示のときだけ別の対応表を引いていた。
+
 | エコシステム | 取得元 | 件数〔2026-08-15〕 |
 |---|---|---|
 | Rust | `cargo tree -e normal`（build 依存は exe に入らない） | 246 |
