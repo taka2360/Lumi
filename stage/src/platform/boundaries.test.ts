@@ -112,10 +112,13 @@ describe("the Stage cannot reach os.*", () => {
 
   it("names no os.* method", () => {
     // `invoke("os.foo")`, a method constant, or anything else that would put the name on
-    // the wire.
+    // the wire. **The `os.` prefix is the rule, not a whole method name**: a composed name
+    // like `invoke(`os.${operation}`)` never exists as one literal, but its head does, and
+    // the request API takes any string. Matching the prefix catches both, and the Stage has
+    // no legitimate string under that namespace for it to catch by accident.
     const offenders = [...modules.values()].flatMap((module) =>
       module.strings
-        .filter((text) => /^os\.[a-z_]/i.test(text))
+        .filter((text) => /^os\./i.test(text))
         .map((text) => `${module.where}: "${text}"`),
     );
     expect(offenders).toEqual([]);

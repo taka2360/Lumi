@@ -58,15 +58,21 @@ const FILES: Record<string, string> = {
   "capture.ts": "export interface OsCapture { id: string }",
 
   // Comment markers inside a string used to truncate the line and hide what followed.
+  // The template is the other half: a composed name puts `os.` in a fragment of its own.
   "literals.ts": [
     "// os.capture, discussed in a comment",
     "/* os.probe, discussed in a block comment */",
     'export const values = ["https://help", "os.capture"];',
+    // biome-ignore lint/suspicious/noTemplateCurlyInString: fixture source text, not a template.
+    "export const composed = (op: string) => `os.${op}`;",
   ].join("\n"),
 
-  // The shapes that are refused rather than modelled.
+  // The shapes that are refused rather than modelled. A worker constructor is reached
+  // bare and through a global object, so the name is what is refused, not the call shape.
   "worker.ts":
     'export const w = new Worker(new URL("./leaf.ts", import.meta.url), { type: "module" });',
+  "qualified-worker.ts":
+    'export const w = new window.SharedWorker(new URL("./leaf.ts", import.meta.url));',
   "computed.ts": ["export const name = './leaf';", "export const mod = import(name);"].join("\n"),
   "dangling.ts": 'import "./nowhere";',
 };
@@ -148,15 +154,24 @@ describe("readModules", () => {
 
   it("keeps a string whole and leaves comments out of it", () => {
     const literals = at("literals.ts");
-    expect(literals.strings).toEqual(["https://help", "os.capture"]);
     // The `//` in the URL used to end the line for the comment stripper, hiding the
     // `os.capture` beside it. And a comment is not a string, so discussing `os.probe`
     // in prose is not a violation.
+    // The trailing `""` is the tail of `` `os.${op}` ``: a template is captured fragment
+    // by fragment, which is the point of the next test.
+    expect(literals.strings).toEqual(["https://help", "os.capture", "os.", ""]);
     expect(literals.strings).not.toContain("os.probe");
   });
 
-  it("refuses a worker entry point", () => {
-    expect(at("worker.ts").unfollowable).toEqual(["new Worker(…)"]);
+  it("keeps the fragments of a composed name", () => {
+    // A method name built as `os.${op}` never exists as a whole literal. Its head does,
+    // which is why the boundary rule matches the `os.` prefix rather than a full name.
+    expect(at("literals.ts").strings).toContain("os.");
+  });
+
+  it("refuses a worker entry point however the constructor is reached", () => {
+    expect(at("worker.ts").unfollowable).toEqual(["Worker"]);
+    expect(at("qualified-worker.ts").unfollowable).toEqual(["SharedWorker"]);
   });
 
   it("refuses a computed dynamic import", () => {

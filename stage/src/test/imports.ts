@@ -39,7 +39,6 @@ import { dirname, resolve } from "node:path";
 import {
   isCallExpression,
   isIdentifier,
-  isNewExpression,
   isNoSubstitutionTemplateLiteral,
   isStringLiteral,
   isTemplateHead,
@@ -80,7 +79,7 @@ export interface StageModule {
    */
   readonly unresolved: readonly string[];
   /**
-   * Constructs that create a dependency this walk cannot follow, described for a message.
+   * What would create a dependency this walk cannot follow, named for a message.
    *
    * A worker entry point — `new Worker(new URL("./w.ts", import.meta.url))` — and a
    * computed `import(name)` both reach a module without naming it where the import graph
@@ -89,6 +88,11 @@ export interface StageModule {
    * are refused. Introducing one is then a deliberate decision that has to widen this
    * walk and the documented guarantee together, instead of silently punching a hole
    * through the boundary the walk was built to hold.
+   *
+   * **The worker constructors are refused by name, not by call shape.** `new Worker(…)`,
+   * `new window.Worker(…)`, `new globalThis.SharedWorker(…)` and `const W = Worker` are
+   * the same intent wearing different syntax, and matching shapes means adding one per
+   * spelling. The name itself is what the Stage has no use for, so the name is the rule.
    */
   readonly unfollowable: readonly string[];
   /** Every identifier written in the source. Not comments, not strings. */
@@ -123,6 +127,9 @@ function isAsset(fromFile: string, specifier: string): boolean {
   return existsSync(resolve(dirname(fromFile), specifier.replace(/[?#].*$/, "")));
 }
 
+/** The constructors that start a module the import graph cannot see. */
+const WORKER_CONSTRUCTORS = new Set(["Worker", "SharedWorker"]);
+
 /** Collects, in one pass, everything the rules ask about a single module's syntax. */
 function readFacts(source: SourceFile): {
   identifiers: string[];
@@ -136,6 +143,9 @@ function readFacts(source: SourceFile): {
   const visit = (node: Node): void => {
     if (isIdentifier(node)) {
       identifiers.push(node.text);
+      if (WORKER_CONSTRUCTORS.has(node.text) && !unfollowable.includes(node.text)) {
+        unfollowable.push(node.text);
+      }
     } else if (
       isStringLiteral(node) ||
       isNoSubstitutionTemplateLiteral(node) ||
@@ -143,11 +153,6 @@ function readFacts(source: SourceFile): {
       isTemplateMiddleOrTail(node)
     ) {
       strings.push(node.text);
-    } else if (isNewExpression(node) && isIdentifier(node.expression)) {
-      const constructed = node.expression.text;
-      if (constructed === "Worker" || constructed === "SharedWorker") {
-        unfollowable.push(`new ${constructed}(…)`);
-      }
     } else if (
       isCallExpression(node) &&
       node.expression.kind === SyntaxKind.ImportKeyword &&
