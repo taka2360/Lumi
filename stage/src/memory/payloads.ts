@@ -4,7 +4,14 @@
  * **Fail-closed in the direction that matters here.** A row whose fields cannot be read
  * is dropped rather than rendered with blanks: a memory listed with an empty sentence and
  * a working [forget] button invites deleting something nobody could read.
+ *
+ * The primitives come from `core/payloads/read`, which is where the `stage.*` readers get
+ * them too. **`asFiniteNumber` is deliberately not the same function as `asNumber`**: the
+ * numbers here are counted with (totals, paging), so a `NaN` that reached the arithmetic
+ * would produce an empty page rather than a visibly wrong one.
  */
+
+import { asFiniteNumber, asString, isRecord } from "../core/payloads/read";
 
 export interface MemoryItem {
   id: string;
@@ -39,18 +46,6 @@ export interface EraseTarget {
   count: number;
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function asString(value: unknown): string | null {
-  return typeof value === "string" ? value : null;
-}
-
-function asNumber(value: unknown, fallback: number): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
-}
-
 export function toMemoryItem(value: unknown): MemoryItem | null {
   if (!isRecord(value)) {
     return null;
@@ -70,8 +65,8 @@ export function toMemoryItem(value: unknown): MemoryItem | null {
     // **Unreadable trust reads as tainted**, never as trusted: the badge exists to warn,
     // and a missing field must not be the thing that removes the warning.
     trust_level: asString(value.trust_level) ?? "tainted",
-    confidence: asNumber(value.confidence, 0),
-    effective_salience: asNumber(value.effective_salience, 0),
+    confidence: asFiniteNumber(value.confidence, 0),
+    effective_salience: asFiniteNumber(value.effective_salience, 0),
     valid_from: asString(value.valid_from) ?? "",
     archived: value.archived === true,
     superseded_by: asString(value.superseded_by),
@@ -85,8 +80,8 @@ export function toMemoryPage(payload: Record<string, unknown>): MemoryPage {
   // as unreadable — the gap is visible instead of being quietly closed.
   return {
     items,
-    total: asNumber(payload.total, items.length),
-    pendingTurns: asNumber(payload.pending_turns, 0),
+    total: asFiniteNumber(payload.total, items.length),
+    pendingTurns: asFiniteNumber(payload.pending_turns, 0),
   };
 }
 
@@ -97,6 +92,6 @@ export function toEraseTargets(payload: Record<string, unknown>): EraseTarget[] 
       return [];
     }
     const target = asString(entry.target);
-    return target ? [{ target, count: asNumber(entry.count, 0) }] : [];
+    return target ? [{ target, count: asFiniteNumber(entry.count, 0) }] : [];
   });
 }

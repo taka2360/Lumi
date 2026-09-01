@@ -11,12 +11,12 @@
  * without either of them reloading.
  */
 
-import { PANEL_KINDS, type PanelKind } from "../core/methods";
 import { cachedLocale, setDocumentLocale } from "../i18n";
 import { LocaleProvider } from "../i18n/provider";
 import { Inspector } from "../inspector/Inspector";
 import { Memory } from "../memory/Memory";
 import { mountRoot, rootElement } from "../mount";
+import { PANEL_KINDS, type PanelKind } from "../platform/PlatformShell";
 import { Settings } from "../settings/Settings";
 import { PanelShell } from "./PanelShell";
 import "../styles/tokens.css";
@@ -31,7 +31,7 @@ const container = rootElement();
 
 /** **Fail loudly.** A page that loaded the panel bundle without saying which panel it is
  * has nothing sensible to render, and rendering an empty window would hide the mistake.
- * The list of kinds is `PANEL_KINDS` (`core/methods.ts`) — **the same one Shell is held
+ * The list of kinds is `PANEL_KINDS` (`platform/PlatformShell.ts`) — **the same one Shell is held
  * to** — so a fourth panel cannot be added there and silently fail to render here. */
 function isPanelKind(value: string | undefined): value is PanelKind {
   return PANEL_KINDS.some((kind) => kind === value);

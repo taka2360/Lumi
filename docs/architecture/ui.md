@@ -416,8 +416,13 @@ stage/src/
 │   ├── stage.css   **キャラクター窓専用。** 透過ウィンドウの reset を含む
 │   └── document.css `credits` と `help` が共有する文書レイアウト
 ├── mount.test.ts   **Core に繋がない窓が Core に到達しない**ことの静的検査
-├── core/           Core との WS・protocol・payload・ストア（`stage.*` / `panel.*`）
+├── test/           境界テストが使う import グラフの読み取り（TypeScript の program から。**テスト専用**）
+├── core/           Core との WS・protocol・ストア（`stage.*` / `panel.*`）
+│   ├── connection.ts  WS の開閉と再接続。**Shell へは `PlatformShell` 経由でしか触らない**
+│   ├── pending.ts     要求と応答の対応づけ（相関 ID・タイムアウト・切断時の後始末）
+│   └── payloads.ts    入口。実体は `payloads/`（read / setup / character / inspector / settings）
 ├── platform/       `PlatformShell` と Tauri 実装（`shell.*`）
+│   └── boundaries.test.ts  **`platform/tauri.ts` 以外が Tauri を import しない**ことの静的検査
 ├── character/      VRM の読み込みと描画、表情・リップシンク・アイドル
 ├── speech/ audio/ actions/ setup/ settings/ memory/ inspector/  各画面
 ├── panel/          3つのパネル窓の共通枠と entry（ADR-042）
@@ -435,6 +440,40 @@ stage/src/
 | `styles/stage.css` | キャラクター窓だけが使うもの | パネル窓が使うクラス |
 | `panel/panel.css` | パネル窓が使うもの | キャラクター窓だけのもの |
 | `credits/` `help/` | その画面固有のもの | `core/` `platform/` `@tauri-apps` への import |
+| `platform/` | Shell に触るもの全部 | **`core/*` への import。** 依存は一方向（`core/` → `platform/`）に保つ |
+| `core/payloads/read.ts` | 受信値を読む素材 | ドメインの知識。どの payload かを知ってよいのは各ドメインのファイル |
+
+**`@tauri-apps` を import してよいのは `platform/tauri.ts` だけ。**
+`core/connection.ts` が Core の接続先を得るために `invoke` と `listen` を直接呼んでおり、
+**「Electron に移るときは `tauri.ts` だけ差し替えればよい」という
+[interfaces/shell.md](../interfaces/shell.md) の前提が実際には崩れていた。**
+接続先の取得と変更通知を `PlatformShell.coreEndpoint()` /
+`onCoreEndpointChanged()` として足し、`platform/boundaries.test.ts` で固定した。
+**2つのシグネチャと、購読が解除できる形である理由は
+[../interfaces/shell.md](../interfaces/shell.md) にある。**
+
+#### この表の「到達しない」が何を意味するか
+
+**この表の境界は import グラフに対して定義する。** 静的検査（`test/imports.ts`）は
+TypeScript の program からソースを読み、`SourceFile.imports` —— static import・
+`export … from`・`import = require`・リテラルの `import()`・inline import type ——
+を辺として、相対 specifier を `.ts` / `.tsx` / ディレクトリ index で解決して辿る。
+**構文の解釈は TypeScript が行い、こちらは行わない。**
+以前は正規表現でソース文字列を検査しており、レビューのたびに構文の特殊ケースが1つずつ増えていた
+（`export * from` / `import("...").OsCommand` / `index.tsx` / 文字列中の `//` をコメントと誤認する等）。
+どれも parser が既に答えている問いなので、parser に答えさせる。
+
+**バンドラの再現はしない。代わりに、辿れない辺を禁止する。**
+`new Worker(new URL("./w.ts", import.meta.url))` と計算された `import(name)` は、
+import グラフに現れない形でモジュールへ到達する。Stage は現在どちらも使っておらず、
+**検査はこの2つと「解決できない相対 specifier」を検出したら失敗する。**
+静かに見落とすくらいなら止める、という側に倒している（設計原則「黙って劣化しない」）。
+Worker が必要になったときは、**検査の走査範囲とこの節の保証を同時に広げてから**入れる。
+
+**Worker / SharedWorker は呼び出しの形ではなく名前で拒む。**
+`new Worker(…)` / `new window.Worker(…)` / `const W = Worker` はどれも同じ意図であり、
+形を数え上げると綴りごとに例外が増える（正規表現でやっていたときと同じ失敗）。
+**Stage がこの名前を使う理由が無い**ので、名前そのものを規則にしている。
 
 **CSS は entry が読む順序がカスケード順そのものなので、`@import` で引き込まない。**
 
@@ -745,7 +784,7 @@ Stage は Core が送った識別子・数値・エラー理由を、選んだ�
 | 1 | **ウィンドウ設定の純粋関数のユニットテスト**（透過 / 最前面 / クリックスルーの組み合わせ） |
 | 2 | ホバー判定の純粋関数のユニットテスト |
 | 3 | `shell.*` に AI 判断の型が含まれない（静的検査） |
-| 4 | `stage/` から `os.*` を参照していない（静的検査） |
+| 4 | `stage/` から `os.*` を参照していない（静的検査）→ `stage/src/platform/boundaries.test.ts`。**構文木の識別子・文字列リテラル・module specifier の3つ**を見る。型は Core / Rust 側にしかないため import だけでは何も守らない——`Os*` という**識別子**を拒むので、別名 import・`export * from` の転送先・`import("...").OsCommand`・`NS.OsCommand` のどれで届いても同じ1つの規則に当たる。`os.*` という method 名は文字列リテラルとして拒む（wire に載る形がそれであるため）。**照合するのは `os.` という接頭辞**——`` `os.${op}` `` のように組み立てた名前は完全な形のリテラルとして存在しないが、その先頭断片は存在し、要求 API は任意の文字列を受けるため。コメントと文字列は構文木では別の node なので、`os.*` を**説明する**記述は違反にならない |
 | 5 | Stage のストアが Core 配信以外の値を持たない |
 | 6 | `<|ACT|>` マーカーが音声化テキストから除去される |
 | 7 | パース失敗したマーカーが読み上げられない |
@@ -760,3 +799,7 @@ Stage は Core が送った識別子・数値・エラー理由を、選んだ�
 | 16 | **`blocked` のとき、不足している要素すべてが解決方法つきで並ぶ**（1つだけ出して終わらない）〔ADR-034〕 |
 | 17 | **未知の `boot` 値を `ready` に丸めない**（キャラクターを出す側に倒さない） |
 | 18 | `stage` の操作メニューからクレジット画面を開け、Lumi を終了できる |
+| 19 | **`platform/tauri.ts` 以外が `@tauri-apps` を import していない**（静的検査）→ `stage/src/platform/boundaries.test.ts` |
+| 20 | **`credits` / `help` の import グラフが `core/` `platform/` `@tauri-apps` に到達しない**（静的検査）→ `stage/src/mount.test.ts` |
+| 21 | 要求と応答の対応づけ — 相関・タイムアウト・拒否・切断時の後始末 → `stage/src/core/pending.test.ts` |
+| 22 | **`platform/` が `core/` を import していない**（静的検査）→ `stage/src/platform/boundaries.test.ts` |

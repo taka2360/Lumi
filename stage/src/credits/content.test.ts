@@ -109,29 +109,12 @@ describe("voice credits and prohibitions", () => {
   });
 });
 
-describe("credits never depend on Core", () => {
-  it("nothing under credits/ imports the Core or Shell paths", () => {
-    // **Credits must be readable even if Core is down**
-    // (docs/licensing.md §8 test 10 / docs/architecture/ui.md).
-    // A single import slipping in would silently break this guarantee.
-    const sources = import.meta.glob("./*.{ts,tsx}", {
-      query: "?raw",
-      import: "default",
-      eager: true,
-    }) as Record<string, string>;
-
-    expect(Object.keys(sources).length).toBeGreaterThan(1);
-    for (const [file, text] of Object.entries(sources)) {
-      if (file.endsWith(".test.ts")) {
-        continue;
-      }
-      expect(text, `${file} references Core path`).not.toMatch(/from\s+"\.\.\/core\//);
-      expect(text, `${file} references Shell path`).not.toMatch(/from\s+"\.\.\/platform\//);
-      // The **name** of the dependency is listed (naturally, since this is credits). What's forbidden is the import.
-      expect(text, `${file} imports Tauri API`).not.toMatch(/from\s+"@tauri-apps/);
-    }
-  });
-});
+// **Credits must be readable even if Core is down** (docs/licensing.md §8 test 10 /
+// docs/architecture/ui.md §1). That is asserted in `mount.test.ts`, over the whole import
+// graph reachable from `credits/main.tsx`. It used to be asserted here as well, by matching
+// `from "../core/` against the text of this directory's files — which saw neither an
+// indirect import nor a file one directory down, and needed a new pattern per spelling.
+// One check that walks the graph is worth more than two that read the lines.
 
 describe("bundled OSS", () => {
   it("lists all three of Shell / Stage / Core", () => {

@@ -13,57 +13,12 @@ import { MicIndicator } from "./audio/MicIndicator";
 import { CharacterCanvas, type CharacterStatus } from "./character/CharacterCanvas";
 import { useStageStore } from "./core/store";
 import { useCoreConnection } from "./core/useCoreConnection";
-import type { CssRect } from "./platform/geometry";
+import { type CssRect, sameHitRegion } from "./platform/geometry";
+import { useElementRect, useViewportRect } from "./platform/useElementRect";
 import { useHitRegionReporter, useHoverState, useWindowGestures } from "./platform/useStageShell";
 import { BootScreen } from "./setup/BootScreen";
 import { SetupPanel } from "./setup/SetupPanel";
 import { Bubble } from "./speech/Bubble";
-
-/** Tracks an element's on-screen rectangle. Updates whenever the layout changes. */
-function useElementRect(element: HTMLElement | null): CssRect | null {
-  const [rect, setRect] = useState<CssRect | null>(null);
-
-  useEffect(() => {
-    if (!element) {
-      setRect(null);
-      return;
-    }
-    const measure = () => {
-      const box = element.getBoundingClientRect();
-      setRect({ x: box.x, y: box.y, width: box.width, height: box.height });
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(element);
-    window.addEventListener("resize", measure);
-    return () => {
-      observer.disconnect();
-      window.removeEventListener("resize", measure);
-    };
-  }, [element]);
-
-  return rect;
-}
-
-/** The Stage window's own client rectangle. Changes whenever the wheel resizes the window. */
-function useViewportRect(): CssRect {
-  const [rect, setRect] = useState<CssRect>(() => ({
-    x: 0,
-    y: 0,
-    width: window.innerWidth,
-    height: window.innerHeight,
-  }));
-
-  useEffect(() => {
-    const measure = () =>
-      setRect({ x: 0, y: 0, width: window.innerWidth, height: window.innerHeight });
-    measure();
-    window.addEventListener("resize", measure);
-    return () => window.removeEventListener("resize", measure);
-  }, []);
-
-  return rect;
-}
 
 export function App() {
   useCoreConnection();
@@ -132,7 +87,7 @@ export function App() {
     return () => document.removeEventListener("contextmenu", onContextMenu);
   }, [paletteOpen]);
 
-  const lastReported = useRef<string>("");
+  const lastReported = useRef<CssRect[]>([]);
   useEffect(() => {
     // **While the palette is open, the whole window is in the hit region.** Outside it
     // Shell clicks through, so without this a click beside the palette would land in
@@ -141,11 +96,12 @@ export function App() {
     const rects = [characterRect, panelRect, micRect, paletteRect].filter(
       (rect): rect is CssRect => rect !== null,
     );
-    const signature = JSON.stringify(rects);
-    if (signature === lastReported.current) {
+    // Most frames leave the region exactly as it was, and `shell.*` is the path with the
+    // 1ms budget — so only a real change is worth an IPC call.
+    if (sameHitRegion(rects, lastReported.current)) {
       return;
     }
-    lastReported.current = signature;
+    lastReported.current = rects;
     reportHitRegion(rects);
   }, [characterRect, panelRect, micRect, paletteOrigin, viewportRect, reportHitRegion]);
 

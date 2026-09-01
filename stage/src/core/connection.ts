@@ -8,13 +8,11 @@
  * **The Stage never makes decisions here.** It just hands received `stage.*` off to handlers.
  */
 
-import { invoke } from "@tauri-apps/api/core";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
-
-import { isTauri } from "../platform/tauri";
+import type { CoreEndpoint, Disposable } from "../platform/PlatformShell";
+import { getPlatformShell } from "../platform/useStageShell";
+import { PendingRequests } from "./pending";
 import {
   type CoreMessage,
-  type CoreResult,
   type CoreRole,
   helloMessage,
   ProtocolVersionMismatch,
@@ -23,17 +21,8 @@ import {
   resultMessage,
 } from "./protocol";
 
-/** The corresponding constant on the Shell side is `shell/src-tauri/src/core_endpoint.rs`. **`wire.json` is authoritative** (ADR-022). */
-export const CMD_CORE_ENDPOINT = "shell_core_endpoint";
-export const EVENT_CORE_ENDPOINT = "shell:core:endpoint";
-
 /** Wait time before reconnecting. Short enough to wait out a Core restart. */
 const RECONNECT_DELAY_MS = 500;
-
-interface CoreEndpoint {
-  port: number;
-  token: string;
-}
 
 export type CommandHandler = (payload: Record<string, unknown>) => Promise<Record<string, unknown>>;
 export type NotifyHandler = (payload: Record<string, unknown>) => void;
@@ -54,14 +43,15 @@ export interface CoreConnection {
   request(method: string, payload?: Record<string, unknown>): Promise<Record<string, unknown>>;
 }
 
-/** How long to wait for Core's answer. **Never waits forever** — the UI has to move on. */
-const REQUEST_TIMEOUT_MS = 10_000;
-
 /**
  * Starts the connection and keeps reconnecting if it drops.
  *
- * Does nothing outside Tauri (when opened in a browser). Branches explicitly here
- * **so it never silently breaks**.
+ * **Reaches Shell only through `PlatformShell`.** Where Core is listening and when that
+ * changes are things Shell knows; this file used to call Tauri directly for both, which
+ * quietly made `platform/tauri.ts` not the only file an Electron port would touch.
+ *
+ * Outside Tauri the no-op shell reports no endpoint, so this retries instead of
+ * connecting — the same path taken while Core is still starting.
  */
 export function connectToCore(
   handlers: CoreConnectionHandlers,
@@ -72,12 +62,7 @@ export function connectToCore(
    */
   role: CoreRole = "stage",
 ): CoreConnection {
-  if (!isTauri()) {
-    return {
-      close: () => {},
-      request: () => Promise.reject(new Error("not_connected")),
-    };
-  }
+  const shell = getPlatformShell();
 
   let closed = false;
   let socket: WebSocket | null = null;
@@ -86,17 +71,8 @@ export function connectToCore(
   //: a socket**, and the second one silently replaces the first in `socket`.
   let connecting = false;
   let retryTimer: number | null = null;
-  let unlistenEndpoint: (() => void) | null = null;
-  let nextRequestId = 0;
-  const waiting = new Map<string, (result: CoreResult) => void>();
-
-  /** Fails everything in flight. **A dropped connection must not leave a promise hanging.** */
-  const abandonPending = (reason: string) => {
-    for (const [id, resolve] of waiting) {
-      resolve({ kind: "result", corrId: id, ok: false, payload: {}, error: reason });
-    }
-    waiting.clear();
-  };
+  let endpointSubscription: Disposable | null = null;
+  const pending = new PendingRequests();
 
   const setConnected = (value: boolean) => handlers.onConnectedChange?.(value);
 
@@ -110,15 +86,10 @@ export function connectToCore(
       return;
     }
     if (message.kind === "result") {
-      // The answer to something the Stage asked for (ADR-028).
-      const pending = waiting.get(message.corrId);
-      if (!pending) {
-        // Nobody is waiting. **Normal after a reconnect** (the caller was already
-        // rejected with `disconnected`), so this is not worth reporting
-        return;
-      }
-      waiting.delete(message.corrId);
-      pending(message);
+      // The answer to something the Stage asked for (ADR-028). Nobody waiting is
+      // **normal after a reconnect** (the caller was already rejected), so the return
+      // value is deliberately not checked here.
+      pending.settle(message);
       return;
     }
 
@@ -153,9 +124,9 @@ export function connectToCore(
     connecting = true;
     let endpoint: CoreEndpoint | null;
     try {
-      endpoint = await invoke<CoreEndpoint | null>(CMD_CORE_ENDPOINT);
+      endpoint = await shell.coreEndpoint();
     } catch {
-      // **Shell can refuse too**, and a rejected `invoke` here would otherwise be an
+      // **Shell can refuse too**, and a rejected request here would otherwise be an
       // unhandled rejection that also ends the retry chain: the window would sit
       // disconnected with nothing left to wake it.
       connecting = false;
@@ -203,26 +174,35 @@ export function connectToCore(
       if (socket === ws) {
         socket = null;
       }
-      abandonPending("disconnected");
+      pending.abandon("disconnected");
       setConnected(false);
       scheduleRetry();
     });
     ws.addEventListener("error", () => ws.close());
   };
 
-  void getCurrentWebviewWindow()
-    .listen(EVENT_CORE_ENDPOINT, () => {
+  void shell
+    .onCoreEndpointChanged(() => {
       // The port changed (Core restarted). Discard the current connection and reconnect.
       socket?.close();
       socket = null;
       void openSocket();
     })
-    .then((unlisten) => {
+    .then((subscription) => {
+      // **`close()` may already have run.** Subscribing is asynchronous, so a connection
+      // closed while this was in flight would otherwise keep a live listener for a
+      // connection nobody is using any more.
       if (closed) {
-        unlisten();
+        subscription.dispose();
       } else {
-        unlistenEndpoint = unlisten;
+        endpointSubscription = subscription;
       }
+    })
+    .catch((error: unknown) => {
+      // The socket's own retry path remains usable without this listener, but losing the
+      // restart nudge must stay observable instead of becoming an unhandled rejection.
+      // biome-ignore lint/suspicious/noConsole: Stage has no shared telemetry sink yet.
+      console.error("Failed to subscribe to Core endpoint changes", error);
     });
 
   void openSocket();
@@ -233,8 +213,8 @@ export function connectToCore(
       if (retryTimer !== null) {
         window.clearTimeout(retryTimer);
       }
-      unlistenEndpoint?.();
-      abandonPending("closed");
+      endpointSubscription?.dispose();
+      pending.abandon("closed");
       socket?.close();
       socket = null;
     },
@@ -244,25 +224,16 @@ export function connectToCore(
       if (!live || live.readyState !== WebSocket.OPEN) {
         return Promise.reject(new Error("not_connected"));
       }
-      const id = `s${nextRequestId++}`;
-      return new Promise((resolve, reject) => {
-        const timer = window.setTimeout(() => {
-          waiting.delete(id);
-          reject(new Error("timeout"));
-        }, REQUEST_TIMEOUT_MS);
-
-        waiting.set(id, (result) => {
-          window.clearTimeout(timer);
-          // **Refusal rejects.** Resolving would let a caller that forgets to check `ok`
-          // report success for a change Core declined to make
-          if (result.ok) {
-            resolve(result.payload);
-          } else {
-            reject(new Error(result.error ?? "refused"));
-          }
-        });
+      const { id, answered } = pending.open();
+      try {
         live.send(requestMessage(id, method, payload));
-      });
+      } catch (error: unknown) {
+        // **The request never left, so nothing will ever answer it.** Settling it here
+        // rather than letting it time out keeps the failure attached to the cause, and
+        // stops the pending timer rejecting a promise the caller never received.
+        pending.fail(id, error instanceof Error ? error.message : "send_failed");
+      }
+      return answered;
     },
   };
 }

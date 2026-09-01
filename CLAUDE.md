@@ -96,10 +96,10 @@ Lumi/
 
 **必要なもの**: Rust（MSVC ツールチェイン）/ Node 24+ / pnpm 11 / uv。Python 3.12 は uv が取得する。
 
-**静的検査**（[authority-matrix.md](docs/contracts/authority-matrix.md) の22項目）— **13項目が実装済み**
+**静的検査**（[authority-matrix.md](docs/contracts/authority-matrix.md) の22項目）— **14項目が実装済み**
 （#1 #2 #3 #7 #8 #9 #11 #12 #15 #20 #21 #22 → `core/tests/test_kernel_boundaries.py` /
-#16 → `core/tests/test_audio_vad.py`）。
-残り9項目は未実装。#10 は Phase 3 と同時。#20〜22 は [ADR-045](docs/decisions/ADR-045-core-module-layering.md) で追加された。
+項目16 → `core/tests/test_audio_vad.py` / **#4 → `stage/src/platform/boundaries.test.ts`**）。
+残り8項目は未実装。#10 は Phase 3 と同時。#20〜22 は [ADR-045](docs/decisions/ADR-045-core-module-layering.md) で追加された。
 
 ## 進め方の原則
 

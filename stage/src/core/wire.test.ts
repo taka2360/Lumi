@@ -19,7 +19,9 @@ import { describe, expect, it } from "vitest";
 
 import { EMOTIONS } from "../character/expression";
 import { VISEMES } from "../character/lipsync";
+import { PANEL_KINDS } from "../platform/PlatformShell";
 import {
+  CMD_CORE_ENDPOINT,
   CMD_DRAG_START,
   CMD_OPEN_CREDITS,
   CMD_OPEN_HELP,
@@ -29,9 +31,10 @@ import {
   CMD_SCALE,
   CMD_SET_HIT_REGION,
   CMD_SET_LOCALE,
+  EVENT_CORE_ENDPOINT,
   EVENT_HOVER_STATE,
 } from "../platform/tauri";
-import { CMD_CORE_ENDPOINT, EVENT_CORE_ENDPOINT } from "./connection";
+
 import {
   CHARACTER_MODEL_REASONS,
   CHOICE_INDIVIDUALLY,
@@ -61,7 +64,6 @@ import {
   METHOD_SPEECH_ENDED,
   METHOD_SPEECH_STARTED,
   METHOD_USER_SAID,
-  PANEL_KINDS,
 } from "./methods";
 import {
   BOOT_PHASES,
