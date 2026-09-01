@@ -1,234 +1,265 @@
 /**
- * Reading the import graph out of the source tree. **For the boundary tests.**
+ * The Stage's module graph, read out of the TypeScript program. **For the boundary tests.**
  *
- * Several rules in `docs/` are about what a file is allowed to *reach*, not about what it
- * does — `credits` and `help` must not reach Core, and only `platform/` may reach Tauri.
- * Those are checked by walking the sources, so the walking itself lives in one place.
+ * Several rules in `docs/` are about what a file may *reach* rather than what it does:
+ * `credits` and `help` must not reach Core, only `platform/tauri.ts` may reach Tauri,
+ * `platform/` must not reach `core/`, and nothing in the Stage may name `os.*`. All of
+ * them are decided by reading the sources, so the reading lives here in one place.
  *
- * **Matching specifiers, not raw text.** A substring search would trip over the string
- * `"@tauri-apps/api"` in the credits data, which is a package *name being displayed*
- * rather than an import.
+ * **The reading is TypeScript's, not ours.** An earlier version matched the source text
+ * with regular expressions and grew one special case per review round — dynamic
+ * `import()`, `export * from`, `import("./x").OsCommand`, directory `index.tsx`, and a
+ * comment stripper that cut `const help = ["https://…"]` in half and hid the rest of the
+ * line. Each of those is a question a parser has already answered, so the parser answers
+ * them here: the project is loaded through the TypeScript API and every fact below is
+ * read off the syntax tree.
+ *
+ * Two consequences are worth naming, because they are the whole reason for the change:
+ *
+ * - `SourceFile.imports` is TypeScript's own list of module specifiers. Static imports,
+ *   side-effect imports, `export … from`, `export type * from`, `import = require`,
+ *   literal `import()`, and the `import("…")` inside an inline import type are all in it.
+ *   A spelling we have not thought of arrives with the compiler, not with a regex.
+ * - Identifiers and string literals are nodes. A comment can never be mistaken for
+ *   either, and a `//` inside a string can never swallow the rest of a line.
+ *
+ * ## What this guarantees, and what it does not
+ *
+ * The graph is the **import** graph, which is what `docs/architecture/ui.md` states the
+ * boundaries over. It is not a model of the bundler and does not try to be one.
+ *
+ * Rather than leave the difference as a silent blind spot, the ways a module edge could
+ * exist without being followable are refused instead of modelled — see
+ * {@link StageModule.unfollowable} and {@link StageModule.unresolved}. So the graph is
+ * either complete or the boundary test fails. It never quietly inspects less than it claims.
  */
 
-import { readdirSync, readFileSync } from "node:fs";
-import { dirname, join, resolve, sep } from "node:path";
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import {
+  isCallExpression,
+  isIdentifier,
+  isNewExpression,
+  isNoSubstitutionTemplateLiteral,
+  isStringLiteral,
+  isTemplateHead,
+  isTemplateMiddleOrTail,
+  type Node,
+  type SourceFile,
+  SyntaxKind,
+} from "typescript/unstable/ast";
+import { API } from "typescript/unstable/sync";
 
-/** The `src` directory, wherever this test happens to run from. */
-export const SRC = resolve(__dirname, "..");
+/** Absolute paths, always with forward slashes: the TypeScript API speaks that way. */
+function toPosix(path: string): string {
+  return path.replaceAll("\\", "/");
+}
 
-/** Source with comments stripped, so a rule *discussing* a construct is not read as one. */
-export function withoutComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, "").replace(/\/\/[^\n]*/g, "");
+/** The `stage` package root, wherever this test happens to run from. */
+export const STAGE_ROOT = toPosix(resolve(__dirname, "../.."));
+
+/** The `src` directory of that root. */
+export const SRC = `${STAGE_ROOT}/src`;
+
+/** One production module, and everything the boundary rules ask about it. */
+export interface StageModule {
+  /** Absolute path, forward slashes. */
+  readonly file: string;
+  /** Path below `src`, e.g. `/platform/tauri.ts`. For readable assertion messages. */
+  readonly where: string;
+  /** Every literal module specifier, as written. */
+  readonly specifiers: readonly string[];
+  /** The specifiers that resolved to another module of this project. */
+  readonly dependencies: readonly string[];
+  /**
+   * Relative specifiers that resolved to neither a module nor a file on disk.
+   *
+   * **A blind spot in a boundary check is worse than no check**, so these are a failure
+   * rather than a shrug: an unresolved specifier means the walk stopped early, and every
+   * rule downstream of that module passed by never having looked.
+   */
+  readonly unresolved: readonly string[];
+  /**
+   * Constructs that create a dependency this walk cannot follow, described for a message.
+   *
+   * A worker entry point — `new Worker(new URL("./w.ts", import.meta.url))` — and a
+   * computed `import(name)` both reach a module without naming it where the import graph
+   * can see it. The Stage has neither, and the boundaries are documented over the import
+   * graph, so rather than grow a bundler resolver for a case that does not exist, these
+   * are refused. Introducing one is then a deliberate decision that has to widen this
+   * walk and the documented guarantee together, instead of silently punching a hole
+   * through the boundary the walk was built to hold.
+   */
+  readonly unfollowable: readonly string[];
+  /** Every identifier written in the source. Not comments, not strings. */
+  readonly identifiers: readonly string[];
+  /** The text of every string and template literal. Not comments. */
+  readonly strings: readonly string[];
+}
+
+/** The literal text of a module specifier node, or `null` if it is computed. */
+function literalText(node: Node | undefined): string | null {
+  if (node === undefined) {
+    return null;
+  }
+  return isStringLiteral(node) || isNoSubstitutionTemplateLiteral(node) ? node.text : null;
 }
 
 /**
- * Literal module specifiers from static imports/exports and dynamic `import()` calls.
+ * Resolves a relative specifier against the modules the project actually contains.
  *
- * Computed dynamic imports cannot be resolved by this source-tree walk, but a string or
- * no-substitution template literal is a concrete dependency and must not bypass a boundary.
+ * The candidates are the bundler's: the path itself, `.ts`/`.tsx`, and a directory index
+ * in either spelling. Existence is decided by the TypeScript program rather than by
+ * probing the filesystem, so this agrees with what the compiler resolved.
  */
-export function extractModuleSpecifiers(text: string): string[] {
-  const found: Array<{ index: number; specifier: string }> = [];
-  const addMatches = (pattern: RegExp, specifierGroup: number): void => {
-    for (const match of text.matchAll(pattern)) {
-      const specifier = match[specifierGroup];
-      if (specifier !== undefined) {
-        found.push({ index: match.index, specifier });
+function resolveRelative(fromFile: string, specifier: string, modules: Set<string>): string | null {
+  const base = toPosix(resolve(dirname(fromFile), specifier));
+  const candidates = [base, `${base}.ts`, `${base}.tsx`, `${base}/index.ts`, `${base}/index.tsx`];
+  return candidates.find((candidate) => modules.has(candidate)) ?? null;
+}
+
+/** Whether a relative specifier points at a non-module asset: `./x.css`, `./x.txt?raw`. */
+function isAsset(fromFile: string, specifier: string): boolean {
+  return existsSync(resolve(dirname(fromFile), specifier.replace(/[?#].*$/, "")));
+}
+
+/** Collects, in one pass, everything the rules ask about a single module's syntax. */
+function readFacts(source: SourceFile): {
+  identifiers: string[];
+  strings: string[];
+  unfollowable: string[];
+} {
+  const identifiers: string[] = [];
+  const strings: string[] = [];
+  const unfollowable: string[] = [];
+
+  const visit = (node: Node): void => {
+    if (isIdentifier(node)) {
+      identifiers.push(node.text);
+    } else if (
+      isStringLiteral(node) ||
+      isNoSubstitutionTemplateLiteral(node) ||
+      isTemplateHead(node) ||
+      isTemplateMiddleOrTail(node)
+    ) {
+      strings.push(node.text);
+    } else if (isNewExpression(node) && isIdentifier(node.expression)) {
+      const constructed = node.expression.text;
+      if (constructed === "Worker" || constructed === "SharedWorker") {
+        unfollowable.push(`new ${constructed}(…)`);
       }
+    } else if (
+      isCallExpression(node) &&
+      node.expression.kind === SyntaxKind.ImportKeyword &&
+      literalText(node.arguments[0]) === null
+    ) {
+      unfollowable.push("import(<computed>)");
     }
+    node.forEachChild(visit);
   };
+  source.forEachChild(visit);
 
-  addMatches(/(?:import|export)\s+(?:type\s+)?(?:[^"'`;]*?\s+from\s+)?["']([^"']+)["']/g, 1);
-  addMatches(/\bimport\s*\(\s*(["'])([^"']+)\1\s*(?:,|\))/g, 2);
-
-  for (const match of text.matchAll(/\bimport\s*\(\s*`([^`]*)`\s*(?:,|\))/g)) {
-    const specifier = match[1];
-    if (specifier !== undefined && !specifier.includes("${")) {
-      found.push({ index: match.index, specifier });
-    }
-  }
-
-  return found.sort((left, right) => left.index - right.index).map(({ specifier }) => specifier);
+  return { identifiers, strings, unfollowable };
 }
 
 /**
- * Names introduced or forwarded by static imports and exports.
+ * Reads every production module of a project below `<root>/src`.
  *
- * Both sides of an alias are returned. A boundary must still see `OsCommand` in
- * `import type { OsCommand as Command } from "./protocol"`, even though the local name
- * is harmless-looking. This intentionally parses only the binding clause; module paths
- * remain the responsibility of `extractModuleSpecifiers` above.
+ * **Tests are left out deliberately.** A boundary test naturally mentions the very
+ * imports it forbids, and `src/test/` exists to be imported by tests.
  *
- * **A bare `export * from` names nothing, so nothing is returned for it.** The forwarded
- * names live in the other module, and are found there instead — by this function if that
- * module re-imports them, by `extractExportedDeclarations` if it declares them. That only
- * holds while the wildcard resolves inside the tree, which is what `extractWildcardReExports`
- * exists to let a caller insist on.
+ * Takes a `root` so the fixtures in `imports.test.ts` can hold this reader to a tree laid
+ * out on purpose, rather than only to the tree it happens to run in.
  */
-export function extractModuleBindings(text: string): string[] {
-  const found: string[] = [];
-  const addBinding = (binding: string): void => {
-    const withoutType = binding.trim().replace(/^type\s+/, "");
-    const names = withoutType.split(/\s+as\s+/);
-    for (const name of names) {
-      if (/^[A-Za-z_$][\w$]*$/.test(name)) {
-        found.push(name);
-      }
-    }
-  };
-
-  const declarations = withoutComments(text).matchAll(
-    /\b(?:import|export)\s+(?:type\s+)?([^"'`;]*?)\s+from\s+["'][^"']+["']/g,
-  );
-  for (const declaration of declarations) {
-    const clause = declaration[1];
-    if (clause === undefined) {
-      continue;
+export function readModules(root: string): Map<string, StageModule> {
+  const projectRoot = toPosix(root);
+  const src = `${projectRoot}/src`;
+  const api = new API({ cwd: projectRoot });
+  try {
+    const snapshot = api.updateSnapshot({ openProjects: [`${projectRoot}/tsconfig.json`] });
+    const project = snapshot.getProjects()[0];
+    if (project === undefined) {
+      throw new Error(`No TypeScript project at ${projectRoot}/tsconfig.json`);
     }
 
-    const named = clause.match(/\{([\s\S]*?)\}/);
-    if (named?.[1] !== undefined) {
-      for (const binding of named[1].split(",")) {
-        addBinding(binding);
+    const sources = new Map<string, SourceFile>();
+    for (const name of project.program.getSourceFileNames()) {
+      const file = toPosix(name);
+      const isProduction =
+        file.startsWith(`${src}/`) &&
+        /\.tsx?$/.test(file) &&
+        !file.endsWith(".d.ts") &&
+        !/\.test\.tsx?$/.test(file) &&
+        !file.startsWith(`${src}/test/`);
+      const source = isProduction ? project.program.getSourceFile(name) : undefined;
+      if (source !== undefined) {
+        sources.set(file, source);
       }
     }
 
-    const outsideNamed = clause.replace(/\{[\s\S]*?\}/, "");
-    for (const binding of outsideNamed.split(",")) {
-      const namespace = binding.trim().match(/^\*\s+as\s+([A-Za-z_$][\w$]*)$/);
-      if (namespace?.[1] !== undefined) {
-        found.push(namespace[1]);
-      } else {
-        addBinding(binding);
+    const known = new Set(sources.keys());
+    const modules = new Map<string, StageModule>();
+    for (const [file, source] of sources) {
+      const specifiers: string[] = [];
+      const dependencies: string[] = [];
+      const unresolved: string[] = [];
+      for (const node of source.imports) {
+        const specifier = literalText(node);
+        if (specifier === null) {
+          continue;
+        }
+        specifiers.push(specifier);
+        if (!specifier.startsWith(".")) {
+          continue;
+        }
+        const resolved = resolveRelative(file, specifier, known);
+        if (resolved !== null) {
+          dependencies.push(resolved);
+        } else if (!isAsset(file, specifier)) {
+          unresolved.push(specifier);
+        }
       }
+      modules.set(file, {
+        file,
+        where: file.slice(src.length),
+        specifiers,
+        dependencies,
+        unresolved,
+        ...readFacts(source),
+      });
     }
+    return modules;
+  } finally {
+    api.close();
   }
-
-  return found;
 }
 
-/**
- * Names a module declares and exports itself, as opposed to forwarding from elsewhere.
- *
- * Needed because a re-export can hide a name: `export * from "./protocol"` puts every one
- * of that module's exports onto this module's surface without writing any of them down.
- * The name is written down where it is *declared*, so that is where a boundary sees it.
- */
-export function extractExportedDeclarations(text: string): string[] {
-  const found: string[] = [];
-  const declarations = withoutComments(text).matchAll(
-    /\bexport\s+(?:declare\s+)?(?:default\s+)?(?:abstract\s+)?(?:async\s+)?(?:const\s+enum|class|function\s*\*?|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)/g,
-  );
-  for (const declaration of declarations) {
-    const name = declaration[1];
-    if (name !== undefined) {
-      found.push(name);
-    }
-  }
-  return found;
+let stageModules: Map<string, StageModule> | null = null;
+
+/** The Stage's own modules. Read once per test worker — loading the project is not free. */
+export function readStageModules(): Map<string, StageModule> {
+  stageModules ??= readModules(STAGE_ROOT);
+  return stageModules;
 }
 
-/**
- * Specifiers of the re-exports that name nothing: `export * from "./x"`, `export type * from "./x"`.
- *
- * `export * as Name from "./x"` is not one of them — it does name what it introduces, and
- * `extractModuleBindings` returns that name.
- */
-export function extractWildcardReExports(text: string): string[] {
-  const found: string[] = [];
-  const reExports = withoutComments(text).matchAll(
-    /\bexport\s+(?:type\s+)?\*\s+from\s+["']([^"']+)["']/g,
-  );
-  for (const reExport of reExports) {
-    const specifier = reExport[1];
-    if (specifier !== undefined) {
-      found.push(specifier);
-    }
-  }
-  return found;
-}
-
-/**
- * Resolves a relative specifier the way the bundler does, trying each extension.
- *
- * **Directory indexes are included, `.tsx` as well as `.ts`.** A specifier that resolves
- * to nothing is treated as a package and the walk stops there, so a candidate this misses
- * is not an error — it is a boundary check that quietly inspects less than it claims.
- */
-export function resolveModule(fromFile: string, specifier: string): string | null {
-  const base = resolve(dirname(fromFile), specifier);
-  for (const candidate of [
-    base,
-    `${base}.ts`,
-    `${base}.tsx`,
-    join(base, "index.ts"),
-    join(base, "index.tsx"),
-  ]) {
-    try {
-      readFileSync(candidate, "utf8");
-      return candidate;
-    } catch {
-      // Not this one. A specifier that resolves to nothing is a package, not our source.
-    }
-  }
-  return null;
-}
-
-/** Every source module reachable from `entry`, following resolved relative imports. */
-export function reachableFrom(entry: string): Map<string, string[]> {
-  const seen = new Map<string, string[]>();
-  const queue = [entry];
+/** Every module reachable from `entry`, `entry` included, following resolved imports. */
+export function reachableFrom(
+  modules: ReadonlyMap<string, StageModule>,
+  entry: string,
+): StageModule[] {
+  const reached = new Map<string, StageModule>();
+  const queue = [toPosix(entry)];
   while (queue.length > 0) {
     const file = queue.pop();
-    if (file === undefined || seen.has(file)) {
+    if (file === undefined || reached.has(file)) {
       continue;
     }
-    let text: string;
-    try {
-      text = readFileSync(file, "utf8");
-    } catch {
+    const module = modules.get(file);
+    if (module === undefined) {
       continue;
     }
-    const specifiers = extractModuleSpecifiers(text);
-    seen.set(file, specifiers);
-    for (const specifier of specifiers) {
-      if (!specifier.startsWith(".")) {
-        continue;
-      }
-      const next = resolveModule(file, specifier);
-      if (next !== null) {
-        queue.push(next);
-      }
-    }
+    reached.set(file, module);
+    queue.push(...module.dependencies);
   }
-  return seen;
-}
-
-/** A path relative to `src`, with forward slashes, for readable assertion messages. */
-export function relativeToSrc(file: string): string {
-  return file.slice(SRC.length).split(sep).join("/");
-}
-
-/**
- * Every production source file under `src`.
- *
- * **Tests are excluded deliberately.** A boundary test naturally mentions the very
- * imports it forbids, and `src/test/` exists to be imported by tests.
- */
-export function productionSources(): Map<string, string> {
-  const found = new Map<string, string>();
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        if (entry.name !== "test") {
-          walk(full);
-        }
-      } else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) {
-        found.set(full, readFileSync(full, "utf8"));
-      }
-    }
-  };
-  walk(SRC);
-  return found;
+  return [...reached.values()];
 }

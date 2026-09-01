@@ -1,43 +1,83 @@
 /**
- * The boundaries `stage/` is held to. **Static checks over the source tree.**
+ * The boundaries `stage/` is held to. **Static checks over the module graph.**
  *
  * | # | Rule | Where it comes from |
  * |---|---|---|
- * | 1 | Only `platform/tauri.ts` imports Tauri | docs/interfaces/shell.md |
- * | 2 | `stage/` never references `os.*` | authority-matrix.md check #4, ui.md §7 test #4 |
- * | 3 | `platform/` does not import `core/` | ui.md §6 |
+ * | 1 | Only `platform/tauri.ts` imports Tauri | docs/interfaces/shell.md, ui.md §6 |
+ * | 2 | `platform/` does not reach `core/` | ui.md §6 |
+ * | 3 | `stage/` never names `os.*` | authority-matrix.md check #4, ui.md §7 test #4 |
  *
- * Both were previously only asserted for the credits window (`credits/content.test.ts`),
+ * 1 and 3 were previously asserted only for the credits window (`credits/content.test.ts`),
  * which is the one place they happened to be written down — so the rest of the tree was
  * free to drift, and `core/connection.ts` had in fact done so.
+ *
+ * The graph itself, and the limits of what it can see, are in `../test/imports`.
  */
 
 import { describe, expect, it } from "vitest";
 
-import {
-  extractExportedDeclarations,
-  extractModuleBindings,
-  extractModuleSpecifiers,
-  extractWildcardReExports,
-  productionSources,
-  reachableFrom,
-  relativeToSrc,
-  resolveModule,
-  withoutComments,
-} from "../test/imports";
+import { reachableFrom, readStageModules } from "../test/imports";
+
+const modules = readStageModules();
+
+/**
+ * **Guards the guard.** Every rule below is of the form "no module does X", which a walk
+ * that found nothing would satisfy perfectly. So first: the walk found the tree.
+ */
+describe("the walk sees the tree", () => {
+  it("reads the production modules", () => {
+    expect(modules.size).toBeGreaterThan(20);
+    expect([...modules.values()].map((module) => module.where)).toContain("/platform/tauri.ts");
+  });
+
+  it("resolves every relative import", () => {
+    // A specifier that resolves to nothing looks exactly like a package: the walk stops,
+    // and every rule downstream of that module passes by never having looked. Directory
+    // indexes are the easy way to lose one, so an unresolved relative specifier is a
+    // failure rather than a silently narrowed check.
+    const dangling = [...modules.values()].flatMap((module) =>
+      module.unresolved.map((specifier) => `${module.where} -> ${specifier}`),
+    );
+    expect(dangling).toEqual([]);
+  });
+
+  it("finds no dependency it cannot follow", () => {
+    // `new Worker(new URL("./w.ts", import.meta.url))` and a computed `import(name)` both
+    // reach a module the import graph cannot follow. The Stage has neither, and the
+    // boundaries are documented over the import graph — so these are refused outright
+    // rather than modelled with a home-grown bundler resolver. Adding one has to widen
+    // ../test/imports and the guarantee in docs/architecture/ui.md §6 together.
+    const opaque = [...modules.values()].flatMap((module) =>
+      module.unfollowable.map((what) => `${module.where}: ${what}`),
+    );
+    expect(opaque).toEqual([]);
+  });
+});
+
+describe("only platform/tauri.ts knows which shell is underneath", () => {
+  const tauriImporters = [...modules.values()]
+    .filter((module) => module.specifiers.some((specifier) => specifier.startsWith("@tauri-apps")))
+    .map((module) => module.where);
+
+  it("no other module imports Tauri", () => {
+    // **The Electron escape route is the point** (docs/interfaces/shell.md): `PlatformShell`
+    // is only worth having if replacing it is genuinely all that a port has to do.
+    expect(tauriImporters).toEqual(["/platform/tauri.ts"]);
+  });
+});
 
 describe("platform does not depend on Core", () => {
   it("reaches no core module", () => {
+    // Transitively. A `platform/` module that goes through a shared helper into `core/`
+    // depends on Core just as much as one that imports it directly.
     const offenders: string[] = [];
-    for (const [file] of productionSources()) {
-      const where = relativeToSrc(file);
-      if (!where.startsWith("/platform/")) {
+    for (const module of modules.values()) {
+      if (!module.where.startsWith("/platform/")) {
         continue;
       }
-      for (const target of reachableFrom(file).keys()) {
-        const dependency = relativeToSrc(target);
-        if (dependency.startsWith("/core/")) {
-          offenders.push(`${where} -> ${dependency}`);
+      for (const reached of reachableFrom(modules, module.file)) {
+        if (reached.where.startsWith("/core/")) {
+          offenders.push(`${module.where} -> ${reached.where}`);
         }
       }
     }
@@ -45,98 +85,48 @@ describe("platform does not depend on Core", () => {
   });
 });
 
-describe("only platform/tauri.ts knows which shell is underneath", () => {
-  it("no other module imports Tauri", () => {
-    const offenders: string[] = [];
-    for (const [file, text] of productionSources()) {
-      const where = relativeToSrc(file);
-      const importsTauri = extractModuleSpecifiers(text).some((specifier) =>
-        specifier.startsWith("@tauri-apps"),
-      );
-      if (importsTauri && where !== "/platform/tauri.ts") {
-        offenders.push(where);
-      }
-    }
-    // **The Electron escape route is the point** (docs/interfaces/shell.md): `PlatformShell`
-    // is only worth having if replacing it is genuinely all that a port has to do.
-    expect(offenders).toEqual([]);
-  });
-
-  it("finds the one file that is allowed to", () => {
-    // Guards the guard: if the walk ever stopped seeing sources, the test above would
-    // pass by finding nothing at all.
-    const tauriImporters = [...productionSources()]
-      .filter(([, text]) =>
-        extractModuleSpecifiers(text).some((specifier) => specifier.startsWith("@tauri-apps")),
-      )
-      .map(([file]) => relativeToSrc(file));
-    expect(tauriImporters).toContain("/platform/tauri.ts");
-  });
-});
-
 /**
  * **`os.*` is Core's channel to Shell, and the Stage is not on it** (Invariant 1).
  *
- * Checked several ways on purpose. The rule as written in `authority-matrix.md` is about
- * the *types*, but those live in Core and Rust, so an import check alone would pass today
- * no matter what the Stage did — green while guarding nothing. What a leak would actually
- * look like here is a method name on the wire, so the names are checked too. And a name
- * can arrive without being imported — declared here, or forwarded by a wildcard re-export
- * — so declarations are checked, and wildcards are held to modules this walk can read.
- * Finally the bare name is refused anywhere in the source, because type syntax can reach
- * a type without ever naming it in an import clause.
+ * Checked two ways, because a leak has two shapes. The rule as written in
+ * `authority-matrix.md` is about the *types*, which live in Core and Rust — so an import
+ * check alone would pass no matter what the Stage did. What a leak actually looks like
+ * here is either an `Os*` name in the source or an `os.*` method name on the wire.
+ *
+ * The name check is over *identifiers*, not over the text, so it does not care how the
+ * name was reached: a named import, an alias, a wildcard re-export resolved elsewhere in
+ * the tree, `import("../protocol").OsCommand`, `Protocol.OsCommand`, or a local
+ * declaration all put the same identifier in the syntax tree. Comments and strings are
+ * other kinds of node, so a rule *discussing* `os.*` — as this one does — is not a
+ * violation of it.
  */
 describe("the Stage cannot reach os.*", () => {
-  it("imports, re-exports or declares no os.* type", () => {
-    for (const [file, text] of productionSources()) {
-      const names = [...extractModuleBindings(text), ...extractExportedDeclarations(text)];
-      for (const name of names) {
-        expect(name, `${relativeToSrc(file)} names an os.* type`).not.toMatch(/^Os[A-Z]/);
-      }
-      for (const specifier of extractModuleSpecifiers(text)) {
-        expect(specifier, `${relativeToSrc(file)} imports an os.* module`).not.toMatch(
-          /(^|\/)os\./,
-        );
-      }
-    }
-  });
-
-  it("mentions no os.* type by any syntax", () => {
-    // The binding parser above reads *declarations*, so it sees a name only where a name is
-    // written in an import or export clause. TypeScript can reference a type without one:
-    // `type Command = import("../protocol").OsCommand`, or `Protocol.OsCommand` after a
-    // namespace import. Both reach the prohibited type while the clause parser stays green.
-    // Rather than teach that parser type syntax, the name itself is refused anywhere in the
-    // source — an `Os*` identifier in the Stage is a violation whatever spells it.
-    for (const [file, text] of productionSources()) {
-      expect(withoutComments(text), `${relativeToSrc(file)} names an os.* type`).not.toMatch(
-        /\bOs[A-Z]/,
-      );
-    }
-  });
-
-  it("forwards nothing it cannot name", () => {
-    // `export * from "./x"` puts names on a module's surface without writing them down, so
-    // the check above can only see them where they are written: in `./x`. That holds as long
-    // as `./x` is a file this walk reads. A wildcard out to a package is a blind spot, and a
-    // blind spot in a boundary check is worse than no check — so it is refused outright.
-    for (const [file, text] of productionSources()) {
-      for (const specifier of extractWildcardReExports(text)) {
-        expect(
-          resolveModule(file, specifier),
-          `${relativeToSrc(file)} re-exports all of "${specifier}", which this walk cannot read`,
-        ).not.toBeNull();
-      }
-    }
+  it("names no os.* type", () => {
+    const offenders = [...modules.values()].flatMap((module) =>
+      module.identifiers
+        .filter((name) => /^Os[A-Z]/.test(name))
+        .map((name) => `${module.where}: ${name}`),
+    );
+    expect(offenders).toEqual([]);
   });
 
   it("names no os.* method", () => {
     // `invoke("os.foo")`, a method constant, or anything else that would put the name on
-    // the wire. Comments are stripped first: they discuss `os.*` legitimately and often.
-    for (const [file, text] of productionSources()) {
-      expect(withoutComments(text), `${relativeToSrc(file)} names an os.* method`).not.toMatch(
-        /["'`]os\.[a-z_]+/i,
-      );
-    }
+    // the wire.
+    const offenders = [...modules.values()].flatMap((module) =>
+      module.strings
+        .filter((text) => /^os\.[a-z_]/i.test(text))
+        .map((text) => `${module.where}: "${text}"`),
+    );
+    expect(offenders).toEqual([]);
+  });
+
+  it("imports no os.* module", () => {
+    const offenders = [...modules.values()].flatMap((module) =>
+      module.specifiers
+        .filter((specifier) => /(^|\/)os\./.test(specifier))
+        .map((specifier) => `${module.where}: ${specifier}`),
+    );
+    expect(offenders).toEqual([]);
   });
 });
