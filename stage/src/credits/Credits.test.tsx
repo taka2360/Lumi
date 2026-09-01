@@ -61,9 +61,7 @@ function translatedCreditKeys(): string[] {
   return Object.keys(ja).filter(
     (key) =>
       key.startsWith("credits.") &&
-      ja[key as keyof typeof ja] !== en[key as keyof typeof en] &&
-      // Not shown on this screen unless something opts into it.
-      !key.startsWith("credits.ecosystem."),
+      ja[key as keyof typeof ja] !== en[key as keyof typeof en],
   );
 }
 
