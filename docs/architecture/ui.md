@@ -424,7 +424,13 @@ stage/src/
 ├── platform/       `PlatformShell` と Tauri 実装（`shell.*`）
 │   └── boundaries.test.ts  **`platform/tauri.ts` 以外が Tauri を import しない**ことの静的検査
 ├── character/      VRM の読み込みと描画、表情・リップシンク・アイドル
-├── speech/ audio/ actions/ setup/ settings/ memory/ inspector/  各画面
+├── speech/ audio/ actions/ settings/ memory/ inspector/  各画面
+├── setup/          初回セットアップ（ADR-034）
+│   ├── SetupPanel.tsx  **どの画面を出すかを決めるだけ**（ADR-034 が名指ししている）
+│   ├── screens/        画面ごとに1ファイル。同時に出るのは常に1つ
+│   ├── status.ts       どの状態にどの文が付くか（**純粋**）
+│   ├── format.ts       サイズの表記（**純粋**）
+│   └── useOllamaState.ts  Ollama の状態と再チェックのタイマー
 ├── panel/          3つのパネル窓の共通枠と entry（ADR-042）
 ├── credits/ help/  **Core に繋がない2枚**（§1）
 └── i18n/           翻訳カタログとロケール解決
