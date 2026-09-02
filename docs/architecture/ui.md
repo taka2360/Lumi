@@ -424,13 +424,19 @@ stage/src/
 ├── platform/       `PlatformShell` と Tauri 実装（`shell.*`）
 │   └── boundaries.test.ts  **`platform/tauri.ts` 以外が Tauri を import しない**ことの静的検査
 ├── character/      VRM の読み込みと描画、表情・リップシンク・アイドル
-├── speech/ audio/ actions/ settings/ memory/ inspector/  各画面
+├── speech/ audio/ actions/ settings/ inspector/  各画面
 ├── setup/          初回セットアップ（ADR-034）
 │   ├── SetupPanel.tsx  **どの画面を出すかを決めるだけ**（ADR-034 が名指ししている）
 │   ├── screens/        画面ごとに1ファイル。同時に出るのは常に1つ
 │   ├── status.ts       どの状態にどの文が付くか（**純粋**）
 │   ├── format.ts       サイズの表記（**純粋**）
 │   └── useOllamaState.ts  Ollama の状態と再チェックのタイマー
+├── memory/         記憶ウィンドウ（§5b）
+│   ├── Memory.tsx        窓そのもの。全体に効く2操作と、空のときの出し分け
+│   ├── MemoryRow.tsx     1件の表示と操作（Invariant 7 の昇格はここ）
+│   ├── EraseDialog.tsx   全消去の確認。**何が消えるかを Core に聞いてから出す**
+│   ├── useMemorySearch.ts  検索・ページング。**書き換えず読み直す**
+│   └── useFocusTrap.ts   モーダルのキーボード操作（Phase 4a の権限プロンプトも同じ問題）
 ├── panel/          3つのパネル窓の共通枠と entry（ADR-042）
 ├── credits/ help/  **Core に繋がない2枚**（§1）
 └── i18n/           翻訳カタログとロケール解決

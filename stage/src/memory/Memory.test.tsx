@@ -4,7 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useStageStore } from "../core/store";
 import { LocaleProvider } from "../i18n/provider";
-import { Memory, SEARCH_DEBOUNCE_MS } from "./Memory";
+import { Memory } from "./Memory";
+import { SEARCH_DEBOUNCE_MS } from "./useMemorySearch";
 
 vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
 
