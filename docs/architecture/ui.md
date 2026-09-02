@@ -446,6 +446,8 @@ stage/src/
 | `credits/` `help/` | その画面固有のもの | `core/` `platform/` `@tauri-apps` への import |
 | `i18n/messages.*.ts` | ユーザーに見える文言 | 製品名・モデル名・ライセンス全文（訳さない） |
 | 画面のデータ（`credits/content.ts` など） | **`MessageKey`** | 文そのもの |
+| `platform/` | Shell に触るもの全部 | **`core/*` への import。** 依存は一方向（`core/` → `platform/`）に保つ |
+| `core/payloads/read.ts` | 受信値を読む素材 | ドメインの知識。どの payload かを知ってよいのは各ドメインのファイル |
 
 **文ではなく鍵を置く。** `credits/content.ts` は以前、日本語の原文を持ち、
 `localize.ts` が**その原文を検索キーにして**英訳を引いていた。
@@ -457,8 +459,6 @@ stage/src/
 生成物も同じ規則に従う。`third-party.generated.json` は表示用の日本語ラベルではなく
 **`id`（`shell` / `core` / `stage` / `undeclared`）を持ち**、文言は
 `credits.ecosystem.*` にある（`scripts/generate-oss-notice.mjs`）。
-| `platform/` | Shell に触るもの全部 | **`core/*` への import。** 依存は一方向（`core/` → `platform/`）に保つ |
-| `core/payloads/read.ts` | 受信値を読む素材 | ドメインの知識。どの payload かを知ってよいのは各ドメインのファイル |
 
 **`@tauri-apps` を import してよいのは `platform/tauri.ts` だけ。**
 `core/connection.ts` が Core の接続先を得るために `invoke` と `listen` を直接呼んでおり、

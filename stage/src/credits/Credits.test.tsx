@@ -60,8 +60,7 @@ function render(locale: "ja" | "en"): string {
 function translatedCreditKeys(): string[] {
   return Object.keys(ja).filter(
     (key) =>
-      key.startsWith("credits.") &&
-      ja[key as keyof typeof ja] !== en[key as keyof typeof en],
+      key.startsWith("credits.") && ja[key as keyof typeof ja] !== en[key as keyof typeof en],
   );
 }
 
