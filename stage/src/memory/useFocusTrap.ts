@@ -11,7 +11,7 @@
  * reachable behind it.
  */
 
-import { type RefObject, useEffect } from "react";
+import { type RefObject, useEffect, useRef } from "react";
 
 export function useFocusTrap(
   active: boolean,
@@ -19,6 +19,15 @@ export function useFocusTrap(
   initial: RefObject<HTMLElement | null>,
   onEscape: () => void,
 ): void {
+  // **The trap is set up once per opening, not once per render.** Callers pass an inline
+  // arrow, so `onEscape` is a new function on every render of the window behind the
+  // dialog — and if the effect depended on it, each of those renders would tear the trap
+  // down (handing focus back to the opener) and build it again (moving focus to Cancel).
+  // Starting the erase re-renders the window; the keyboard must not jump back onto Cancel
+  // while the irreversible request it would dismiss is still in flight.
+  const latestEscape = useRef(onEscape);
+  latestEscape.current = onEscape;
+
   useEffect(() => {
     if (!active) {
       return;
@@ -29,7 +38,7 @@ export function useFocusTrap(
 
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
-        onEscape();
+        latestEscape.current();
         return;
       }
       if (event.key !== "Tab" || !container.current) {
@@ -59,5 +68,5 @@ export function useFocusTrap(
       // Back to whatever opened it, so the keyboard does not land at the top of the page.
       opener?.focus();
     };
-  }, [active, container, initial, onEscape]);
+  }, [active, container, initial]);
 }

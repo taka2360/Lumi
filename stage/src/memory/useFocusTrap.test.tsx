@@ -87,6 +87,30 @@ describe("useFocusTrap", () => {
     expect(document.activeElement?.id).not.toBe("cancel");
   });
 
+  it("stays put when the window behind it re-renders", () => {
+    mount(true);
+    document.querySelector<HTMLButtonElement>("#erase")?.focus();
+
+    // Callers pass an inline arrow, so every render of the window hands the hook a new
+    // one. Starting the erase is such a render — and the keyboard must not be pulled
+    // back onto Cancel while the request that click sent is still in flight.
+    act(() => root?.render(<Dialog active={true} onEscape={() => {}} />));
+
+    expect(document.activeElement?.id).toBe("erase");
+  });
+
+  it("calls the newest Escape handler, not the one it opened with", () => {
+    const stale = vi.fn();
+    const fresh = vi.fn();
+    mount(true, stale);
+
+    act(() => root?.render(<Dialog active={true} onEscape={fresh} />));
+    press("Escape");
+
+    expect(stale).not.toHaveBeenCalled();
+    expect(fresh).toHaveBeenCalledOnce();
+  });
+
   it("hands focus back to whatever opened it", () => {
     const opener = document.createElement("button");
     opener.id = "opener";
