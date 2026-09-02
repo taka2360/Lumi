@@ -42,20 +42,28 @@ describe("nothing to say", () => {
   it("a working setup produces no lines at all", () => {
     // **The panel is not drawn when everything is fine.** A status area that is always
     // present trains people to stop reading it.
-    const lines = statusLines({
-      boot: "ready",
-      tts: tts({ state: "installed", runtime: "ready" }),
-      llm: llm({ state: "detected", runtime: "ready" }),
-      stt: stt({ state: "installed", runtime: "ready" }),
-      embedding: { state: "installed", model: "harrier-oss-v1-270m", reason: null, progress: null },
-    });
+    const lines = statusLines(
+      {
+        boot: "ready",
+        tts: tts({ state: "installed", runtime: "ready" }),
+        llm: llm({ state: "detected", runtime: "ready" }),
+        stt: stt({ state: "installed", runtime: "ready" }),
+        embedding: {
+          state: "installed",
+          model: "harrier-oss-v1-270m",
+          reason: null,
+          progress: null,
+        },
+      },
+      "ja",
+    );
     expect(lines).toEqual([]);
   });
 
   it("says nothing while it still knows nothing", () => {
     // **`unknown` is "not checked yet."** Reporting it as a problem would flash a
     // complaint on every startup.
-    expect(statusLines(UNKNOWN_SETUP)).toEqual([]);
+    expect(statusLines(UNKNOWN_SETUP, "ja")).toEqual([]);
   });
 });
 
@@ -63,7 +71,7 @@ describe("TTS", () => {
   it("not set up is stated as a limitation, not an error", () => {
     // **Still `normal`, not `bad`** (ADR-034 changed the consequence, not the tone):
     // setup being unfinished is a state, and only an actual failure is worded as one.
-    const line = ttsStatus(tts({ state: "not_configured" }));
+    const line = ttsStatus(tts({ state: "not_configured" }), "ja");
     expect(line?.tone).toBe("normal");
     expect(line?.text).toContain("喋れません");
   });
@@ -73,13 +81,14 @@ describe("TTS", () => {
     // is installed while nothing speaks (docs/architecture/setup.md).
     const line = ttsStatus(
       tts({ state: "installed", runtime: "failed", engine_name: "AivisSpeech" }),
+      "ja",
     );
     expect(line?.tone).toBe("bad");
     expect(line?.text).toContain("入ってはいますが");
   });
 
   it("a failed fetch says what happened, not just that it failed", () => {
-    expect(ttsStatus(tts({ state: "failed", reason: "hash_mismatch" }))?.text).toBe(
+    expect(ttsStatus(tts({ state: "failed", reason: "hash_mismatch" }), "ja")?.text).toBe(
       "取得したファイルの内容が想定と違いました",
     );
   });
@@ -89,19 +98,19 @@ describe("LLM", () => {
   it("missing Ollama asks the user to install it themselves", () => {
     // **Lumi never fetches Ollama** (ADR-023), so this is the one message that asks
     // the user to go and do something.
-    const line = llmStatus(llm({ state: "not_configured" }));
+    const line = llmStatus(llm({ state: "not_configured" }), "ja");
     expect(line?.text).toContain("返事ができません");
     expect(line?.hint).toContain("ollama.com");
   });
 
   it("a missing model says Lumi can fetch it after consent", () => {
-    const line = llmStatus(llm({ state: "model_missing", model: "qwen3.5:9b" }));
+    const line = llmStatus(llm({ state: "model_missing", model: "qwen3.5:9b" }), "ja");
     expect(line?.text).toContain("Lumiのセットアップから取得できます");
     expect(line?.hint).toBeUndefined();
   });
 
   it("keeps a failed model download visible as a failure", () => {
-    const line = llmStatus(llm({ state: "model_failed", reason: "ollama_pull_unreachable" }));
+    const line = llmStatus(llm({ state: "model_failed", reason: "ollama_pull_unreachable" }), "ja");
     expect(line?.tone).toBe("bad");
     expect(line?.text).toContain("Ollamaへ接続できなくなりました");
   });
@@ -110,43 +119,43 @@ describe("LLM", () => {
     // "not installed" and "installed but not running" are indistinguishable over HTTP,
     // which is exactly why they must not share a sentence
     // (docs/architecture/setup.md §2b).
-    const stopped = llmStatus(llm({ state: "detected", runtime: "stopped" }));
+    const stopped = llmStatus(llm({ state: "detected", runtime: "stopped" }), "ja");
     expect(stopped?.text).toContain("起動していません");
     expect(stopped?.text).not.toContain("見つかりません");
     expect(stopped?.hint).toBeUndefined();
   });
 
   it("a working Ollama says nothing", () => {
-    expect(llmStatus(llm({ state: "detected", runtime: "ready" }))).toBeNull();
+    expect(llmStatus(llm({ state: "detected", runtime: "ready" }), "ja")).toBeNull();
   });
 
   it("no LLM is never coloured as a fault", () => {
     // **"Listens and says nothing" is a state Lumi is allowed to be in.**
     for (const state of ["not_configured", "model_missing"] as const) {
-      expect(llmStatus(llm({ state }))?.tone).toBe("normal");
+      expect(llmStatus(llm({ state }), "ja")?.tone).toBe("normal");
     }
   });
 });
 
 describe("STT", () => {
   it("not set up is stated as a limitation, not an error", () => {
-    const line = sttStatus(stt({ state: "not_configured" }));
+    const line = sttStatus(stt({ state: "not_configured" }), "ja");
     expect(line?.tone).toBe("normal");
     expect(line?.text).toContain("聞き取れません");
   });
 
   it("shows fetch progress", () => {
-    expect(sttStatus(stt({ state: "installing", progress: 0.42 }))?.text).toContain("42%");
+    expect(sttStatus(stt({ state: "installing", progress: 0.42 }), "ja")?.text).toContain("42%");
   });
 
   it("a failed fetch keeps the reason", () => {
-    const line = sttStatus(stt({ state: "failed", reason: "network_unreachable" }));
+    const line = sttStatus(stt({ state: "failed", reason: "network_unreachable" }), "ja");
     expect(line?.tone).toBe("bad");
     expect(line?.text).toBe("ネットワークに接続できませんでした");
   });
 
   it("an installed model that cannot load is a runtime failure", () => {
-    const line = sttStatus(stt({ state: "installed", runtime: "failed" }));
+    const line = sttStatus(stt({ state: "installed", runtime: "failed" }), "ja");
     expect(line?.tone).toBe("bad");
     expect(line?.text).toContain("取得済みですが");
     expect(line?.text).not.toContain("取得に失敗");
@@ -157,13 +166,21 @@ describe("several at once", () => {
   it("says every one of them", () => {
     // **A first run with nothing set up has three separate things to say.** Showing
     // only the first would make the next one appear out of nowhere later.
-    const lines = statusLines({
-      boot: "ready",
-      tts: tts({ state: "not_configured" }),
-      llm: llm({ state: "not_configured" }),
-      stt: stt({ state: "not_configured" }),
-      embedding: { state: "installed", model: "harrier-oss-v1-270m", reason: null, progress: null },
-    });
+    const lines = statusLines(
+      {
+        boot: "ready",
+        tts: tts({ state: "not_configured" }),
+        llm: llm({ state: "not_configured" }),
+        stt: stt({ state: "not_configured" }),
+        embedding: {
+          state: "installed",
+          model: "harrier-oss-v1-270m",
+          reason: null,
+          progress: null,
+        },
+      },
+      "ja",
+    );
     expect(lines).toHaveLength(3);
   });
 });
@@ -171,11 +188,11 @@ describe("several at once", () => {
 describe("failure reasons", () => {
   it("an unknown reason is still shown", () => {
     // **Never swallowed.** A reason nobody has written wording for is still a reason.
-    expect(failureText("something_new")).toContain("something_new");
+    expect(failureText("something_new", "ja")).toContain("something_new");
   });
 
   it("no reason at all still says it failed", () => {
-    expect(failureText(null)).toBe("取得に失敗しました");
+    expect(failureText(null, "ja")).toBe("取得に失敗しました");
   });
 
   it("localizes known reasons and preserves unknown reason ids in English", () => {
@@ -196,12 +213,12 @@ describe("the embedding model", () => {
   });
 
   it("says nothing once it is installed", () => {
-    expect(embeddingStatus(embedding({ state: "installed" }))).toBeNull();
-    expect(embeddingStatus(embedding())).toBeNull();
+    expect(embeddingStatus(embedding({ state: "installed" }), "ja")).toBeNull();
+    expect(embeddingStatus(embedding(), "ja")).toBeNull();
   });
 
   it("shows progress while it downloads", () => {
-    const line = embeddingStatus(embedding({ state: "installing", progress: 0.42 }));
+    const line = embeddingStatus(embedding({ state: "installing", progress: 0.42 }), "ja");
     expect(line?.text).toContain("42");
   });
 
@@ -210,14 +227,14 @@ describe("the embedding model", () => {
     // search is worse than it could be — **and a list where those look identical cannot
     // be read as a list of things to fix.**
     for (const state of ["installing", "failed", "not_configured"] as const) {
-      expect(embeddingStatus(embedding({ state }))?.tone).toBe("normal");
+      expect(embeddingStatus(embedding({ state }), "ja")?.tone).toBe("normal");
     }
   });
 
   it("distinguishes never fetched from tried and failed", () => {
-    expect(embeddingStatus(embedding({ state: "not_configured" }))?.text).toContain("未取得");
-    expect(embeddingStatus(embedding({ state: "failed", reason: "http_error" }))?.text).toContain(
-      "取得できませんでした",
-    );
+    expect(embeddingStatus(embedding({ state: "not_configured" }), "ja")?.text).toContain("未取得");
+    expect(
+      embeddingStatus(embedding({ state: "failed", reason: "http_error" }), "ja")?.text,
+    ).toContain("取得できませんでした");
   });
 });

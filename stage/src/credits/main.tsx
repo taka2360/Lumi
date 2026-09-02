@@ -1,10 +1,14 @@
-import { cachedLocale, setDocumentLocale } from "../i18n";
+import { cachedLocale, setDocumentLocale, translate } from "../i18n";
 import { mountRoot } from "../mount";
 import { Credits } from "./Credits";
 import "../styles/tokens.css";
 import "../styles/document.css";
 import "./credits.css";
 
-setDocumentLocale(cachedLocale());
+const locale = cachedLocale();
+setDocumentLocale(locale);
+// **The title is wording too.** It was fixed English in `credits.html`, so the one part of
+// this window the user saw before anything rendered ignored their language setting.
+document.title = `Lumi — ${translate(locale, "credits.title")}`;
 
 mountRoot(<Credits />);

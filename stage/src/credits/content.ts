@@ -12,6 +12,7 @@
  * Narrowing this down to what's actually in use is Phase 1's `Provider.attribution()`.
  */
 
+import type { MessageKey } from "../i18n";
 import acmlText from "./licenses/acml-1.0.txt?raw";
 import gplText from "./licenses/gpl-3.0.txt?raw";
 import lgplText from "./licenses/lgpl-3.0.txt?raw";
@@ -22,8 +23,9 @@ export type LicenseId = "mit-lumi" | "lgpl-3.0" | "gpl-3.0" | "acml-1.0";
 
 export type LicenseDocument = {
   readonly id: LicenseId;
+  /** The license's own name. **Never translated.** */
   readonly title: string;
-  readonly note: string;
+  readonly noteKey: MessageKey;
   readonly text: string;
 };
 
@@ -34,27 +36,29 @@ export type Dependency = {
 };
 
 export type BundledComponent = {
-  readonly component: string;
+  readonly componentKey: MessageKey;
+  /** A one-line technology summary. **Not translated** — it is the stack's own names. */
   readonly note: string;
   readonly dependencies: readonly Dependency[];
 };
 
 export type ExternalComponent = {
-  readonly name: string;
-  readonly license: string;
+  readonly nameKey: MessageKey;
+  readonly licenseKey: MessageKey;
   /** Where on this screen the full text can be read. Empty means the full text isn't included. */
   readonly licenses: readonly LicenseId[];
   /** **When this applies.** Phase 0 doesn't know what's "in use," so this is always filled in. */
-  readonly appliesWhen: string;
+  readonly appliesWhenKey: MessageKey;
+  /** The upstream URL. **Not translated.** */
   readonly source: string;
   /** Obligations Lumi's user bears. **The "obligation to disclose" is included here too.** */
-  readonly obligations: readonly string[];
+  readonly obligationKeys: readonly MessageKey[];
 };
 
 export type ProhibitionSet = {
-  readonly source: string;
-  readonly appliesWhen: string;
-  readonly items: readonly string[];
+  readonly sourceKey: MessageKey;
+  readonly appliesWhenKey: MessageKey;
+  readonly itemKeys: readonly MessageKey[];
 };
 
 /** Lumi itself. **MIT, and this is the only thing that's Lumi's own distributable.** */
@@ -62,8 +66,7 @@ export const LUMI = {
   name: "Lumi",
   license: "MIT",
   licenseId: "mit-lumi" as LicenseId,
-  description:
-    "Lumi 本体（Core / Shell / Stage）は MIT ライセンスです。以下のソフトウェアを利用しています。",
+  descriptionKey: "credits.lumi.description" as MessageKey,
 } as const;
 
 /**
@@ -76,7 +79,7 @@ export const LUMI = {
  */
 export const BUNDLED: readonly BundledComponent[] = [
   {
-    component: "Lumi Stage（画面）",
+    componentKey: "credits.component.stage",
     note: "React + TypeScript",
     dependencies: [
       { name: "react", version: "19.2.8", license: "MIT" },
@@ -88,7 +91,7 @@ export const BUNDLED: readonly BundledComponent[] = [
     ],
   },
   {
-    component: "Lumi Shell（デスクトップ）",
+    componentKey: "credits.component.shell",
     note: "Tauri 2 / Rust",
     dependencies: [
       { name: "tauri", version: "2.11", license: "Apache-2.0 OR MIT" },
@@ -104,7 +107,7 @@ export const BUNDLED: readonly BundledComponent[] = [
     ],
   },
   {
-    component: "Lumi Core（判断と状態）",
+    componentKey: "credits.component.core",
     note: "Python / asyncio",
     dependencies: [
       { name: "websockets", version: "17.0.1", license: "BSD-3-Clause" },
@@ -125,57 +128,48 @@ export const BUNDLED: readonly BundledComponent[] = [
  */
 export const EXTERNAL: readonly ExternalComponent[] = [
   {
-    name: "AivisSpeech Engine",
-    license: "LGPL-3.0",
+    nameKey: "credits.external.aivisspeech.name",
+    licenseKey: "credits.external.aivisspeech.license",
     licenses: ["lgpl-3.0", "gpl-3.0"],
-    appliesWhen:
-      "初回セットアップで取得した場合、または AivisSpeech を自分でインストールしている場合",
+    appliesWhenKey: "credits.external.aivisspeech.appliesWhen",
     source: "https://github.com/Aivis-Project/AivisSpeech-Engine",
-    obligations: [
-      "Lumi はこのエンジンを同梱していません。取得は公式の配布元から、あなたの PC の上で行われます。",
-      "エンジンは初回起動時に、エンジン自身の判断で音声合成モデル（AivisHub）と言語モデル（HuggingFace）を取得します。",
-      "エンジン自身が使っているライブラリのライセンス一覧は、エンジンに同梱されています。",
+    obligationKeys: [
+      "credits.external.aivisspeech.obligation1",
+      "credits.external.aivisspeech.obligation2",
+      "credits.external.aivisspeech.obligation3",
     ],
   },
   {
-    name: "VOICEVOX / VOICEVOX ENGINE",
-    license: "LGPL-3.0（ENGINE）/ VOICEVOX ソフトウェア利用規約",
+    nameKey: "credits.external.voicevox.name",
+    licenseKey: "credits.external.voicevox.license",
     licenses: ["lgpl-3.0", "gpl-3.0"],
-    appliesWhen: "自分でインストールした VOICEVOX を Lumi が検出して使う場合",
+    appliesWhenKey: "credits.external.voicevox.appliesWhen",
     source: "https://voicevox.hiroshiba.jp/",
-    obligations: [
-      "VOICEVOX を利用したことがわかるクレジット表記が必要です。",
-      "音源ごとのクレジット表記が必要です（例: VOICEVOX:ずんだもん）。",
-      "音源の共通規約の禁止事項を守る必要があります（下記）。",
+    obligationKeys: [
+      "credits.external.voicevox.obligation1",
+      "credits.external.voicevox.obligation2",
+      "credits.external.voicevox.obligation3",
     ],
   },
   {
-    name: "音声合成モデル（AIVMX）",
-    license: "Aivis Common Model License (ACML) 1.0",
+    nameKey: "credits.external.aivmx.name",
+    licenseKey: "credits.external.aivmx.license",
     licenses: ["acml-1.0"],
-    appliesWhen:
-      "AivisSpeech Engine が取得した既定の音声合成モデルを使う場合（別ライセンスのモデルを自分で追加した場合は、そのモデルのライセンスが適用されます）",
+    appliesWhenKey: "credits.external.aivmx.appliesWhen",
     source: "https://hub.aivis-project.com/",
-    obligations: [
-      "モデルのクレジット表記は任意です（制作者・話者への敬意ある利用をお願いします）。",
-      "禁止事項があります（下記）。",
-    ],
+    obligationKeys: ["credits.external.aivmx.obligation1", "credits.external.aivmx.obligation2"],
   },
   {
     // **表記は義務ではない。それでも出す**（docs/licensing.md §4.5）。
     // 義務の有無と、出すかどうかは別の判断。
-    name: "3Dモデル「光莉 / ひかり」（あわ）",
-    license: "VRoid Hub 利用条件（モデル登録者が設定）",
+    nameKey: "credits.external.model.name",
+    licenseKey: "credits.external.model.license",
     // **全文は同梱していない。** 同梱を求められていないため（docs/licensing.md §4.5）。
     // 求められる条件のモデルに差し替えるなら、ここに全文を足す義務が発生する
     licenses: [],
-    appliesWhen:
-      "既定の Content Pack を使う場合（別のモデルに差し替えた場合は、そのモデルの利用条件が適用されます）",
+    appliesWhenKey: "credits.external.model.appliesWhen",
     source: "https://hub.vroid.com/characters/7574619046991064867/models/3031358336334644609",
-    obligations: [
-      "クレジット表記は不要です（2026-08-16 時点の条件）。",
-      "再配布・改変が許諾されているため、Lumi の配布物に含まれています。",
-    ],
+    obligationKeys: ["credits.external.model.obligation1", "credits.external.model.obligation2"],
   },
 ];
 
@@ -189,28 +183,28 @@ export const CREDIT_EXAMPLES: readonly string[] = ["VOICEVOX:ずんだもん", "
  */
 export const PROHIBITIONS: readonly ProhibitionSet[] = [
   {
-    source: "ACML 1.0（音声合成モデル）",
-    appliesWhen: "ACML の音声合成モデルで音声を作るとき",
-    items: [
-      "話者本人・原作者・公式関係者であるとの誤解を招く / 騙す利用（ディープフェイク等）",
-      "話者のイメージ・尊厳・品位・社会的評価を傷つける / 貶める利用",
-      "実在の人物・団体・商品を批判・攻撃・嫌がらせ・誹謗中傷・差別する活動",
-      "人々を騙す目的での虚偽情報・コンテンツの公開 / 流布",
-      "虚偽・誇大なマーケティング、倫理的に問題のあるビジネス",
-      "特定の政治的立場・政治 / 宗教団体・排他的思想・陰謀論への賛同・支援または反対・批判を呼びかける活動",
-      "反社会的・犯罪目的での利用",
+    sourceKey: "credits.prohibition.acml.source",
+    appliesWhenKey: "credits.prohibition.acml.appliesWhen",
+    itemKeys: [
+      "credits.prohibition.acml.item1",
+      "credits.prohibition.acml.item2",
+      "credits.prohibition.acml.item3",
+      "credits.prohibition.acml.item4",
+      "credits.prohibition.acml.item5",
+      "credits.prohibition.acml.item6",
+      "credits.prohibition.acml.item7",
     ],
   },
   {
-    source: "VOICEVOX 音源 共通規約",
-    appliesWhen: "VOICEVOX の音源で音声を作るとき",
-    items: [
-      "公序良俗に反する利用",
-      "政治活動・宗教活動またはそれらにつながる行為。特定の個人・団体（国家を含む）を非難・批判・応援する目的での利用",
-      "情報商材での利用、情報商材の宣伝目的での利用",
-      "意図的な虚偽情報・誤解を招く内容の作成 / 共有 / 拡散",
-      "風俗営業（接待飲食等 1〜3号営業）および性風俗関連特殊営業での利用",
-      "反社会的勢力による利用、および反社会的勢力と協力・関与する者の利用",
+    sourceKey: "credits.prohibition.voicevox.source",
+    appliesWhenKey: "credits.prohibition.voicevox.appliesWhen",
+    itemKeys: [
+      "credits.prohibition.voicevox.item1",
+      "credits.prohibition.voicevox.item2",
+      "credits.prohibition.voicevox.item3",
+      "credits.prohibition.voicevox.item4",
+      "credits.prohibition.voicevox.item5",
+      "credits.prohibition.voicevox.item6",
     ],
   },
 ];
@@ -225,32 +219,48 @@ export const LICENSES: readonly LicenseDocument[] = [
   {
     id: "mit-lumi",
     title: "MIT License — Lumi",
-    note: "Lumi 本体（Core / Shell / Stage）に適用されます。",
+    noteKey: "credits.license.mit.note",
     text: mitText,
   },
   {
     id: "lgpl-3.0",
     title: "GNU Lesser General Public License Version 3",
-    note: "AivisSpeech Engine / VOICEVOX ENGINE に適用されます。",
+    noteKey: "credits.license.lgpl.note",
     text: lgplText,
   },
   {
     id: "gpl-3.0",
     title: "GNU General Public License Version 3",
-    note: "LGPL-3.0 が取り込んでいる本文です。",
+    noteKey: "credits.license.gpl.note",
     text: gplText,
   },
   {
     id: "acml-1.0",
     title: "Aivis Common Model License (ACML) 1.0",
-    note: "AivisSpeech Engine が取得する既定の音声合成モデルに適用されます。",
+    noteKey: "credits.license.acml.note",
     text: acmlText,
   },
 ];
 
 export type Ecosystem = {
-  readonly name: string;
+  /**
+   * Which part of the distributable this covers. **A stable id, not a label** — the
+   * wording is in the message catalog, so the generated file carries no display text
+   * and the list changes language with the rest of Lumi.
+   */
+  readonly id: EcosystemId;
   readonly packages: readonly Dependency[];
+};
+
+/** The four groups `scripts/generate-oss-notice.mjs` emits. */
+export type EcosystemId = "shell" | "core" | "stage" | "undeclared";
+
+/** What each group is called on screen. */
+export const ECOSYSTEM_LABEL: Readonly<Record<EcosystemId, MessageKey>> = {
+  shell: "credits.ecosystem.shell",
+  core: "credits.ecosystem.core",
+  stage: "credits.ecosystem.stage",
+  undeclared: "credits.ecosystem.undeclared",
 };
 
 /**

@@ -8,11 +8,12 @@
  * readable even if Core is down. So nothing here imports `../core/*`.
  */
 
-import { translate } from "../i18n";
+import { type MessageKey, translate } from "../i18n";
 import { useStandaloneLocale } from "../i18n/standalone";
 import {
   BUNDLED,
   CREDIT_EXAMPLES,
+  ECOSYSTEM_LABEL,
   EXTERNAL,
   LICENSES,
   LUMI,
@@ -20,7 +21,6 @@ import {
   type SectionId,
   THIRD_PARTY,
 } from "./content";
-import { creditText } from "./localize";
 
 function Section({
   id,
@@ -44,12 +44,12 @@ function Section({
 
 export function Credits() {
   const locale = useStandaloneLocale();
-  const ct = (text: string) => creditText(locale, text);
+  const t = (key: MessageKey) => translate(locale, key);
   return (
     <main className="document credits">
       <h1 className="document__title">{translate(locale, "credits.title")}</h1>
 
-      <Section id="lumi" title={LUMI.name} lead={ct(LUMI.description)}>
+      <Section id="lumi" title={LUMI.name} lead={t(LUMI.descriptionKey)}>
         <p className="credits__lead">
           {translate(locale, "credits.license")}: {LUMI.license}
         </p>
@@ -61,9 +61,9 @@ export function Credits() {
         lead={translate(locale, "credits.bundled.lead")}
       >
         {BUNDLED.map((component) => (
-          <div key={component.component} className="credits__group">
+          <div key={component.componentKey} className="credits__group">
             <h3 className="credits__subheading">
-              {ct(component.component)} <span className="credits__note">{component.note}</span>
+              {t(component.componentKey)} <span className="credits__note">{component.note}</span>
             </h3>
             <table className="credits__table">
               <tbody>
@@ -86,17 +86,17 @@ export function Credits() {
         lead={translate(locale, "credits.external.lead")}
       >
         {EXTERNAL.map((external) => (
-          <div key={external.name} className="credits__group">
-            <h3 className="credits__subheading">{ct(external.name)}</h3>
+          <div key={external.nameKey} className="credits__group">
+            <h3 className="credits__subheading">{t(external.nameKey)}</h3>
             <p className="credits__lead">
-              {translate(locale, "credits.license")}: {ct(external.license)}
+              {translate(locale, "credits.license")}: {t(external.licenseKey)}
             </p>
             <p className="credits__note">
-              {translate(locale, "credits.appliesWhen")}: {ct(external.appliesWhen)}
+              {translate(locale, "credits.appliesWhen")}: {t(external.appliesWhenKey)}
             </p>
             <ul className="credits__list">
-              {external.obligations.map((obligation) => (
-                <li key={obligation}>{ct(obligation)}</li>
+              {external.obligationKeys.map((obligation) => (
+                <li key={obligation}>{t(obligation)}</li>
               ))}
             </ul>
             <p className="credits__note">
@@ -127,14 +127,14 @@ export function Credits() {
         lead={translate(locale, "credits.prohibitions.lead")}
       >
         {PROHIBITIONS.map((set) => (
-          <div key={set.source} className="credits__group">
-            <h3 className="credits__subheading">{ct(set.source)}</h3>
+          <div key={set.sourceKey} className="credits__group">
+            <h3 className="credits__subheading">{t(set.sourceKey)}</h3>
             <p className="credits__note">
-              {translate(locale, "credits.appliesWhen")}: {ct(set.appliesWhen)}
+              {translate(locale, "credits.appliesWhen")}: {t(set.appliesWhenKey)}
             </p>
             <ul className="credits__list">
-              {set.items.map((item) => (
-                <li key={item}>{ct(item)}</li>
+              {set.itemKeys.map((item) => (
+                <li key={item}>{t(item)}</li>
               ))}
             </ul>
           </div>
@@ -147,9 +147,9 @@ export function Credits() {
         lead={translate(locale, "credits.thirdParty.lead", { count: THIRD_PARTY.total })}
       >
         {THIRD_PARTY.ecosystems.map((ecosystem) => (
-          <details key={ecosystem.name} className="credits__license">
+          <details key={ecosystem.id} className="credits__license">
             <summary className="credits__summary">
-              {ct(ecosystem.name)}{" "}
+              {t(ECOSYSTEM_LABEL[ecosystem.id])}{" "}
               <span className="credits__note">
                 {translate(locale, "credits.packages", { count: ecosystem.packages.length })}
               </span>
@@ -173,7 +173,7 @@ export function Credits() {
         {LICENSES.map((license) => (
           <details key={license.id} className="credits__license">
             <summary className="credits__summary">{license.title}</summary>
-            <p className="credits__note">{ct(license.note)}</p>
+            <p className="credits__note">{t(license.noteKey)}</p>
             <pre className="credits__text">{license.text}</pre>
           </details>
         ))}
