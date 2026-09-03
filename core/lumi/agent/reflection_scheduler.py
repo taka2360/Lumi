@@ -152,16 +152,29 @@ class ReflectionScheduler:
                 episodes=self._episodes,
                 options=options_for(self._model(), Purpose.EXTRACTION),
             )
-            report = await job.run()
-            if report.learned:
-                # **What was just learned should be findable.** Indexing is cheap and this
-                # is already the idle path, so it costs the user nothing.
-                await self._maintenance.index_memories()
-                # **A nudge, not the memories themselves.** An open memory window asks for
-                # what it wants to show; sending the records here would mean guessing
-                # which page it is on (ADR-042).
-                await self._server.notify(
-                    Role.PANEL,
-                    METHOD_PANEL_MEMORY,
-                    {"written": report.written, "superseded": report.superseded},
-                )
+            try:
+                report = await job.run()
+                if report.learned:
+                    # **What was just learned should be findable.** Indexing is cheap and
+                    # this is already the idle path, so it costs the user nothing.
+                    await self._maintenance.index_memories()
+                    # **A nudge, not the memories themselves.** An open memory window asks
+                    # for what it wants to show; sending the records here would mean
+                    # guessing which page it is on (ADR-042).
+                    await self._server.notify(
+                        Role.PANEL,
+                        METHOD_PANEL_MEMORY,
+                        {"written": report.written, "superseded": report.superseded},
+                    )
+            except Exception:
+                # ★ **One bad pass must not end reflection for the session.** This coroutine
+                # is spawned once and never restarted (`runtime.py`), so anything escaping
+                # here — a locked database, an Indexer that cannot reach its model, a
+                # Provider raising something new — would take the loop with it, and Lumi
+                # would quietly stop making memories until the next launch. **That is the
+                # same stopped queue the batch retry exists to prevent**, reached from the
+                # outside.
+                #
+                # Repeating the pass is safe: the watermark only moves after its writes
+                # land, so whatever it did not finish is read again next idle period.
+                log.exception("reflection.pass_failed")

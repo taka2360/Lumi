@@ -242,22 +242,11 @@ class ConversationRuntime:
         self._panel.register(server)
 
     def _build_tools(self, server: WsServer, bus: EventBus) -> ToolRegistry:
-        """Every tool Lumi has, behind the Permission Kernel.
-
-        **There is no second way in** (Invariant 2). `character.set_expression` is L0 and
-        effectively passes straight through, but it is registered here and invoked through
-        `ToolRegistry.invoke` like anything else — **the path is the same as production's**,
-        which is the only way it can be trusted once L3 tools exist.
-        """
-        tools = ToolRegistry(
-            PermissionKernel(GrantStore(), SqliteAuditLog(self._audit_db)),
-            bus,
-            HookRegistry(),
-            canonicalizers={ScopeLane.CHARACTER: CharacterCanonicalizer()},
-            bind_verifiers={ScopeLane.CHARACTER: CharacterBindVerifier()},
+        return build_tool_registry(
+            permission=PermissionKernel(GrantStore(), SqliteAuditLog(self._audit_db)),
+            bus=bus,
+            send_expression=_expression_sender(server),
         )
-        tools.register(SetExpressionTool(_expression_sender(server)))
-        return tools
 
     def _build_loop(self, server: WsServer, tools: ToolRegistry) -> ReactiveLoop | None:
         """The conversation loop, or `None` when there is no persona to run it as.
@@ -615,6 +604,36 @@ def _load_pack() -> CharacterPack | None:
     except ContentPackError as error:
         log.error("content.unavailable", error=str(error))
         return None
+
+
+def build_tool_registry(
+    *,
+    permission: PermissionKernel,
+    bus: EventBus,
+    send_expression: Callable[[ExpressionIntent], Awaitable[None]],
+) -> ToolRegistry:
+    """Every tool Lumi has, behind the Permission Kernel.
+
+    **There is no second way in** (Invariant 2). `character.set_expression` is L0 and
+    effectively passes straight through, but it is registered here and invoked through
+    `ToolRegistry.invoke` like anything else — **the path is the same as production's**,
+    which is the only way it can be trusted once L3 tools exist.
+
+    **A function rather than a method, because production is not its only reader.** What
+    `list_exposed()` returns is part of every LLM request Lumi makes, so the A/B harness
+    (`scripts/llm_profile_eval.py`) has to send the same set or it is measuring a request
+    shape that does not ship. Two lists would drift the first time a tool is added, and
+    the drift would look like a sampling result.
+    """
+    tools = ToolRegistry(
+        permission,
+        bus,
+        HookRegistry(),
+        canonicalizers={ScopeLane.CHARACTER: CharacterCanonicalizer()},
+        bind_verifiers={ScopeLane.CHARACTER: CharacterBindVerifier()},
+    )
+    tools.register(SetExpressionTool(send_expression))
+    return tools
 
 
 def _expression_sender(server: WsServer) -> Callable[[ExpressionIntent], Awaitable[None]]:

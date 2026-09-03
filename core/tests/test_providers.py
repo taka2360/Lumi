@@ -245,6 +245,33 @@ async def test_ollama_streams_text_and_finishes() -> None:
     assert finish.usage["completion_tokens"] == 7
 
 
+async def test_ollama_reads_a_null_done_reason_as_an_ordinary_stop() -> None:
+    """★ **fail-closed elsewhere makes this load-bearing.** `memory/reflection.py` refuses
+    to move the watermark on a `Finish.reason` it does not recognise, so a `null` read as
+    the literal `"None"` would stop the reflection queue for good — on a JSON null.
+
+    An absent reason and a null one are the same statement: the engine did not say why.
+    """
+    provider = ollama_with(
+        version={"version": "0.5.0"},
+        tags={"models": [{"name": "qwen3:8b"}]},
+        chat=ndjson({"done": True, "done_reason": None}, {"done": True}),
+    )
+    await provider.load()
+
+    events = [
+        event
+        async for event in provider.stream(
+            [Message(role="user", content="やあ")],
+            None,
+            LLMOptions(model="qwen3:8b"),
+            CancelToken(),
+        )
+    ]
+
+    assert [e.reason for e in events if isinstance(e, Finish)] == ["stop"]
+
+
 async def test_ollama_always_states_whether_to_think() -> None:
     """★ **Omitting the field leaves the model's default in place.**
 

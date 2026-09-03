@@ -234,6 +234,32 @@ harness → `core/scripts/llm_profile_eval.py`。
 **5ケース × seed 2 系列（1000 / 2000）= 変種ごとに10応答。** 本番の `assemble()` と
 Content Pack の persona をそのまま通しており、プロンプトは製品と同一である。
 
+#### 測定として成立する条件〔2026-09-03 追記〕
+
+harness は「本番の生成経路を再現して比較する」ためのものなので、**再現していない点と、
+sample として数えない条件を明示しておく。**
+
+- **tool descriptor は本番と同じものを送る。** 本番の会話は毎回
+  `ToolRegistry.list_exposed()`（`character.set_expression`）を渡しており、
+  `tools` の有無はリクエスト形状そのものを変える。harness は
+  `build_tool_registry()` を通して同じ集合を取る——手書きの写しは、ツールが増えた日に
+  黙ってずれ、そのずれが sampling の結果として読まれる
+- **ただし tool は実行しない。** 実行には Permission Kernel と監査 DB と Stage が要り、
+  さらに**1ターンぶんの数値に2回目の生成が混ざる**。tool call が返ったケースは
+  `除外` として印字する（無言で text として数えない）
+- **`Finish(reason="stop")` の text だけが sample である。** `length` / tool call /
+  `LLMFailure` / `Finish` 無しは**除外**し、理由を印字する
+- **除外された sample はそのケースを打ち切る。** ケースは複数ターンで人格の維持を見るもので、
+  欠けたターンや途中で切れたターンを履歴に入れると、以降は他の変種と別の会話になる
+- **A だけ `max_tokens` を送らない**（出荷前のリクエストそのものだから）。
+  この非対称は意図的で、だからこそ切れた sample を混ぜてはならない——
+  混ぜると B〜E が「短くて速い」ように見える
+- **記憶は入らない。** harness には記憶 DB が無いので `ContextBlock` は空である。
+  全変種で等しく空なので比較は成立するが、**本番のプロンプトより短い**
+- 変種は同じ常駐モデルに対して固定順で回すため、最初に**捨てるための生成を1回**入れて
+  KV キャッシュを揃える。latency は**変種間の比較にだけ**使える（SLO の測定は
+  [phase1.md](phase1.md) の役目）
+
 ### まず分かったこと — Lumi は3つのパラメータを Modelfile に決めさせていた
 
 `/api/show` が返す `qwen3.5:9b` の Modelfile：

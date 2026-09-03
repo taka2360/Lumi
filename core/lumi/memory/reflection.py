@@ -67,24 +67,60 @@ UTTERANCE_LIMIT: Final = 40
 #: see `_reflect_episode`.
 MIN_UTTERANCE_BATCH: Final = 1
 
+#: Extra generations allowed once the batch is already at the floor and still comes back
+#: `length`. **Above zero and bounded, for opposite reasons.**
+#:
+#: Above zero because extraction runs at `temperature 0.2` with **no seed** — production
+#: never sets one (`LLMOptions.seed`). One `length` at the floor is therefore a sample,
+#: not a property of the utterance: a single runaway generation is not evidence that this
+#: sentence can never be extracted from, and treating it as evidence throws the sentence
+#: away forever on a coin flip.
+#:
+#: Bounded because the floor is where shrinking has run out of room. Past this, repeating
+#: is idle inference spent to stay stuck, and every episode behind this one stays stuck
+#: with it (`unreflected()` is oldest-first).
+#:
+#: Two extra attempts — three samples at the floor — is enough to tell a coin flip from a
+#: wall, and small enough that the pathological episode costs three generations per pass
+#: rather than a retry storm.
+FLOOR_TRUNCATION_RETRIES: Final = 2
+
 
 class _Ask(StrEnum):
-    """How the model's answer ended. **Not the same question as "did it parse"** — a
-    truncated JSON array can still parse into a shorter list, which is the whole reason
-    the reason code is read rather than the text.
+    """How the model's answer ended, and **what the pass may do about it.**
+
+    Not the same question as "did it parse" — a truncated JSON array can still parse into
+    a shorter list, which is the whole reason the reason code is read rather than the text.
+
+    **The ending-by-ending table lives in docs/architecture/memory.md §4** (what is
+    retried, what the watermark does, what ends up in the report). What is written here is
+    why there are three members and not one per `Finish.reason`.
+
+    `UNUSABLE` is one member on purpose. What its cases share is that **the request was
+    fine and something outside it was not**, so the same request is worth making again
+    unchanged, later. `OVERSIZE` is the opposite: the request is what did not fit, and
+    repeating it unchanged is exactly how the queue stopped draining.
+
+    ★ **An unrecognised `Finish.reason` is `UNUSABLE`, and that is a choice to block
+    rather than to forget.** A reason nobody has read cannot be assumed to mean the answer
+    is whole, and it cannot be told apart from an engine that gave up server-side — so the
+    transcript is kept and the queue stops. That stall is visible (`unreflected_turns()` is
+    what the memory window shows) and logged at `error`; a watermark moved on a reason
+    nobody understood would be silent and permanent.
     """
 
     OK = "ok"
-    #: Revoked mid-stream, or the engine broke. **Try the same thing again later**
-    FAILED = "failed"
+    #: Revoked mid-stream, the engine broke, or the answer ended in a way this cannot read.
+    #: **Try the same thing again later, unchanged**
+    UNUSABLE = "unusable"
     #: `Finish(reason="length")` — ran out of output tokens with the array half-written.
-    #: **Trying the same thing again later produces the same truncation**
-    TRUNCATED = "truncated"
+    #: **Asking the same batch again is asking for the same truncation**
+    OVERSIZE = "oversize"
 
 
-#: `Finish.reason` → what to do about it. **Anything unrecognised is a failure**, because a
-#: reason nobody has read cannot be assumed to mean the answer is whole (fail-closed).
-_FINISH_OUTCOMES: Final[dict[str, _Ask]] = {"stop": _Ask.OK, "length": _Ask.TRUNCATED}
+#: `Finish.reason` → what to do about it. **Anything unrecognised is `UNUSABLE`** — see the
+#: `_Ask` table (fail-closed: keep the transcript, stop the queue, say so).
+_FINISH_OUTCOMES: Final[dict[str, _Ask]] = {"stop": _Ask.OK, "length": _Ask.OVERSIZE}
 
 
 @dataclass(frozen=True, slots=True)
@@ -95,8 +131,13 @@ class ReflectionReport:
     superseded: int = 0
     duplicates: int = 0
     rejected: tuple[str, ...] = ()
-    #: The lease was revoked, or the model did not finish naturally. **The watermark did
-    #: not move.**
+    #: The pass stopped early and **nothing it was in the middle of was kept.** The
+    #: watermark did not move for the episode it stopped on, so the same utterances are
+    #: read again next time (`_Ask.UNUSABLE`).
+    #:
+    #: **Not the same as "the model did not finish naturally"**: an answer given up on at
+    #: the floor did not finish naturally either, and that one moves the watermark and
+    #: leaves a `rejected` reason instead.
     interrupted: bool = False
     episodes: int = 0
 
@@ -178,32 +219,66 @@ class ReflectionJob:
     ) -> tuple[ReflectionReport, Sequence[Utterance]]:
         """One episode, and **the batch it ended up reading.**
 
+        **`report.interrupted` is the whole answer to "may the watermark move"**: the
+        caller moves it exactly when this returns false, and nothing else in here gets a
+        say. Every path below has to leave that flag true for a result that was thrown
+        away and false for one that was acted on — including "acted on" meaning "given up
+        on, loudly".
+
         A revoked lease and a token-capped answer both mean "throw the result away", but
         only the first is worth retrying unchanged. `unreflected()` returns episodes oldest
         first and `UTTERANCE_LIMIT` is fixed, so **an episode whose batch needs more than
         `max_tokens` of JSON would truncate again on every later pass** — forever, blocking
         every episode behind it and spending idle inference to stay stuck.
 
-        So the batch halves until the answer fits. At `MIN_UTTERANCE_BATCH` it stops and the
+        So the batch halves until the answer fits. At `MIN_UTTERANCE_BATCH` halving has no
+        room left, and **the same batch is asked `FLOOR_TRUNCATION_RETRIES` more times
+        before it is given up on** — extraction is sampled, not computed, so one `length`
+        on one utterance is a run of bad luck until it has repeated. When it has, the
         watermark moves anyway: **one utterance nobody can extract from is a loss worth
         recording; a reflection queue that never drains is a broken feature.** The loss is
         loud — a `rejected` reason in the report and an error in the log.
+
+        Every attempt, halved or repeated, re-enters `_reflect` and so re-checks the
+        cancel token immediately before generating (ADR-018).
+
+        **The loop is bounded twice over**, which is what keeps a stuck episode from
+        becoming a retry storm: halving from `UTTERANCE_LIMIT` gives at most six attempts,
+        the floor adds `FLOOR_TRUNCATION_RETRIES` more, and `run()` moves on to the next
+        episode rather than re-entering this one. The worst pass is nine generations per
+        episode, each capped by `max_tokens` and each abandonable at the checkpoint above.
         """
         batch = lines[:UTTERANCE_LIMIT]
+        floor_attempts = 0
         while True:
-            report, truncated = await self._reflect(episode_id, batch, job)
-            if not truncated:
+            report, ending = await self._reflect(episode_id, batch, job)
+            if ending is not _Ask.OVERSIZE:
+                # `OK` → the watermark moves over `batch`. `UNUSABLE` → the report carries
+                # `interrupted` and the caller ends the pass without moving it.
                 return report, batch
-            if len(batch) <= MIN_UTTERANCE_BATCH:
-                log.error(
-                    "reflection.truncated_at_floor",
+            if len(batch) > MIN_UTTERANCE_BATCH:
+                batch = batch[: len(batch) // 2]
+                log.warning("reflection.batch_halved", episode=episode_id, utterances=len(batch))
+                continue
+            floor_attempts += 1
+            if floor_attempts <= FLOOR_TRUNCATION_RETRIES:
+                # **The same batch, deliberately.** There is nothing left to shrink, and at
+                # temperature 0.2 with no seed the next sample is genuinely a new one
+                log.warning(
+                    "reflection.floor_retry",
                     episode=episode_id,
                     turn=batch[-1].turn_index,
+                    attempt=floor_attempts,
                 )
-                reason = f"truncated: turn {batch[-1].turn_index} exceeded max_tokens"
-                return ReflectionReport(rejected=(reason,), episodes=1), batch
-            batch = batch[: len(batch) // 2]
-            log.warning("reflection.batch_halved", episode=episode_id, utterances=len(batch))
+                continue
+            log.error(
+                "reflection.truncated_at_floor",
+                episode=episode_id,
+                turn=batch[-1].turn_index,
+                attempts=floor_attempts,
+            )
+            reason = f"truncated: turn {batch[-1].turn_index} exceeded max_tokens"
+            return ReflectionReport(rejected=(reason,), episodes=1), batch
 
     async def _novelty(self, item: Mapping[str, Any]) -> float:
         """How far this sits from what is already believed. **1.0 means nothing like it.**
@@ -221,30 +296,47 @@ class ReflectionJob:
 
     async def _reflect(
         self, episode_id: str, lines: Sequence[Utterance], job: Job
-    ) -> tuple[ReflectionReport, bool]:
-        """One prompt over one batch, and **whether it was the batch that was too big.**"""
+    ) -> tuple[ReflectionReport, _Ask]:
+        """One prompt over one batch, and **how the answer ended.**
+
+        The report's `interrupted` and the returned `_Ask` say two different things, and
+        only together do they say enough: `interrupted` is "the pass stops here and the
+        watermark stays", `_Ask` is "and this is why, so this is what may be tried next".
+        """
         known = [record.subject for record in await self._store.recent(20)]
         messages = build_messages(lines, known_subjects=known)
-        if job.cancel_token.is_set:
+        # Read into a local at each of the two checkpoints below. **They are two different
+        # questions asked of a value that moves** — "may this generation start" and "did
+        # the conversation take the GPU while it ran" — and collapsing them into one read
+        # is how the second one would go missing.
+        revoked_before: bool = job.cancel_token.is_set
+        if revoked_before:
             # ★ **The checkpoint is here, not after the answer.** `OllamaProvider.stream()`
-            # posts `/api/chat` before it ever looks at the token, so a shrunk retry started
-            # after the lease was revoked would put a second background generation in front
-            # of the user's turn — the one thing revocation exists to prevent (ADR-018).
-            # Revocation can land on any await above this line, `_store.recent()` included.
-            return ReflectionReport(interrupted=True, episodes=1), False
+            # posts `/api/chat` before it ever looks at the token, so an attempt started
+            # after the lease was revoked — a halved batch or a floor retry alike — would
+            # put a second background generation in front of the user's turn, the one thing
+            # revocation exists to prevent (ADR-018). Revocation can land on any await above
+            # this line, `_store.recent()` included.
+            return ReflectionReport(interrupted=True, episodes=1), _Ask.UNUSABLE
         try:
             answer, ending = await self._ask(messages, job)
         except Exception as error:
             # **An engine that is not there is not a reason to lose the transcript.** The
             # watermark stays put and the next pass tries again.
             log.warning("reflection.llm_failed", error=str(error), episode=episode_id)
-            return ReflectionReport(interrupted=True, episodes=1), False
-        if ending is not _Ask.OK or job.cancel_token.is_set:
-            # The token is read again because it can be set **while the answer was being
-            # streamed**, and then **revocation wins over truncation**: the conversation
-            # wants the GPU now, and a smaller batch is still a second inference.
-            truncated = ending is _Ask.TRUNCATED and not job.cancel_token.is_set
-            return ReflectionReport(interrupted=True, episodes=1), truncated
+            return ReflectionReport(interrupted=True, episodes=1), _Ask.UNUSABLE
+        revoked_while_streaming: bool = job.cancel_token.is_set
+        if revoked_while_streaming:
+            # **Revocation wins over an oversize answer.** A halved batch and a floor retry
+            # are both still a second background generation, and the floor's "give up and
+            # move the watermark" verdict is a decision this pass no longer has the standing
+            # to make. Nothing is written and the watermark stays where it was.
+            return ReflectionReport(interrupted=True, episodes=1), _Ask.UNUSABLE
+        if ending is not _Ask.OK:
+            # `OVERSIZE` is not an interruption — `_reflect_episode` is about to try again
+            # inside this same pass, and only what it does with the last attempt decides
+            # whether the watermark moves.
+            return ReflectionReport(interrupted=ending is _Ask.UNUSABLE, episodes=1), ending
 
         items, rejected = parse_extractions(answer)
         by_id = {line.id: line for line in lines}
@@ -282,7 +374,7 @@ class ReflectionJob:
                 rejected=tuple(rejected),
                 episodes=1,
             ),
-            False,
+            _Ask.OK,
         )
 
     async def _ask(self, messages: Sequence[Message], job: Job) -> tuple[str, _Ask]:
@@ -290,21 +382,28 @@ class ReflectionJob:
         only interface — the pieces are joined here rather than being spoken.
         """
         chunks: list[str] = []
-        # A stream that ends without a `Finish` did not finish.
-        ending = _Ask.FAILED
+        # **A stream that ends without a `Finish` did not finish**, and an answer that was
+        # cut off mid-array parses into a shorter one just as happily. So the loop starts
+        # from "this cannot be used" and only a `Finish` it recognises moves it off that.
+        ending = _Ask.UNUSABLE
         async for event in self._llm.stream(messages, None, self._options, job.cancel_token):
             if job.cancel_token.is_set:
                 # **Cooperative.** The lease was revoked; the conversation wants the GPU.
-                return "", _Ask.FAILED
+                return "", _Ask.UNUSABLE
             if isinstance(event, TextDelta):
                 chunks.append(event.text)
             elif isinstance(event, LLMFailure):
                 log.warning("reflection.stream_failed", detail=event.message)
-                return "".join(chunks), _Ask.FAILED
+                return "".join(chunks), _Ask.UNUSABLE
             elif isinstance(event, Finish):
-                if event.reason != "stop":
+                ending = _FINISH_OUTCOMES.get(event.reason, _Ask.UNUSABLE)
+                if ending is _Ask.UNUSABLE:
+                    # **Loud, because this is the ending that stops the queue** rather than
+                    # costing one batch. Nobody watches a warning; this is the line that
+                    # explains why reflection stopped making progress (see `_Ask`).
+                    log.error("reflection.unknown_finish_reason", reason=event.reason)
+                elif ending is _Ask.OVERSIZE:
                     log.warning("reflection.stream_incomplete", reason=event.reason)
-                ending = _FINISH_OUTCOMES.get(event.reason, _Ask.FAILED)
                 break
         return "".join(chunks), ending
 
