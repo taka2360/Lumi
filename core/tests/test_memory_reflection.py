@@ -75,9 +75,10 @@ def said(
 class FakeLlm:
     """Answers with fixed text. **Records the prompt** so it can be snapshotted."""
 
-    def __init__(self, *answers: str, fail: bool = False) -> None:
+    def __init__(self, *answers: str, fail: bool = False, finish_reason: str = "stop") -> None:
         self._answers = list(answers) or ["[]"]
         self._fail = fail
+        self.finish_reason = finish_reason
         self.prompts: list[Sequence[Message]] = []
         self.cancel_at: int | None = None
 
@@ -97,7 +98,7 @@ class FakeLlm:
             if self.cancel_at == index:
                 cancel_token.fire("inference_revoked")
             yield TextDelta(text=chunk)
-        yield Finish(reason="stop")
+        yield Finish(reason=self.finish_reason)
 
 
 class Rig:
@@ -549,6 +550,22 @@ async def test_a_failing_engine_leaves_the_transcript_for_next_time(rig: Rig) ->
     report = await rig.job.run()
 
     assert report.interrupted
+    assert await rig.episodes.unreflected(4)
+
+
+async def test_a_length_limited_answer_leaves_the_transcript_for_next_time(rig: Rig) -> None:
+    """A token-capped answer is incomplete even if the returned text happens to parse.
+
+    Advancing the watermark would make the omitted facts permanently unreachable.
+    """
+    rig.llm._answers = [extraction()]
+    rig.llm.finish_reason = "length"
+    await rig.conversation(said("u1", "Factorio 好きなんだ"))
+
+    report = await rig.job.run()
+
+    assert report.interrupted
+    assert await rig.store.live("user.hobby") == []
     assert await rig.episodes.unreflected(4)
 
 

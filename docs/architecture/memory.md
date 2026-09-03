@@ -235,6 +235,8 @@ async with arbiter.inference_lease(job) as lease:
 - **watermark は書き込みが終わってから動かす。** 先に動かすと、落ちたときに記憶が失われた事実まで消える
 - **revoke されたら watermark は動かさない**（[ADR-018](../decisions/ADR-018-foreground-and-jobs.md)）。
   同じ発話を次回また読む。部分結果は保存しない
+- **LLM が自然終了しなかった場合も watermark は動かさない。** `Finish(reason="length")` は
+  トークン上限で JSON が途中までしか生成されなかったことを示すため、結果全体を捨てて次回やり直す
 - **抽出した記憶は同じアイドル時間にインデックスする**（2e の `Indexer`）
 - **`novelty` は subject で測る**（既知の subject なら 0.0、初めてなら 1.0）。
   埋め込み距離のほうが細かいが、**候補が埋め込まれるのは書き込みの後**（`Indexer`）なので

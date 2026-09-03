@@ -71,7 +71,8 @@ class ReflectionReport:
     superseded: int = 0
     duplicates: int = 0
     rejected: tuple[str, ...] = ()
-    #: The lease was revoked, or the model failed mid-stream. **The watermark did not move.**
+    #: The lease was revoked, or the model did not finish naturally. **The watermark did
+    #: not move.**
     interrupted: bool = False
     episodes: int = 0
 
@@ -219,6 +220,7 @@ class ReflectionJob:
         """
         chunks: list[str] = []
         failed = False
+        completed = False
         async for event in self._llm.stream(messages, None, self._options, job.cancel_token):
             if job.cancel_token.is_set:
                 # **Cooperative.** The lease was revoked; the conversation wants the GPU.
@@ -229,8 +231,11 @@ class ReflectionJob:
                 log.warning("reflection.stream_failed", detail=event.message)
                 failed = True
             elif isinstance(event, Finish):
+                completed = event.reason == "stop"
+                if not completed:
+                    log.warning("reflection.stream_incomplete", reason=event.reason)
                 break
-        return "".join(chunks), failed
+        return "".join(chunks), failed or not completed
 
 
 def _merge(total: ReflectionReport, one: ReflectionReport) -> ReflectionReport:
