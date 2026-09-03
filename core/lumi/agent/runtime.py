@@ -59,8 +59,8 @@ from lumi.permission.scope import ScopeLane
 from lumi.permission.verifiers import CharacterBindVerifier, CharacterCanonicalizer
 from lumi.providers.base import EngineRuntime, ProviderKind
 from lumi.providers.embedding.harrier import HarrierEmbeddingProvider
-from lumi.providers.llm.base import LLMOptions
 from lumi.providers.llm.ollama import OllamaProvider
+from lumi.providers.llm.sampling import Purpose, options_for
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.faster_whisper import FasterWhisperProvider
 from lumi.providers.tts.provider import AivisSpeechProvider
@@ -274,7 +274,7 @@ class ConversationRuntime:
             tools=tools,
             pack=self._pack,
             notifier=server,
-            options=LLMOptions(model=self._model),
+            options=options_for(self._model, Purpose.CONVERSATION),
             session=Session(),
             audio=self._audio,
             tts_speed=float(self._settings.tts_speed.value),

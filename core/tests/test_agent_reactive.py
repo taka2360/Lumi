@@ -60,6 +60,7 @@ from lumi.providers.llm.base import (
     TextDelta,
     ToolCall,
 )
+from lumi.providers.llm.sampling import Purpose, options_for
 from lumi.providers.registry import ProviderRegistry
 from lumi.providers.stt.base import Transcription
 from lumi.providers.tts.base import SpeechAudio, VoiceConfig
@@ -318,23 +319,22 @@ async def test_a_turn_speaks_and_records() -> None:
     assert [t.text for t in rig.session.turns] == ["やあ", "こんにちは。げんきだよ。"]
 
 
-def test_selecting_a_model_preserves_the_other_llm_options() -> None:
+def test_selecting_a_model_reresolves_the_sampling_profile() -> None:
+    """★ **The profile follows the model, it is not carried across** (ADR-048).
+
+    A sampling profile is a claim about one model family that somebody measured. Keeping
+    the previous model's numbers would silently decode a model the user just switched to
+    with settings taken from a different model's card — the same inheritance bug the
+    profiles exist to close, running in the other direction.
+    """
     rig = Rig(FakeLlm([text("こんにちは。")]))
-    rig.loop._options = LLMOptions(
-        model="old",
-        temperature=0.25,
-        max_tokens=256,
-        think=True,
-    )
+    rig.loop._options = options_for("qwen3.5:9b", Purpose.CONVERSATION)
 
-    rig.loop.set_llm_model("new")
+    rig.loop.set_llm_model("gemma3:12b")
 
-    assert rig.loop._options == LLMOptions(
-        model="new",
-        temperature=0.25,
-        max_tokens=256,
-        think=True,
-    )
+    assert rig.loop._options == options_for("gemma3:12b", Purpose.CONVERSATION)
+    # Qwen's values did not come along for the ride
+    assert rig.loop._options.top_p is None
 
 
 async def test_runtime_tts_speed_applies_to_next_turn_only() -> None:

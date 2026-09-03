@@ -126,6 +126,56 @@ LLMEvent = (
 )
 ```
 
+### `LLMOptions` と sampling プロファイル〔2026-09-02 確定 / ADR-048〕
+
+**ここが生成設定の単一定義である。** 決定 → [../decisions/ADR-048-sampling-profiles.md](../decisions/ADR-048-sampling-profiles.md) /
+実測 → [../measurements/phase2.md](../measurements/phase2.md)
+
+```python
+@dataclass(frozen=True, slots=True)
+class LLMOptions:
+    model: str
+    temperature: float = 0.7
+    top_p: float | None = None
+    top_k: int | None = None
+    min_p: float | None = None
+    repeat_penalty: float | None = None      # 乗算。1.0 = 無効
+    presence_penalty: float | None = None    # 加算。既出トークン一律
+    frequency_penalty: float | None = None   # 加算。出現回数に比例
+    max_tokens: int | None = None            # 暴走の保険。文体制御ではない
+    seed: int | None = None                  # ★ 製品経路では設定しない
+    think: bool = False                      # 有効でも TTS には流さない
+```
+
+★ **`None` は中立ではない。「送らない」であり、値はモデルファイルが決める。**
+`qwen3.5:9b` の Modelfile は `temperature 1 / top_k 20 / top_p 0.95 / presence_penalty 1.5` を持つ。
+**フィールドを省くことは委譲であって、無指定ではない。**
+
+#### プロファイル（`providers/llm/sampling.py`）
+
+| | `qwen3*` 会話 | `qwen3*` 抽出 | 測定のないモデル |
+|---|---|---|---|
+| `temperature` | 0.7 | **0.2** | 会話 0.7 / 抽出 0.2 |
+| `top_p` | 0.8 | 0.8 | 送らない |
+| `top_k` | 20 | 20 | 送らない |
+| `min_p` | 0.0 | 0.0 | 送らない |
+| `repeat_penalty` | 1.0 | 1.0 | 送らない |
+| **`presence_penalty`** | **0.0** | **0.0** | 送らない |
+| `frequency_penalty` | 0.0 | 0.0 | 送らない |
+| `max_tokens` | 512 | 1024 | 送らない |
+| `think` | false | false | false |
+
+- **測定したモデル系列には、既定値と一致する値も含めて全項目を送る。** 一致は今日のモデルファイルについての事実であって、決定ではない
+- **`presence_penalty` の 0.0 だけが Qwen のモデルカード（1.5）と異なる。** 根拠は実測であり、
+  1.5 は長文生成の無限反復に向けた値、Lumi の応答は1〜2文の音声である
+- 抽出が冷たいのは**出力が JSON で、読むのはパーサだから。** `"subject"` の再出現を罰することは形式を罰すること
+- 測定のないモデルに Qwen の値を当てない。**そのモデルの作者の値のほうが根拠がある**
+
+#### `think` を常に送る〔Phase 1 実測〕
+
+ハイブリッド推論モデルは**既定で思考する**ので、省略は `think=false` の無視と同じ結果になる。
+最初の発話可能トークンまで 272 ms 対 5578 ms（[../measurements/phase1.md](../measurements/phase1.md)）。
+
 ### 実装候補
 
 | Provider | 状態 |
