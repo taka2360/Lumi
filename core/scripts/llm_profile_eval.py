@@ -25,9 +25,10 @@ prompt-token column does not describe a production turn.
 
 ## A sample counts only if it ended the way a reply ends
 
-`Finish(reason="stop")`, text only. Everything else is **excluded from the comparison and
-printed as excluded**, because every other ending measures something other than the
-profile:
+`Finish(reason="stop")`, with something left to say once `MarkerStream` has taken the
+`<|ACT ...|>` directives out — **the same text production records and speaks**. Everything
+else is **excluded from the comparison and printed as excluded**, because every other
+ending measures something other than the profile:
 
 | ending | why it is not a sample |
 |---|---|
@@ -36,6 +37,8 @@ profile:
 | | faster" for a reason that is not its sampling |
 | a tool call | production would run it and generate again; the text and the latency |
 | | here are one step of a turn, not a turn |
+| empty | `stop` with nothing spoken is silence, not brevity — and after markers |
+| | are stripped, a turn that emitted only `<|ACT ...|>` lands here |
 | `LLMFailure` / no `Finish` | there is no reply to measure |
 | any other reason | an unread ending is not assumed to be whole — |
 | | `memory/reflection.py` takes the same line |
@@ -80,6 +83,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from lumi.agent.markers import MarkerStream
 from lumi.agent.prompt import assemble
 from lumi.agent.runtime import build_tool_registry
 from lumi.agent.session import Session
@@ -90,7 +94,14 @@ from lumi.kernel.ids import EventId
 from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.provenance import TrustLevel
-from lumi.providers.llm.base import Finish, LLMFailure, LLMOptions, TextDelta, ToolCall
+from lumi.providers.llm.base import (
+    Finish,
+    LLMFailure,
+    LLMOptions,
+    LLMProvider,
+    TextDelta,
+    ToolCall,
+)
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.llm.sampling import Purpose, is_qwen3, options_for
 from lumi.tools.base import ToolDescriptor
@@ -137,6 +148,8 @@ class Sample(StrEnum):
     OK = "ok"
     #: `Finish(reason="length")` — cut off at `max_tokens`, not finished
     TRUNCATED = "truncated"
+    #: Finished cleanly with nothing to say. **Silence, not brevity**
+    EMPTY = "empty"
     #: The model called a tool. Production would run it and generate again
     TOOL_CALL = "tool_call"
     #: `LLMFailure`, or a stream that ended without a `Finish`
@@ -147,6 +160,7 @@ class Sample(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class Reply:
+    #: **What Lumi would have said** — markers stripped, as `agent/streaming.py` records it
     text: str
     #: **What this generation is worth as a measurement.** Read before any number below
     status: Sample
@@ -159,6 +173,10 @@ class Reply:
     #: What the assembled prompt actually cost. **Not the estimate** `agent/prompt.py` budgets
     #: against — the point of printing it is to see how far apart the two are
     prompt_tokens: int
+    #: `<|ACT ...|>` markers that parsed. **Reported, not measured against**: it says how
+    #: far each profile follows `SPEECH_PROTOCOL`, and it is what the 字数 column would
+    #: have been inflated by
+    intents: int = 0
 
 
 class _NullAudit:
@@ -201,7 +219,7 @@ def exposed_tools() -> Sequence[ToolDescriptor]:
 
 
 async def generate(
-    provider: OllamaProvider,
+    provider: LLMProvider,
     session: Session,
     options: LLMOptions,
     text: str,
@@ -218,7 +236,15 @@ async def generate(
 
     started = time.perf_counter()
     first: float | None = None
+    # **The same parser production speaks through** (`agent/streaming.py`). `SPEECH_PROTOCOL`
+    # asks for `<|ACT {...}|>` on every turn, and a marker is ~40 ASCII characters inside a
+    # 30-120 character Japanese reply: left in, it lands in the 字数 column, drags
+    # `repeated_ratio` toward whatever punctuation the marker repeats, and prints control
+    # syntax as if Lumi had said it. **Profiles emit markers at different rates**, so that
+    # is not a constant offset — it is a difference between variants that is not sampling.
+    markers = MarkerStream()
     parts: list[str] = []
+    intents = 0
     tokens = 0
     prompt_tokens = 0
     # **Starts invalid.** A stream that ends without a `Finish` has not said it is done,
@@ -228,8 +254,13 @@ async def generate(
     async for event in provider.stream(prompt.messages, tools, options, CancelToken()):
         if isinstance(event, TextDelta):
             if first is None:
+                # **Before the marker parser, as production times it.** A delta that turns
+                # out to be the opening of a marker is still the moment the model started
+                # answering (`llm_first_token_ms` in `agent/streaming.py`)
                 first = time.perf_counter()
-            parts.append(event.text)
+            chunk = markers.feed(event.text)
+            parts.append(chunk.text)
+            intents += len(chunk.intents)
         elif isinstance(event, ToolCall):
             # Recorded, not run. **Latency and length here describe one step of a turn**
             status, detail = Sample.TOOL_CALL, f"the model called {event.name}"
@@ -241,7 +272,16 @@ async def generate(
             status, detail = Sample.FAILED, event.message
     ended = time.perf_counter()
 
+    # **Whatever was left holding an unterminated marker is discarded**, exactly as the
+    # turn does — half a marker is not something Lumi says
+    parts.append(markers.flush())
     reply = "".join(parts)
+    if status is Sample.OK and not reply.strip():
+        # ★ **`stop` with nothing to say is not a concise reply, it is silence.** Counted
+        # as `OK` it would report as a zero-length, fastest-of-the-run sample and make the
+        # profile that produced it look admirably terse. It also matters more now that
+        # markers are stripped: a turn that emitted only `<|ACT ...|>` lands here.
+        status, detail = Sample.EMPTY, f"stop with no spoken text (markers: {intents})"
     if status is Sample.OK:
         session.record_lumi_turn(reply, TrustLevel.TRUSTED)
     return Reply(
@@ -252,6 +292,7 @@ async def generate(
         total_ms=round((ended - started) * 1000),
         tokens=tokens,
         prompt_tokens=prompt_tokens,
+        intents=intents,
     )
 
 
@@ -289,22 +330,35 @@ def profiles(
     return [(name, replace(base, **kwargs)) for name, kwargs in overrides]  # type: ignore[arg-type]
 
 
+#: The throwaway turn. **Deliberately not one of `CASES`** — see `warm_up`.
+WARM_UP_TURN = "ちょっと待っててね"
+
+
 async def warm_up(
-    provider: OllamaProvider, options: LLMOptions, tools: Sequence[ToolDescriptor]
+    provider: LLMProvider, options: LLMOptions, tools: Sequence[ToolDescriptor]
 ) -> None:
-    """One generation whose output is thrown away. **So that A is not the only cold run.**
+    """One generation whose output is thrown away. **Run before every profile.**
 
     Profiles are compared in a fixed order against one loaded model, and the first request
-    pays for a KV cache the rest inherit — 644 ms cold against ~420 ms warm on this machine
-    (`docs/measurements/phase1.md`). Left alone, that difference lands entirely on whichever
-    variant happens to be listed first and reads as if its settings caused it.
+    pays for a system-prompt KV cache the rest inherit — 644 ms cold against ~420 ms warm on
+    this machine (`docs/measurements/phase1.md`). Left alone, that lands entirely on
+    whichever variant is listed first and reads as if its settings caused it.
+
+    **Once per run was not enough, and the reason is smaller but sharper.** Ollama reuses
+    the longest common prefix of the previous request, so a warm-up that generated `CASES[0]`
+    left that exact prompt — user message and all — cached for whichever variant ran next,
+    while every later variant reached `CASES[0]` after the preceding variant's *last* case
+    and shared only the system prefix. The gap is a handful of user tokens rather than the
+    644/420 above, but it fell on exactly one printed cell and on the same variant every
+    time. A neutral turn nobody measures, before each profile, leaves all five starting from
+    the same cache state.
 
     It does not make the latency column an SLO measurement — that is `phase1.md`'s job, with
     a proper cold/warm split. It makes the column **comparable between the profiles below**,
     which is the only claim this file makes.
     """
     session = Session()
-    await generate(provider, session, replace(options, seed=0), CASES[0].turns[0], tools)
+    await generate(provider, session, replace(options, seed=0), WARM_UP_TURN, tools)
 
 
 #: The comparison. **A is what shipped**: `temperature` alone, every other value inherited
@@ -357,19 +411,25 @@ async def main() -> None:
         f"- seed base: {args.seed_base}",
         f"- tools: {', '.join(tool.name for tool in tools) or '(none)'}"
         "（`build_tool_registry()` の `list_exposed()`。本番と同じものをモデルに見せている）",
-        "- 最初に1回、捨てるための生成を回している（KV キャッシュを揃えるため）。"
-        "latency は**プロファイル間の比較にだけ**使える",
-        "- **`stop` で終わった text のみが sample である。** `length` / tool call / 失敗は"
-        "`除外` として印字し、比較には使わない。ケースは1ターンでも除外されたらそこで打ち切る"
+        "- **変種ごとに1回、捨てるための生成を回している**（KV キャッシュを揃えるため。"
+        "ケースに含まれない中立の1ターン）。latency は**プロファイル間の比較にだけ**使える",
+        "- **`stop` で終わり、かつ発話テキスト が空でない text のみが sample である。**"
+        " `length` / tool call / 失敗 / 空応答は `除外` として印字し、比較には使わない。"
+        "ケースは1ターンでも除外されたらそこで打ち切る"
         "（続きは別の会話になり、他の変種と比較できなくなるため）",
+        "- **`<|ACT ...|>` は本番と同じ `MarkerStream` で取り除いてから数えている。**"
+        "マーカーは ASCII 40字前後あり、残すと 字数 と 反復 が歪む。"
+        "出た回数は `marker` 列に出す",
         "- **A だけ `max_tokens` を送らない。** 出荷前の要求そのものを再現しているためで、"
         "この非対称は意図的である。だからこそ打ち切られた sample を混ぜない",
         "",
     ]
     try:
         variants = profiles(args.model, VARIANTS)
-        await warm_up(provider, variants[0][1], tools)
         for label, options in variants:
+            # **Before each profile, not once for the run.** Every variant then reaches its
+            # first case from the same cache state (`warm_up`)
+            await warm_up(provider, options, tools)
             lines += [f"## {label}", "", f"```\n{_settings(options)}\n```", ""]
             for index, case in enumerate(CASES):
                 session = Session()
@@ -386,7 +446,7 @@ async def main() -> None:
 
 
 async def _run_case(
-    provider: OllamaProvider,
+    provider: LLMProvider,
     session: Session,
     options: LLMOptions,
     case: Case,
@@ -432,7 +492,7 @@ def _render(case: Case, replies: Sequence[Reply]) -> list[str]:
         lines += [
             f"- first token {last.first_token_ms} ms / total {last.total_ms} ms "
             f"/ {last.tokens} tok / {len(last.text)} 字 / 反復 {repeated_ratio(last.text)}"
-            f" / prompt {last.prompt_tokens} tok",
+            f" / marker {last.intents} / prompt {last.prompt_tokens} tok",
             "",
         ]
     else:
