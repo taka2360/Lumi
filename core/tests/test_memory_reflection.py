@@ -82,6 +82,9 @@ class FakeLlm:
         self.finish_reason = finish_reason
         self.prompts: list[Sequence[Message]] = []
         self.cancel_at: int | None = None
+        #: The token of the pass currently running. **Kept so a test can revoke between two
+        #: generations**, which is the window a retrying pass has to respect
+        self.token: CancelToken | None = None
         #: Finish with `"length"` while the transcript holds more than this many lines.
         #: **Models the real relationship**: what overflows `num_predict` is the size of the
         #: batch, so a smaller batch is what makes the retry succeed.
@@ -95,6 +98,7 @@ class FakeLlm:
         cancel_token: CancelToken,
     ) -> AsyncIterator[LLMEvent]:
         self.prompts.append(messages)
+        self.token = cancel_token
         if self._fail:
             yield LLMFailure(message="the engine died")
             return
@@ -114,6 +118,30 @@ class FakeLlm:
 def transcript_lines(messages: Sequence[Message]) -> int:
     """How many utterances the prompt carries. `build_messages` writes `id speaker: text`."""
     return len(re.findall(r"^\S+ (?:user|lumi): ", messages[-1].content, re.MULTILINE))
+
+
+class RevokingStore:
+    """A `MemoryStore` that revokes the pass while the pass is reading it.
+
+    **Models where a revocation actually lands.** The foreground does not wait for a
+    convenient moment: it fires on whatever await the Job happens to be sitting on, and
+    between two generations that await is `recent()`.
+    """
+
+    def __init__(self, store: MemoryStore, llm: FakeLlm, *, after: int) -> None:
+        self._store = store
+        self._llm = llm
+        self._after = after
+        self.reads = 0
+
+    async def recent(self, limit: int) -> Any:
+        self.reads += 1
+        if self.reads > self._after and self._llm.token is not None:
+            self._llm.token.fire("inference_revoked")
+        return await self._store.recent(limit)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._store, name)
 
 
 class Rig:
@@ -592,6 +620,38 @@ async def test_a_length_limited_answer_is_thrown_away_and_retried_smaller(rig: R
     # 4 lines truncated, 2 fit. **Nothing was extracted from the truncated answer**
     assert [transcript_lines(prompt) for prompt in rig.llm.prompts] == [4, 2]
     assert await rig.episodes.unreflected(4) == [("e1", 2)]
+
+
+async def test_a_shrunk_retry_does_not_start_after_the_lease_was_revoked(rig: Rig) -> None:
+    """★ **ADR-018.** The halving retry is still background work: a second generation
+    started after the foreground asked for inference competes with the turn the user is
+    waiting on, and `OllamaProvider.stream()` posts its request before it looks at the
+    token. **So the pass checks immediately before asking**, not only after the answer.
+    """
+    rig.llm._answers = [extraction()]
+    rig.llm.truncate_above = 2
+    job = ReflectionJob(
+        arbiter=rig.arbiter,
+        llm=rig.llm,  # type: ignore[arg-type]
+        store=RevokingStore(rig.store, rig.llm, after=1),  # type: ignore[arg-type]
+        episodes=rig.episodes,
+        options=OPTIONS,
+        clock=lambda: NOW,
+    )
+    await rig.conversation(
+        said("u1", "Factorio 好きなんだ"),
+        said("u2", "いいね。", speaker=SPEAKER_LUMI, turn=1),
+        said("u3", "工場を広げるのが楽しい", turn=2),
+        said("u4", "わかる。", speaker=SPEAKER_LUMI, turn=3),
+    )
+
+    report = await job.run()
+
+    assert report.interrupted
+    # **One generation, not two.** The retry never left the ground
+    assert len(rig.llm.prompts) == 1
+    # And nothing was lost by refusing it: the watermark stayed where it was
+    assert await rig.episodes.unreflected(4) == [("e1", 0)]
 
 
 async def test_an_utterance_that_never_fits_does_not_block_the_queue(rig: Rig) -> None:

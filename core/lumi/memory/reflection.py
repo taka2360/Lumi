@@ -225,6 +225,13 @@ class ReflectionJob:
         """One prompt over one batch, and **whether it was the batch that was too big.**"""
         known = [record.subject for record in await self._store.recent(20)]
         messages = build_messages(lines, known_subjects=known)
+        if job.cancel_token.is_set:
+            # ★ **The checkpoint is here, not after the answer.** `OllamaProvider.stream()`
+            # posts `/api/chat` before it ever looks at the token, so a shrunk retry started
+            # after the lease was revoked would put a second background generation in front
+            # of the user's turn — the one thing revocation exists to prevent (ADR-018).
+            # Revocation can land on any await above this line, `_store.recent()` included.
+            return ReflectionReport(interrupted=True, episodes=1), False
         try:
             answer, ending = await self._ask(messages, job)
         except Exception as error:
@@ -232,12 +239,12 @@ class ReflectionJob:
             # watermark stays put and the next pass tries again.
             log.warning("reflection.llm_failed", error=str(error), episode=episode_id)
             return ReflectionReport(interrupted=True, episodes=1), False
-        if job.cancel_token.is_set:
-            # **Revocation wins over truncation.** The conversation wants the GPU now, and
-            # a smaller batch is still a second inference.
-            return ReflectionReport(interrupted=True, episodes=1), False
-        if ending is not _Ask.OK:
-            return ReflectionReport(interrupted=True, episodes=1), ending is _Ask.TRUNCATED
+        if ending is not _Ask.OK or job.cancel_token.is_set:
+            # The token is read again because it can be set **while the answer was being
+            # streamed**, and then **revocation wins over truncation**: the conversation
+            # wants the GPU now, and a smaller batch is still a second inference.
+            truncated = ending is _Ask.TRUNCATED and not job.cancel_token.is_set
+            return ReflectionReport(interrupted=True, episodes=1), truncated
 
         items, rejected = parse_extractions(answer)
         by_id = {line.id: line for line in lines}

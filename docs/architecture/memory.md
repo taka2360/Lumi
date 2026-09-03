@@ -243,6 +243,9 @@ async with arbiter.inference_lease(job) as lease:
   1発話まで縮めてもなお切れる場合は、**その1発話を諦めて watermark を進める**
   （`rejected` に理由を残し、`reflection.truncated_at_floor` を error で出す）。
   1発話ぶんの取りこぼしは損失だが、**二度と流れない抽出キューは機能の停止である**
+- **縮めた再試行を始める前に、その都度 revoke を確認する。** Provider は
+  `/api/chat` を投げてからトークンを見るので、確認が「答えが返った後」だけだと
+  **revoke 済みの2回目の生成がユーザーのターンと競合する**。確認は `_ask` の直前に置く
 - **抽出した記憶は同じアイドル時間にインデックスする**（2e の `Indexer`）
 - **`novelty` は subject で測る**（既知の subject なら 0.0、初めてなら 1.0）。
   埋め込み距離のほうが細かいが、**候補が埋め込まれるのは書き込みの後**（`Indexer`）なので
