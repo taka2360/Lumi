@@ -12,6 +12,7 @@ the rules live:
 
 from __future__ import annotations
 
+import re
 from collections.abc import AsyncIterator, Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -81,6 +82,10 @@ class FakeLlm:
         self.finish_reason = finish_reason
         self.prompts: list[Sequence[Message]] = []
         self.cancel_at: int | None = None
+        #: Finish with `"length"` while the transcript holds more than this many lines.
+        #: **Models the real relationship**: what overflows `num_predict` is the size of the
+        #: batch, so a smaller batch is what makes the retry succeed.
+        self.truncate_above: int | None = None
 
     async def stream(
         self,
@@ -98,7 +103,17 @@ class FakeLlm:
             if self.cancel_at == index:
                 cancel_token.fire("inference_revoked")
             yield TextDelta(text=chunk)
-        yield Finish(reason=self.finish_reason)
+        yield Finish(reason=self._finish_reason(messages))
+
+    def _finish_reason(self, messages: Sequence[Message]) -> str:
+        if self.truncate_above is None:
+            return self.finish_reason
+        return "length" if transcript_lines(messages) > self.truncate_above else "stop"
+
+
+def transcript_lines(messages: Sequence[Message]) -> int:
+    """How many utterances the prompt carries. `build_messages` writes `id speaker: text`."""
+    return len(re.findall(r"^\S+ (?:user|lumi): ", messages[-1].content, re.MULTILINE))
 
 
 class Rig:
@@ -553,20 +568,50 @@ async def test_a_failing_engine_leaves_the_transcript_for_next_time(rig: Rig) ->
     assert await rig.episodes.unreflected(4)
 
 
-async def test_a_length_limited_answer_leaves_the_transcript_for_next_time(rig: Rig) -> None:
-    """A token-capped answer is incomplete even if the returned text happens to parse.
+async def test_a_length_limited_answer_is_thrown_away_and_retried_smaller(rig: Rig) -> None:
+    """A token-capped answer is incomplete even if the returned text happens to parse, so
+    it is discarded — **but discarding alone would never make progress.**
 
-    Advancing the watermark would make the omitted facts permanently unreachable.
+    The same batch, capped the same way, truncates again on every later pass. So the batch
+    halves and the pass tries again, and the watermark moves over **what was read**, not
+    over what was asked for.
     """
     rig.llm._answers = [extraction()]
-    rig.llm.finish_reason = "length"
+    rig.llm.truncate_above = 2
+    await rig.conversation(
+        said("u1", "Factorio 好きなんだ"),
+        said("u2", "いいね。", speaker=SPEAKER_LUMI, turn=1),
+        said("u3", "工場を広げるのが楽しい", turn=2),
+        said("u4", "わかる。", speaker=SPEAKER_LUMI, turn=3),
+    )
+
+    report = await rig.job.run()
+
+    assert not report.interrupted
+    assert report.written == 1
+    # 4 lines truncated, 2 fit. **Nothing was extracted from the truncated answer**
+    assert [transcript_lines(prompt) for prompt in rig.llm.prompts] == [4, 2]
+    assert await rig.episodes.unreflected(4) == [("e1", 2)]
+
+
+async def test_an_utterance_that_never_fits_does_not_block_the_queue(rig: Rig) -> None:
+    """★ The floor. A single utterance the model cannot answer within `max_tokens` would
+    otherwise be re-read forever — and because `unreflected()` is oldest-first, it would
+    take every episode behind it down with it, burning idle inference to stay stuck.
+
+    **So the watermark moves and the loss is recorded.** One utterance nobody can extract
+    from is a loss; a reflection queue that never drains is a stopped feature.
+    """
+    rig.llm._answers = [extraction()]
+    rig.llm.truncate_above = 0  # nothing ever fits
     await rig.conversation(said("u1", "Factorio 好きなんだ"))
 
     report = await rig.job.run()
 
-    assert report.interrupted
+    assert not report.interrupted
     assert await rig.store.live("user.hobby") == []
-    assert await rig.episodes.unreflected(4)
+    assert [reason for reason in report.rejected if "truncated" in reason]
+    assert await rig.episodes.unreflected(4) == []
 
 
 async def test_the_job_never_takes_the_foreground(rig: Rig) -> None:

@@ -115,14 +115,18 @@ def options_for(model: str, purpose: Purpose) -> LLMOptions:
     been measured — swapping the model must swap the settings with it, or Lumi would be
     decoding Gemma with numbers taken from Qwen's model card.
     """
-    table = _QWEN3 if _is_qwen3(model) else _GENERIC
+    table = _QWEN3 if is_qwen3(model) else _GENERIC
     return replace(table[purpose], model=model)
 
 
-def _is_qwen3(model: str) -> bool:
+def is_qwen3(model: str) -> bool:
     """`qwen3.5:9b` → yes, `qwen3.5` → yes, `gemma3:12b` → no.
 
     Matched exactly on the name before the tag. Similar names such as `qwen3-coder` stay
     generic until they have their own measured profile.
+
+    **Public because "does this model have a measured profile" is a question outside this
+    module asks** — `scripts/llm_profile_eval.py` refuses to run its Qwen-specific variant
+    table against anything else.
     """
     return model.split(":", 1)[0].strip().lower() in _QWEN3_MODEL_NAMES

@@ -22,6 +22,11 @@ average that out. **Production never sets one** (`LLMOptions.seed`).
 **It does not score.** Naturalness of Japanese is not a number this repo can compute, and
 a made-up scorer would launder taste into evidence. What is counted is only what counting
 answers honestly: length, latency, and how much of the reply is literally repeated text.
+
+**It does not run on a model family it has no variants for.** `VARIANTS` names Qwen's own
+numbers and spells out the Modelfile values `qwen3.5:9b` ships with; pointed at `gemma3:12b`
+those labels would be lies about a base that `options_for()` had already fallen back to
+temperature-only. A new family needs its own variant table, not a `--model` flag.
 """
 
 from __future__ import annotations
@@ -40,7 +45,7 @@ from lumi.kernel.cancellation import CancelToken
 from lumi.provenance import TrustLevel
 from lumi.providers.llm.base import Finish, LLMFailure, LLMOptions, TextDelta
 from lumi.providers.llm.ollama import OllamaProvider
-from lumi.providers.llm.sampling import Purpose, options_for
+from lumi.providers.llm.sampling import Purpose, is_qwen3, options_for
 
 #: Repo root → the Content Pack that ships with Lumi
 PACK = Path(__file__).resolve().parents[2] / "content" / "characters" / "lumi"
@@ -141,6 +146,22 @@ def profiles(
     return [(name, replace(base, **kwargs)) for name, kwargs in overrides]  # type: ignore[arg-type]
 
 
+async def warm_up(provider: OllamaProvider, options: LLMOptions) -> None:
+    """One generation whose output is thrown away. **So that A is not the only cold run.**
+
+    Profiles are compared in a fixed order against one loaded model, and the first request
+    pays for a KV cache the rest inherit — 644 ms cold against ~420 ms warm on this machine
+    (`docs/measurements/phase1.md`). Left alone, that difference lands entirely on whichever
+    variant happens to be listed first and reads as if its settings caused it.
+
+    It does not make the latency column an SLO measurement — that is `phase1.md`'s job, with
+    a proper cold/warm split. It makes the column **comparable between the profiles below**,
+    which is the only claim this file makes.
+    """
+    session = Session()
+    await generate(provider, session, replace(options, seed=0), CASES[0].turns[0])
+
+
 #: The comparison. **A is what shipped**: `temperature` alone, every other value inherited
 #: from the model file (`top_p 0.95 / top_k 20 / presence_penalty 1.5`), which is why it is
 #: spelled out here rather than written as "the defaults".
@@ -172,6 +193,15 @@ async def main() -> None:
     parser.add_argument("--seed-base", type=int, default=DEFAULT_SEED_BASE)
     args = parser.parse_args()
 
+    if not is_qwen3(args.model):
+        # **Refusing beats reporting.** ADR-048 points at this harness as the way to decide
+        # whether to switch models, and a run whose variant labels describe a different
+        # family is evidence pointing the wrong way.
+        parser.error(
+            f"{args.model} has no variant table; VARIANTS is Qwen3-specific"
+            " (see the module docstring)"
+        )
+
     provider = OllamaProvider(args.model)
     await provider.load()
 
@@ -179,10 +209,14 @@ async def main() -> None:
         f"# sampling profile A/B — `{args.model}`",
         "",
         f"- seed base: {args.seed_base}",
+        "- 最初に1回、捨てるための生成を回している（KV キャッシュを揃えるため）。"
+        "latency は**プロファイル間の比較にだけ**使える",
         "",
     ]
     try:
-        for label, options in profiles(args.model, VARIANTS):
+        variants = profiles(args.model, VARIANTS)
+        await warm_up(provider, variants[0][1])
+        for label, options in variants:
             lines += [f"## {label}", "", f"```\n{_settings(options)}\n```", ""]
             for index, case in enumerate(CASES):
                 session = Session()

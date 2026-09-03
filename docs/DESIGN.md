@@ -25,6 +25,10 @@
 >    抽出の数値は temperature 0.2 で取られていたが、コードは 0.8 で動かしていた
 > 4. **日本語の A/B を実測として記録した** → [measurements/phase2.md](measurements/phase2.md)。
 >    再実行手段は `core/scripts/llm_profile_eval.py`
+> 5. **抽出に出力トークン上限を入れた帰結として、`length` での打ち切りを
+>    「捨てて次回やり直す」で終わらせないことにした**
+>    → [architecture/memory.md](architecture/memory.md) §4。同じ入力を同じ上限で読む限り
+>    次回も同じ場所で切れるため、**バッチを縮めて引き直す**
 >
 > **rev.25 の変更点**（Phase 3 の前に、依存の向きと責務境界を固定した）
 > 1. **Core のモジュール階層を決めて静的検査に載せた**

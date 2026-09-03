@@ -281,6 +281,14 @@ B〜E は `min_p 0.0 / repeat_penalty 1.0 / frequency_penalty 0.0 / num_predict 
 - 反復指標の max は C が最も高いが、これは技術説明で `rebase` / `merge` を繰り返す回であり、
   **劣化ではない。この指標は「同じ節を二度言う」しか見ていない**（`repeated_ratio` の docstring）
 
+> ⚠ **この表の latency は変種間の比較にしか使えない。**
+> harness は1プロセスで A→E の順に回すので、system prompt の KV キャッシュが冷たいのは
+> 最初の生成だけである（[phase1.md](phase1.md) の cold 644 ms / warm 約 420 ms）。
+> **この測定を取った時点では最初に回る A がその1回を被っていた。** 上の差が出力長で説明でき、
+> first token に差が無いことがそれを裏づけているが、
+> **harness には以降、捨てるためのウォームアップ生成を1回入れてある**（同じ順序で取り直せば
+> A の total はいくらか下がるはず）。SLO の値は [phase1.md](phase1.md) を見ること。
+
 ### 実際に出た文（判断の根拠はこちら）
 
 **A（変更前）— 日本語が壊れる**
