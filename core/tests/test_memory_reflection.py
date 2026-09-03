@@ -154,6 +154,46 @@ class RevokingStore:
         return getattr(self._store, name)
 
 
+class BreakingStore:
+    """A `MemoryStore` that writes `after` candidates and then cannot write any more."""
+
+    def __init__(self, store: MemoryStore, *, after: int) -> None:
+        self._store = store
+        self._after = after
+        self.writes = 0
+
+    async def reconcile(self, candidate: Any, *, now: Any = None) -> Any:
+        self.writes += 1
+        if self.writes > self._after:
+            raise RuntimeError("database is locked")
+        return await self._store.reconcile(candidate, now=now)
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._store, name)
+
+
+class LockedEpisodes:
+    """An `EpisodeStore` whose one named method raises, the way a busy SQLite does.
+
+    **A wrapper rather than a patched attribute**: `EpisodeStore` has `__slots__`, and the
+    point is to break one call without pretending the rest of the store is gone.
+    """
+
+    def __init__(self, episodes: EpisodeStore, *, on: str) -> None:
+        self._episodes = episodes
+        self._on = on
+
+    def __getattr__(self, name: str) -> Any:
+        if name == self._on:
+
+            async def locked(*args: Any, **kwargs: Any) -> Any:
+                del args, kwargs
+                raise RuntimeError("database is locked")
+
+            return locked
+        return getattr(self._episodes, name)
+
+
 class Rig:
     def __init__(self, llm: FakeLlm) -> None:
         self.db = open_memory(IN_MEMORY)
@@ -167,6 +207,17 @@ class Rig:
             llm=self.llm,  # type: ignore[arg-type]
             store=self.store,
             episodes=self.episodes,
+            options=OPTIONS,
+            clock=lambda: NOW,
+        )
+
+    def job_over(self, episodes: Any) -> ReflectionJob:
+        """The same pass, reading a different `EpisodeStore`."""
+        return ReflectionJob(
+            arbiter=self.arbiter,
+            llm=self.llm,  # type: ignore[arg-type]
+            store=self.store,
+            episodes=episodes,
             options=OPTIONS,
             clock=lambda: NOW,
         )
@@ -604,6 +655,95 @@ async def test_a_failing_engine_leaves_the_transcript_for_next_time(rig: Rig) ->
 
     assert report.interrupted
     assert await rig.episodes.unreflected(4)
+
+
+async def test_a_pass_that_dies_after_writing_still_says_what_it_wrote(rig: Rig) -> None:
+    """★ **The report is the only record of what landed.**
+
+    `mark_reflected()` is the sharp case: the memories are committed and the watermark is
+    not, so the next pass re-reads the same utterances, re-extracts the same facts, and
+    `reconcile` calls them `DUPLICATE` — `learned` is 0 forever after. If this pass had let
+    the exception replace its report, the scheduler's `if report.learned:` would have
+    skipped `index_memories()` on both passes, and **those memories would stay unembedded
+    until the next restart** — reachable by keyword, invisible to similarity search.
+    """
+
+    rig.llm._answers = [extraction()]
+    await rig.conversation(said("u1", "Factorio 好きなんだ"))
+
+    report = await rig.job_over(LockedEpisodes(rig.episodes, on="mark_reflected")).run()
+
+    # The write itself went through, and the report still carries it
+    assert report.written == 1
+    assert [record.content for record in await rig.store.live("user.hobby")] == [
+        "ユーザーは Factorio が好き"
+    ]
+    # **And the pass is honest about having stopped**, so the watermark stayed put
+    assert report.interrupted
+    assert await rig.episodes.unreflected(4) == [("e1", 0)]
+
+
+async def test_a_store_that_breaks_mid_answer_keeps_what_it_already_wrote(rig: Rig) -> None:
+    """★ The same rule one frame down. **Two memories from one answer, and the store dies
+    between them**: the first is committed, so it has to be reported or nobody embeds it —
+    and the watermark must not move, or the second is skipped forever.
+
+    A store failure is not the item's fault, so it is not a `rejected` reason. `rejected`
+    means "this extraction was no good"; this one may have been fine.
+    """
+    import json
+
+    rig.llm._answers = [
+        json.dumps(
+            [
+                {
+                    "subject": "user.hobby",
+                    "content": "ユーザーは Factorio が好き",
+                    "assertion_mode": "user_stated",
+                    "evidence": ["u1"],
+                },
+                {
+                    "subject": "user.pet",
+                    "content": "ユーザーは猫を飼っている",
+                    "assertion_mode": "user_stated",
+                    "evidence": ["u1"],
+                },
+            ],
+            ensure_ascii=False,
+        )
+    ]
+    await rig.conversation(said("u1", "Factorio 好きだし猫もいる"))
+    job = ReflectionJob(
+        arbiter=rig.arbiter,
+        llm=rig.llm,  # type: ignore[arg-type]
+        store=BreakingStore(rig.store, after=1),  # type: ignore[arg-type]
+        episodes=rig.episodes,
+        options=OPTIONS,
+        clock=lambda: NOW,
+    )
+
+    report = await job.run()
+
+    assert report.written == 1
+    assert report.rejected == ()
+    assert report.interrupted
+    assert await rig.episodes.unreflected(4) == [("e1", 0)]
+    # **Not treated as an oversize answer.** Nothing overflowed, so nothing is halved
+    assert len(rig.llm.prompts) == 1
+
+
+async def test_a_pass_that_dies_before_writing_reports_nothing_learned(rig: Rig) -> None:
+    """The other side of the same rule. **Nothing landed, so nothing is claimed** — the
+    scheduler must not embed or nudge on a pass that never got as far as a memory.
+    """
+
+    await rig.conversation(said("u1", "Factorio 好きなんだ"))
+
+    report = await rig.job_over(LockedEpisodes(rig.episodes, on="utterances_from")).run()
+
+    assert report.interrupted
+    assert report.learned == 0
+    assert rig.llm.prompts == []
 
 
 async def test_a_length_limited_answer_is_thrown_away_and_retried_smaller(rig: Rig) -> None:

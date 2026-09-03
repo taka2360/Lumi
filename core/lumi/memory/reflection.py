@@ -174,7 +174,16 @@ class ReflectionJob:
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def run(self) -> ReflectionReport:
-        """One pass over the unreflected conversation. **Safe to call when there is none.**"""
+        """One pass over the unreflected conversation. **Safe to call when there is none.**
+
+        ★ **Whatever this wrote, it reports — including when it dies partway.** The report
+        is the only record of what landed: the scheduler reads `learned` to decide whether
+        to embed the new memories and whether to nudge the memory window (ADR-042). Letting
+        an exception replace the report would throw that away for writes that are already
+        committed, and the pass that retries them afterwards sees its own writes as
+        duplicates — `learned` is 0, so **the memories stay unembedded and unfindable by
+        similarity until the next restart.**
+        """
         pending = await self._episodes.unreflected(EPISODE_LIMIT)
         if not pending:
             return ReflectionReport()
@@ -192,18 +201,28 @@ class ReflectionJob:
                     # **Stop where the revocation found us.** What has been written stays
                     # written; what has not is read again next time.
                     return _interrupted(report)
-                lines = await self._episodes.utterances_from(episode_id, watermark)
-                if not lines:
-                    continue
-                episode_report, batch = await self._reflect_episode(episode_id, lines, job)
-                report = _merge(report, episode_report)
-                if episode_report.interrupted:
-                    return report
-                # **The watermark moves only after the writes landed**, and only over the
-                # batch that was actually read — a shrunk batch leaves the rest for the
-                # next pass. Moving it first would mean a crash costs the memories and
-                # hides that it did.
-                await self._episodes.mark_reflected(episode_id, batch[-1].turn_index + 1)
+                try:
+                    lines = await self._episodes.utterances_from(episode_id, watermark)
+                    if not lines:
+                        continue
+                    episode_report, batch = await self._reflect_episode(episode_id, lines, job)
+                    report = _merge(report, episode_report)
+                    if episode_report.interrupted:
+                        return report
+                    # **The watermark moves only after the writes landed**, and only over
+                    # the batch that was actually read — a shrunk batch leaves the rest for
+                    # the next pass. Moving it first would mean a crash costs the memories
+                    # and hides that it did.
+                    await self._episodes.mark_reflected(episode_id, batch[-1].turn_index + 1)
+                except Exception:
+                    # ★ **The counts survive; the pass does not.** A locked database on
+                    # `mark_reflected()` is the sharp case: the memories are committed, the
+                    # watermark is not, and losing the report here would mean nobody embeds
+                    # them — the retry that follows classifies its own writes as duplicates
+                    # (see `run`'s docstring). Reporting `interrupted` instead is already
+                    # what a revoked lease does, and it is true of this too.
+                    log.exception("reflection.episode_failed", episode=episode_id)
+                    return _interrupted(report)
         log.info(
             "reflection.done",
             job=str(job.id),
@@ -341,6 +360,7 @@ class ReflectionJob:
         items, rejected = parse_extractions(answer)
         by_id = {line.id: line for line in lines}
         written = superseded = duplicates = 0
+        broke = False
         for item in items:
             try:
                 candidate = to_candidate(
@@ -358,6 +378,15 @@ class ReflectionJob:
                 # The store checks the same things again and knows more than this does.
                 rejected.append(f"store: {error}")
                 continue
+            except Exception:
+                # ★ **Not this item's fault, so not this item's `rejected`.** A store that
+                # cannot write is a store that will not write the rest either, and the
+                # items already committed are the same hazard `run()` guards: **stop, keep
+                # the counts, leave the watermark** so nothing is skipped and what did land
+                # still reaches the Indexer.
+                log.exception("reflection.write_failed", episode=episode_id)
+                broke = True
+                break
             if outcome.resolution is Resolution.DUPLICATE:
                 duplicates += 1
             elif outcome.resolution is Resolution.SUPERSEDE:
@@ -372,9 +401,13 @@ class ReflectionJob:
                 superseded=superseded,
                 duplicates=duplicates,
                 rejected=tuple(rejected),
+                interrupted=broke,
                 episodes=1,
             ),
-            _Ask.OK,
+            # **`UNUSABLE`, not `OK`** — the answer was whole, but this pass did not finish
+            # acting on it, and `OK` is what would move the watermark past the items it
+            # never wrote. Shrinking the batch would not help either: nothing overflowed
+            _Ask.UNUSABLE if broke else _Ask.OK,
         )
 
     async def _ask(self, messages: Sequence[Message], job: Job) -> tuple[str, _Ask]:

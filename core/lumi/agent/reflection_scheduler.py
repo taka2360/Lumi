@@ -169,12 +169,14 @@ class ReflectionScheduler:
             except Exception:
                 # ★ **One bad pass must not end reflection for the session.** This coroutine
                 # is spawned once and never restarted (`runtime.py`), so anything escaping
-                # here — a locked database, an Indexer that cannot reach its model, a
-                # Provider raising something new — would take the loop with it, and Lumi
-                # would quietly stop making memories until the next launch. **That is the
-                # same stopped queue the batch retry exists to prevent**, reached from the
-                # outside.
+                # here would take the loop with it and Lumi would quietly stop making
+                # memories until the next launch. **That is the same stopped queue the batch
+                # retry exists to prevent**, reached from the outside.
                 #
-                # Repeating the pass is safe: the watermark only moves after its writes
-                # land, so whatever it did not finish is read again next idle period.
+                # **This is the last resort, not the handler.** `ReflectionJob.run()` keeps
+                # its own report when it dies partway, precisely so that writes it already
+                # made still reach `index_memories()` above — a pass whose failure surfaced
+                # here instead wrote nothing, because `unreflected()` is all that runs before
+                # the first write. Repeating it is safe either way: the watermark only moves
+                # after the writes land.
                 log.exception("reflection.pass_failed")
