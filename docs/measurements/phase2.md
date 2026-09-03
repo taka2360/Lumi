@@ -238,7 +238,7 @@ Content Pack の persona をそのまま通しており、プロンプトは製�
 
 `/api/show` が返す `qwen3.5:9b` の Modelfile：
 
-```
+```text
 temperature 1 / top_k 20 / top_p 0.95 / presence_penalty 1.5
 ```
 

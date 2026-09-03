@@ -60,11 +60,14 @@ def test_extraction_is_colder_than_conversation() -> None:
 
 
 @pytest.mark.parametrize("model", ["qwen3:8b", "qwen3.5:9b", "qwen3.6:35b-a3b", "qwen3.8:27b"])
-def test_the_whole_qwen3_family_takes_the_qwen_profile(model: str) -> None:
+def test_supported_qwen3_names_take_the_qwen_profile(model: str) -> None:
     assert options_for(model, Purpose.CONVERSATION).top_k == 20
 
 
-@pytest.mark.parametrize("model", ["gemma3:12b", "llama3.1:8b", "qwen2.5:7b"])
+@pytest.mark.parametrize(
+    "model",
+    ["gemma3:12b", "llama3.1:8b", "qwen2.5:7b", "qwen3-coder:30b", "qwen30:latest"],
+)
 def test_an_unmeasured_model_keeps_its_own_authors_values(model: str) -> None:
     """**Temperature only.** Qwen's numbers are a measurement of Qwen; applying them to a
     stranger is the same unfounded inheritance, chosen by Lumi instead of by Ollama.

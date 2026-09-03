@@ -175,7 +175,12 @@ async def main() -> None:
     provider = OllamaProvider(args.model)
     await provider.load()
 
-    lines = [f"# sampling profile A/B — `{args.model}`", ""]
+    lines = [
+        f"# sampling profile A/B — `{args.model}`",
+        "",
+        f"- seed base: {args.seed_base}",
+        "",
+    ]
     try:
         for label, options in profiles(args.model, VARIANTS):
             lines += [f"## {label}", "", f"```\n{_settings(options)}\n```", ""]

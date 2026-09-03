@@ -153,7 +153,10 @@ class LLMOptions:
 
 #### プロファイル（`providers/llm/sampling.py`）
 
-| | `qwen3*` 会話 | `qwen3*` 抽出 | 測定のないモデル |
+対象 Qwen 名は `qwen3` / `qwen3.5` / `qwen3.6` / `qwen3.8` の完全一致とする。
+`qwen3-coder` などの派生名は、専用プロファイルを測定するまで generic に落とす。
+
+| | 対象 Qwen・会話 | 対象 Qwen・抽出 | 測定のないモデル |
 |---|---|---|---|
 | `temperature` | 0.7 | **0.2** | 会話 0.7 / 抽出 0.2 |
 | `top_p` | 0.8 | 0.8 | 送らない |

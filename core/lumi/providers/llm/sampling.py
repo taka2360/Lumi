@@ -105,6 +105,8 @@ _GENERIC: Final[dict[Purpose, LLMOptions]] = {
     Purpose.EXTRACTION: LLMOptions(model="", temperature=0.2),
 }
 
+_QWEN3_MODEL_NAMES: Final[frozenset[str]] = frozenset({"qwen3", "qwen3.5", "qwen3.6", "qwen3.8"})
+
 
 def options_for(model: str, purpose: Purpose) -> LLMOptions:
     """The generation settings for one model and one purpose.
@@ -120,9 +122,7 @@ def options_for(model: str, purpose: Purpose) -> LLMOptions:
 def _is_qwen3(model: str) -> bool:
     """`qwen3.5:9b` → yes, `qwen3.5` → yes, `gemma3:12b` → no.
 
-    Matched on the name before the tag. **Not a version comparison**: `qwen3` and
-    `qwen3.5` and `qwen3.8` all start the same way and all carry the same non-thinking
-    recommendation. A future Qwen that departs from it needs its own row, not a smarter
-    parser.
+    Matched exactly on the name before the tag. Similar names such as `qwen3-coder` stay
+    generic until they have their own measured profile.
     """
-    return model.split(":")[0].strip().lower().startswith("qwen3")
+    return model.split(":", 1)[0].strip().lower() in _QWEN3_MODEL_NAMES

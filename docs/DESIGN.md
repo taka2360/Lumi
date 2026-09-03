@@ -25,7 +25,7 @@
 >    抽出の数値は temperature 0.2 で取られていたが、コードは 0.8 で動かしていた
 > 4. **日本語の A/B を実測として記録した** → [measurements/phase2.md](measurements/phase2.md)。
 >    再実行手段は `core/scripts/llm_profile_eval.py`
-
+>
 > **rev.25 の変更点**（Phase 3 の前に、依存の向きと責務境界を固定した）
 > 1. **Core のモジュール階層を決めて静的検査に載せた**
 >    → [ADR-045](decisions/ADR-045-core-module-layering.md)。
