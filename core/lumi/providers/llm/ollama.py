@@ -403,7 +403,11 @@ def _parse_line(line: str) -> list[LLMEvent]:
     if chunk.get("done"):
         events.append(
             Finish(
-                reason=str(chunk.get("done_reason", "stop")),
+                # `or`, not a default: **a `null` `done_reason` is an absent one.**
+                # `chunk.get(k, "stop")` returns `None` when the key is present and null,
+                # and `str(None)` is the literal `"None"` — a reason no reader recognises,
+                # handed to every caller that branches on how the generation ended.
+                reason=str(chunk.get("done_reason") or "stop"),
                 usage={
                     "prompt_tokens": int(chunk.get("prompt_eval_count", 0) or 0),
                     "completion_tokens": int(chunk.get("eval_count", 0) or 0),

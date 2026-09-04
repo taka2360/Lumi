@@ -245,6 +245,34 @@ async def test_ollama_streams_text_and_finishes() -> None:
     assert finish.usage["completion_tokens"] == 7
 
 
+async def test_ollama_reads_a_null_done_reason_as_an_ordinary_stop() -> None:
+    """★ **An absent reason and a null one are the same statement**: the engine did not say
+    why it stopped.
+
+    `chunk.get("done_reason", "stop")` only defaults when the key is missing, so a present
+    null became the literal string `"None"` — a reason no reader recognises, handed to
+    every caller that branches on how the generation ended.
+    """
+    provider = ollama_with(
+        version={"version": "0.5.0"},
+        tags={"models": [{"name": "qwen3:8b"}]},
+        chat=ndjson({"done": True, "done_reason": None}),
+    )
+    await provider.load()
+
+    events = [
+        event
+        async for event in provider.stream(
+            [Message(role="user", content="やあ")],
+            None,
+            LLMOptions(model="qwen3:8b"),
+            CancelToken(),
+        )
+    ]
+
+    assert [e.reason for e in events if isinstance(e, Finish)] == ["stop"]
+
+
 async def test_ollama_always_states_whether_to_think() -> None:
     """★ **Omitting the field leaves the model's default in place.**
 
