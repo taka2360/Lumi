@@ -234,9 +234,19 @@ Phase 2b で [ADR-039](../decisions/ADR-039-speculative-stt.md) を実装した�
 Content Pack の persona を通して取っており、プロンプトは製品と同一である
 （記憶 DB は空なので `ContextBlock` だけが本番より短い。全変種で等しく空）。
 
-⚠ **測定に使ったのは使い捨ての実験スクリプトで、リポジトリには入っていない。**
-以下は取れた値であって、コマンド一つで追試できる形にはなっていない
-（再実行手段を持つかどうかは別途決める → [ADR-048](../decisions/ADR-048-sampling-profiles.md)）。
+**追試できる。** `core/scripts/llm_profile_eval.py`（ADR-048 の時点では使い捨てだったものを、
+本番忠実な形にして入れた）。
+
+```
+cd core && uv run python scripts/llm_profile_eval.py --out ../ab.md
+```
+
+⚠ **以下の数値そのものは使い捨てスクリプトで取ったもので、上のスクリプトの出力ではない。**
+スクリプトは本番の `assemble()` / Content Pack / `list_exposed()` のツール記述子を通し、
+`MarkerStream` で `<|ACT ...|>` を除いてから数え、**`stop` で終わって発話が空でない生成だけを
+sample とする**（`length` / tool call / 失敗 / 空応答は「除外」として印字する）。
+変種ごとに捨てるための1生成を回して KV キャッシュを揃える。
+**同じ条件で取り直すと数値は動きうる**——揃っていなかったものを揃えたので、動くほうが正しい。
 
 ### まず分かったこと — Lumi は3つのパラメータを Modelfile に決めさせていた
 

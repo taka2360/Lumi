@@ -90,6 +90,7 @@ Lumi/
 | Core のセットアップ | `uv sync` | `core/` |
 | Core を単体起動 | `uv run lumi-core` | `core/` |
 | Core のテスト | `uv run pytest` | `core/` |
+| 生成設定の A/B（LLM を実際に呼ぶ） | `uv run python scripts/llm_profile_eval.py --out ../ab.md` | `core/` |
 | Core の lint / format / 型 | `uv run ruff check` / `uv run ruff format` / `uv run mypy` | `core/` |
 | Stage のテスト / lint / 型 | `pnpm test` / `pnpm lint` / `pnpm typecheck` | `stage/` |
 | Shell のテスト / lint / format | `cargo test` / `cargo clippy --all-targets -- -D warnings` / `cargo fmt` | `shell/src-tauri/` |
