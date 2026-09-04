@@ -220,6 +220,28 @@ class ReflectionJob:
                     # the next pass. Moving it first would mean a crash costs the memories
                     # and hides that it did.
                     await self._episodes.mark_reflected(episode_id, batch[-1].turn_index + 1)
+                    if len(batch) < len(lines):
+                        # ★ **An episode that is not finished blocks the newer ones behind
+                        # it**, because reading order *is* belief precedence. `unreflected()`
+                        # returns episodes oldest-first (`ORDER BY started_at`) and
+                        # `contradiction.resolve()` lets equal strength go to whichever
+                        # candidate arrives later — together those two make "Tuesday
+                        # supersedes Monday" true. Carrying on to a newer episode here
+                        # would write Tuesday's belief now and Monday's remainder next
+                        # pass, so **the older one would supersede the newer**: a fact
+                        # quietly deleting a fresher fact (memory.md §3).
+                        #
+                        # Reached by a halved batch and by an episode longer than
+                        # `UTTERANCE_LIMIT` alike. Ending the pass costs one idle period,
+                        # not a memory: nothing is thrown away, the watermark keeps what it
+                        # earned, and the next pass finds this same episode first.
+                        log.info(
+                            "reflection.episode_unfinished",
+                            episode=episode_id,
+                            read=len(batch),
+                            pending=len(lines) - len(batch),
+                        )
+                        break
                 except Exception:
                     # ★ **The counts survive; the pass does not.** A locked database on
                     # `mark_reflected()` is the sharp case: the memories are committed, the

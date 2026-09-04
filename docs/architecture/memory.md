@@ -282,6 +282,16 @@ async with arbiter.inference_lease(job) as lease:
   JSON の null ひとつで抽出キューが止まるのは、この fail-closed の意図ではない
 - **revoke は打ち切りに勝つ。** 再サンプル中に revoke されたら watermark は動かさない——
   「上限まで `length` だったから諦める」という判定も、revoke 後のこのパスが下してよい判定ではない
+- ★ **読み残した Episode があるパスは、そこで終わる。次の（新しい）Episode に進まない。**
+  **読む順序がそのまま信念の優先順位である**——`unreflected()` は `ORDER BY started_at` で
+  古い順に返し、[§6](#6-矛盾) の `resolve()` は同強度なら**後に到着した候補**を勝たせる。
+  この2つが噛み合って初めて「火曜の信念が月曜の信念を supersede する」が成り立つ。
+  古い Episode を半分読んだまま新しい Episode に進むと、**火曜の信念を先に書き、
+  月曜の残りを次のパスで書く**ことになり、**古いほうが新しいほうを supersede する**——
+  §3 が警告している「無関係な事実が別の事実を静かに消す」のと同じ事故である。
+  バッチを半分にした場合と、`UTTERANCE_LIMIT` を超える長さの Episode の場合の両方で起きる。
+  パスを終えるコストはアイドル1回分であって記憶ではない（捨てるものは無く、
+  次のパスは同じ Episode を最初に見つける）
 - 上限そのもの（`EXTRACTION_MAX_TOKENS`）は生成設定であり、値は
   [../interfaces/provider.md](../interfaces/provider.md) が単一定義とする
 - ★ **途中で落ちたパスも「何を書いたか」は返す。** レポートは**書き込みが起きた唯一の記録**であり、

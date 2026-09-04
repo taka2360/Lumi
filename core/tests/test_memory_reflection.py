@@ -223,8 +223,14 @@ class Rig:
             clock=lambda: NOW,
         )
 
-    async def conversation(self, *lines: Utterance, episode_id: str = "e1") -> None:
-        await self.episodes.open_episode(Episode(id=episode_id, session_id="s1", started_at=NOW))
+    async def conversation(
+        self, *lines: Utterance, episode_id: str = "e1", started_at: datetime = NOW
+    ) -> None:
+        # **`started_at` is what orders the pass** (`unreflected()` is `ORDER BY
+        # started_at`), so a test about ordering has to set it rather than share `NOW`.
+        await self.episodes.open_episode(
+            Episode(id=episode_id, session_id="s1", started_at=started_at)
+        )
         for line in lines:
             await self.episodes.append(line)
 
@@ -785,6 +791,45 @@ async def test_a_length_limited_answer_is_thrown_away_and_retried_smaller(rig: R
     # 4 lines truncated, 2 fit. **Nothing was extracted from the truncated answer**
     assert [transcript_lines(prompt) for prompt in rig.llm.prompts] == [4, 2]
     assert await rig.episodes.unreflected(4) == [("e1", 2)]
+
+
+async def test_an_unfinished_episode_holds_back_the_newer_ones_behind_it(rig: Rig) -> None:
+    """★ **Reading order is belief precedence**, and shrinking a batch is what can invert it.
+
+    `unreflected()` is `ORDER BY started_at` and `contradiction.resolve()` gives equal
+    strength to whichever candidate arrives *later* — `valid_from` is never consulted. So
+    "Tuesday supersedes Monday" is true only while the pass reads Monday first and finishes
+    it. Halving Monday's batch and moving on would write Tuesday's belief now and Monday's
+    remainder on the next pass, and **the older belief would supersede the newer one.**
+
+    The same window is open for an episode longer than `UTTERANCE_LIMIT`; halving just
+    makes it wide.
+    """
+    rig.llm._answers = [extraction()]
+    rig.llm.truncate_above = 2
+    await rig.conversation(
+        said("u1", "Factorio 好きなんだ"),
+        said("u2", "いいね。", speaker=SPEAKER_LUMI, turn=1),
+        said("u3", "工場を広げるのが楽しい", turn=2),
+        said("u4", "わかる。", speaker=SPEAKER_LUMI, turn=3),
+        started_at=NOW,
+    )
+    await rig.conversation(
+        said("v1", "やっぱり Rimworld のほうが好きかも", episode="e2"),
+        episode_id="e2",
+        started_at=NOW + timedelta(days=1),
+    )
+
+    report = await rig.job.run()
+
+    # The older episode was read (twice — 4 lines, then the halved 2) and **nothing else**
+    assert [transcript_lines(prompt) for prompt in rig.llm.prompts] == [4, 2]
+    # **Not an interruption.** The writes landed and the watermark kept what it earned, so
+    # the scheduler still indexes and nudges
+    assert not report.interrupted
+    assert report.written == 1
+    # e1 has a remainder and e2 has not been touched. **e1 is still first next time**
+    assert await rig.episodes.unreflected(4) == [("e1", 2), ("e2", 0)]
 
 
 async def test_a_shrunk_retry_does_not_start_after_the_lease_was_revoked(rig: Rig) -> None:
