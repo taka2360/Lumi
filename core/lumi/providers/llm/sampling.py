@@ -52,6 +52,17 @@ class Purpose(StrEnum):
 #: worst observed case: it only ever fires on a model that has stopped terminating.
 CONVERSATION_MAX_TOKENS: Final = 512
 
+#: Runaway guard for extraction (ADR-049). **Derived, not measured**: `CANDIDATE_LIMIT` is
+#: 8, and anything past it the parser throws away, so the largest answer that can be *read*
+#: is about 850 tokens — a JSON element with a Japanese `content` runs 90-100. This is 1.8x
+#: that, so it does not fire on a real extraction and does stop one that never terminates.
+#:
+#: ★ **A cap here only works because `memory/reflection.py` has somewhere to put a
+#: truncation.** Extraction reads the same episodes again next pass, so a cut-off that
+#: depends only on the input recurs on that input forever; the cap is safe because the
+#: reflection pass answers `length` by halving the batch, not by trying again unchanged.
+EXTRACTION_MAX_TOKENS: Final = 1536
+
 #: Qwen3 family, non-thinking. **Qwen's published values, with one departure**
 #: (docs/interfaces/provider.md). Applies to `qwen3`, `qwen3.5`, `qwen3.6`, `qwen3.8`:
 #: the non-thinking recommendation has been the same across the family.
@@ -89,12 +100,10 @@ _QWEN3: Final[dict[Purpose, LLMOptions]] = {
         # penalising `"subject"` for having appeared is penalising the format itself
         presence_penalty=0.0,
         frequency_penalty=0.0,
-        # ★ **Deliberately uncapped**, unlike conversation. A cap here is not a runaway
-        # guard but a new failure mode: extraction reads the same episodes again next
-        # pass, so a cut-off that depends only on the input **recurs forever on that
-        # input** and the queue stops. Deciding what a truncated extraction should do to
-        # the watermark is a memory-layer decision, not a sampling one
-        max_tokens=None,
+        # ★ **Wider than conversation, and load-bearing in a different way** — see
+        # `EXTRACTION_MAX_TOKENS`. What a truncated extraction does to the watermark is a
+        # memory-layer decision and lives in docs/architecture/memory.md §4 (ADR-049)
+        max_tokens=EXTRACTION_MAX_TOKENS,
     ),
 }
 

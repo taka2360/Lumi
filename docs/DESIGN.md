@@ -9,9 +9,20 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.26 |
+| Revision | rev.27 |
 | 実装フェーズ | **Phase 2（Memory）完了。2b（投機 STT）の実測だけ未取得。次は Phase 3。** → [roadmap.md](roadmap.md) |
 
+> **rev.27 の変更点**（抽出に保険を掛け、打ち切られたときの行き先を決めた）
+> 1. **抽出に出力トークン上限（1536）を入れた** → [ADR-049](decisions/ADR-049-truncated-extraction-and-watermark.md)。
+>    会話の 512 は「停止しなくなったモデル」への保険だが、**抽出だけがそれを持っていなかった**。
+>    抽出は revoke されうるが、**ユーザーが黙っている限り revoke は来ない**
+> 2. **打ち切りは「次回やり直す」ではなく「その場でバッチを半分にして引き直す」**。
+>    抽出は次のパスでも同じ Episode を読むので、**入力だけで決まる打ち切りは毎回再発し、
+>    `unreflected()` が古い順である以上その Episode 以降が全部詰まる**
+> 3. **未知の `Finish.reason` と `Finish` 無しのストリームは fail-closed。**
+>    切れた JSON 配列は短い配列として素直にパースできるので、**「パースできたか」では判定できない**
+> 4. **生成の終わり方 × watermark の表**を [architecture/memory.md](architecture/memory.md) §4 の単一定義にした
+>
 > **rev.26 の変更点**（生成設定を Core の決定に戻した）
 > 1. **LLM の sampling 設定を Core が用途ごとに決めるようにした**
 >    → [ADR-048](decisions/ADR-048-sampling-profiles.md)。
