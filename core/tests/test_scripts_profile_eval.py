@@ -21,11 +21,13 @@ from lumi.providers.llm.base import Finish, LLMEvent, LLMFailure, LLMOptions, Te
 from lumi.providers.llm.sampling import Purpose, options_for
 from scripts.llm_profile_eval import (
     CASES,
+    VARIANTS,
     WARM_UP_TURN,
     Reply,
     Sample,
     exposed_tools,
     generate,
+    warm_up,
 )
 
 OPTIONS = options_for("qwen3.5:9b", Purpose.CONVERSATION)
@@ -178,3 +180,41 @@ def test_the_warm_up_turn_is_not_one_of_the_cases() -> None:
     the KV cache — a head start on exactly one printed cell, on the same variant every run.
     """
     assert WARM_UP_TURN not in {turn for case in CASES for turn in case.turns}
+
+
+async def test_a_warm_up_that_did_not_generate_stops_the_run() -> None:
+    """★ **The one failure in the run that would otherwise be invisible.**
+
+    `generate()` reports a broken stream as `Sample.FAILED` instead of raising, and the
+    warm-up's output is thrown away by design — so an unchecked warm-up lets the report
+    claim a cache state the run never reached, and the profile's first case pays a cost
+    that reads as its settings. Every other failure prints itself as `除外`; this one has
+    to be raised or it says nothing at all.
+    """
+    provider: Any = Scripted(LLMFailure(message="the engine died"))
+
+    with pytest.raises(RuntimeError, match="warm-up failed"):
+        await warm_up(provider, OPTIONS, exposed_tools())
+
+
+def test_the_before_variant_names_no_value_it_did_not_send() -> None:
+    """★ **A is the pre-ADR-048 request, and that request set one field.**
+
+    Writing `qwen3.5:9b`'s inherited values into A would pin the baseline to one tag while
+    `is_qwen3()` admits the whole family — pointed at a sibling whose file differs, A would
+    be a request Lumi never sent, and every difference measured against it would be a
+    difference from a fabricated past. Omission reproduces A exactly, for any model.
+    """
+    label, overrides = VARIANTS[0]
+    assert "before" in label
+    assert overrides["temperature"] == 0.8
+    named = {field for field, value in overrides.items() if value is not None}
+    assert named == {"temperature"}
+
+
+def test_every_other_variant_starts_from_the_shipped_profile() -> None:
+    """B–E are the family's profile with one field moved, so they may name values — those
+    values are `sampling.py`'s, not a model file's. **A is the only one reproducing a past.**
+    """
+    for _, overrides in VARIANTS[1:]:
+        assert None not in overrides.values()

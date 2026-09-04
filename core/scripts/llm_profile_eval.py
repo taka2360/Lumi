@@ -53,6 +53,11 @@ the pre-ADR-048 request, which set no `num_predict` at all. Making A capped to m
 would compare the shipped profile against something that never shipped. Exclusion is what
 keeps that asymmetry from turning into a false result.
 
+**A is reproduced by leaving fields off, never by naming what they became.** The values a
+model file supplies belong to one tag, and `is_qwen3()` admits a family — so a written-out
+baseline would be a request Lumi never sent as soon as the flag pointed at a sibling. See
+`VARIANTS`.
+
 ## What it does not do
 
 **It does not score.** Naturalness of Japanese is not a number this repo can compute, and
@@ -358,22 +363,36 @@ async def warm_up(
     which is the only claim this file makes.
     """
     session = Session()
-    await generate(provider, session, replace(options, seed=0), WARM_UP_TURN, tools)
+    reply = await generate(provider, session, replace(options, seed=0), WARM_UP_TURN, tools)
+    if reply.status is not Sample.OK:
+        # ★ **A warm-up that did not generate did not warm anything**, and `generate()`
+        # returns `Sample.FAILED` rather than raising — so left unread this is the one
+        # failure in the run that is invisible. Every other one prints itself as `除外`;
+        # this one would let the report claim a cache state it does not have, and the
+        # profile's first case would pay a cost that reads as its settings.
+        raise RuntimeError(f"warm-up failed ({reply.status.value}): {reply.detail}")
 
 
-#: The comparison. **A is what shipped**: `temperature` alone, every other value inherited
-#: from the model file (`top_p 0.95 / top_k 20 / presence_penalty 1.5`), which is why it is
-#: spelled out here rather than written as "the defaults".
+#: The comparison. **A is what shipped**: `temperature` alone on the request, every other
+#: field left off so the selected model's own file decides it.
+#:
+#: ★ **A is reproduced by omission, not by naming the values it inherited.** Spelling out
+#: `qwen3.5:9b`'s file (`top_p 0.95 / top_k 20 / presence_penalty 1.5`) would make A a
+#: baseline that only exists for that one tag — run against `qwen3:8b`, whose file may say
+#: something else, it would be a request Lumi never sent, and every difference measured
+#: against it would be a difference from a fabricated past. `is_qwen3()` gates the *family*
+#: (B–E are the family's profile); it cannot gate one tag's Modelfile. Omission is exact
+#: for whatever model is selected, and `_settings()` prints each omission as one.
 VARIANTS: tuple[tuple[str, dict[str, object]], ...] = (
     (
-        "A (before: temperature only, rest from the Modelfile)",
+        "A (before: temperature only, rest from the model's own file)",
         {
             "temperature": 0.8,
-            "top_p": 0.95,
-            "top_k": 20,
+            "top_p": None,
+            "top_k": None,
             "min_p": None,
             "repeat_penalty": None,
-            "presence_penalty": 1.5,
+            "presence_penalty": None,
             "frequency_penalty": None,
             "max_tokens": None,
         },
@@ -420,8 +439,13 @@ async def main() -> None:
         "- **`<|ACT ...|>` は本番と同じ `MarkerStream` で取り除いてから数えている。**"
         "マーカーは ASCII 40字前後あり、残すと 字数 と 反復 が歪む。"
         "出た回数は `marker` 列に出す",
-        "- **A だけ `max_tokens` を送らない。** 出荷前の要求そのものを再現しているためで、"
-        "この非対称は意図的である。だからこそ打ち切られた sample を混ぜない",
+        "- **A は `temperature` 以外を一切送らない**（`max_tokens` を含む）。"
+        "ADR-048 以前の要求そのものを再現しているためで、この非対称は意図的である。"
+        "だからこそ打ち切られた sample を混ぜない",
+        "- ★ **A の「送らない」欄を埋めるのは、上のモデル自身のファイルである。**"
+        "値をここに書き写すと `qwen3.5:9b` 専用の基準になり、別のタグに対しては"
+        "**Lumi が一度も送ったことのない要求**を基準に差を測ることになる。"
+        "各欄が実際に何になったかは `/api/show` が答える",
         "",
     ]
     try:
