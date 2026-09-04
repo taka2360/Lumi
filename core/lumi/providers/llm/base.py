@@ -56,8 +56,8 @@ class LLMOptions:
     #: Runaway guard, not a length control (`sampling.CONVERSATION_MAX_TOKENS`)
     max_tokens: int | None = None
     #: **Never set in production.** A fixed seed makes the same input produce the same
-    #: reply forever, which is the opposite of a character. It exists so the A/B harness
-    #: (`scripts/llm_profile_eval.py`) can compare profiles rather than compare noise
+    #: reply forever, which is the opposite of a character. It exists so a development-time
+    #: A/B can compare profiles rather than compare noise
     seed: int | None = None
     #: Whether to enable reasoning (Qwen3 family). **Even when enabled, never routed to TTS**
     think: bool = False

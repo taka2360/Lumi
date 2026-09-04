@@ -65,10 +65,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 python_version = "3.12"
 strict = true
 warn_unreachable = true
-# `scripts` is dev-only and never imported by Core, but it drives the real production
-# path to produce evidence (ADR-048). **Evidence from an unchecked harness is not
-# evidence**, so it is type-checked like everything else.
-files = ["lumi", "tests", "scripts"]
+files = ["lumi", "tests"]
 
 # External libraries without type stubs. **Listed individually** (never ignored wholesale).
 [[tool.mypy.overrides]]

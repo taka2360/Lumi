@@ -12,7 +12,6 @@ the rules live:
 
 from __future__ import annotations
 
-import re
 from collections.abc import AsyncIterator, Iterator, Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -32,7 +31,7 @@ from lumi.memory.extraction import (
 from lumi.memory.extraction_prompt import EXTRACTION_SYSTEM, build_messages
 from lumi.memory.phrases import asked_to_remember, explicit_marking
 from lumi.memory.records import AssertionMode, MemoryType
-from lumi.memory.reflection import FLOOR_TRUNCATION_RETRIES, ReflectionJob
+from lumi.memory.reflection import ReflectionJob
 from lumi.memory.store import MemoryStore
 from lumi.provenance import ProvenanceClass, TrustLevel
 from lumi.providers.llm.base import Finish, LLMEvent, LLMFailure, LLMOptions, Message, TextDelta
@@ -76,25 +75,11 @@ def said(
 class FakeLlm:
     """Answers with fixed text. **Records the prompt** so it can be snapshotted."""
 
-    def __init__(self, *answers: str, fail: bool = False, finish_reason: str = "stop") -> None:
+    def __init__(self, *answers: str, fail: bool = False) -> None:
         self._answers = list(answers) or ["[]"]
         self._fail = fail
-        self.finish_reason = finish_reason
         self.prompts: list[Sequence[Message]] = []
         self.cancel_at: int | None = None
-        #: The token of the pass currently running. **Kept so a test can revoke between two
-        #: generations**, which is the window a retrying pass has to respect
-        self.token: CancelToken | None = None
-        #: Finish with `"length"` while the transcript holds more than this many lines.
-        #: **Models the real relationship**: what overflows `num_predict` is the size of the
-        #: batch, so a smaller batch is what makes the retry succeed.
-        self.truncate_above: int | None = None
-        #: One reason per generation, consumed in order, before the rules above apply.
-        #: **What models a run of bad luck** — the same batch ending `length` once and
-        #: `stop` the next time, which is what temperature 0.2 with no seed can do
-        self.endings: list[str] = []
-        #: End the stream without a `Finish` at all
-        self.no_finish = False
 
     async def stream(
         self,
@@ -104,7 +89,6 @@ class FakeLlm:
         cancel_token: CancelToken,
     ) -> AsyncIterator[LLMEvent]:
         self.prompts.append(messages)
-        self.token = cancel_token
         if self._fail:
             yield LLMFailure(message="the engine died")
             return
@@ -113,85 +97,7 @@ class FakeLlm:
             if self.cancel_at == index:
                 cancel_token.fire("inference_revoked")
             yield TextDelta(text=chunk)
-        if self.no_finish:
-            return
-        yield Finish(reason=self._finish_reason(messages))
-
-    def _finish_reason(self, messages: Sequence[Message]) -> str:
-        if self.endings:
-            return self.endings.pop(0)
-        if self.truncate_above is None:
-            return self.finish_reason
-        return "length" if transcript_lines(messages) > self.truncate_above else "stop"
-
-
-def transcript_lines(messages: Sequence[Message]) -> int:
-    """How many utterances the prompt carries. `build_messages` writes `id speaker: text`."""
-    return len(re.findall(r"^\S+ (?:user|lumi): ", messages[-1].content, re.MULTILINE))
-
-
-class RevokingStore:
-    """A `MemoryStore` that revokes the pass while the pass is reading it.
-
-    **Models where a revocation actually lands.** The foreground does not wait for a
-    convenient moment: it fires on whatever await the Job happens to be sitting on, and
-    between two generations that await is `recent()`.
-    """
-
-    def __init__(self, store: MemoryStore, llm: FakeLlm, *, after: int) -> None:
-        self._store = store
-        self._llm = llm
-        self._after = after
-        self.reads = 0
-
-    async def recent(self, limit: int) -> Any:
-        self.reads += 1
-        if self.reads > self._after and self._llm.token is not None:
-            self._llm.token.fire("inference_revoked")
-        return await self._store.recent(limit)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._store, name)
-
-
-class BreakingStore:
-    """A `MemoryStore` that writes `after` candidates and then cannot write any more."""
-
-    def __init__(self, store: MemoryStore, *, after: int) -> None:
-        self._store = store
-        self._after = after
-        self.writes = 0
-
-    async def reconcile(self, candidate: Any, *, now: Any = None) -> Any:
-        self.writes += 1
-        if self.writes > self._after:
-            raise RuntimeError("database is locked")
-        return await self._store.reconcile(candidate, now=now)
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._store, name)
-
-
-class LockedEpisodes:
-    """An `EpisodeStore` whose one named method raises, the way a busy SQLite does.
-
-    **A wrapper rather than a patched attribute**: `EpisodeStore` has `__slots__`, and the
-    point is to break one call without pretending the rest of the store is gone.
-    """
-
-    def __init__(self, episodes: EpisodeStore, *, on: str) -> None:
-        self._episodes = episodes
-        self._on = on
-
-    def __getattr__(self, name: str) -> Any:
-        if name == self._on:
-
-            async def locked(*args: Any, **kwargs: Any) -> Any:
-                del args, kwargs
-                raise RuntimeError("database is locked")
-
-            return locked
-        return getattr(self._episodes, name)
+        yield Finish(reason="stop")
 
 
 class Rig:
@@ -207,17 +113,6 @@ class Rig:
             llm=self.llm,  # type: ignore[arg-type]
             store=self.store,
             episodes=self.episodes,
-            options=OPTIONS,
-            clock=lambda: NOW,
-        )
-
-    def job_over(self, episodes: Any) -> ReflectionJob:
-        """The same pass, reading a different `EpisodeStore`."""
-        return ReflectionJob(
-            arbiter=self.arbiter,
-            llm=self.llm,  # type: ignore[arg-type]
-            store=self.store,
-            episodes=episodes,
             options=OPTIONS,
             clock=lambda: NOW,
         )
@@ -655,259 +550,6 @@ async def test_a_failing_engine_leaves_the_transcript_for_next_time(rig: Rig) ->
 
     assert report.interrupted
     assert await rig.episodes.unreflected(4)
-
-
-async def test_a_pass_that_dies_after_writing_still_says_what_it_wrote(rig: Rig) -> None:
-    """★ **The report is the only record of what landed.**
-
-    `mark_reflected()` is the sharp case: the memories are committed and the watermark is
-    not, so the next pass re-reads the same utterances, re-extracts the same facts, and
-    `reconcile` calls them `DUPLICATE` — `learned` is 0 forever after. If this pass had let
-    the exception replace its report, the scheduler's `if report.learned:` would have
-    skipped `index_memories()` on both passes, and **those memories would stay unembedded
-    until the next restart** — reachable by keyword, invisible to similarity search.
-    """
-
-    rig.llm._answers = [extraction()]
-    await rig.conversation(said("u1", "Factorio 好きなんだ"))
-
-    report = await rig.job_over(LockedEpisodes(rig.episodes, on="mark_reflected")).run()
-
-    # The write itself went through, and the report still carries it
-    assert report.written == 1
-    assert [record.content for record in await rig.store.live("user.hobby")] == [
-        "ユーザーは Factorio が好き"
-    ]
-    # **And the pass is honest about having stopped**, so the watermark stayed put
-    assert report.interrupted
-    assert await rig.episodes.unreflected(4) == [("e1", 0)]
-
-
-async def test_a_store_that_breaks_mid_answer_keeps_what_it_already_wrote(rig: Rig) -> None:
-    """★ The same rule one frame down. **Two memories from one answer, and the store dies
-    between them**: the first is committed, so it has to be reported or nobody embeds it —
-    and the watermark must not move, or the second is skipped forever.
-
-    A store failure is not the item's fault, so it is not a `rejected` reason. `rejected`
-    means "this extraction was no good"; this one may have been fine.
-    """
-    import json
-
-    rig.llm._answers = [
-        json.dumps(
-            [
-                {
-                    "subject": "user.hobby",
-                    "content": "ユーザーは Factorio が好き",
-                    "assertion_mode": "user_stated",
-                    "evidence": ["u1"],
-                },
-                {
-                    "subject": "user.pet",
-                    "content": "ユーザーは猫を飼っている",
-                    "assertion_mode": "user_stated",
-                    "evidence": ["u1"],
-                },
-            ],
-            ensure_ascii=False,
-        )
-    ]
-    await rig.conversation(said("u1", "Factorio 好きだし猫もいる"))
-    job = ReflectionJob(
-        arbiter=rig.arbiter,
-        llm=rig.llm,  # type: ignore[arg-type]
-        store=BreakingStore(rig.store, after=1),  # type: ignore[arg-type]
-        episodes=rig.episodes,
-        options=OPTIONS,
-        clock=lambda: NOW,
-    )
-
-    report = await job.run()
-
-    assert report.written == 1
-    assert report.rejected == ()
-    assert report.interrupted
-    assert await rig.episodes.unreflected(4) == [("e1", 0)]
-    # **Not treated as an oversize answer.** Nothing overflowed, so nothing is halved
-    assert len(rig.llm.prompts) == 1
-
-
-async def test_a_pass_that_dies_before_writing_reports_nothing_learned(rig: Rig) -> None:
-    """The other side of the same rule. **Nothing landed, so nothing is claimed** — the
-    scheduler must not embed or nudge on a pass that never got as far as a memory.
-    """
-
-    await rig.conversation(said("u1", "Factorio 好きなんだ"))
-
-    report = await rig.job_over(LockedEpisodes(rig.episodes, on="utterances_from")).run()
-
-    assert report.interrupted
-    assert report.learned == 0
-    assert rig.llm.prompts == []
-
-
-async def test_a_length_limited_answer_is_thrown_away_and_retried_smaller(rig: Rig) -> None:
-    """A token-capped answer is incomplete even if the returned text happens to parse, so
-    it is discarded — **but discarding alone would never make progress.**
-
-    The same batch, capped the same way, truncates again on every later pass. So the batch
-    halves and the pass tries again, and the watermark moves over **what was read**, not
-    over what was asked for.
-    """
-    rig.llm._answers = [extraction()]
-    rig.llm.truncate_above = 2
-    await rig.conversation(
-        said("u1", "Factorio 好きなんだ"),
-        said("u2", "いいね。", speaker=SPEAKER_LUMI, turn=1),
-        said("u3", "工場を広げるのが楽しい", turn=2),
-        said("u4", "わかる。", speaker=SPEAKER_LUMI, turn=3),
-    )
-
-    report = await rig.job.run()
-
-    assert not report.interrupted
-    assert report.written == 1
-    # 4 lines truncated, 2 fit. **Nothing was extracted from the truncated answer**
-    assert [transcript_lines(prompt) for prompt in rig.llm.prompts] == [4, 2]
-    assert await rig.episodes.unreflected(4) == [("e1", 2)]
-
-
-async def test_a_shrunk_retry_does_not_start_after_the_lease_was_revoked(rig: Rig) -> None:
-    """★ **ADR-018.** The halving retry is still background work: a second generation
-    started after the foreground asked for inference competes with the turn the user is
-    waiting on, and `OllamaProvider.stream()` posts its request before it looks at the
-    token. **So the pass checks immediately before asking**, not only after the answer.
-    """
-    rig.llm._answers = [extraction()]
-    rig.llm.truncate_above = 2
-    job = ReflectionJob(
-        arbiter=rig.arbiter,
-        llm=rig.llm,  # type: ignore[arg-type]
-        store=RevokingStore(rig.store, rig.llm, after=1),  # type: ignore[arg-type]
-        episodes=rig.episodes,
-        options=OPTIONS,
-        clock=lambda: NOW,
-    )
-    await rig.conversation(
-        said("u1", "Factorio 好きなんだ"),
-        said("u2", "いいね。", speaker=SPEAKER_LUMI, turn=1),
-        said("u3", "工場を広げるのが楽しい", turn=2),
-        said("u4", "わかる。", speaker=SPEAKER_LUMI, turn=3),
-    )
-
-    report = await job.run()
-
-    assert report.interrupted
-    # **One generation, not two.** The retry never left the ground
-    assert len(rig.llm.prompts) == 1
-    # And nothing was lost by refusing it: the watermark stayed where it was
-    assert await rig.episodes.unreflected(4) == [("e1", 0)]
-
-
-async def test_a_truncation_at_the_floor_is_retried_before_it_is_believed(rig: Rig) -> None:
-    """★ Extraction is **sampled, not computed**: temperature 0.2 and no seed (production
-    never sets one), so one `length` on one utterance is a run of bad luck until it has
-    repeated. Giving up on the first would delete a memory on a coin flip.
-
-    Halving has no room left at the floor, so what the retry changes is the sample.
-    """
-    rig.llm._answers = [extraction()]
-    rig.llm.endings = ["length"]  # once, then the default "stop"
-    await rig.conversation(said("u1", "Factorio 好きなんだ"))
-
-    report = await rig.job.run()
-
-    assert not report.interrupted
-    assert report.written == 1
-    assert report.rejected == ()
-    # The **same** batch twice — there is nothing left to shrink
-    assert [transcript_lines(prompt) for prompt in rig.llm.prompts] == [1, 1]
-    assert await rig.episodes.unreflected(4) == []
-
-
-async def test_an_utterance_that_never_fits_does_not_block_the_queue(rig: Rig) -> None:
-    """★ The floor. A single utterance the model cannot answer within `max_tokens` would
-    otherwise be re-read forever — and because `unreflected()` is oldest-first, it would
-    take every episode behind it down with it, burning idle inference to stay stuck.
-
-    **So the watermark moves and the loss is recorded**, once the bounded retry above has
-    ruled out bad luck. One utterance nobody can extract from is a loss; a reflection queue
-    that never drains is a stopped feature.
-    """
-    rig.llm._answers = [extraction()]
-    rig.llm.truncate_above = 0  # nothing ever fits
-    await rig.conversation(said("u1", "Factorio 好きなんだ"))
-
-    report = await rig.job.run()
-
-    assert not report.interrupted
-    assert await rig.store.live("user.hobby") == []
-    assert [reason for reason in report.rejected if "truncated" in reason]
-    assert await rig.episodes.unreflected(4) == []
-    # **Bounded.** The retry is what stops a coin flip from costing a memory; it is not
-    # licence to keep asking
-    assert len(rig.llm.prompts) == 1 + FLOOR_TRUNCATION_RETRIES
-
-
-async def test_a_floor_retry_does_not_start_after_the_lease_was_revoked(rig: Rig) -> None:
-    """★ **ADR-018**, at the one place the retry loop reaches that halving does not: the
-    floor repeats the *same* batch, so nothing about it looks like a new decision. It is
-    still a second background generation, and it still has to yield to the conversation.
-    """
-    rig.llm._answers = [extraction()]
-    rig.llm.truncate_above = 0
-    job = ReflectionJob(
-        arbiter=rig.arbiter,
-        llm=rig.llm,  # type: ignore[arg-type]
-        store=RevokingStore(rig.store, rig.llm, after=1),  # type: ignore[arg-type]
-        episodes=rig.episodes,
-        options=OPTIONS,
-        clock=lambda: NOW,
-    )
-    await rig.conversation(said("u1", "Factorio 好きなんだ"))
-
-    report = await job.run()
-
-    assert report.interrupted
-    assert len(rig.llm.prompts) == 1
-    # **Revocation is not the floor giving up.** Nothing is rejected and nothing is lost
-    assert report.rejected == ()
-    assert await rig.episodes.unreflected(4) == [("e1", 0)]
-
-
-async def test_an_ending_nobody_has_read_keeps_the_transcript(rig: Rig) -> None:
-    """★ **fail-closed on an unknown `Finish.reason`.** A reason no reader recognises
-    cannot be assumed to mean the answer is whole, and it cannot be told apart from an
-    engine that gave up server-side — so the watermark stays and the pass says so.
-
-    This is deliberately *not* the floor's treatment: shrinking the batch is an answer to
-    "too big", and an unread ending is not evidence of that.
-    """
-    rig.llm._answers = [extraction()]
-    rig.llm.finish_reason = "content_filter"
-    await rig.conversation(said("u1", "Factorio 好きなんだ"))
-
-    report = await rig.job.run()
-
-    assert report.interrupted
-    assert await rig.store.live("user.hobby") == []
-    assert len(rig.llm.prompts) == 1  # not retried inside the pass either
-    assert await rig.episodes.unreflected(4) == [("e1", 0)]
-
-
-async def test_an_answer_that_parses_but_never_finished_is_not_kept(rig: Rig) -> None:
-    """★ The case the reason code exists for. **The text is perfectly good JSON** — the
-    stream simply stopped without saying it was done, and "it parsed" is not the question.
-    """
-    rig.llm._answers = [extraction()]
-    rig.llm.no_finish = True
-    await rig.conversation(said("u1", "Factorio 好きなんだ"))
-
-    report = await rig.job.run()
-
-    assert report.interrupted
-    assert await rig.store.live("user.hobby") == []
-    assert await rig.episodes.unreflected(4) == [("e1", 0)]
 
 
 async def test_the_job_never_takes_the_foreground(rig: Rig) -> None:

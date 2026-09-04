@@ -57,6 +57,9 @@ def test_extraction_is_colder_than_conversation() -> None:
     assert extraction.temperature < conversation.temperature
     # A JSON array repeats its own keys. Penalising that is penalising the format
     assert extraction.presence_penalty == 0.0
+    # ★ **No cap.** A truncation that depends only on the input recurs on every pass over
+    # that input, so a cap here would stop the reflection queue rather than guard a runaway
+    assert extraction.max_tokens is None
 
 
 @pytest.mark.parametrize("model", ["qwen3:8b", "qwen3.5:9b", "qwen3.6:35b-a3b", "qwen3.8:27b"])

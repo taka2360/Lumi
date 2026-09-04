@@ -5,7 +5,7 @@
 | Status | Accepted |
 | Date | 2026-09-02 |
 | 関連 | [../interfaces/provider.md](../interfaces/provider.md) `LLMOptions`, [ADR-008](ADR-008-provider-abstraction.md), [ADR-023](ADR-023-llm-runtime-and-model-acquisition.md), [../measurements/phase2.md](../measurements/phase2.md), [../measurements/phase1.md](../measurements/phase1.md) |
-| 実装 | `core/lumi/providers/llm/sampling.py`, `core/lumi/providers/llm/base.py`, `core/lumi/providers/llm/ollama.py`, `core/lumi/agent/runtime.py`, `core/lumi/agent/reactive.py`, `core/lumi/agent/reflection_scheduler.py`, `core/scripts/llm_profile_eval.py` |
+| 実装 | `core/lumi/providers/llm/sampling.py`, `core/lumi/providers/llm/base.py`, `core/lumi/providers/llm/ollama.py`, `core/lumi/agent/runtime.py`, `core/lumi/agent/reactive.py`, `core/lumi/agent/reflection_scheduler.py` |
 
 ## Decision
 
@@ -21,8 +21,14 @@
 会話は `Purpose.CONVERSATION`、記憶抽出は `Purpose.EXTRACTION` を使う。
 `set_llm_model()` は**プロファイル全体を引き直す**（モデル名だけ差し替えない）。
 
-`seed` は `LLMOptions` に持つが**製品経路では設定しない。** A/B 比較
-（`core/scripts/llm_profile_eval.py`）のためだけに存在する。
+`seed` は `LLMOptions` に持つが**製品経路では設定しない。** 開発時の A/B 比較——
+同じ入力に対する変種の差を、引きの差から切り離して見るため——のためだけに存在する。
+
+★ **抽出には出力トークン上限を入れない。** 会話の `max_tokens = 512` は暴走の保険だが、
+抽出で同じことをすると保険ではなく**新しい失敗様式**になる。抽出は次のパスでも同じ
+Episode を読むので、**入力だけで決まる打ち切りはその入力に対して毎回再発する**——
+watermark が進まないまま、アイドルのたびに同じ推論を焼き続ける。
+打ち切られた抽出を watermark に対してどう扱うかは記憶層の決定であり、本 ADR の範囲ではない。
 
 ## Reason
 
@@ -70,10 +76,9 @@ Qwen のモデルカード自身が「高い値は言語混在と性能低下を
 - 「Qwen の推奨と違う」1点を抱える。根拠は実測にあり、モデルカードにはない
 - `num_predict = 512` は暴走時の保険であり、**発話の途中で切れうる。** 実測 30〜120 トークンに対して
   約4倍の余裕を取っているので、正常に停止するモデルでは発火しない
-- **抽出側に上限を入れたことで「決定論的に再発する打ち切り」という失敗様式が生まれた。**
-  会話と違い、抽出は同じ入力を次回また読む。上限で切れた結果を捨てて同じ入力を読み直すだけでは
-  永久に進まないので、`ReflectionJob` はバッチを縮めて引き直す
-  （→ [architecture/memory.md](../architecture/memory.md) §4）
+- **抽出は上限が無いままである。** 暴走した抽出は会話と違って誰も待っていないが、
+  アイドル時間と VRAM は焼く。上限を入れるには先に「打ち切られた抽出と watermark」を
+  決める必要があり、それは別の変更である
 
 **得るもの。**
 
@@ -89,8 +94,6 @@ Qwen のモデルカード自身が「高い値は言語混在と性能低下を
   **Lumi が握っている復号の決定はその表が全部である**
 - 将来の `OpenAICompatProvider` などは同じ `LLMOptions` を自分の語彙に写す。
   プロファイルは Provider に依存しない
-- `core/scripts/llm_profile_eval.py` が A/B の再実行手段として残る。
-  **モデルを替える判断の前にこれを回す**のが、この ADR の想定する手順である。
-  ただしその比較表（`VARIANTS`）は Qwen3 系の値を名指しで並べたものなので、
-  **ハーネスは Qwen3 系以外のモデル名を拒否する。** 他系列を測るには、
-  その系列の variant 表を書くほうが先である
+- **新しいモデル系列を採るときは、先に A/B を取ってからプロファイルを書く。**
+  測定手段そのものはこの決定の一部ではない（今回の数値は使い捨ての実験スクリプトで取った）。
+  再実行できる形にするかは別途決める

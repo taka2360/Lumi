@@ -403,12 +403,7 @@ def _parse_line(line: str) -> list[LLMEvent]:
     if chunk.get("done"):
         events.append(
             Finish(
-                # `or`, not a default: **a `null` `done_reason` is an absent one.**
-                # `chunk.get(k, "stop")` returns `None` when the key is present and null,
-                # and `str(None)` is the literal `"None"` — a reason no reader recognises.
-                # `memory/reflection.py` is fail-closed on exactly that (`_Ask.UNUSABLE`),
-                # so one JSON null would stop the reflection queue for good.
-                reason=str(chunk.get("done_reason") or "stop"),
+                reason=str(chunk.get("done_reason", "stop")),
                 usage={
                     "prompt_tokens": int(chunk.get("prompt_eval_count", 0) or 0),
                     "completion_tokens": int(chunk.get("eval_count", 0) or 0),
