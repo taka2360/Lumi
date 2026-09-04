@@ -24,7 +24,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 from collections.abc import Callable, Sequence
-from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from typing import Final
 
@@ -51,6 +50,7 @@ from lumi.memory.phrases import asked_to_remember
 from lumi.memory.retrieval import Retriever
 from lumi.providers.base import ProviderError, ProviderKind
 from lumi.providers.llm.base import LLMOptions
+from lumi.providers.llm.sampling import Purpose, options_for
 from lumi.providers.registry import ProviderRegistry, provider_of
 from lumi.providers.stt.base import AudioBuffer, STTProvider, Transcription
 from lumi.tasks import spawn
@@ -200,8 +200,14 @@ class ReactiveLoop:
         self._tts_volume = validate_volume(volume)
 
     def set_llm_model(self, model: str) -> None:
-        """Uses a setup-selected model for subsequent turns without rebuilding the loop."""
-        self._options = replace(self._options, model=model)
+        """Uses a setup-selected model for subsequent turns without rebuilding the loop.
+
+        **The whole profile is re-resolved, not just the name** (ADR-048). Sampling
+        settings are a claim about a specific model family; carrying Qwen's numbers over
+        onto a model the user just switched to would be the same silent inheritance the
+        profiles exist to stop — only in the other direction.
+        """
+        self._options = options_for(model, Purpose.CONVERSATION)
 
     # ── Entry point ──────────────────────────────────────────────
 

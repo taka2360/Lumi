@@ -33,7 +33,8 @@ from lumi.kernel.arbiter import AttentionArbiter
 from lumi.memory.reflection import ReflectionJob
 from lumi.memory.store import MemoryStore
 from lumi.providers.base import ProviderError, ProviderKind
-from lumi.providers.llm.base import LLMOptions, LLMProvider
+from lumi.providers.llm.base import LLMProvider
+from lumi.providers.llm.sampling import Purpose, options_for
 from lumi.providers.registry import ProviderRegistry
 from lumi.storage.memory import EpisodeStore
 from lumi.transport.methods import METHOD_PANEL_MEMORY
@@ -149,7 +150,7 @@ class ReflectionScheduler:
                 llm=llm,
                 store=self._memories,
                 episodes=self._episodes,
-                options=LLMOptions(model=self._model()),
+                options=options_for(self._model(), Purpose.EXTRACTION),
             )
             report = await job.run()
             if report.learned:

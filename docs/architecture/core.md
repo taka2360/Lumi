@@ -182,7 +182,8 @@ core/lumi/
 ├── tools/           registry, base,
 │                    builtin/        character（Class A）。fs / computer は〔Phase 4〕
 ├── providers/       base, registry, device,
-│                    llm/ stt/ tts/ embedding/。vision/ は〔Phase 5〕
+│                    llm/（base, endpoint, ollama, sampling — 生成設定 → ADR-048）
+│                    stt/ tts/ embedding/。vision/ は〔Phase 5〕
 ├── audio/           ring, resample, capture, vad, playback, io, devices,
 │                    drift, probe, wav（EchoGuard L1 は vad 内）
 ├── setup/           coordinator（ファサード）, state, detect, ollama,

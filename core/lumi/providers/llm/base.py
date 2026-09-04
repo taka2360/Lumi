@@ -29,9 +29,36 @@ class Message:
 
 @dataclass(frozen=True, slots=True)
 class LLMOptions:
+    """How to decode. **Built by `llm/sampling.py`, never field by field at a call site**
+    (ADR-048) — a turn assembled from whatever defaults were nearest is a turn nobody can
+    reproduce.
+
+    ★ **`None` is not a neutral value. It means "send nothing", and the runtime then takes
+    the number from the model's own file** — for `qwen3.5:9b` that is `presence_penalty
+    1.5`, which Lumi never asked for. Leaving a field out is therefore a decision, and
+    `sampling.py` states every one of them for the families it knows.
+    """
+
     model: str
-    temperature: float = 0.8
+    temperature: float = 0.7
+    #: Nucleus. `None` → the model file decides
+    top_p: float | None = None
+    #: Candidate cut-off. `None` → the model file decides
+    top_k: int | None = None
+    min_p: float | None = None
+    #: Multiplicative penalty on tokens seen in the last `repeat_last_n`. **1.0 is off**
+    repeat_penalty: float | None = None
+    #: Additive, one-shot penalty on any token already seen. **Aimed at endless repetition
+    #: in long generations** — a short spoken reply pays it on ordinary Japanese instead
+    presence_penalty: float | None = None
+    #: Additive penalty scaled by how often a token was seen
+    frequency_penalty: float | None = None
+    #: Runaway guard, not a length control (`sampling.CONVERSATION_MAX_TOKENS`)
     max_tokens: int | None = None
+    #: **Never set in production.** A fixed seed makes the same input produce the same
+    #: reply forever, which is the opposite of a character. It exists so a development-time
+    #: A/B can compare profiles rather than compare noise
+    seed: int | None = None
     #: Whether to enable reasoning (Qwen3 family). **Even when enabled, never routed to TTS**
     think: bool = False
 

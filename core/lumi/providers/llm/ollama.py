@@ -208,14 +208,12 @@ class OllamaProvider:
             "model": options.model or self._model,
             "messages": [_message_payload(m) for m in messages],
             "stream": True,
-            "options": {"temperature": options.temperature},
+            "options": _sampling_payload(options),
             # **Sent on every request, not just the preload.** Ollama restarts the countdown
             # from the last call, so omitting it here would silently fall back to the 5-minute
             # default and evict the model between conversations
             "keep_alive": KEEP_ALIVE,
         }
-        if options.max_tokens is not None:
-            payload["options"]["num_predict"] = options.max_tokens
         # ★ **Always sent, including `False`.** Hybrid-reasoning models (Qwen3.5, ...) think by
         # default, and omitting the field leaves that default in place — so `think=False` would
         # be silently ignored. Measured 2026-08-16: thinking pushed time-to-first-spoken-token
@@ -322,6 +320,39 @@ class OllamaProvider:
             if name == wanted or name.split(":")[0] == wanted.split(":")[0]:
                 return True
         return False
+
+
+#: `LLMOptions` field → the name Ollama's `options` block uses. **Everything Lumi decides
+#: about decoding goes through this table**, so "which knobs does Lumi actually turn" is one
+#: list rather than a scan of the request builder.
+_OPTION_NAMES: Final = {
+    "temperature": "temperature",
+    "top_p": "top_p",
+    "top_k": "top_k",
+    "min_p": "min_p",
+    "repeat_penalty": "repeat_penalty",
+    "presence_penalty": "presence_penalty",
+    "frequency_penalty": "frequency_penalty",
+    "max_tokens": "num_predict",
+    "seed": "seed",
+}
+
+
+def _sampling_payload(options: LLMOptions) -> dict[str, Any]:
+    """The `options` block. **A `None` field is omitted, and omission is inheritance.**
+
+    Ollama fills anything left out from the model's Modelfile — `qwen3.5:9b` carries
+    `temperature 1 / top_k 20 / top_p 0.95 / presence_penalty 1.5` there. So this function
+    is not "send what was set"; it is **the exact list of decisions Lumi is taking away
+    from the model file** (ADR-048), and the profiles in `llm/sampling.py` are what decide
+    how long that list is.
+    """
+    payload: dict[str, Any] = {}
+    for field, name in _OPTION_NAMES.items():
+        value = getattr(options, field)
+        if value is not None:
+            payload[name] = value
+    return payload
 
 
 def _message_payload(message: Message) -> dict[str, Any]:

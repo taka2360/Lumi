@@ -9,9 +9,22 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.25 |
+| Revision | rev.26 |
 | 実装フェーズ | **Phase 2（Memory）完了。2b（投機 STT）の実測だけ未取得。次は Phase 3。** → [roadmap.md](roadmap.md) |
 
+> **rev.26 の変更点**（生成設定を Core の決定に戻した）
+> 1. **LLM の sampling 設定を Core が用途ごとに決めるようにした**
+>    → [ADR-048](decisions/ADR-048-sampling-profiles.md)。
+>    Lumi は `temperature` しか送っておらず、**`top_p` / `top_k` / `presence_penalty` は
+>    モデルの Modelfile が決めていた**（`qwen3.5:9b` は `presence_penalty 1.5` を持つ）。
+>    コードのどこにもその事実は書かれていなかった
+> 2. **`LLMOptions` の型と sampling プロファイルの表を
+>    [interfaces/provider.md](interfaces/provider.md) の単一定義にした** → §12 に行を追加。
+>    **`None` は「送らない = モデルファイルに委ねる」を意味する**ことを明文化した
+> 3. **記憶抽出を会話と別の設定にした。** [measurements/phase2.md](measurements/phase2.md) の
+>    抽出の数値は temperature 0.2 で取られていたが、コードは 0.8 で動かしていた
+> 4. **日本語の A/B を実測として記録した** → [measurements/phase2.md](measurements/phase2.md)
+>
 > **rev.25 の変更点**（Phase 3 の前に、依存の向きと責務境界を固定した）
 > 1. **Core のモジュール階層を決めて静的検査に載せた**
 >    → [ADR-045](decisions/ADR-045-core-module-layering.md)。
@@ -873,6 +886,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | Drive / AutonomyGate / AutonomyBudget | [architecture/autonomy.md](architecture/autonomy.md) |
 | World / Internal State の分離と facet 定義 | [architecture/world-state.md](architecture/world-state.md) |
 | `Tool` / `SecurityScope` / `Handle` / 検証器の**型定義** | [interfaces/tool.md](interfaces/tool.md) |
+| **`LLMOptions` の型定義と sampling プロファイル**（用途 × モデル系列） | [interfaces/provider.md](interfaces/provider.md) |
 | `MemoryRecord` / `AssertionMode` の**型定義** | [interfaces/memory.md](interfaces/memory.md) |
 | Renderer に渡す意図の型・**リップシンクの生成方式**・`stage.speech.*` の契約 | [interfaces/renderer.md](interfaces/renderer.md) |
 | GPU / VRAM 戦略とモデル配置 | **DESIGN.md** §7 |
