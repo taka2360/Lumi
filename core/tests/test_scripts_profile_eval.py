@@ -19,8 +19,10 @@ import httpx
 import pytest
 
 from lumi.agent.session import Session
+from lumi.providers.base import ProviderUnavailable
 from lumi.providers.llm.base import Finish, LLMEvent, LLMFailure, LLMOptions, TextDelta, ToolCall
 from lumi.providers.llm.sampling import Purpose, options_for
+from scripts import llm_profile_eval as module
 from scripts.llm_profile_eval import (
     CASES,
     VARIANTS,
@@ -29,6 +31,7 @@ from scripts.llm_profile_eval import (
     Sample,
     _render,
     exposed_tools,
+    fenced,
     generate,
     model_identity,
     resolve_tag,
@@ -318,6 +321,100 @@ def test_a_case_with_no_broken_markers_says_nothing_about_them() -> None:
     )
 
     assert "壊れ" not in "\n".join(_render(SINGLE, [clean]))
+
+
+async def test_an_engine_error_costs_one_cell_not_the_run() -> None:
+    """★ `OllamaProvider.stream()` **raises** rather than yielding `LLMFailure` when the
+    request never got started (an HTTP error status, a version mismatch).
+
+    Left to propagate, that unwinds `main()` past the `write_text` at the end — so one
+    transient 500 late in a ten-minute run discards every variant already measured. It is
+    the same outcome the harness already documents for a broken stream, so it gets the
+    same treatment: an excluded cell, and the run carries on.
+    """
+
+    class Exploding:
+        """Raises on the first step, the way `stream()` does when the POST came back 4xx."""
+
+        def stream(self, *args: Any, **kwargs: Any) -> Any:
+            del args, kwargs
+            return self
+
+        def __aiter__(self) -> Any:
+            return self
+
+        async def __anext__(self) -> LLMEvent:
+            raise ProviderUnavailable("ollama_http_error", "500 boom")
+
+    provider: Any = Exploding()
+    reply = await generate(provider, Session(), OPTIONS, SINGLE.turns[0], exposed_tools())
+
+    assert reply.status is Sample.FAILED
+    assert "500 boom" in reply.detail
+
+
+async def test_a_generation_that_never_stops_is_cut_off_and_excluded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """★ **Variant A sends no `num_predict`, deliberately**, and httpx's timeout fires on
+    silence between reads — never on a model that streams forever. Production would revoke
+    the token when the foreground wanted the GPU (ADR-018); a harness has no foreground.
+
+    So the deadline fires the token, the provider stops at its next checkpoint, and the
+    stream ends without a `Finish` — which is already `FAILED`.
+    """
+    monkeypatch.setattr(module, "GENERATION_DEADLINE_S", 0.0)
+
+    class Endless:
+        async def stream(
+            self, messages: Any, tools: Any, options: Any, cancel_token: Any
+        ) -> AsyncIterator[LLMEvent]:
+            del messages, tools, options
+            while not cancel_token.is_set:
+                yield TextDelta(text="あ")
+
+    provider: Any = Endless()
+    reply = await generate(provider, Session(), OPTIONS, SINGLE.turns[0], exposed_tools())
+
+    assert reply.status is Sample.FAILED
+    assert "still generating" in reply.detail
+
+
+def test_a_reply_cannot_break_out_of_its_own_cell() -> None:
+    """★ The `technical` case asks about `git rebase`, so a reply with a code fence is an
+    ordinary Tuesday — and one that never closes it swallows **the rest of the report**:
+    every later case and variant rendered inside that block.
+
+    Quoting bounds it: the fence is closed by the end of the quote, so the malformed
+    output stays visible and stays in its own cell.
+    """
+    runaway = Reply(
+        text="こうします:\n```python\nrebase()",  # opened, never closed
+        status=Sample.OK,
+        detail="",
+        first_token_ms=1,
+        total_ms=2,
+        tokens=3,
+        prompt_tokens=4,
+        intents=1,
+    )
+
+    block = _render(SINGLE, [runaway])
+
+    body = [line for line in "\n".join(block).splitlines() if "rebase()" in line]
+    assert body == ["> rebase()"]
+    # **Still readable.** Bounding it must not mean hiding it
+    assert any("```python" in line for line in "\n".join(block).splitlines())
+
+
+def test_a_model_file_full_of_backticks_stays_inside_its_block() -> None:
+    """The same rule for text a *server* wrote. `/api/show` returns whatever the Modelfile
+    holds, and a three-backtick run in it would end the block early.
+    """
+    fence = fenced('stop "```"\ntemperature 1')
+
+    assert fence.startswith("````")
+    assert fence.endswith("````")
 
 
 def test_the_vague_case_has_something_to_be_vague_about() -> None:

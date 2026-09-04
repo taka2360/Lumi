@@ -40,6 +40,11 @@ ending measures something other than the profile:
 | empty | `stop` with nothing spoken is silence, not brevity — and after markers |
 | | are stripped, a turn that emitted only `<|ACT ...|>` lands here |
 | `LLMFailure` / no `Finish` | there is no reply to measure |
+| a `ProviderError` | the request never started (HTTP 4xx/5xx). **Costs one cell, |
+| | not the run** — the exception would otherwise unwind past the |
+| | `write_text` at the end and discard every variant already measured |
+| `GENERATION_DEADLINE_S` | the model was still going. **A is uncapped on purpose and |
+| | httpx only times out on silence**, so this is what bounds the run |
 | any other reason | an unread ending is not assumed to be whole — |
 | | `memory/reflection.py` takes the same line |
 
@@ -87,6 +92,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import re
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass, fields, replace
@@ -107,6 +113,7 @@ from lumi.kernel.ids import EventId
 from lumi.permission.grants import GrantStore
 from lumi.permission.kernel import PermissionKernel
 from lumi.provenance import TrustLevel
+from lumi.providers.base import ProviderError
 from lumi.providers.llm.base import (
     Finish,
     LLMFailure,
@@ -284,26 +291,50 @@ async def generate(
     # and the joined text of one is indistinguishable from a whole short answer
     status = Sample.FAILED
     detail = "the stream ended without a Finish"
-    async for event in provider.stream(prompt.messages, tools, options, CancelToken()):
-        if isinstance(event, TextDelta):
-            if first is None:
-                # **Before the marker parser, as production times it.** A delta that turns
-                # out to be the opening of a marker is still the moment the model started
-                # answering (`llm_first_token_ms` in `agent/streaming.py`)
-                first = time.perf_counter()
-            raw.append(event.text)
-            chunk = markers.feed(event.text)
-            parts.append(chunk.text)
-            intents += len(chunk.intents)
-        elif isinstance(event, ToolCall):
-            # Recorded, not run. **Latency and length here describe one step of a turn**
-            status, detail = Sample.TOOL_CALL, f"the model called {event.name}"
-        elif isinstance(event, Finish):
-            tokens = event.usage.get("completion_tokens", 0)
-            prompt_tokens = event.usage.get("prompt_tokens", 0)
-            status, detail = _ending(event.reason, status, detail)
-        elif isinstance(event, LLMFailure):
-            status, detail = Sample.FAILED, event.message
+    # ★ **The one thing that can stop variant A.** A sends no `num_predict` on purpose,
+    # and httpx's timeout is per-read — it fires on silence, never on a model that streams
+    # forever. Nothing else here bounds that: production would revoke this token when the
+    # foreground wanted the GPU (ADR-018), and a harness has no foreground. So the deadline
+    # fires it, the provider stops at its next line, and the stream ends without a `Finish`
+    # — which the initial `status` above already calls `FAILED`.
+    token = CancelToken()
+    deadline = started + GENERATION_DEADLINE_S
+    try:
+        async for event in provider.stream(prompt.messages, tools, options, token):
+            if time.perf_counter() > deadline and not token.is_set:
+                token.fire("deadline")
+                detail = f"still generating after {GENERATION_DEADLINE_S:.0f} s"
+            if isinstance(event, TextDelta):
+                if first is None:
+                    # **Before the marker parser, as production times it.** A delta that
+                    # turns out to be the opening of a marker is still the moment the model
+                    # started answering (`llm_first_token_ms` in `agent/streaming.py`)
+                    first = time.perf_counter()
+                raw.append(event.text)
+                chunk = markers.feed(event.text)
+                parts.append(chunk.text)
+                intents += len(chunk.intents)
+            elif isinstance(event, ToolCall):
+                # Recorded, not run. **Latency and length describe one step of a turn**
+                status, detail = Sample.TOOL_CALL, f"the model called {event.name}"
+            elif isinstance(event, Finish):
+                tokens = event.usage.get("completion_tokens", 0)
+                prompt_tokens = event.usage.get("prompt_tokens", 0)
+                status, detail = _ending(event.reason, status, detail)
+            elif isinstance(event, LLMFailure):
+                status, detail = Sample.FAILED, event.message
+    except ProviderError as error:
+        # ★ **An engine that answered 500 costs one cell, not the run.** `stream()` raises
+        # rather than yielding `LLMFailure` when the request never got started (an HTTP
+        # error status, a version mismatch), and left to propagate that exception unwinds
+        # `main()` past the `write_text` at the end — **discarding every variant already
+        # measured** for one transient failure late in a ten-minute run. It is the same
+        # outcome the harness already documents for a broken stream, so it is reported the
+        # same way: a `FAILED` cell, excluded and printed as excluded.
+        #
+        # A genuinely dead engine still stops things loudly: `warm_up` runs before every
+        # variant and raises on `FAILED`.
+        status, detail = Sample.FAILED, f"{error.reason}: {error}"
     ended = time.perf_counter()
 
     # **Whatever was left holding an unterminated marker is discarded**, exactly as the
@@ -421,6 +452,17 @@ PARALLEL_ENV = "OLLAMA_NUM_PARALLEL"
 
 #: `/api/show` and `/api/tags` are metadata reads; neither generates.
 METADATA_TIMEOUT_S = 30.0
+
+#: Wall-clock bound on one generation. **Not a `max_tokens` in disguise** — variant A has
+#: to stay uncapped to be the pre-ADR-048 request, so what is bounded is the run, not the
+#: reply. httpx's timeout does not do this: it fires on silence between reads, and a model
+#: that streams forever is never silent.
+#:
+#: 180 s against replies measured at 30-120 tokens (`docs/measurements/phase2.md`) and a
+#: whole extraction at 4.4 s. **It cannot fire on a generation anyone would want to keep**,
+#: which is the only property it needs — a tighter number would start excluding samples for
+#: being slow, and speed is one of the things the report compares.
+GENERATION_DEADLINE_S = 180.0
 
 
 def resolve_tag(model: str, listed: Sequence[Any]) -> tuple[str, str]:
@@ -640,8 +682,12 @@ async def main() -> None:
         "「マーカーを出さなかった」と「壊れたものを5回出した」が同じ 0 に見える。"
         "**マーカーの2列だけがケース合計なのは、プロトコル違反が"
         "どのターンで起きても違反だからである**（他の列は最終ターン1回の生成の性質）",
+        "- **モデルの出力は引用ブロックに入れている。**"
+        "閉じられていないコードフェンスが1つあるだけで、**以降のケースも変種も全部その中に入る**——"
+        "壊れた出力は見えたまま、その1マスの中に留める",
         "- **`stop` で終わり、かつ発話テキスト が空でない text のみが sample である。**"
-        " `length` / tool call / 失敗 / 空応答は `除外` として印字し、比較には使わない。"
+        " `length` / tool call / 失敗 / 空応答 / エンジンのエラー / "
+        f"{GENERATION_DEADLINE_S:.0f} 秒の打ち切りは `除外` として印字し、比較には使わない。"
         "ケースは1ターンでも除外されたらそこで打ち切る"
         "（続きは別の会話になり、他の変種と比較できなくなるため）",
         "- **`<|ACT ...|>` は本番と同じ `MarkerStream` で取り除いてから数えている。**"
@@ -746,8 +792,43 @@ def _render(case: Case, replies: Sequence[Reply]) -> list[str]:
             "",
         ]
     for turn, reply in zip(case.turns, replies, strict=False):
-        lines += [f"> {turn}", "", reply.text or "*(空)*", ""]
+        lines += [
+            quoted(f"**user:** {turn}"),
+            ">",
+            quoted(f"**lumi:** {reply.text or '*(空)*'}"),
+            "",
+        ]
     return lines
+
+
+def quoted(text: str) -> str:
+    """A block quote, **because a reply is model output and this file is Markdown.**
+
+    ★ The `technical` case asks about `git rebase`, so a reply containing an opening code
+    fence is an ordinary Tuesday — and one that never closes it (a truncated technical
+    answer will do) swallows **the rest of the report**: every later case, every later
+    variant, rendered inside that block. The experiment would be unreadable because the
+    model wrote three backticks.
+
+    Quoting bounds it. A fence inside a block quote is closed by the end of the quote, and
+    the blank line after this ends it — so malformed output stays visible, and stays
+    inside its own cell. It also stops a reply's `###` from becoming a section of the
+    report and a `---` from cutting one.
+    """
+    return "\n".join(f"> {line}" if line else ">" for line in text.splitlines() or [""])
+
+
+def fenced(text: str, info: str = "text") -> str:
+    """A code block sized to its contents. **For text a server wrote, not Lumi.**
+
+    `/api/show` returns whatever the Modelfile holds, and three backticks in it would end
+    the block early and spill the rest into the report. A fence only closes on a run of
+    backticks at least as long as itself, so this one is always longer than anything
+    inside.
+    """
+    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
+    fence = "`" * max(3, longest + 1)
+    return f"{fence}{info}\n{text}\n{fence}"
 
 
 if __name__ == "__main__":
