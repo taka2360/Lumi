@@ -71,10 +71,16 @@ and it would add a second generation to a number that is supposed to describe on
 tool call is reported and excluded instead (`Sample.TOOL_CALL`). The registry built here
 is for `list_exposed()` only; **nothing in this file calls `invoke`.**
 
-**It does not run on a model family it has no variants for.** `VARIANTS` names Qwen's own
-numbers and spells out the Modelfile values `qwen3.5:9b` ships with; pointed at `gemma3:12b`
-those labels would be lies about a base that `options_for()` had already fallen back to
-temperature-only. A new family needs its own variant table, not a `--model` flag.
+**It does not run on a model family it has no variants for.** `VARIANTS` B–E are Qwen's
+own numbers with one field moved; pointed at `gemma3:12b` those labels would be lies about
+a base that `options_for()` had already fallen back to temperature-only. A new family needs
+its own variant table, not a `--model` flag.
+
+**It does not verify the server it is talking to.** `OLLAMA_NUM_PARALLEL` decides whether
+the warm-up equalizes anything at all (`warm_up`), and it belongs to a process that may not
+be on this machine — so the report states that precondition rather than checking it. What
+the run *can* pin down about its environment, it records: the model digest and `/api/show`'s
+parameter block (`model_identity`), because a tag is mutable and variant A is defined by it.
 """
 
 from __future__ import annotations
@@ -88,7 +94,9 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from lumi.agent.markers import MarkerStream
+import httpx
+
+from lumi.agent.markers import MARKER_CLOSE, MARKER_OPEN, MarkerStream
 from lumi.agent.prompt import assemble
 from lumi.agent.runtime import build_tool_registry
 from lumi.agent.session import Session
@@ -107,6 +115,7 @@ from lumi.providers.llm.base import (
     TextDelta,
     ToolCall,
 )
+from lumi.providers.llm.endpoint import DEFAULT_PORT, HOST
 from lumi.providers.llm.ollama import OllamaProvider
 from lumi.providers.llm.sampling import Purpose, is_qwen3, options_for
 from lumi.tools.base import ToolDescriptor
@@ -182,6 +191,13 @@ class Reply:
     #: far each profile follows `SPEECH_PROTOCOL`, and it is what the 字数 column would
     #: have been inflated by
     intents: int = 0
+    #: ★ Markers the model **closed but `parse_marker` refused** — broken JSON, or an
+    #: emotion not in `Emotion`. Counted apart because `MarkerStream` drops those without
+    #: telling anyone: with only `intents`, a profile that emitted five unusable markers
+    #: reads exactly like one that emitted none, and the column above claims to be about
+    #: protocol adherence. **Malformed JSON is a sampling result** — it is what a hotter
+    #: profile produces — so it is the kind of difference this harness exists to show
+    malformed_markers: int = 0
 
 
 class _NullAudit:
@@ -249,6 +265,9 @@ async def generate(
     # is not a constant offset — it is a difference between variants that is not sampling.
     markers = MarkerStream()
     parts: list[str] = []
+    # The stream as it arrived, **before the marker parser saw it.** Kept only so the
+    # markers the parser threw away can be counted (`Reply.malformed_markers`)
+    raw: list[str] = []
     intents = 0
     tokens = 0
     prompt_tokens = 0
@@ -263,6 +282,7 @@ async def generate(
                 # out to be the opening of a marker is still the moment the model started
                 # answering (`llm_first_token_ms` in `agent/streaming.py`)
                 first = time.perf_counter()
+            raw.append(event.text)
             chunk = markers.feed(event.text)
             parts.append(chunk.text)
             intents += len(chunk.intents)
@@ -298,7 +318,31 @@ async def generate(
         tokens=tokens,
         prompt_tokens=prompt_tokens,
         intents=intents,
+        # Closed markers the parser kept, subtracted from closed markers the model wrote.
+        # **An unterminated one is not counted**: `flush()` drops it, and that is a
+        # truncation artefact rather than a protocol failure — and those samples are
+        # excluded anyway
+        malformed_markers=max(0, closed_markers("".join(raw)) - intents),
     )
+
+
+def closed_markers(text: str) -> int:
+    """How many `<|ACT ...|>` the model actually finished writing, **parseable or not.**
+
+    Scans the way `MarkerStream.feed` scans — an open, then the next close after it — so
+    the two counts line up. `parse_marker` returning `None` is invisible from outside the
+    parser: the marker is consumed and no intent appears. **This is the only way to tell
+    "followed the protocol badly" from "did not follow it at all".**
+    """
+    count = 0
+    index = 0
+    while (start := text.find(MARKER_OPEN, index)) >= 0:
+        end = text.find(MARKER_CLOSE, start + len(MARKER_OPEN))
+        if end < 0:
+            break
+        count += 1
+        index = end + len(MARKER_CLOSE)
+    return count
 
 
 def _ending(reason: str, status: Sample, detail: str) -> tuple[Sample, str]:
@@ -312,6 +356,13 @@ def _ending(reason: str, status: Sample, detail: str) -> tuple[Sample, str]:
     if reason == "length":
         return Sample.TRUNCATED, "cut off at max_tokens"
     return Sample.UNKNOWN, f"unread finish reason: {reason}"
+
+
+def _malformed(reply: Reply) -> str:
+    """The broken-marker count, **printed only when there is one.** A `+0` on every line
+    is noise; a `+3` on one line is the finding.
+    """
+    return f" (壊れ {reply.malformed_markers})" if reply.malformed_markers else ""
 
 
 def repeated_ratio(text: str) -> float:
@@ -338,6 +389,71 @@ def profiles(
 #: The throwaway turn. **Deliberately not one of `CASES`** — see `warm_up`.
 WARM_UP_TURN = "ちょっと待っててね"
 
+#: Ollama's context-slot count. **Read from the report, not from here** — the harness
+#: cannot see a remote server's environment, so it states the precondition instead of
+#: checking it (`warm_up`).
+PARALLEL_ENV = "OLLAMA_NUM_PARALLEL"
+
+#: `/api/show` and `/api/tags` are metadata reads; neither generates.
+METADATA_TIMEOUT_S = 30.0
+
+
+async def model_identity(
+    model: str, *, transport: httpx.AsyncBaseTransport | None = None
+) -> list[str]:
+    """What the selected tag **actually was, at the moment of the run.**
+
+    ★ **A tag is mutable, and variant A is now defined by whatever it holds.** A publishes
+    `temperature` and nothing else, so `top_p`, `top_k` and the penalties come from this
+    model's own file — which is the honest way to reproduce the pre-ADR-048 request
+    (`VARIANTS`) and, left at that, the way to lose the baseline. `qwen3.5:9b` re-pulled
+    six months from now is a different set of numbers under the same name, and a report
+    that only says "not sent" can no longer say what it compared against.
+
+    So the run records it: the digest that identifies the weights, and `/api/show`'s
+    parameter block **verbatim** — copying it into a dict would be one more place to
+    misread it. This is the same failure ADR-048 was written about, one level up: a file
+    nobody read deciding the numbers.
+
+    **A failure to read it does not stop the run**, because the comparison is still valid
+    for the machine it ran on. It is printed as the caveat it is.
+
+    `transport` is the hook for tests to substitute HTTP, as `OllamaProvider` has.
+    **`None` when it is actually run.**
+    """
+    base = f"http://{HOST}:{DEFAULT_PORT}"
+    try:
+        async with httpx.AsyncClient(
+            base_url=base, timeout=METADATA_TIMEOUT_S, transport=transport
+        ) as http:
+            shown = await http.post("/api/show", json={"model": model})
+            shown.raise_for_status()
+            tags = await http.get("/api/tags")
+            tags.raise_for_status()
+            parameters = str(shown.json().get("parameters") or "").strip()
+            listed = tags.json().get("models") or []
+    except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
+        return [
+            f"- ⚠ **このタグが実際に何だったかを記録できなかった**（`{error}`）。"
+            "**A の基準はこのレポートからは復元できない**——"
+            "タグは書き換わるので、後から `/api/show` を引いても同じ値とは限らない",
+            "",
+        ]
+    digest = next(
+        (str(entry.get("digest", "")) for entry in listed if entry.get("name") == model), ""
+    )
+    return [
+        f"- model digest: `{digest or '(unknown)'}`"
+        "（**タグは可変なので、A の基準を名指しできるのはこれだけである**）",
+        "",
+        "<details><summary>`/api/show` の parameters（**A が継承した値そのもの**）</summary>",
+        "",
+        f"```text\n{parameters or '(empty — the model file sets nothing)'}\n```",
+        "",
+        "</details>",
+        "",
+    ]
+
 
 async def warm_up(
     provider: LLMProvider, options: LLMOptions, tools: Sequence[ToolDescriptor]
@@ -361,16 +477,32 @@ async def warm_up(
     It does not make the latency column an SLO measurement — that is `phase1.md`'s job, with
     a proper cold/warm split. It makes the column **comparable between the profiles below**,
     which is the only claim this file makes.
+
+    ★ **And it makes that claim only on a single-slot server.** One request warms the one
+    context slot it lands on. With `OLLAMA_NUM_PARALLEL` above 1, the other slots still
+    hold whatever the *previous* variant left in them, so a later variant's case can be
+    routed onto a longer cached prefix than variant A ever had — and the equalization this
+    function exists for silently does not happen, leaving first-token latency correlated
+    with variant order exactly as it was before. **The harness cannot check this**: the
+    setting belongs to a server that may not be on this machine. So the report states the
+    precondition instead of verifying it, and `PARALLEL_ENV` names it.
     """
     session = Session()
     reply = await generate(provider, session, replace(options, seed=0), WARM_UP_TURN, tools)
-    if reply.status is not Sample.OK:
+    if reply.status is Sample.FAILED:
         # ★ **A warm-up that did not generate did not warm anything**, and `generate()`
         # returns `Sample.FAILED` rather than raising — so left unread this is the one
         # failure in the run that is invisible. Every other one prints itself as `除外`;
         # this one would let the report claim a cache state it does not have, and the
         # profile's first case would pay a cost that reads as its settings.
-        raise RuntimeError(f"warm-up failed ({reply.status.value}): {reply.detail}")
+        #
+        # **`FAILED` only, because the question here is just "did inference run".** The
+        # output was always going to be thrown away, so a warm-up that came back `EMPTY`
+        # (the neutral turn answered with a marker and nothing else), `TOOL_CALL` or
+        # `TRUNCATED` did its job: the server generated and the cache is warm. Ending a
+        # ten-minute run over one of those would be discarding a warm cache for having
+        # said the wrong thing with it.
+        raise RuntimeError(f"warm-up failed: {reply.detail}")
 
 
 #: The comparison. **A is what shipped**: `temperature` alone on the request, every other
@@ -428,10 +560,22 @@ async def main() -> None:
         f"# sampling profile A/B — `{args.model}`",
         "",
         f"- seed base: {args.seed_base}",
+        *await model_identity(args.model),
         f"- tools: {', '.join(tool.name for tool in tools) or '(none)'}"
         "（`build_tool_registry()` の `list_exposed()`。本番と同じものをモデルに見せている）",
         "- **変種ごとに1回、捨てるための生成を回している**（KV キャッシュを揃えるため。"
         "ケースに含まれない中立の1ターン）。latency は**プロファイル間の比較にだけ**使える",
+        f"- ⚠ **その「揃えた」が成り立つのは context slot が1つのときだけである。**"
+        f"`{PARALLEL_ENV}` が 2 以上だと中立ターンは当たったスロット1つしか温めず、"
+        "他のスロットには前の変種のケースのプロンプトが残る。"
+        "後の変種のケースがその長い接頭辞に当たると、"
+        "**揃えたはずの latency が変種の並び順と相関したままになる。**"
+        f"harness は remote のサーバの環境を見られないので確認していない——"
+        f"latency を読むなら `{PARALLEL_ENV}=1` で取り直すこと",
+        "- **`marker` は parse できたマーカーの数。** 閉じているのに parse できなかったもの"
+        "（壊れた JSON・`Emotion` に無い emotion）は `壊れ N` として別に出す。"
+        "**`MarkerStream` はそれを黙って落とす**ので、分けないと"
+        "「マーカーを出さなかった」と「壊れたものを5回出した」が同じ 0 に見える",
         "- **`stop` で終わり、かつ発話テキスト が空でない text のみが sample である。**"
         " `length` / tool call / 失敗 / 空応答は `除外` として印字し、比較には使わない。"
         "ケースは1ターンでも除外されたらそこで打ち切る"
@@ -516,7 +660,8 @@ def _render(case: Case, replies: Sequence[Reply]) -> list[str]:
         lines += [
             f"- first token {last.first_token_ms} ms / total {last.total_ms} ms "
             f"/ {last.tokens} tok / {len(last.text)} 字 / 反復 {repeated_ratio(last.text)}"
-            f" / marker {last.intents} / prompt {last.prompt_tokens} tok",
+            f" / marker {last.intents}{_malformed(last)}"
+            f" / prompt {last.prompt_tokens} tok",
             "",
         ]
     else:

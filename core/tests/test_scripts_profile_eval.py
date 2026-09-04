@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
+import httpx
 import pytest
 
 from lumi.agent.session import Session
@@ -27,6 +28,7 @@ from scripts.llm_profile_eval import (
     Sample,
     exposed_tools,
     generate,
+    model_identity,
     warm_up,
 )
 
@@ -195,6 +197,102 @@ async def test_a_warm_up_that_did_not_generate_stops_the_run() -> None:
 
     with pytest.raises(RuntimeError, match="warm-up failed"):
         await warm_up(provider, OPTIONS, exposed_tools())
+
+
+@pytest.mark.parametrize(
+    "events",
+    [
+        pytest.param((TextDelta(text='<|ACT {"emotion":"sad"}|>'), stop()), id="marker_only"),
+        pytest.param(
+            (
+                TextDelta(text="うん"),
+                ToolCall(id="1", name="character.set_expression", arguments={}),
+                stop(),
+            ),
+            id="tool_call",
+        ),
+        pytest.param((TextDelta(text="うん"), Finish(reason="length")), id="truncated"),
+    ],
+)
+async def test_a_warm_up_that_generated_is_a_warm_up(events: tuple[LLMEvent, ...]) -> None:
+    """★ **The only question the warm-up asks is whether inference ran.** Its output is
+    discarded by design, so a neutral turn answered with a bare marker, a tool call, or a
+    reply that hit the cap still left the server's cache exactly as warm as intended.
+
+    Aborting on those would throw away a ten-minute run because a throwaway turn said the
+    wrong thing — the equalization it exists for had already happened.
+    """
+    provider: Any = Scripted(*events)
+
+    await warm_up(provider, OPTIONS, exposed_tools())
+
+
+async def test_a_marker_the_parser_refused_is_counted_not_hidden() -> None:
+    """★ `MarkerStream` consumes a closed-but-invalid directive and returns no intent, so
+    `marker 0` alone cannot tell **"emitted no marker"** from **"emitted broken ones"**.
+
+    That distinction is a sampling result: malformed JSON is what a hotter profile
+    produces, and the report presents the marker column as protocol adherence.
+    """
+    reply = await one(
+        TextDelta(text='ふむ<|ACT {"emotion":"nonexistent"}|>'),
+        TextDelta(text='そうだね<|ACT {"emotion":"happy"}|>'),
+        TextDelta(text='まあね<|ACT {"emotion":'),  # unterminated: a truncation artefact
+        stop(),
+    )
+
+    assert reply.text == "ふむそうだねまあね"
+    assert reply.intents == 1
+    # The unknown emotion, and **not** the unterminated one `flush()` dropped
+    assert reply.malformed_markers == 1
+
+
+async def test_a_reply_with_only_good_markers_reports_none_broken() -> None:
+    """The other side: the column stays quiet when there is nothing to say."""
+    reply = await one(TextDelta(text='やあ<|ACT {"emotion":"happy"}|>'), stop())
+
+    assert reply.intents == 1
+    assert reply.malformed_markers == 0
+
+
+def _metadata(handler: Any) -> httpx.MockTransport:
+    return httpx.MockTransport(handler)
+
+
+async def test_the_report_records_what_the_tag_actually_was() -> None:
+    """★ **A tag is mutable, and variant A is now defined by whatever it holds.**
+
+    A publishes `temperature` and nothing else, so the rest comes from this model's own
+    file — the honest way to reproduce the pre-ADR-048 request, and, unrecorded, the way
+    to lose the baseline. `qwen3.5:9b` re-pulled next year is a different set of numbers
+    under the same name, and "not sent" no longer says what the comparison ran against.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"parameters": "top_p 0.95\npresence_penalty 1.5"})
+        return httpx.Response(200, json={"models": [{"name": "qwen3.5:9b", "digest": "abc123"}]})
+
+    report = "\n".join(await model_identity("qwen3.5:9b", transport=_metadata(handler)))
+
+    assert "abc123" in report
+    # **Verbatim.** Reading it into a dict would be one more place to misread it
+    assert "presence_penalty 1.5" in report
+
+
+async def test_a_tag_that_cannot_be_read_is_a_caveat_not_a_crash() -> None:
+    """The comparison is still valid for the machine it ran on, so the run continues —
+    **but the report has to say it can no longer name A's baseline.**
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(500, text="boom")
+
+    report = "\n".join(await model_identity("qwen3.5:9b", transport=_metadata(handler)))
+
+    assert "⚠" in report
+    assert "復元できない" in report
 
 
 def test_the_before_variant_names_no_value_it_did_not_send() -> None:
