@@ -16,7 +16,12 @@ import pytest
 from lumi.kernel.cancellation import CancelToken
 from lumi.providers.llm.base import LLMOptions, Message
 from lumi.providers.llm.ollama import OllamaProvider
-from lumi.providers.llm.sampling import Purpose, options_for
+from lumi.providers.llm.sampling import (
+    CONVERSATION_MAX_TOKENS,
+    EXTRACTION_MAX_TOKENS,
+    Purpose,
+    options_for,
+)
 
 #: Every field the conversation profile must pin down. **Leaving any of these out means
 #: inheriting it from the model file**, which is the bug ADR-048 was written about
@@ -57,9 +62,13 @@ def test_extraction_is_colder_than_conversation() -> None:
     assert extraction.temperature < conversation.temperature
     # A JSON array repeats its own keys. Penalising that is penalising the format
     assert extraction.presence_penalty == 0.0
-    # ★ **No cap.** A truncation that depends only on the input recurs on every pass over
-    # that input, so a cap here would stop the reflection queue rather than guard a runaway
-    assert extraction.max_tokens is None
+    # ★ **Capped, and wider than conversation** (ADR-049). A truncation that depends only
+    # on the input recurs on every pass over that input, so this number is only safe
+    # because `memory/reflection.py` answers `length` by halving the batch rather than by
+    # asking the same thing again. It has to clear the largest answer the parser will
+    # accept — `CANDIDATE_LIMIT` items, roughly 850 tokens — or it fires on real content.
+    assert extraction.max_tokens == EXTRACTION_MAX_TOKENS
+    assert extraction.max_tokens > CONVERSATION_MAX_TOKENS
 
 
 @pytest.mark.parametrize("model", ["qwen3:8b", "qwen3.5:9b", "qwen3.6:35b-a3b", "qwen3.8:27b"])
