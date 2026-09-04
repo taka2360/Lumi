@@ -12,6 +12,7 @@ down is a way a generation can look like a short, fast reply without being one.
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
+from dataclasses import replace
 from typing import Any
 
 import httpx
@@ -26,9 +27,11 @@ from scripts.llm_profile_eval import (
     WARM_UP_TURN,
     Reply,
     Sample,
+    _render,
     exposed_tools,
     generate,
     model_identity,
+    resolve_tag,
     warm_up,
 )
 
@@ -237,13 +240,34 @@ async def test_a_marker_the_parser_refused_is_counted_not_hidden() -> None:
     reply = await one(
         TextDelta(text='ふむ<|ACT {"emotion":"nonexistent"}|>'),
         TextDelta(text='そうだね<|ACT {"emotion":"happy"}|>'),
-        TextDelta(text='まあね<|ACT {"emotion":'),  # unterminated: a truncation artefact
         stop(),
     )
 
-    assert reply.text == "ふむそうだねまあね"
+    assert reply.text == "ふむそうだね"
     assert reply.intents == 1
-    # The unknown emotion, and **not** the unterminated one `flush()` dropped
+    assert reply.malformed_markers == 1
+
+
+@pytest.mark.parametrize(
+    "tail",
+    [
+        pytest.param('<|ACT {"emotion":', id="opened_and_abandoned"),
+        pytest.param("<|A", id="stopped_on_a_partial_open"),
+    ],
+)
+async def test_a_marker_left_unfinished_on_a_clean_stop_is_a_failure(tail: str) -> None:
+    """★ **A correction.** This was left uncounted as "a truncation artefact, and those
+    samples are excluded anyway" — true only when the ending was `length`.
+
+    A reply that stops mid-directive and then finishes `stop` is a sample that *counts*,
+    `flush()` removes the fragment, and nothing else in the report mentions it. Without
+    this, that turn is indistinguishable from one that emitted no marker at all.
+    """
+    reply = await one(TextDelta(text=f"まあね{tail}"), stop())
+
+    assert reply.status is Sample.OK
+    assert reply.text == "まあね"  # the fragment is never spoken
+    assert reply.intents == 0
     assert reply.malformed_markers == 1
 
 
@@ -253,6 +277,58 @@ async def test_a_reply_with_only_good_markers_reports_none_broken() -> None:
 
     assert reply.intents == 1
     assert reply.malformed_markers == 0
+
+
+def test_a_broken_marker_on_an_early_turn_reaches_the_report() -> None:
+    """★ Only the last turn's numbers are printed, so a case-long protocol failure would
+    otherwise be visible for turn 3 alone. **A directive the parser refused on turn 1 is
+    still a directive the parser refused** — and the report calls this column adherence.
+    """
+    early = Reply(
+        text="うん",
+        status=Sample.OK,
+        detail="",
+        first_token_ms=1,
+        total_ms=2,
+        tokens=3,
+        prompt_tokens=4,
+        intents=0,
+        malformed_markers=2,
+    )
+    clean = replace(early, malformed_markers=0, intents=1)
+
+    block = "\n".join(_render(MULTI, [early, clean, clean]))
+
+    assert "壊れ 2" in block
+    # And the parsed ones are the case's total too, not just the last turn's
+    assert "marker 2" in block
+
+
+def test_a_case_with_no_broken_markers_says_nothing_about_them() -> None:
+    """`壊れ 0` on every line is noise. The column appears when there is a finding."""
+    clean = Reply(
+        text="うん",
+        status=Sample.OK,
+        detail="",
+        first_token_ms=1,
+        total_ms=2,
+        tokens=3,
+        prompt_tokens=4,
+        intents=1,
+    )
+
+    assert "壊れ" not in "\n".join(_render(SINGLE, [clean]))
+
+
+def test_the_vague_case_has_something_to_be_vague_about() -> None:
+    """★ Its expectation is that the reply follows the preceding topic. `main()` opens a
+    fresh `Session` per case and there are no memories, so **as a lone utterance there is
+    no preceding topic** — the expectation would be unmeetable and unfalsifiable at once,
+    and a reader could not tell context-following from a lucky guess.
+    """
+    vague = next(case for case in CASES if case.name == "vague")
+
+    assert len(vague.turns) > 1
 
 
 def _metadata(handler: Any) -> httpx.MockTransport:
@@ -278,6 +354,56 @@ async def test_the_report_records_what_the_tag_actually_was() -> None:
     assert "abc123" in report
     # **Verbatim.** Reading it into a dict would be one more place to misread it
     assert "presence_penalty 1.5" in report
+
+
+@pytest.mark.parametrize(
+    ("asked", "listed", "expected"),
+    [
+        pytest.param("qwen3.5:9b", ["qwen3.5:9b"], "qwen3.5:9b", id="exact"),
+        pytest.param("qwen3.5", ["qwen3.5:latest"], "qwen3.5:latest", id="tagless_to_latest"),
+        pytest.param("qwen3.5", ["qwen3.5:9b"], "qwen3.5:9b", id="tagless_to_the_only_tag"),
+        pytest.param("qwen3.5", ["qwen3.5:9b", "qwen3.5:4b"], "", id="tagless_but_ambiguous"),
+        pytest.param("qwen3.5", ["gemma3:12b"], "", id="not_there"),
+    ],
+)
+def test_a_tagless_model_name_still_identifies_its_weights(
+    asked: str, listed: list[str], expected: str
+) -> None:
+    """★ **`--model qwen3.5` is a name Ollama serves and `/api/tags` never lists.**
+    `OllamaProvider._has_model` matches the tag-less form deliberately and `is_qwen3()`
+    accepts it, so an exact lookup here records `(unknown)` for a perfectly ordinary run —
+    losing the one field that identifies the mutable thing it used.
+
+    **Ambiguity resolves to nothing**: a digest naming the wrong weights is worse evidence
+    than no digest.
+    """
+    entries = [{"name": name, "digest": f"sha-{name}"} for name in listed]
+
+    tag, digest = resolve_tag(asked, entries)
+
+    assert tag == expected
+    assert digest == (f"sha-{expected}" if expected else "")
+
+
+async def test_the_report_records_the_engine_that_decoded_it() -> None:
+    """★ Variant A is made of fall-throughs. A field its request omits that the model file
+    does not set either lands on **Ollama's** default — and `sampling.py` says outright
+    that those are not to be taken on a runtime's word ("0.33.2's own default is already
+    1.0 ... but a value this load-bearing is not left to a runtime's release notes").
+
+    So the digest alone does not identify A's baseline; the engine version is half of it.
+    """
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/show":
+            return httpx.Response(200, json={"parameters": "top_p 0.95"})
+        if request.url.path == "/api/version":
+            return httpx.Response(200, json={"version": "0.33.2"})
+        return httpx.Response(200, json={"models": [{"name": "qwen3.5:9b", "digest": "abc123"}]})
+
+    report = "\n".join(await model_identity("qwen3.5:9b", transport=_metadata(handler)))
+
+    assert "0.33.2" in report
 
 
 async def test_a_tag_that_cannot_be_read_is_a_caveat_not_a_crash() -> None:

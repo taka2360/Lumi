@@ -147,7 +147,16 @@ CASES: tuple[Case, ...] = (
         "人格と文体を数ターン維持する。説明口調に戻らない",
     ),
     Case("technical", ("Git の rebase と merge の違いを簡単に教えて",), "正確で、崩れない"),
-    Case("vague", ("うーん、どうしよ",), "文脈を踏まえる。一般論を始めない"),
+    # ★ **Two turns, because the expectation needs something to be measured against.**
+    # `main()` opens a fresh `Session` per case and there are no memories, so as a lone
+    # utterance 「うーん、どうしよ」 arrives with no preceding topic at all — "文脈を踏まえる"
+    # would then be asking the model to use context that was never in the prompt, and a
+    # reader could not tell a profile that followed context from one that guessed well.
+    Case(
+        "vague",
+        ("来週プレゼンなんだよね", "うーん、どうしよ"),
+        "直前の話題（プレゼン）を引き継ぐ。一般論を始めない",
+    ),
 )
 
 
@@ -318,30 +327,42 @@ async def generate(
         tokens=tokens,
         prompt_tokens=prompt_tokens,
         intents=intents,
-        # Closed markers the parser kept, subtracted from closed markers the model wrote.
-        # **An unterminated one is not counted**: `flush()` drops it, and that is a
-        # truncation artefact rather than a protocol failure — and those samples are
-        # excluded anyway
-        malformed_markers=max(0, closed_markers("".join(raw)) - intents),
+        # Markers the model started, minus the ones the parser could actually use.
+        # **Unterminated openings are in the first number** — see `markers_written`
+        malformed_markers=max(0, markers_written("".join(raw)) - intents),
     )
 
 
-def closed_markers(text: str) -> int:
-    """How many `<|ACT ...|>` the model actually finished writing, **parseable or not.**
+def markers_written(text: str) -> int:
+    """How many `<|ACT ...|>` the model **started**, closed or not.
 
     Scans the way `MarkerStream.feed` scans — an open, then the next close after it — so
-    the two counts line up. `parse_marker` returning `None` is invisible from outside the
-    parser: the marker is consumed and no intent appears. **This is the only way to tell
+    the counts line up with the intents it produced. `parse_marker` returning `None` is
+    invisible from outside the parser (the marker is consumed and no intent appears), and
+    so is `flush()` throwing away an unterminated one. **This is the only way to tell
     "followed the protocol badly" from "did not follow it at all".**
+
+    ★ **An unterminated opening counts, and that is a correction.** It was left out as "a
+    truncation artefact, and those samples are excluded anyway" — which is only true when
+    the ending was `length`. A reply that stops mid-marker and then finishes `stop` is a
+    sample that counts, and half a directive in it is a protocol failure like any other.
+    On a truncated sample the extra count is harmless: `_render` prints no numbers for an
+    excluded one.
     """
     count = 0
     index = 0
     while (start := text.find(MARKER_OPEN, index)) >= 0:
+        count += 1
         end = text.find(MARKER_CLOSE, start + len(MARKER_OPEN))
         if end < 0:
-            break
-        count += 1
+            return count  # opened and never closed — `flush()` drops it
         index = end + len(MARKER_CLOSE)
+    # The stream may instead have stopped on a *partial* open (`<|A`), which `flush()`
+    # discards as a marker too. Same test as `markers._partial_open_length`.
+    tail = text[index:]
+    for length in range(min(len(MARKER_OPEN) - 1, len(tail)), 0, -1):
+        if tail.endswith(MARKER_OPEN[:length]):
+            return count + 1
     return count
 
 
@@ -358,11 +379,15 @@ def _ending(reason: str, status: Sample, detail: str) -> tuple[Sample, str]:
     return Sample.UNKNOWN, f"unread finish reason: {reason}"
 
 
-def _malformed(reply: Reply) -> str:
-    """The broken-marker count, **printed only when there is one.** A `+0` on every line
-    is noise; a `+3` on one line is the finding.
+def _malformed(replies: Sequence[Reply]) -> str:
+    """The broken-marker count **over the whole case**, printed only when there is one.
+
+    Summed across turns because a directive the parser refused on turn 1 is a protocol
+    failure whether or not turn 3 went well — and only turn 3's numbers are printed
+    otherwise. A `壊れ 0` on every line is noise; a `壊れ 3` on one line is the finding.
     """
-    return f" (壊れ {reply.malformed_markers})" if reply.malformed_markers else ""
+    broken = sum(reply.malformed_markers for reply in replies)
+    return f" (壊れ {broken})" if broken else ""
 
 
 def repeated_ratio(text: str) -> float:
@@ -398,6 +423,35 @@ PARALLEL_ENV = "OLLAMA_NUM_PARALLEL"
 METADATA_TIMEOUT_S = 30.0
 
 
+def resolve_tag(model: str, listed: Sequence[Any]) -> tuple[str, str]:
+    """The canonical tag `/api/tags` lists for `--model`, and its digest.
+
+    ★ **`--model qwen3.5` is a name Ollama serves and `/api/tags` never lists.**
+    `OllamaProvider._has_model` matches the tag-less form on purpose, and `is_qwen3()`
+    accepts it too, so a run can perfectly well be made against `qwen3.5` — and an exact
+    `name == model` lookup then finds nothing and records `(unknown)`, losing the one
+    field that identifies the mutable thing the run used.
+
+    So: the exact name, then `:latest` (what Ollama resolves a bare name to), then a
+    unique match on the base name. **Ambiguity resolves to nothing rather than to a
+    guess** — two tags sharing a base means the report cannot say which was served, and a
+    digest naming the wrong weights is worse evidence than no digest at all.
+    """
+    by_name = {
+        str(entry.get("name", "")): str(entry.get("digest", ""))
+        for entry in listed
+        if isinstance(entry, dict)
+    }
+    for candidate in (model, f"{model}:latest"):
+        if candidate in by_name:
+            return candidate, by_name[candidate]
+    base = model.split(":", 1)[0]
+    same_base = sorted(name for name in by_name if name.split(":", 1)[0] == base)
+    if len(same_base) == 1:
+        return same_base[0], by_name[same_base[0]]
+    return "", ""
+
+
 async def model_identity(
     model: str, *, transport: httpx.AsyncBaseTransport | None = None
 ) -> list[str]:
@@ -410,10 +464,15 @@ async def model_identity(
     six months from now is a different set of numbers under the same name, and a report
     that only says "not sent" can no longer say what it compared against.
 
-    So the run records it: the digest that identifies the weights, and `/api/show`'s
-    parameter block **verbatim** — copying it into a dict would be one more place to
-    misread it. This is the same failure ADR-048 was written about, one level up: a file
-    nobody read deciding the numbers.
+    So the run records it: the digest that identifies the weights, `/api/show`'s parameter
+    block **verbatim** — copying it into a dict would be one more place to misread it —
+    and **the engine version**. That last one is not padding: every field A leaves off
+    that the model file does not set either falls through to *Ollama's* default, and those
+    move between releases. `sampling.py` says as much about `repeat_penalty` ("Ollama
+    0.33.2's own default is already 1.0 ... but a value this load-bearing is not left to a
+    runtime's release notes"), and A is the variant made entirely of such fall-throughs.
+    This is the same failure ADR-048 was written about, one level up: a file nobody read
+    deciding the numbers.
 
     **A failure to read it does not stop the run**, because the comparison is still valid
     for the machine it ran on. It is printed as the caveat it is.
@@ -430,8 +489,11 @@ async def model_identity(
             shown.raise_for_status()
             tags = await http.get("/api/tags")
             tags.raise_for_status()
+            version = await http.get("/api/version")
+            version.raise_for_status()
             parameters = str(shown.json().get("parameters") or "").strip()
             listed = tags.json().get("models") or []
+            engine = str(version.json().get("version") or "")
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as error:
         return [
             f"- ⚠ **このタグが実際に何だったかを記録できなかった**（`{error}`）。"
@@ -439,12 +501,12 @@ async def model_identity(
             "タグは書き換わるので、後から `/api/show` を引いても同じ値とは限らない",
             "",
         ]
-    digest = next(
-        (str(entry.get("digest", "")) for entry in listed if entry.get("name") == model), ""
-    )
+    tag, digest = resolve_tag(model, listed)
     return [
-        f"- model digest: `{digest or '(unknown)'}`"
-        "（**タグは可変なので、A の基準を名指しできるのはこれだけである**）",
+        f"- model: `{tag or model}` / digest: `{digest or '(unknown)'}`"
+        "（**タグは可変なので、A の基準を名指しできるのは digest である**）",
+        f"- ollama: `{engine or '(unknown)'}`"
+        "（**A が Modelfile にも無い欄で落ちる先はエンジンの既定値であり、版で動く**）",
         "",
         "<details><summary>`/api/show` の parameters（**A が継承した値そのもの**）</summary>",
         "",
@@ -572,10 +634,12 @@ async def main() -> None:
         "**揃えたはずの latency が変種の並び順と相関したままになる。**"
         f"harness は remote のサーバの環境を見られないので確認していない——"
         f"latency を読むなら `{PARALLEL_ENV}=1` で取り直すこと",
-        "- **`marker` は parse できたマーカーの数。** 閉じているのに parse できなかったもの"
-        "（壊れた JSON・`Emotion` に無い emotion）は `壊れ N` として別に出す。"
-        "**`MarkerStream` はそれを黙って落とす**ので、分けないと"
-        "「マーカーを出さなかった」と「壊れたものを5回出した」が同じ 0 に見える",
+        "- **`marker` は parse できたマーカーの数で、ケース全体の合計である。**"
+        "parse できなかったもの（壊れた JSON・`Emotion` に無い emotion・閉じ忘れ）は"
+        "`壊れ N` として別に出す。**`MarkerStream` はそれを黙って落とす**ので、分けないと"
+        "「マーカーを出さなかった」と「壊れたものを5回出した」が同じ 0 に見える。"
+        "**マーカーの2列だけがケース合計なのは、プロトコル違反が"
+        "どのターンで起きても違反だからである**（他の列は最終ターン1回の生成の性質）",
         "- **`stop` で終わり、かつ発話テキスト が空でない text のみが sample である。**"
         " `length` / tool call / 失敗 / 空応答は `除外` として印字し、比較には使わない。"
         "ケースは1ターンでも除外されたらそこで打ち切る"
@@ -654,13 +718,22 @@ def _value(value: object) -> str:
 
 
 def _render(case: Case, replies: Sequence[Reply]) -> list[str]:
+    """One case's block.
+
+    **The measurement columns describe the last turn; the marker columns describe the
+    case.** That split is not tidiness — the two answer different questions. Latency,
+    length and repetition are properties of one generation, and for the multi-turn case
+    the last one is the point (drift shows up on turn 3). Protocol adherence is not: a
+    broken directive on turn 1 is a broken directive, and reporting only turn 3 would let
+    a profile that mangled two of them read as clean.
+    """
     last = replies[-1]
     lines = [f"### {case.name} — 期待: {case.expectation}", ""]
     if last.status is Sample.OK:
         lines += [
             f"- first token {last.first_token_ms} ms / total {last.total_ms} ms "
             f"/ {last.tokens} tok / {len(last.text)} 字 / 反復 {repeated_ratio(last.text)}"
-            f" / marker {last.intents}{_malformed(last)}"
+            f" / marker {sum(reply.intents for reply in replies)}{_malformed(replies)}"
             f" / prompt {last.prompt_tokens} tok",
             "",
         ]
