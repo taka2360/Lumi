@@ -21,9 +21,12 @@
 >    [architecture/audio.md](architecture/audio.md) §7 の予測は変わっていない
 > 2. **Desktop Sensor を Shell に置くことにした** → [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)。
 >    未確定事項 14 の決着である。**`sensor-desktop` を out-of-process Extension として作らない**——
->    Extension ホストが1行も無く、**最初の本当の利用者が Phase 8 まで現れない**。
+>    Extension ホストは **Phase 4b（Browser / Playwright / Class B）でどのみち作る**ので、
+>    その1つ前で、Shell が数行で出せる観測のために先に作る理由が無い。
 >    そして **out-of-process にしても OS に対する境界にはならない**（実効的な防御は
 >    Core が宣言外の facet を拒否することであって、誰が OS を叩いたかではない）。
+>    **同意・trust・分類は Shell に移しても落とさない**——`sensor.*` は `UNTRUSTED`、
+>    `user.activity_class` は Core が導出、初回開示と無効化設定が Sensor の起動を gate する。
 >    **[contracts/authority-matrix.md](contracts/authority-matrix.md) は変更していない**
 > 3. **Phase 3 を 3a〜3e に分けた** → [roadmap.md](roadmap.md)。
 >    **Gate / Budget を dry-run で作ってから発話させる**（3d → 3e）。
@@ -469,7 +472,7 @@ Memory       何を覚えているか         Vision model
              │ ext.* (WS / stdio, capability-gated)
    ┌─────────┼──────────────┐
    ▼                        ▼
- Browser Ext 〔4b〕    GameAgent Ext 〔8〕 ...
+ Browser Ext 〔4b。最初の1つ〕   GameAgent Ext 〔8〕 ...
 
  ※ Desktop Sensor は Extension ではなく **Shell** が持つ（ADR-050）。Signal で Core へ
 

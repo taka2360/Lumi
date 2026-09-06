@@ -252,8 +252,15 @@ if effective_trust is TrustLevel.TAINTED and effective_risk >= Risk.L3:
 | Vision の結果 | `UNTRUSTED` |
 | ゲーム画面のテキスト | `UNTRUSTED` |
 | Capability Extension の出力 | `UNTRUSTED` |
-| Sensor Extension の Signal | `UNTRUSTED`（ただし World facet 化は Core が検証） |
+| **Sensor（Shell / Extension）の Signal** | `UNTRUSTED`（ただし World facet 化は Core が検証）〔2026-09-06 / [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)〕 |
 | Reflection Job が抽出した記憶 | `DERIVED`（元が untrusted を含む場合） |
+
+> **送出元の信頼度は、運ばれてきた値の信頼度ではない。**
+> `Signal.trust_level` は送出元から決まるが（[event-model.md](event-model.md)）、
+> **Sensor が Shell（信頼されたコンポーネント）になっても `sensor.*` の payload は `UNTRUSTED` のままである。**
+> `user.focus_app` は**その辺のアプリが自分で名乗った文字列**であり、
+> World projection を通ってプロンプトに入る。攻撃者が表示名を選べる以上、外部由来のテキストである（Invariant 3）。
+> **実装形態を変えても汚染は落ちない**（Invariant 7）。
 
 ### LLM の出力を `propagate()` する理由
 

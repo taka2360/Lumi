@@ -275,7 +275,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   （[architecture/audio.md](architecture/audio.md) §7）。**寄与は `stt_ms - stt_overlap_ms`。定数 0 で埋めない**
   〔`unaccounted_ms` の基準を `critical_path_ms` に変更。**Inspector 側も更新した**——
   Stage は「summary に無い数値キーは区間」として扱うので、放置すると新しいキーが**偽の区間**として並ぶ〕
-- [x] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f）
+- [x] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f。**CPU 構成は 8g に分けた**）
   〔2026-09-03。**マイクで実際に喋った 7 ターン**。破棄率 **12.5%** / `stt_overlap_ms` は**全ターン `stt_ms` と一致**
   （STT の寄与 0）/ `capped` **0 回**。`critical_path_ms` p50 **1170 ms**（予算 1100 に対し +70。**超過は TTS だけ**）、
   `total_ms` p50 **1171 ms** で p50 目標 1.50 s は満たす。
@@ -409,10 +409,15 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 **Desktop Sensor は Shell に置く**（未確定事項 14 → [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)）。
 `sensor-desktop` を out-of-process Capability Extension として作らない。
 
-理由は2つ。**Extension ホストが1行も無く、最初の本当の利用者が Phase 8（GameAgent）まで現れない**こと。
+理由は2つ。**Extension ホストは Phase 4b（Browser / Playwright / Class B）でどのみち作る**ので、
+**その1つ前で、Shell が数行で出せる観測のために先に作る理由が無い**こと。
 そして **out-of-process にしても OS に対する境界にはならない**こと——実効的な防御は
 「Core が宣言外の facet を拒否する」（Invariant 5）であって、誰が OS を叩いたかではない。
 **[authority-matrix.md](contracts/authority-matrix.md) は変更していない**（表は Shell を Sensor として既に認めている）。
+
+**同意・trust・分類の3つは Shell に移しても落とさない。**
+`sensor.*` は `UNTRUSTED`（アプリ名は攻撃者が選べる）、`user.activity_class` は Core が導出、
+初回開示と無効化設定が Sensor の起動を gate する。→ [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)
 
 ### 実装順 — 3a〜3e に分けた〔2026-09-06〕
 
@@ -438,15 +443,24 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] **`Signal` 型の実装**（[contracts/event-model.md](contracts/event-model.md)）。
   **`stream_key` / `sequence_id` を持たないことを型で保証する**（静的検査 → [authority-matrix.md](contracts/authority-matrix.md)）
 - [ ] Signal の受信経路（認証 → schema 検証 → **送出元ごとの許可 key 集合と照合** → 拒否 or Core が解釈）
+- [ ] **wire 契約を先に埋める** — `sensor.*` の封筒・名前空間・schema を
+  [contracts/wire.json](contracts/wire.json) と [interfaces/shell.md](interfaces/shell.md) に定義する。
+  **現在 `os.*` は Core → Shell の一方向しか無く、Shell 発の inbound が存在しない**
 - [ ] **Desktop Sensor（Shell / Rust）** — foreground app 名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。
-  `hover.rs` と同じポーリング監視スレッドの形。**ウィンドウタイトルは読まない**
-- [ ] `time.*` は Core built-in（Sensor ではない）
+  `hover.rs` と同じポーリング監視スレッドの形。**ウィンドウタイトルは読まない**。
+  **送るのは生の観測だけ**（`user.activity_class` は送らない）
+- [ ] **`sensor.*` の payload を `UNTRUSTED` として扱う**（送出元が Shell でも。
+  [contracts/provenance.md](contracts/provenance.md)）。World projection まで汚染が伝播すること
+- [ ] **初回開示と無効化設定**（無効なら Sensor のスレッドを起動しない）。
+  **Extension の `consent` に相当する門を、Shell に移した分だけ落とさない**
+- [ ] `time.*` は **facet にしない**（導出値。時計は陳腐化せず、Signal も TTL も持てない）
 
 #### 3b — WorldState
 
 - [ ] WorldFacet の型と TTL 管理（**期限切れは `None` ではなく `Unknown`**）
 - [ ] WorldSnapshot（ある時点の一貫したスナップショット）
-- [ ] プロンプトへの projection（**「分からない」も投影する**）
+- [ ] **`user.activity_class` を Core が導出する**（`sensor.*` ハンドラの中で。決定論的コードで）
+- [ ] プロンプトへの projection（**「分からない」も投影する**。**tainted な観測は隔離ブロックへ**）
 - [ ] Inspector に facet 一覧（期限切れは灰色）
 - [ ] **静的検査 #10**（`WorldFacet` の書き込みが Signal ハンドラ以外に存在しない）
   → [contracts/authority-matrix.md](contracts/authority-matrix.md)
@@ -625,7 +639,8 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | ~~8~~ | ~~**DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる）~~ | **✓ 解消**〔2026-08-22〕→ [contracts/privacy.md](contracts/privacy.md) §2。**既定 30 日 / 「全部消して」の対象**。Phase 3 まで持ち越さない |
 | ~~8b~~ | ~~区間合計が p50 目標を超えている~~ | **✓ 解消**〔2026-08-18〕。`llm_first_token` を 537→**421 ms** に縮めたうえで、**p50 目標を 1.2s → 1.5s に置き直した**（1.27/1.50 = 85%）。`vad_ms` 0.43s はターンテイキングの方針で動かせず、旧目標と両立しなかったため。**p95 2.0s（完了条件）と区間別予算は据え置き** → [architecture/audio.md](architecture/audio.md) §7 |
 | ~~8e~~ | ~~🔴 **記憶検索 0.05s を足すと 85% 規則を破る**~~ | **✓ 設計上は解消**〔2026-08-22〕→ [ADR-039](decisions/ADR-039-speculative-stt.md)。**目標を動かさず、STT を VAD の無音待ちに重ねる**（投機 STT）。予算上のクリティカルパス 1.27 → **1.10s / 73%**、予備枠 15% → 27%。**実装と実測は Phase 2**（8f） |
-| ~~8f~~ | ~~**投機 STT の実測**（破棄率 / `stt_overlap_ms` / CPU 構成で隠れきらない分）~~ | **✓ 解消**〔2026-09-03〕→ [measurements/phase2.md](measurements/phase2.md)。**破棄率 12.5% / `stt_overlap_ms` は全ターン `stt_ms` と一致（寄与 0）/ `capped` 0 回。`critical_path_ms` p50 1170 ms**（予算 1100 の超過分は `tts_first_audio_ms` のみで、投機 STT 由来ではない）。**CPU 構成は測っていない**——0.49 s は引き続き予測値 |
+| ~~8f~~ | ~~**投機 STT の実測**（GPU 構成）~~ | **✓ 解消**〔2026-09-03〕→ [measurements/phase2.md](measurements/phase2.md)。**破棄率 12.5% / `stt_overlap_ms` は全ターン `stt_ms` と一致（寄与 0）/ `capped` 0 回。`critical_path_ms` p50 1170 ms**（予算 1100 の超過分は `tts_first_audio_ms` のみで、投機 STT 由来ではない） |
+| **8g** | **CPU 構成で隠れきらない分の実測**（8f から分けた〔2026-09-06〕）。**0.49 s は非投機の `stt_ms` からの計算値であって、投機 STT を CPU で回した実測ではない** → [architecture/audio.md](architecture/audio.md) §7 | Phase 5（`ModelResourceManager` で CPU 退避が現実になるとき）。**SLO は GPU 構成での約束なので**（[ADR-025](decisions/ADR-025-tts-on-gpu.md)）**Phase 2 の完了条件ではない** |
 | ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
 | ~~8d~~ | ~~🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**~~ | **✓ 解消**〔2026-08-17〕→ [architecture/audio.md](architecture/audio.md) §7。**予算の側が誤り**。パラメータは 400 ms のまま（下げると文中の間で区間が切れる。実測済み）。**表には数値を書かず §5 を参照する**（同じ値を2箇所に書いたのが原因） |
 | ~~9~~ | ~~設定の保存形式とスキーマ~~ | **✓ 解消**〔2026-08-17 / Step G〕→ [architecture/core.md](architecture/core.md) §6b。**JSON / `<data_dir>/settings.json`**。壊れたファイルは上書きしない・知らないキーは保持・環境変数の上書きは表示する。変更経路（Stage → Core の `request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md) |
@@ -633,7 +648,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 11 | キャラクター人格の記述形式（独自 vs 既存カード互換） | Phase 1 後半 |
 | 12 | Canonicalizer / BindVerifier の具体的アルゴリズム | Phase 4a |
 | 13 | 🔴 **Invariant 8 の実装方式**（全画面キャプチャ / 座標指定の入力注入） | **Phase 4c 着手前** |
-| ~~14~~ | ~~**`sensor-desktop` が out-of-process のまま OS を直接読むこと**の是非~~ | **✓ 解消**〔2026-09-06〕→ [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)。**Desktop Sensor は Shell に置く。** authority-matrix は変更しない（表は Shell を Sensor として既に認めており、`OS特権` 列の定義に foreground app 名と idle 時間は入っていない）。**out-of-process Sensor Extension は Phase 9 に送る**——最初の本当の利用者は Phase 8 の GameAgent であり、**out-of-process にしても OS に対する境界にはならない** |
+| ~~14~~ | ~~**`sensor-desktop` が out-of-process のまま OS を直接読むこと**の是非~~ | **✓ 解消**〔2026-09-06〕→ [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)。**Desktop Sensor は Shell に置く。** authority-matrix は変更しない（表は Shell を Sensor として既に認めており、`OS特権` 列の定義に foreground app 名と idle 時間は入っていない）。**out-of-process Sensor Extension は作らない**——Extension ホストは **Phase 4b（Browser / Playwright / Class B）でどのみち作る**ので、その1つ前で先に作る理由が無い。**out-of-process にしても OS に対する境界にはならない**（実効的な防御は Core が宣言外の facet を拒否することであって、誰が OS を叩いたかではない）。**同意・trust・分類は Shell に移しても落とさない** |
 | 15 | 多モニタ・混在 DPI での座標系（ヒットテストと入力注入） | Phase 4c |
 | 16 | 第三者製 Provider を許すか | Phase 9 |
 | 17 | Live2D 導入時のライセンス区分 | Phase 9 |

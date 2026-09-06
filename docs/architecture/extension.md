@@ -111,7 +111,7 @@ in-core Provider は Core のプロセス権限をそのまま持つ。この組
 
 > **この例はまだ存在しない Extension である**〔2026-09-06〕。
 > Phase 3 の Desktop Sensor は **Shell に置く**ことにしたので、out-of-process Extension の
-> 実装例は現時点で1つも無い（最初の1つは Phase 8 の GameAgent）
+> 実装例は現時点で1つも無い（**最初の1つは Phase 4b の `browser`**）
 > → [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)。
 > **動いていない機構を、動いている例で説明しない。**
 
@@ -137,6 +137,7 @@ in-core Provider は Core のプロセス権限をそのまま持つ。この組
         "reason": "会話中に言及されたファイルを読むため" }
     ],
     "sensors": [
+      // ttl_ms は**上限のヒント**。Core は自分の値と短い方を採る（ADR-050）
       { "key": "calendar.in_meeting",    "ttl_ms": 60000 },
       { "key": "calendar.next_event_in", "ttl_ms": 60000 }
     ],

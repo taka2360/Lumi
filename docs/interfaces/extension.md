@@ -8,7 +8,7 @@
 
 > **この例はまだ存在しない Extension である**〔2026-09-06〕。
 > Phase 3 の Desktop Sensor は **Shell に置く**（[ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)）。
-> **out-of-process Extension の実装は現時点で1つも無い。**
+> **out-of-process Extension の実装は現時点で1つも無く、最初の1つは Phase 4b の `browser` である。**
 
 ```jsonc
 {
@@ -40,9 +40,9 @@
       }
     ],
     "sensors": [
-      { "key": "user.present",       "ttl_ms": 60000 },
-      { "key": "user.focus_app",     "ttl_ms": 30000 },
-      { "key": "desktop.fullscreen", "ttl_ms": 30000 }
+      // ttl_ms は**上限のヒント**。Core は自分の値と短い方を採る（ADR-050）
+      { "key": "calendar.in_meeting",    "ttl_ms": 60000 },
+      { "key": "calendar.next_event_in", "ttl_ms": 60000 }
     ],
     "signals": ["sensor.*"],
     "hooks":   ["before_tool"]
@@ -191,8 +191,8 @@ Core ←── WS (127.0.0.1) or stdio ──→ Extension プロセス
 
 | Extension | 提供するもの | Phase |
 |---|---|---|
-| `browser` | `browser.navigate` / `browser.click` / `browser.read`（Playwright, Class B） | 4b |
-| `game-agent` | `GameAdapter`（**out-of-process の最初の実装例**） | 8 |
+| `browser` | `browser.navigate` / `browser.click` / `browser.read`（Playwright, Class B）。**out-of-process の最初の実装例** | 4b |
+| `game-agent` | `GameAdapter` | 8 |
 
 **`filesystem` / `computer` は Extension にしない。** Class A の lane であり、in-core built-in Tool として実装する（[ADR-017](../decisions/ADR-017-out-of-process-tool-contract.md)）。
 

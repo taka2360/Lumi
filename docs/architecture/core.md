@@ -194,7 +194,7 @@ core/lumi/
 │                    llm_model（モデル選択と pull）, progress（進捗の間引き）
 │                    → [setup.md](setup.md)
 ├── panel/           service — 設定 / Inspector / 記憶ウィンドウへの配信（ADR-042）
-├── extensions/      〔Phase 8 / 9〕host, manifest, protocol（→ [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)）
+├── extensions/      〔Phase 4b / 9〕host, manifest, protocol（→ [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)）
 ├── storage/         sqlite（APSW・暗号化・マイグレーション）, memory, events, audit,
 │                    retention（**ユーザ発話を削除できる唯一のコード**）, secret
 ├── content/         Content Pack の**読み取り専用ローダ**（extension.md §9）

@@ -21,7 +21,7 @@ Lumi/
 ├── core/          Lumi Core — Python / asyncio。権威（判断・状態・ポリシー・記憶）
 ├── shell/         Lumi Shell — Tauri 2 / Rust。OS 特権プリミティブのみ
 ├── stage/         Stage WebView — React + TS + Zustand。表現のみ
-├── extensions/    〔Phase 8 で作る〕out-of-process Capability Extension（別プロセス・任意言語）
+├── extensions/    〔Phase 4b で作る〕out-of-process Capability Extension（別プロセス・任意言語）
 └── content/       Content Pack（キャラ・モデル・音声・人格。**コードを含まない**）
 ```
 

@@ -61,15 +61,37 @@ class WorldFacet:
 | `user.present` | bool | 60s | Desktop Sensor |
 | `user.idle_seconds` | int | 30s | Desktop Sensor |
 | `user.focus_app` | str | 30s | Desktop Sensor |
-| `user.activity_class` | enum | 120s | Desktop Sensor |
+| **`user.activity_class`** | enum | 120s | **Core**（下記。Sensor は送らない） |
 | `desktop.fullscreen` | bool | 30s | Desktop Sensor |
 | `audio.playing` | bool | 30s | Desktop Sensor |
-| `time.local` | datetime | 60s | core (built-in) |
-| `time.quiet_hours` | bool | 300s | core (built-in) |
 | `system.cpu` | float | 30s | Desktop Sensor |
 | `system.gpu_vram_free` | int | 30s | Desktop Sensor |
 
 `user.activity_class` の値〔Provisional〕: `idle` / `browsing` / `focused_work` / `meeting` / `gaming` / `media` / `unknown`
+
+### ★ `user.activity_class` は観測ではなく分類である〔2026-09-06〕
+
+**Sensor はこれを送らない。** `meeting` / `focused_work` は
+**`AutonomyGate` が「割り込んでよいか」を直接これで決める**値であり（[autonomy.md](autonomy.md) §4）、
+**Sensor が送れるなら Sensor が割り込みの可否を決めていることになる**（Invariant 1）。
+
+**Core が `sensor.*` Signal ハンドラの中で、生の観測（前面アプリ / idle / 全画面 / 音声再生）から
+決定論的に導出する。** ハンドラの中で書くのは、静的検査 #10
+（`WorldFacet` の書き込みは Signal ハンドラ以外に存在しない →
+[../contracts/authority-matrix.md](../contracts/authority-matrix.md)）を満たすためでもある。
+
+### ★ `time.*` は facet ではなく導出値である〔2026-09-06〕
+
+**時計を facet にすると、TTL も Signal も持てないものに TTL と Signal を要求することになる。**
+
+| | |
+|---|---|
+| 陳腐化しない | `now()` は常に最新で、`Unknown` になる瞬間が無い。**TTL に意味が無い** |
+| Sensor がいない | 外部から届く通知ではないので `Signal` にできない（`Signal` は「外部から Core に届く通知」） |
+| 書き手がいない | Core が直接 facet を書くと**静的検査 #10 を落とす**。例外を1つ作るより、facet をやめるほうが安い |
+
+**`time.local` / `time.quiet_hours` は、必要な場所が時計と設定から直接計算する。**
+「最終対話からの経過時間」（§4）と同じ**導出値**の扱いである。
 
 ### 書き込み経路
 
@@ -192,7 +214,7 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 
 **Phase 3 の Desktop Sensor を out-of-process Extension にしない理由**は
 [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md) にある。要点は
-**Extension ホストの最初の本当の利用者が Phase 8 まで現れないこと**と、
+**Extension ホストを Phase 4b（Browser / Class B）でどのみち作ること**と、
 **out-of-process にしても OS に対する境界にはならないこと**の2つである。
 
 ### 形態が変わっても変わらないこと
@@ -202,7 +224,9 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 | 送るもの | **`Signal` だけ。** WorldFacet を更新するのは Core（Invariant 6） |
 | 検査 | Core が**送出元ごとに、送ってよい key の集合**と照合して拒否する（Invariant 5） |
 | 権限判断 | Sensor は持たない（Invariant 1） |
-| TTL / confidence | Sensor は申告しない。**Core が facet ごとに決める**（§3 の表） |
+| **trust** | **`sensor.*` の payload は `UNTRUSTED`。** 送出元が Shell でも変わらない（[../contracts/provenance.md](../contracts/provenance.md)）——`user.focus_app` は**アプリが自分で名乗った文字列**である |
+| TTL / confidence | **権威は Core が持つ**（§3 の表）。manifest の `ttl_ms` は**上限のヒント**で、**Core は自分の値と短い方を採る**——Extension が観測を Core の意図より長生きさせられない |
+| 分類 | **Sensor は送らない。** `user.activity_class` は Core が導出する（§3） |
 
 **「宣言外の key を送っても Core が拒否する」は形態に依存しない。** 宣言の置き場所だけが変わる——
 Extension は manifest、Shell は Shell のコード（**実行時に増えない固定集合**）である。
@@ -224,11 +248,21 @@ Extension は manifest、Shell は Shell のコード（**実行時に増えな�
 > **この例はまだ存在しない Sensor である。** 実装済みのもの（Desktop Sensor）を
 > manifest の例に使うと、**動いていない機構が動いているように読める。**
 
-### プライバシー
+### プライバシーと同意
 
 `user.focus_app` はアプリ名を取る。**ウィンドウタイトルは取らない**（機密情報が入りうる）。
 
 **この規則は Shell 側の制約としてそのまま持つ。** 実装形態が変わっても緩めない。
+
+**★ 同意の門を落とさない**〔2026-09-06 / [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)〕。
+Extension だったときは [extension.md](extension.md) §6 の `consent` を通らないと `ready` にならなかった。
+Shell に移したことで、その門が黙って消えてはならない。
+
+| | |
+|---|---|
+| 初回 | **何を観測するかを開示する**（前面アプリ名 / idle / 在席 / 全画面 / 音声再生 / CPU・VRAM） |
+| 設定 | **Desktop Sensor を無効にできる。無効ならスレッドを起動しない**（「送らない」ではなく「観測しない」） |
+| 永続化 | `world:*` の DomainEvent は既定 30 日（[../contracts/privacy.md](../contracts/privacy.md) §2 の行 5）。**新しい保存先は作らない** |
 
 タイトルが必要な機能を作る場合は、別の capability として明示的に宣言させ、ユーザー同意を必須にする。
 

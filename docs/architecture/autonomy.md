@@ -73,7 +73,7 @@ def effective_drive(d: Drive) -> float:
         base_drive[d]
         * fatigue_modifier(internal.fatigue)          # 疲れていると全部下がる
         * quiet_modifier(internal.rest_pressure,      # 深夜は全部下がる
-                         world.get("time.quiet_hours"))
+                         clock.quiet_hours())          # facet ではなく導出値（ADR-050）
         * budget_modifier(autonomy_budget)            # 予算が減ると全部下がる
     )
 ```
