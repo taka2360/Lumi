@@ -6,20 +6,24 @@
 
 ## Manifest
 
+> **この例はまだ存在しない Extension である**〔2026-09-06〕。
+> Phase 3 の Desktop Sensor は **Shell に置く**（[ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)）。
+> **out-of-process Extension の実装は現時点で1つも無い。**
+
 ```jsonc
 {
   "manifest_version": 1,
-  "id": "lumi.sensor-desktop",
+  "id": "example.sensor-calendar",
   "version": "0.1.0",
-  "name": "Desktop Sensor",
-  "description": "前面アプリ・アイドル時間・在席状態を観測します",
+  "name": "Calendar Sensor",
+  "description": "予定表を読み、会議中かどうかを観測します",
 
   "runtime": "out-of-process",     // "in-core" | "out-of-process" | "stage"
   "trust_level": "untrusted",      // "official" | "verified" | "untrusted"
 
   "entrypoint": {
     "in_core":        { "module": "lumi_provider_ollama" },
-    "out_of_process": { "command": "python", "args": ["-m", "lumi_sensor_desktop"] },
+    "out_of_process": { "command": "python", "args": ["-m", "sensor_calendar"] },
     "stage":          { "esm": "./renderer-live2d.js" }
   },
 
@@ -187,8 +191,8 @@ Core ←── WS (127.0.0.1) or stdio ──→ Extension プロセス
 
 | Extension | 提供するもの | Phase |
 |---|---|---|
-| `sensor-desktop` | `user.*` / `desktop.*` / `system.*` の sensor（tool ではない） | 3 |
 | `browser` | `browser.navigate` / `browser.click` / `browser.read`（Playwright, Class B） | 4b |
+| `game-agent` | `GameAdapter`（**out-of-process の最初の実装例**） | 8 |
 
 **`filesystem` / `computer` は Extension にしない。** Class A の lane であり、in-core built-in Tool として実装する（[ADR-017](../decisions/ADR-017-out-of-process-tool-contract.md)）。
 

@@ -262,7 +262,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [x] **STT のデバッグ書き出しを撤去**（[contracts/privacy.md](contracts/privacy.md) §6 が録音経路を禁じている。
   Phase 1 の `lumi/audio/dump.py` は**ソースから実行すると既定で有効**だった → [architecture/audio.md](architecture/audio.md)）
 
-#### 2b — 投機 STT〔2026-08-22 実装完了。**実測が残っているので 2b は閉じていない**〕
+#### 2b — 投機 STT〔2026-08-22 実装 / 2026-09-03 実測。**完了**〕
 
 - [x] **投機 STT**（VAD の無音待ちと STT を重ねる → [ADR-039](decisions/ADR-039-speculative-stt.md)）。
   不変スナップショット + 世代 ID + 原子的な照合。**曖昧なら採用しない**（fail-closed）。
@@ -275,8 +275,12 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   （[architecture/audio.md](architecture/audio.md) §7）。**寄与は `stt_ms - stt_overlap_ms`。定数 0 で埋めない**
   〔`unaccounted_ms` の基準を `critical_path_ms` に変更。**Inspector 側も更新した**——
   Stage は「summary に無い数値キーは区間」として扱うので、放置すると新しいキーが**偽の区間**として並ぶ〕
-- [ ] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f）
-  **実際に喋らないと出ない数値であり、実装では埋まらない。** → [measurements/phase2.md](measurements/phase2.md)
+- [x] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f）
+  〔2026-09-03。**マイクで実際に喋った 7 ターン**。破棄率 **12.5%** / `stt_overlap_ms` は**全ターン `stt_ms` と一致**
+  （STT の寄与 0）/ `capped` **0 回**。`critical_path_ms` p50 **1170 ms**（予算 1100 に対し +70。**超過は TTS だけ**）、
+  `total_ms` p50 **1171 ms** で p50 目標 1.50 s は満たす。
+  **隠れた余裕は 134 ms しかない**——CPU 構成では隠れきらないという audio.md §7 の予測は変わっていない
+  → [measurements/phase2.md](measurements/phase2.md)〕
 
 #### 2c — Episode と保持期間〔2026-08-22 完了〕
 
@@ -400,15 +404,72 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 **目的: 「自分から話しかけてくるが、鬱陶しくない」を成立させる。**
 
-- [ ] Sensor Extension（foreground app / idle / presence / time）— out-of-process
-- [ ] WorldState facet（TTL / confidence）+ プロンプトへの投影
+### ✅ 着手前に決めること — Sensor の実装形態〔2026-09-06 決着〕
+
+**Desktop Sensor は Shell に置く**（未確定事項 14 → [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)）。
+`sensor-desktop` を out-of-process Capability Extension として作らない。
+
+理由は2つ。**Extension ホストが1行も無く、最初の本当の利用者が Phase 8（GameAgent）まで現れない**こと。
+そして **out-of-process にしても OS に対する境界にはならない**こと——実効的な防御は
+「Core が宣言外の facet を拒否する」（Invariant 5）であって、誰が OS を叩いたかではない。
+**[authority-matrix.md](contracts/authority-matrix.md) は変更していない**（表は Shell を Sensor として既に認めている）。
+
+### 実装順 — 3a〜3e に分けた〔2026-09-06〕
+
+分割の軸は Phase 2 と同じ「**単体で検証でき、次に進む前提を1つだけ確定させる単位**」。
+
+| | 何を | なぜこの順か |
+|---|---|---|
+| **3a** | `Signal` の型と受信経路 + Desktop Sensor（Shell） | **観測が入らないと World も Drive も空回りする。** `Signal` は今 docs にあるだけで実装が無い |
+| **3b** | WorldState（facet / TTL / `Unknown` / snapshot / projection） | 観測を**Lumi の世界**に変える。3a の Signal は「素材」でしかない |
+| **3c** | InternalState + Drive System（慣性・減衰） | **まだ喋らせない。** 内部状態が動くことと、それが発話になることを分けて確かめる |
+| **3d** | AutonomyGate + AutonomyBudget（**dry-run**） | **判定だけ作り、発話はしない。** Inspector に「今喋ろうとした / なぜ止めた」を出して**数日眺める** |
+| **3e** | 自律発話 + 「うるさい」フィードバック + Inspector 完成 | **3d のログが妥当に見えてから初めて口を開かせる** |
+
+> **3d と 3e を分けるのが要点である。** Phase 3 の完了条件は体験（1日つけっぱなしで不快でない）であり、
+> 最大のリスクは R5（鬱陶しさ）である。**先に喋らせてから調整すると、
+> 「頻度の問題」なのか「タイミングの問題」なのか「話題の問題」なのかが分離できない。**
+> dry-run 期間は判定だけを記録するので、**一度も鬱陶しくならずに Gate を調整できる。**
+
+### やること
+
+#### 3a — Signal 経路と Desktop Sensor
+
+- [ ] **`Signal` 型の実装**（[contracts/event-model.md](contracts/event-model.md)）。
+  **`stream_key` / `sequence_id` を持たないことを型で保証する**（静的検査 → [authority-matrix.md](contracts/authority-matrix.md)）
+- [ ] Signal の受信経路（認証 → schema 検証 → **送出元ごとの許可 key 集合と照合** → 拒否 or Core が解釈）
+- [ ] **Desktop Sensor（Shell / Rust）** — foreground app 名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。
+  `hover.rs` と同じポーリング監視スレッドの形。**ウィンドウタイトルは読まない**
+- [ ] `time.*` は Core built-in（Sensor ではない）
+
+#### 3b — WorldState
+
+- [ ] WorldFacet の型と TTL 管理（**期限切れは `None` ではなく `Unknown`**）
+- [ ] WorldSnapshot（ある時点の一貫したスナップショット）
+- [ ] プロンプトへの projection（**「分からない」も投影する**）
+- [ ] Inspector に facet 一覧（期限切れは灰色）
+- [ ] **静的検査 #10**（`WorldFacet` の書き込みが Signal ハンドラ以外に存在しない）
+  → [contracts/authority-matrix.md](contracts/authority-matrix.md)
+
+#### 3c — Internal State と Drive
+
 - [ ] **Internal State**（mood / fatigue / arousal / attention_focus / drives）
+- [ ] Mood の慣性と減衰
 - [ ] Drive System（social / curiosity / duty / play）
-- [ ] AutonomyGate（在席 / DND / cooldown / quiet hours / budget / permission）
+- [ ] Inspector に Drive 内訳
+
+#### 3d — Gate と Budget（**dry-run。まだ喋らない**）
+
+- [ ] AutonomyGate（在席 / DND / cooldown / quiet hours / budget / permission）。**決定論的コードで判断する**
 - [ ] AutonomyBudget（時間あたり割り込み回数 / トークン / wall-clock）
+- [ ] **「なぜ発火した / しなかったか」を Inspector に出す**（発話はしない）
+- [ ] **数日 dry-run で眺め、Gate のパラメータを決める**
+
+#### 3e — 自律発話
+
 - [ ] **自律的な発話のみ。OS 操作はまだしない**
 - [ ] 「うるさい」フィードバックループ（予算即時消費 + Drive 強制減衰 + Memory 書き込み）
-- [ ] Inspector に Drive 内訳と「なぜ発火した/しなかったか」を表示
+- [ ] Inspector に発話の履歴と、そのときの Drive / Gate の状態
 
 ### 完了条件
 **1日つけっぱなしにして不快でない。**
@@ -564,7 +625,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | ~~8~~ | ~~**DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる）~~ | **✓ 解消**〔2026-08-22〕→ [contracts/privacy.md](contracts/privacy.md) §2。**既定 30 日 / 「全部消して」の対象**。Phase 3 まで持ち越さない |
 | ~~8b~~ | ~~区間合計が p50 目標を超えている~~ | **✓ 解消**〔2026-08-18〕。`llm_first_token` を 537→**421 ms** に縮めたうえで、**p50 目標を 1.2s → 1.5s に置き直した**（1.27/1.50 = 85%）。`vad_ms` 0.43s はターンテイキングの方針で動かせず、旧目標と両立しなかったため。**p95 2.0s（完了条件）と区間別予算は据え置き** → [architecture/audio.md](architecture/audio.md) §7 |
 | ~~8e~~ | ~~🔴 **記憶検索 0.05s を足すと 85% 規則を破る**~~ | **✓ 設計上は解消**〔2026-08-22〕→ [ADR-039](decisions/ADR-039-speculative-stt.md)。**目標を動かさず、STT を VAD の無音待ちに重ねる**（投機 STT）。予算上のクリティカルパス 1.27 → **1.10s / 73%**、予備枠 15% → 27%。**実装と実測は Phase 2**（8f） |
-| 8f | **投機 STT の実測**（破棄率 / `stt_overlap_ms` / CPU 構成で隠れきらない分） | Phase 2（実装後） |
+| ~~8f~~ | ~~**投機 STT の実測**（破棄率 / `stt_overlap_ms` / CPU 構成で隠れきらない分）~~ | **✓ 解消**〔2026-09-03〕→ [measurements/phase2.md](measurements/phase2.md)。**破棄率 12.5% / `stt_overlap_ms` は全ターン `stt_ms` と一致（寄与 0）/ `capped` 0 回。`critical_path_ms` p50 1170 ms**（予算 1100 の超過分は `tts_first_audio_ms` のみで、投機 STT 由来ではない）。**CPU 構成は測っていない**——0.49 s は引き続き予測値 |
 | ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
 | ~~8d~~ | ~~🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**~~ | **✓ 解消**〔2026-08-17〕→ [architecture/audio.md](architecture/audio.md) §7。**予算の側が誤り**。パラメータは 400 ms のまま（下げると文中の間で区間が切れる。実測済み）。**表には数値を書かず §5 を参照する**（同じ値を2箇所に書いたのが原因） |
 | ~~9~~ | ~~設定の保存形式とスキーマ~~ | **✓ 解消**〔2026-08-17 / Step G〕→ [architecture/core.md](architecture/core.md) §6b。**JSON / `<data_dir>/settings.json`**。壊れたファイルは上書きしない・知らないキーは保持・環境変数の上書きは表示する。変更経路（Stage → Core の `request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md) |
@@ -572,7 +633,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 11 | キャラクター人格の記述形式（独自 vs 既存カード互換） | Phase 1 後半 |
 | 12 | Canonicalizer / BindVerifier の具体的アルゴリズム | Phase 4a |
 | 13 | 🔴 **Invariant 8 の実装方式**（全画面キャプチャ / 座標指定の入力注入） | **Phase 4c 着手前** |
-| 14 | **`sensor-desktop` が out-of-process のまま OS を直接読むこと**の是非（[contracts/authority-matrix.md](contracts/authority-matrix.md) は「OS 特権は Shell のみ」と書いている）。Shell に取り込む / `os.*` 経由にする / 表を直す のいずれか | Phase 3 着手前 |
+| ~~14~~ | ~~**`sensor-desktop` が out-of-process のまま OS を直接読むこと**の是非~~ | **✓ 解消**〔2026-09-06〕→ [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)。**Desktop Sensor は Shell に置く。** authority-matrix は変更しない（表は Shell を Sensor として既に認めており、`OS特権` 列の定義に foreground app 名と idle 時間は入っていない）。**out-of-process Sensor Extension は Phase 9 に送る**——最初の本当の利用者は Phase 8 の GameAgent であり、**out-of-process にしても OS に対する境界にはならない** |
 | 15 | 多モニタ・混在 DPI での座標系（ヒットテストと入力注入） | Phase 4c |
 | 16 | 第三者製 Provider を許すか | Phase 9 |
 | 17 | Live2D 導入時のライセンス区分 | Phase 9 |

@@ -58,16 +58,16 @@ class WorldFacet:
 
 | key | 型 | TTL 目安 | Sensor |
 |---|---|---|---|
-| `user.present` | bool | 60s | sensor-desktop |
-| `user.idle_seconds` | int | 30s | sensor-desktop |
-| `user.focus_app` | str | 30s | sensor-desktop |
-| `user.activity_class` | enum | 120s | sensor-desktop |
-| `desktop.fullscreen` | bool | 30s | sensor-desktop |
-| `audio.playing` | bool | 30s | sensor-desktop |
+| `user.present` | bool | 60s | Desktop Sensor |
+| `user.idle_seconds` | int | 30s | Desktop Sensor |
+| `user.focus_app` | str | 30s | Desktop Sensor |
+| `user.activity_class` | enum | 120s | Desktop Sensor |
+| `desktop.fullscreen` | bool | 30s | Desktop Sensor |
+| `audio.playing` | bool | 30s | Desktop Sensor |
 | `time.local` | datetime | 60s | core (built-in) |
 | `time.quiet_hours` | bool | 300s | core (built-in) |
-| `system.cpu` | float | 30s | sensor-desktop |
-| `system.gpu_vram_free` | int | 30s | sensor-desktop |
+| `system.cpu` | float | 30s | Desktop Sensor |
+| `system.gpu_vram_free` | int | 30s | Desktop Sensor |
 
 `user.activity_class` の値〔Provisional〕: `idle` / `browsing` / `focused_work` / `meeting` / `gaming` / `media` / `unknown`
 
@@ -178,35 +178,57 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 
 ---
 
-## 5. Sensor Extension
+## 5. Sensor
 
-**out-of-process Capability Extension。** → [extension.md](extension.md)
+**Sensor は「OS や外部を観測して Signal を送るもの」であり、実装形態は1つではない**
+〔2026-09-06 決着 → [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)〕。
 
-| Sensor | 取得する facet |
+| Sensor | 取得する facet | 実装形態 |
+|---|---|---|
+| **Desktop Sensor** | `user.*`, `desktop.*`, `audio.playing`, `system.*` | **Shell（Rust）**〔Phase 3〕 |
+| Clock | `time.*` | Core built-in |
+| （将来）`sensor-calendar` | 予定、会議中か | out-of-process Capability Extension〔Phase 9〕 |
+| （将来）`sensor-music` | 再生中の曲 | 同上 |
+
+**Phase 3 の Desktop Sensor を out-of-process Extension にしない理由**は
+[ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md) にある。要点は
+**Extension ホストの最初の本当の利用者が Phase 8 まで現れないこと**と、
+**out-of-process にしても OS に対する境界にはならないこと**の2つである。
+
+### 形態が変わっても変わらないこと
+
+| | |
 |---|---|
-| `sensor-desktop` | `user.*`, `desktop.*`, `audio.playing`, `system.*` |
-| （将来）`sensor-calendar` | 予定、会議中か |
-| （将来）`sensor-music` | 再生中の曲 |
+| 送るもの | **`Signal` だけ。** WorldFacet を更新するのは Core（Invariant 6） |
+| 検査 | Core が**送出元ごとに、送ってよい key の集合**と照合して拒否する（Invariant 5） |
+| 権限判断 | Sensor は持たない（Invariant 1） |
+| TTL / confidence | Sensor は申告しない。**Core が facet ごとに決める**（§3 の表） |
 
-### manifest での宣言
+**「宣言外の key を送っても Core が拒否する」は形態に依存しない。** 宣言の置き場所だけが変わる——
+Extension は manifest、Shell は Shell のコード（**実行時に増えない固定集合**）である。
 
-Sensor は「どの facet を書きたいか」を manifest で宣言する。宣言外の key を送っても Core が拒否する（Invariant 5）。
+### manifest での宣言〔out-of-process Sensor の場合〕
 
 ```jsonc
 {
+  "id": "example.sensor-calendar",
   "capabilities": {
     "sensors": [
-      { "key": "user.present",     "ttl_ms": 60000 },
-      { "key": "user.focus_app",   "ttl_ms": 30000 },
-      { "key": "desktop.fullscreen", "ttl_ms": 30000 }
+      { "key": "calendar.in_meeting",   "ttl_ms": 60000 },
+      { "key": "calendar.next_event_in", "ttl_ms": 60000 }
     ]
   }
 }
 ```
 
+> **この例はまだ存在しない Sensor である。** 実装済みのもの（Desktop Sensor）を
+> manifest の例に使うと、**動いていない機構が動いているように読める。**
+
 ### プライバシー
 
 `user.focus_app` はアプリ名を取る。**ウィンドウタイトルは取らない**（機密情報が入りうる）。
+
+**この規則は Shell 側の制約としてそのまま持つ。** 実装形態が変わっても緩めない。
 
 タイトルが必要な機能を作る場合は、別の capability として明示的に宣言させ、ユーザー同意を必須にする。
 
@@ -222,7 +244,7 @@ Sensor は「どの facet を書きたいか」を manifest で宣言する。�
 | projection | プロンプト用の圧縮記述 |
 | InternalState | mood / fatigue / arousal / rest_pressure / drives |
 | Mood の慣性と減衰 | |
-| `sensor-desktop` Extension | Windows の foreground app / idle / fullscreen |
+| **Desktop Sensor**（Shell） | Windows の foreground app / idle / fullscreen / 在席 → Signal で Core へ（[ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)） |
 | Inspector 表示 | facet 一覧（期限切れは灰色）、Internal State |
 
 ---
@@ -232,7 +254,7 @@ Sensor は「どの facet を書きたいか」を manifest で宣言する。�
 | # | テスト |
 |---|---|
 | 1 | TTL を過ぎた facet が `Unknown` を返す |
-| 2 | Sensor が宣言外の key を送ると拒否される |
+| 2 | Sensor が宣言外の key（Shell なら固定集合の外）を送ると拒否される |
 | 3 | Sensor Signal が WorldFacet を直接書かない（Core 経由） |
 | 4 | WorldSnapshot が一貫している（取得中に facet が変わっても） |
 | 5 | projection が期限切れ facet を「分からない」と表現する |

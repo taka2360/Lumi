@@ -36,7 +36,8 @@ World facet / Internal State / Memory / Activity / Grant の変更。
 
 **Core Kernel だけが ✓。** 他はすべて Command か Signal を経由し、変更するかどうかは Core が決める。
 
-Sensor Extension も例外ではない: Sensor は `Signal` を送るだけで、World facet を更新するのは Core。
+Sensor も例外ではない: Sensor は `Signal` を送るだけで、World facet を更新するのは Core。
+**これは Sensor が Shell でも Extension でも同じである**〔2026-09-06 / [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)。**表の ✓ は変えていない**——Shell は元から「World読み取り = OS読み取り（Sensorとして）」と「Signal送出 ✓」を持つ〕。
 
 ### Tool実行
 - **Core Kernel**: `ToolRegistry` を通じて実行。ただし必ず Permission Kernel を経由する（Invariant 2）
@@ -80,7 +81,7 @@ screenshot / input injection / window create / process launch。
 | `Handle` | `Tool.bind` | 不変。`BindVerifier` の検証を通ったものだけが有効 | Tool（execute 完了時） |
 | `ToolResult` | Tool Registry のみ | **不変** | — |
 | `MemoryRecord` | Memory System のみ | supersede のみ（上書きしない） | archive のみ（物理削除は明示的ユーザー操作） |
-| `WorldFacet` | Sensor Extension が Signal を送り、**Core が書く** | Core（上書き） | TTL 失効 |
+| `WorldFacet` | Sensor（Shell / Extension）が Signal を送り、**Core が書く** | Core（上書き） | TTL 失効 |
 | `InternalState` | Core 内部のみ | Core 内部のみ | — |
 | `Signal` | Shell / Stage / Extension / Widget | **不変** | Core（処理後に破棄。永続化しない） |
 | `DomainEvent` | **Core Kernel のみ**（EventBus が採番） | **不変** | — |

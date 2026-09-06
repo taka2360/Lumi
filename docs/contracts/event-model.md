@@ -84,10 +84,10 @@ Core が意味を解釈する
 > **重要: 外部は DomainEvent の内容を直接決められない。**
 > Signal は「素材」であり、DomainEvent にするかどうか・どう表現するかは Core が決める。
 
-### 例1: Sensor Extension
+### 例1: Sensor
 
 ```
-Sensor Ext
+Sensor（Phase 3 は Shell → [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)）
   → Signal(type="sensor.foreground_app", payload={"app": "factorio.exe"})
   → Core が認証・schema検証・capability検査
   → Core が WorldFacet("user.focus_app") を更新
