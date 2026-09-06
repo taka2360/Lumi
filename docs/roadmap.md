@@ -425,7 +425,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 | | 何を | なぜこの順か |
 |---|---|---|
-| **3a** | `Signal` の型と受信経路 + Desktop Sensor（Shell） | **観測が入らないと World も Drive も空回りする。** `Signal` は今 docs にあるだけで実装が無い |
+| **3a** | Signal の**受信経路**（Shell → Core の inbound）+ Desktop Sensor（Shell） | **観測が入らないと World も Drive も空回りする。** `Signal` の**型は既にある**（`kernel/event.py`）。無いのは**届ける経路とハンドラ** |
 | **3b** | WorldState（facet / TTL / `Unknown` / snapshot / projection） | 観測を**Lumi の世界**に変える。3a の Signal は「素材」でしかない |
 | **3c** | InternalState + Drive System（慣性・減衰） | **まだ喋らせない。** 内部状態が動くことと、それが発話になることを分けて確かめる |
 | **3d** | AutonomyGate + AutonomyBudget（**dry-run**） | **判定だけ作り、発話はしない。** Inspector に「今喋ろうとした / なぜ止めた」を出して**数日眺める** |
@@ -440,19 +440,23 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 #### 3a — Signal 経路と Desktop Sensor
 
-- [ ] **`Signal` 型の実装**（[contracts/event-model.md](contracts/event-model.md)）。
-  **`stream_key` / `sequence_id` を持たないことを型で保証する**（静的検査 → [authority-matrix.md](contracts/authority-matrix.md)）
-- [ ] Signal の受信経路（認証 → schema 検証 → **送出元ごとの許可 key 集合と照合** → 拒否 or Core が解釈）
+- [x] ~~`Signal` 型~~ 〔**実装済み**。`core/lumi/kernel/event.py`。`stream_key` / `sequence_id` を
+  持たないことの静的検査も `core/tests/test_kernel_event.py` にある。`world_stream()` も既にある〕
+- [ ] **Signal の受信経路**（Shell → Core の inbound）。認証 → schema 検証 →
+  **Core が持つ「送出元ごとの許可 key 集合」と照合** → 拒否 or Core が解釈。
+  **送出元のコードにあるリストを宣言として扱わない**（[architecture/world-state.md](architecture/world-state.md) §5）
+- [ ] **`trust_level` を (送出元, type) で決める。`sensor.*` は送出元によらず `UNTRUSTED`**
+  （[contracts/event-model.md](contracts/event-model.md) / [contracts/provenance.md](contracts/provenance.md)）
 - [ ] **wire 契約を先に埋める** — `sensor.*` の封筒・名前空間・schema を
   [contracts/wire.json](contracts/wire.json) と [interfaces/shell.md](interfaces/shell.md) に定義する。
   **現在 `os.*` は Core → Shell の一方向しか無く、Shell 発の inbound が存在しない**
 - [ ] **Desktop Sensor（Shell / Rust）** — foreground app 名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。
   `hover.rs` と同じポーリング監視スレッドの形。**ウィンドウタイトルは読まない**。
   **送るのは生の観測だけ**（`user.activity_class` は送らない）
-- [ ] **`sensor.*` の payload を `UNTRUSTED` として扱う**（送出元が Shell でも。
-  [contracts/provenance.md](contracts/provenance.md)）。World projection まで汚染が伝播すること
-- [ ] **初回開示と無効化設定**（無効なら Sensor のスレッドを起動しない）。
-  **Extension の `consent` に相当する門を、Shell に移した分だけ落とさない**
+- [ ] **`WorldFacet` が `trust_level` を持ち、projection まで運ぶ**
+  （§2。**facet に置き場所が無いと汚染は保存の時点で消える**）
+- [ ] **明示的な許可を得るまで Sensor を起動しない**（opt-in。許可は永続化し、観測 key が増えたら再同意）。
+  **開示だけして既定オンにしない**——Extension の `consent` に相当する門を、Shell に移した分だけ落とさない
 - [ ] `time.*` は **facet にしない**（導出値。時計は陳腐化せず、Signal も TTL も持てない）
 
 #### 3b — WorldState

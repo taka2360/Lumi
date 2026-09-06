@@ -21,7 +21,7 @@
 | 権限判断 | **Shell は持たない**（Invariant 1）。送る facet の集合は Shell のコードに固定で、実行時に増えない |
 | ★ **送るのは生の観測だけ** | 前面アプリ名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。**`user.activity_class` は Shell が決めない**（下記） |
 | ★ **`sensor.*` の trust** | **`UNTRUSTED`。** 送出元が Shell（信頼されたコンポーネント）でも、**運んでいるのは外界の観測**である（下記） |
-| ★ **同意** | **初回に開示し、設定で無効にできる。無効なら Sensor を起動しない**（下記） |
+| ★ **同意** | **明示的な許可を得るまで起動しない**（opt-in。同意は永続化する。下記） |
 
 ### ★ `user.activity_class` は Shell が決めない
 
@@ -49,10 +49,27 @@ Shell に判断を持たせないという本 ADR 自身の規則に反するの
 Extension だったときは、[extension.md](../architecture/extension.md) §6 の
 **`consent` を通らない限り `ready` にならなかった。** Shell に移すと、その門が黙って消える。
 
-**消さない。** 初回起動時に「何を観測するか」を開示し、設定で無効にできるようにし、
-**無効なら Desktop Sensor のスレッドを起動しない。** 永続化される先（`world:*` の DomainEvent、
-既定 30 日）は [privacy.md](../contracts/privacy.md) §2 の行 5 が既に覆っているので、
-足りないのは**ユーザーが知り、止められること**だけである。
+**消さない。同じ強さで残す。**
+
+| Extension だったときの `consent` | Shell に移した後 |
+|---|---|
+| capability を提示して**同意を得る** | **何を観測するかを提示して、明示的な許可を得る** |
+| **同意前は `load` しない** | **許可前は Sensor のスレッドを起動しない**（「送らない」ではなく「観測しない」） |
+| 同意結果を `extensions.granted_permissions_json` に永続化 | **設定に永続化する。毎回聞かない** |
+| manifest が変われば再同意 | **観測する key が増えたら再同意** |
+
+**開示だけでは足りない。** 「知らせたうえで既定オン」は、
+extension.md §6 が拒んだ **manifest がそのまま granted になる**形と同じである。
+**答えていないことを同意と読まない**——アンインストーラで既に採った規則である
+（[../roadmap.md](../roadmap.md) 2g「サイレントアンインストールでは消さない」）。
+
+**断れる。** 許可しなければ Desktop Sensor は動かず、Lumi は在席も前面アプリも知らないまま
+`Unknown` で走る（§3）。**自律発話の質は落ちるが、Phase 3 は成立する**——
+`AutonomyGate` は不明な facet を**通さない**側に倒れる（fail-closed）。
+
+永続化される先（`world:*` の DomainEvent、既定 30 日）は
+[privacy.md](../contracts/privacy.md) §2 の行 5 が既に覆っているので、
+新しい保存先は増えない。
 
 > **AIRI に `permissionResolver` が無いことを批判した**（extension.md §6）その同じ機構を、
 > 自分の Sensor では飛ばす——という形にしない。
@@ -74,11 +91,16 @@ foreground app 名と idle 時間はそこに入っていない。矛盾して�
 
 決め手になったのは、矛盾の解消ではなく**実装の順序**のほうだった。
 
-**Phase 3 の時点で Extension ホストが1行も無い。** `Signal` は
-`kernel/command.py` のコメントに概念があるだけで型が無く、`core/lumi/extensions/` も存在しない。
+**Phase 3 の時点で Extension ホストが1行も無い。** `core/lumi/extensions/` は存在しない。
+（**`Signal` の型そのものは既にある**——`core/lumi/kernel/event.py` に凍結 dataclass として定義され、
+`stream_key` / `sequence_id` を持たないことの検査も `core/tests/test_kernel_event.py` にある。
+**足りないのは型ではなく、届ける経路とハンドラである。**）
+
 `sensor-desktop` を out-of-process にすると、Phase 3 は
 **「プロセス生成・IPC・manifest 解析・capability 検査」を新規に作り、その上で最初の利用者が
 foreground app 名を 30 秒ごとに送るだけのプロセス**になる。
+**Shell に置けば、要るのは Win32 呼び出しと Signal の inbound 経路だけ**であり、
+**その inbound 経路はどちらを選んでも要る**（Extension も同じ経路で Signal を送る）。
 
 **そして次の利用者は Phase 4b の Browser Extension である**（Playwright / Class B。
 Class B が out-of-process であることは [ADR-017](ADR-017-out-of-process-tool-contract.md) が決めている）。

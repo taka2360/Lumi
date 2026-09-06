@@ -256,11 +256,18 @@ if effective_trust is TrustLevel.TAINTED and effective_risk >= Risk.L3:
 | Reflection Job が抽出した記憶 | `DERIVED`（元が untrusted を含む場合） |
 
 > **送出元の信頼度は、運ばれてきた値の信頼度ではない。**
-> `Signal.trust_level` は送出元から決まるが（[event-model.md](event-model.md)）、
-> **Sensor が Shell（信頼されたコンポーネント）になっても `sensor.*` の payload は `UNTRUSTED` のままである。**
+> `Signal.trust_level` は **(送出元, `type`) の組**で決まり（[event-model.md](event-model.md)）、
+> **`sensor.*` は送出元によらず `UNTRUSTED` に固定する。**
+> **Sensor が Shell（信頼されたコンポーネント）になっても payload は `UNTRUSTED` のままである。**
 > `user.focus_app` は**その辺のアプリが自分で名乗った文字列**であり、
 > World projection を通ってプロンプトに入る。攻撃者が表示名を選べる以上、外部由来のテキストである（Invariant 3）。
 > **実装形態を変えても汚染は落ちない**（Invariant 7）。
+>
+> **運ぶ先まで型がある。** `WorldFacet` は `trust_level` を持ち
+> （[../architecture/world-state.md](../architecture/world-state.md) §2）、
+> そこから導出される facet（`user.activity_class`）は `propagate()` し、
+> **tainted な facet は projection で隔離ブロックに入る。**
+> **facet に置き場所が無いと、汚染は保存の時点で消える。**
 
 ### LLM の出力を `propagate()` する理由
 

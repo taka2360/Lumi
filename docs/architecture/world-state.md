@@ -47,12 +47,25 @@ class WorldFacet:
     observed_at: datetime
     ttl: timedelta
     source: SensorId
+    trust_level: TrustLevel     # 元の Signal から運ぶ。**再計算しない**（Invariant 7）
 
     def is_valid(self, now: datetime) -> bool:
         return now - self.observed_at < self.ttl
 ```
 
 **期限切れた facet は「知らない」を意味する。** `None` を返すのではなく、`Unknown` として扱い、プロンプトにも「分からない」と投影する。
+
+### ★ `trust_level` を facet が持つ理由〔2026-09-06 / [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)〕
+
+**facet に置き場所が無いと、汚染は保存の時点で消える。**
+`Signal` は `trust_level` を持つが（[../contracts/event-model.md](../contracts/event-model.md)）、
+facet がそれを落とすと、**projection がどれを隔離ブロックに入れるべきか判断できない。**
+
+| | |
+|---|---|
+| 誰が決めるか | **Core**（Signal ハンドラ）。**`sensor.*` は送出元によらず `UNTRUSTED`**（下記） |
+| 導出した facet | `user.activity_class` は元にした観測から `propagate()` する。**導出で汚染は落ちない**（Invariant 7） |
+| projection | **tainted な facet は隔離ブロックに入れる**（[../contracts/provenance.md](../contracts/provenance.md)） |
 
 ### Facet 一覧〔Provisional〕
 
@@ -187,7 +200,7 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 | Lumi の疲労 | 同上 | **Internal** |
 | 現在の目標 | 同上 | **Internal** |
 | Drive 値 | 同上 | **Internal** |
-| 時刻 | システムから取れなくなれば分からない | World |
+| 時刻 | **どちらでもない**（導出値）。時計は陳腐化せず、Sensor も TTL も持たない → §3 | — |
 
 ### 迷いやすい例
 
@@ -207,8 +220,7 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 
 | Sensor | 取得する facet | 実装形態 |
 |---|---|---|
-| **Desktop Sensor** | `user.*`, `desktop.*`, `audio.playing`, `system.*` | **Shell（Rust）**〔Phase 3〕 |
-| Clock | `time.*` | Core built-in |
+| **Desktop Sensor** | `user.*`（`activity_class` を除く）, `desktop.*`, `audio.playing`, `system.*` | **Shell（Rust）**〔Phase 3〕 |
 | （将来）`sensor-calendar` | 予定、会議中か | out-of-process Capability Extension〔Phase 9〕 |
 | （将来）`sensor-music` | 再生中の曲 | 同上 |
 
@@ -222,14 +234,30 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 | | |
 |---|---|
 | 送るもの | **`Signal` だけ。** WorldFacet を更新するのは Core（Invariant 6） |
-| 検査 | Core が**送出元ごとに、送ってよい key の集合**と照合して拒否する（Invariant 5） |
+| 検査 | Core が**自分の側にある「送出元ごとの許可 key 集合」**と照合して拒否する（Invariant 5。下記） |
 | 権限判断 | Sensor は持たない（Invariant 1） |
-| **trust** | **`sensor.*` の payload は `UNTRUSTED`。** 送出元が Shell でも変わらない（[../contracts/provenance.md](../contracts/provenance.md)）——`user.focus_app` は**アプリが自分で名乗った文字列**である |
+| **trust** | **`sensor.*` の `trust_level` は `UNTRUSTED`。** 送出元が Shell でも変わらない（[../contracts/provenance.md](../contracts/provenance.md)）——`user.focus_app` は**アプリが自分で名乗った文字列**である。**`WorldFacet` が `trust_level` を持ち、projection まで運ぶ**（§2） |
 | TTL / confidence | **権威は Core が持つ**（§3 の表）。manifest の `ttl_ms` は**上限のヒント**で、**Core は自分の値と短い方を採る**——Extension が観測を Core の意図より長生きさせられない |
 | 分類 | **Sensor は送らない。** `user.activity_class` は Core が導出する（§3） |
 
-**「宣言外の key を送っても Core が拒否する」は形態に依存しない。** 宣言の置き場所だけが変わる——
-Extension は manifest、Shell は Shell のコード（**実行時に増えない固定集合**）である。
+### ★ 許可 key の集合は Core が持つ〔2026-09-06〕
+
+**送出元が自分で持っているリストは、capability 境界ではない。**
+Shell が壊れていても、バージョンがずれていても、乗っ取られていても、
+**Core は「この送出元はこの key を送ってよいか」を自分の側の表だけで答えられなければならない**（Invariant 5）。
+
+| 送出元 | 宣言はどこに書くか | **判定に使うのはどれか** |
+|---|---|---|
+| Shell（Desktop Sensor） | Core が持つ**送出元 `shell` の許可 key 集合**。[wire.json](../contracts/wire.json) の schema にも写す | **Core の集合** |
+| out-of-process Extension | Extension の manifest。**同意時に Core が永続化する** | **Core が永続化した集合** |
+
+**Shell のコードにある「送る key の一覧」は実装の都合であって宣言ではない。**
+これを宣言として扱うと、**送出元が自分の権限を決めていることになる。**
+
+> **schema 検証だけでは足りない。** `sensor.*` として妥当な key であることと、
+> **その送出元が送ってよい key であること**は別である。前者だけだと、Shell が
+> `calendar.in_meeting` や `user.activity_class` を名乗れてしまい、
+> **それは AutonomyGate の判断に直接効く**（[autonomy.md](autonomy.md) §4）。
 
 ### manifest での宣言〔out-of-process Sensor の場合〕
 
@@ -260,9 +288,11 @@ Shell に移したことで、その門が黙って消えてはならない。
 
 | | |
 |---|---|
-| 初回 | **何を観測するかを開示する**（前面アプリ名 / idle / 在席 / 全画面 / 音声再生 / CPU・VRAM） |
-| 設定 | **Desktop Sensor を無効にできる。無効ならスレッドを起動しない**（「送らない」ではなく「観測しない」） |
-| 永続化 | `world:*` の DomainEvent は既定 30 日（[../contracts/privacy.md](../contracts/privacy.md) §2 の行 5）。**新しい保存先は作らない** |
+| 初回 | **何を観測するかを提示し、明示的な許可を得る**（前面アプリ名 / idle / 在席 / 全画面 / 音声再生 / CPU・VRAM） |
+| **既定** | **許可されるまで起動しない**（opt-in）。**開示だけして既定オンにはしない** |
+| 永続化 | 許可は設定に保存する。**毎回聞かない。観測する key が増えたら再同意** |
+| 断ったとき | Sensor のスレッドを起動しない（「送らない」ではなく**観測しない**）。facet は `Unknown` のままで、`AutonomyGate` は通さない側に倒れる |
+| 保存先 | `world:*` の DomainEvent は既定 30 日（[../contracts/privacy.md](../contracts/privacy.md) §2 の行 5）。**新しい保存先は作らない** |
 
 タイトルが必要な機能を作る場合は、別の capability として明示的に宣言させ、ユーザー同意を必須にする。
 
