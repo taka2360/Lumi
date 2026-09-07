@@ -20,7 +20,7 @@
 | ウィンドウタイトル | **読まない。** [world-state.md](../architecture/world-state.md) §5 のプライバシー規則をそのまま Shell 側の制約として持つ |
 | 権限判断 | **Shell は持たない**（Invariant 1）。送る facet の集合は Shell のコードに固定で、実行時に増えない |
 | ★ **送るのは生の観測だけ** | 前面アプリ名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。**`user.activity_class` は Shell が決めない**（下記） |
-| ★ **`sensor.*` の trust** | **`UNTRUSTED`。** 送出元が Shell（信頼されたコンポーネント）でも、**運んでいるのは外界の観測**である（下記） |
+| ★ **`sensor.*` の trust** | **`ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`。** 送出元が Shell（信頼されたコンポーネント）でも、**運んでいるのは外界の観測**である（下記） |
 | ★ **同意** | **明示的な許可を得るまで起動しない**（opt-in。同意は永続化する。下記） |
 
 ### ★ `user.activity_class` は Shell が決めない
@@ -32,8 +32,12 @@ Shell に判断を持たせないという本 ADR 自身の規則に反するの
 
 > ハンドラの中で導出するのは、[authority-matrix.md](../contracts/authority-matrix.md) の
 > 静的検査 #10（`WorldFacet` の書き込みは Signal ハンドラ以外に存在しない）を満たすためでもある。
+>
+> **導出 facet の TTL は入力より長くできない**（`ttl(derived) = min(残り TTL of 入力)`）。
+> 固定値を与えると、**根拠が全部切れた後も分類だけが生き残り、Gate がそれを見て割り込む**
+> → [world-state.md](../architecture/world-state.md) §3。
 
-### ★ `sensor.*` の Signal は `UNTRUSTED` である
+### ★ `sensor.*` の Signal は tainted である
 
 **送出元の信頼度と、運ばれてきた値の信頼度は別物である。**
 `Signal.trust_level` は送出元から決まる（[event-model.md](../contracts/event-model.md)）ので、
@@ -43,6 +47,10 @@ Shell に判断を持たせないという本 ADR 自身の規則に反するの
 
 **[provenance.md](../contracts/provenance.md) の「Sensor Extension の Signal = `UNTRUSTED`」を
 `Sensor（Shell / Extension）の Signal` に読み替える。** 実装形態を変えても汚染は落ちない（Invariant 7）。
+
+> **2つの enum を混ぜない。** あの表は **`ProvenanceClass`** の表であり、
+> Policy が読む **`TrustLevel` には `UNTRUSTED` という値は無い**（`TRUSTED` / `TAINTED` の2つだけ）。
+> 対応は既存の `taint()` が持つ——`taint(UNTRUSTED) == TAINTED`。**新しい規則を足していない。**
 
 ### ★ 同意を落とさない
 
@@ -182,7 +190,7 @@ A のコストに Shell 実装が足されるだけで、Sensor の中身は「C
 | [roadmap.md](../roadmap.md) Phase 3 | 「Sensor Extension — out-of-process」→「**Desktop Sensor（Shell）**」。未確定事項 14 を解消にする |
 | [authority-matrix.md](../contracts/authority-matrix.md) | **✓ は1つも変えない。** 「Sensor Extension も例外ではない」という言い回しだけを「Sensor（Shell / Extension）」に直す。**表の意味は変わらず、item 14 を生んだ読み違いだけが消える** |
 | [interfaces/shell.md](../interfaces/shell.md) | Shell → Core の Signal に `sensor.*` が加わる。**`stage.*` には出さない**（Stage は Core が配信した投影だけを見る） |
-| [provenance.md](../contracts/provenance.md) | 「Sensor Extension の Signal」→「**Sensor（Shell / Extension）の Signal**」。`UNTRUSTED` であることは変えない。**送出元の信頼度が payload の信頼度にならないことを明記する** |
+| [provenance.md](../contracts/provenance.md) | 「Sensor Extension の Signal」→「**Sensor（Shell / Extension）の Signal**」。`ProvenanceClass.UNTRUSTED`（→ `TrustLevel.TAINTED`）であることは変えない。**送出元の信頼度が payload の信頼度にならないことを明記する** |
 | [world-state.md](../architecture/world-state.md) §3 | `user.activity_class` の source が Desktop Sensor → **Core（`sensor.*` ハンドラで導出）**。`time.*` は**facet をやめて導出値にする**（時計は陳腐化せず、静的検査 #10 の例外を作る必要も無くなる） |
 | [autonomy.md](../architecture/autonomy.md) | `world.get("time.quiet_hours")` → 時計から直接引く |
 | manifest の `ttl_ms` | **権威ではなく上限のヒント。** Core は自分の値と短い方を採る（**Extension が観測を Core の意図より長生きさせられない**） |

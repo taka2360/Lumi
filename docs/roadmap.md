@@ -416,7 +416,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 **[authority-matrix.md](contracts/authority-matrix.md) は変更していない**（表は Shell を Sensor として既に認めている）。
 
 **同意・trust・分類の3つは Shell に移しても落とさない。**
-`sensor.*` は `UNTRUSTED`（アプリ名は攻撃者が選べる）、`user.activity_class` は Core が導出、
+`sensor.*` は tainted（アプリ名は攻撃者が選べる）、`user.activity_class` は Core が導出、
 初回開示と無効化設定が Sensor の起動を gate する。→ [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)
 
 ### 実装順 — 3a〜3e に分けた〔2026-09-06〕
@@ -445,7 +445,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] **Signal の受信経路**（Shell → Core の inbound）。認証 → schema 検証 →
   **Core が持つ「送出元ごとの許可 key 集合」と照合** → 拒否 or Core が解釈。
   **送出元のコードにあるリストを宣言として扱わない**（[architecture/world-state.md](architecture/world-state.md) §5）
-- [ ] **`trust_level` を (送出元, type) で決める。`sensor.*` は送出元によらず `UNTRUSTED`**
+- [ ] **provenance を (送出元, type) で決める。`sensor.*` は送出元によらず `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`**（**`trust_level` に `UNTRUSTED` は存在しない**）
   （[contracts/event-model.md](contracts/event-model.md) / [contracts/provenance.md](contracts/provenance.md)）
 - [ ] **wire 契約を先に埋める** — `sensor.*` の封筒・名前空間・schema を
   [contracts/wire.json](contracts/wire.json) と [interfaces/shell.md](interfaces/shell.md) に定義する。
@@ -463,7 +463,8 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 - [ ] WorldFacet の型と TTL 管理（**期限切れは `None` ではなく `Unknown`**）
 - [ ] WorldSnapshot（ある時点の一貫したスナップショット）
-- [ ] **`user.activity_class` を Core が導出する**（`sensor.*` ハンドラの中で。決定論的コードで）
+- [ ] **`user.activity_class` を Core が導出する**（`sensor.*` ハンドラの中で。決定論的コードで）。
+  **TTL は入力の残りの最小**——固定値にすると根拠が切れた後も分類が生き残り、Gate が割り込む
 - [ ] プロンプトへの projection（**「分からない」も投影する**。**tainted な観測は隔離ブロックへ**）
 - [ ] Inspector に facet 一覧（期限切れは灰色）
 - [ ] **静的検査 #10**（`WorldFacet` の書き込みが Signal ハンドラ以外に存在しない）
@@ -644,6 +645,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | ~~8b~~ | ~~区間合計が p50 目標を超えている~~ | **✓ 解消**〔2026-08-18〕。`llm_first_token` を 537→**421 ms** に縮めたうえで、**p50 目標を 1.2s → 1.5s に置き直した**（1.27/1.50 = 85%）。`vad_ms` 0.43s はターンテイキングの方針で動かせず、旧目標と両立しなかったため。**p95 2.0s（完了条件）と区間別予算は据え置き** → [architecture/audio.md](architecture/audio.md) §7 |
 | ~~8e~~ | ~~🔴 **記憶検索 0.05s を足すと 85% 規則を破る**~~ | **✓ 設計上は解消**〔2026-08-22〕→ [ADR-039](decisions/ADR-039-speculative-stt.md)。**目標を動かさず、STT を VAD の無音待ちに重ねる**（投機 STT）。予算上のクリティカルパス 1.27 → **1.10s / 73%**、予備枠 15% → 27%。**実装と実測は Phase 2**（8f） |
 | ~~8f~~ | ~~**投機 STT の実測**（GPU 構成）~~ | **✓ 解消**〔2026-09-03〕→ [measurements/phase2.md](measurements/phase2.md)。**破棄率 12.5% / `stt_overlap_ms` は全ターン `stt_ms` と一致（寄与 0）/ `capped` 0 回。`critical_path_ms` p50 1170 ms**（予算 1100 の超過分は `tts_first_audio_ms` のみで、投機 STT 由来ではない） |
+| **8h** | **現構成での p95 が未検証**〔2026-09-06〕。[measurements/phase1.md](measurements/phase1.md) の p95 1.63 s は **STT `small` / 非投機 / 記憶検索なし / 録音注入**で測った値であり、**現構成**（`large-v3-turbo` / 投機 / 毎ターン検索）**の判定にはならない**。投機 STT の `stt_wait_ms > 0` の裾は**実測で一度も踏んでいない** → [measurements/phase2.md](measurements/phase2.md) | Phase 3（1日つけっぱなしの体験評価で、どのみち長時間回す。**そこで n を稼ぐ**） |
 | **8g** | **CPU 構成で隠れきらない分の実測**（8f から分けた〔2026-09-06〕）。**0.49 s は非投機の `stt_ms` からの計算値であって、投機 STT を CPU で回した実測ではない** → [architecture/audio.md](architecture/audio.md) §7 | Phase 5（`ModelResourceManager` で CPU 退避が現実になるとき）。**SLO は GPU 構成での約束なので**（[ADR-025](decisions/ADR-025-tts-on-gpu.md)）**Phase 2 の完了条件ではない** |
 | ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
 | ~~8d~~ | ~~🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**~~ | **✓ 解消**〔2026-08-17〕→ [architecture/audio.md](architecture/audio.md) §7。**予算の側が誤り**。パラメータは 400 ms のまま（下げると文中の間で区間が切れる。実測済み）。**表には数値を書かず §5 を参照する**（同じ値を2箇所に書いたのが原因） |

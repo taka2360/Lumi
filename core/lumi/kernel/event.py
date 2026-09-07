@@ -83,7 +83,7 @@ class Signal:
     payload: Mapping[str, Any]
     received_at: datetime
     #: Determined by the (sender, type) pair, not the sender alone: a trusted sender can
-    #: carry an untrusted value. `sensor.*` is UNTRUSTED whoever sends it, because
+    #: carry an untrusted value. `sensor.*` is TAINTED whoever sends it, because
     #: `user.focus_app` is a name an application chose for itself (ADR-050).
     #: Propagates to anything derived from this
     trust_level: TrustLevel

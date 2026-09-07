@@ -43,7 +43,7 @@ class Signal:
     type: str
     payload: dict
     received_at: datetime
-    trust_level: TrustLevel      # 送出元と type の組で決まる（下記）
+    trust_level: TrustLevel      # 送出元と type の組で決まる（下記）。TRUSTED | TAINTED
 
     # stream_key も sequence_id も持たない（型で保証）
 
@@ -64,11 +64,17 @@ class DomainEvent:
 > **★ `trust_level` は送出元だけでは決まらない**〔2026-09-06 / [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)〕。
 > **信頼された送出元が、信頼できない値を運ぶことがある。**
 > `sensor.*` の payload は**外界の観測**であり、`user.focus_app` は
-> **その辺のアプリが自分で名乗った文字列**である。送出元が Shell でも `UNTRUSTED` になる。
+> **その辺のアプリが自分で名乗った文字列**である。送出元が Shell でも tainted になる。
 >
-> したがって Core は **(送出元, `type`) の組**で `trust_level` を決める。既定は送出元の信頼度で、
-> **`sensor.*` のように「外界を運ぶ」type は、送出元によらず `UNTRUSTED` に固定する。**
-> 一覧は [provenance.md](provenance.md) が持つ。**上げる方向の例外は作らない**（Invariant 7）。
+> したがって Core は **(送出元, `type`) の組**で provenance を決める。既定は送出元の信頼度で、
+> **`sensor.*` のように「外界を運ぶ」type は、送出元によらず
+> `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED` に固定する。**
+>
+> **2つの enum を混ぜない。** `UNTRUSTED` は `ProvenanceClass`（監査とユーザーへの説明のラベル）の値、
+> `TAINTED` は `TrustLevel`（Policy が読む値）の値であり、
+> **`trust_level` に `UNTRUSTED` は存在しない。** 対応は `taint()` が持つ
+> （[provenance.md](provenance.md)）。一覧も同じファイルにある。
+> **上げる方向の例外は作らない**（Invariant 7）。
 
 **`Signal` が `stream_key` / `sequence_id` を持たないことを型で保証する。** これにより「外部が DomainEvent を直接書く」経路がコンパイル時に塞がる。
 

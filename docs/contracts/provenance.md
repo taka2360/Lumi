@@ -256,9 +256,10 @@ if effective_trust is TrustLevel.TAINTED and effective_risk >= Risk.L3:
 | Reflection Job が抽出した記憶 | `DERIVED`（元が untrusted を含む場合） |
 
 > **送出元の信頼度は、運ばれてきた値の信頼度ではない。**
-> `Signal.trust_level` は **(送出元, `type`) の組**で決まり（[event-model.md](event-model.md)）、
-> **`sensor.*` は送出元によらず `UNTRUSTED` に固定する。**
-> **Sensor が Shell（信頼されたコンポーネント）になっても payload は `UNTRUSTED` のままである。**
+> `Signal` の provenance は **(送出元, `type`) の組**で決まり（[event-model.md](event-model.md)）、
+> **`sensor.*` は送出元によらず `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED` に固定する**
+> （§上の表の写像 `taint(UNTRUSTED) == TAINTED` に従うだけで、新しい規則ではない）。
+> **Sensor が Shell（信頼されたコンポーネント）になっても payload は tainted のままである。**
 > `user.focus_app` は**その辺のアプリが自分で名乗った文字列**であり、
 > World projection を通ってプロンプトに入る。攻撃者が表示名を選べる以上、外部由来のテキストである（Invariant 3）。
 > **実装形態を変えても汚染は落ちない**（Invariant 7）。

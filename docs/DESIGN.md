@@ -25,8 +25,10 @@
 >    その1つ前で、Shell が数行で出せる観測のために先に作る理由が無い。
 >    そして **out-of-process にしても OS に対する境界にはならない**（実効的な防御は
 >    Core が宣言外の facet を拒否することであって、誰が OS を叩いたかではない）。
->    **同意・trust・分類は Shell に移しても落とさない**——`sensor.*` は `UNTRUSTED`、
->    `user.activity_class` は Core が導出、初回開示と無効化設定が Sensor の起動を gate する。
+>    **同意・trust・分類は Shell に移しても落とさない**——`sensor.*` は tainted
+>    （`ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`）で `WorldFacet` がそれを projection まで運び、
+>    `user.activity_class` は Core が**入力の残り TTL の最小**で導出し、
+>    **明示的な許可を得るまで Sensor を起動しない**（opt-in）。
 >    **[contracts/authority-matrix.md](contracts/authority-matrix.md) は変更していない**
 > 3. **Phase 3 を 3a〜3e に分けた** → [roadmap.md](roadmap.md)。
 >    **Gate / Budget を dry-run で作ってから発話させる**（3d → 3e）。

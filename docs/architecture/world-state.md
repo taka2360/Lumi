@@ -63,7 +63,7 @@ facet がそれを落とすと、**projection がどれを隔離ブロックに�
 
 | | |
 |---|---|
-| 誰が決めるか | **Core**（Signal ハンドラ）。**`sensor.*` は送出元によらず `UNTRUSTED`**（下記） |
+| 誰が決めるか | **Core**（Signal ハンドラ）。**`sensor.*` は送出元によらず `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`**（下記） |
 | 導出した facet | `user.activity_class` は元にした観測から `propagate()` する。**導出で汚染は落ちない**（Invariant 7） |
 | projection | **tainted な facet は隔離ブロックに入れる**（[../contracts/provenance.md](../contracts/provenance.md)） |
 
@@ -74,7 +74,7 @@ facet がそれを落とすと、**projection がどれを隔離ブロックに�
 | `user.present` | bool | 60s | Desktop Sensor |
 | `user.idle_seconds` | int | 30s | Desktop Sensor |
 | `user.focus_app` | str | 30s | Desktop Sensor |
-| **`user.activity_class`** | enum | 120s | **Core**（下記。Sensor は送らない） |
+| **`user.activity_class`** | enum | **入力の残り TTL の最小**（下記） | **Core**（下記。Sensor は送らない） |
 | `desktop.fullscreen` | bool | 30s | Desktop Sensor |
 | `audio.playing` | bool | 30s | Desktop Sensor |
 | `system.cpu` | float | 30s | Desktop Sensor |
@@ -92,6 +92,27 @@ facet がそれを落とすと、**projection がどれを隔離ブロックに�
 決定論的に導出する。** ハンドラの中で書くのは、静的検査 #10
 （`WorldFacet` の書き込みは Signal ハンドラ以外に存在しない →
 [../contracts/authority-matrix.md](../contracts/authority-matrix.md)）を満たすためでもある。
+
+#### ★ 導出 facet の TTL は入力より長くできない
+
+**導出値に独立した TTL を持たせると、根拠が全部切れた後も分類だけが生き残る。**
+
+`user.focus_app` は 30 s、`user.present` は 60 s である。
+`activity_class` に固定 120 s を与えると、**前面アプリの観測が止まってから 90 s のあいだ、
+Core が「今どのアプリを見ているか知らない」まま `browsing` を主張し続ける。**
+そして `AutonomyGate` はそれを見て割り込みを許す——**TTL が fail-closed に倒すはずだった、まさにその点で。**
+
+```text
+ttl(derived) = min(残り TTL of その値の導出に実際に使った facet)
+```
+
+| | |
+|---|---|
+| 規則 | **導出 facet は、根拠のどれか1つが切れた瞬間に `Unknown` になる** |
+| 数え方 | **実際に使った入力だけ**。`gaming` の判定に音声再生を見ていないなら、その TTL は効かない |
+| 実装 | 読み出し時に導出してもよい（そのほうが安全側）。**保存するなら上式の TTL を必ず付ける** |
+
+**`Unknown` は Gate を通さない。** 分からないときに割り込まないのが、この Phase の設計方針である。
 
 ### ★ `time.*` は facet ではなく導出値である〔2026-09-06〕
 
@@ -236,7 +257,7 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 | 送るもの | **`Signal` だけ。** WorldFacet を更新するのは Core（Invariant 6） |
 | 検査 | Core が**自分の側にある「送出元ごとの許可 key 集合」**と照合して拒否する（Invariant 5。下記） |
 | 権限判断 | Sensor は持たない（Invariant 1） |
-| **trust** | **`sensor.*` の `trust_level` は `UNTRUSTED`。** 送出元が Shell でも変わらない（[../contracts/provenance.md](../contracts/provenance.md)）——`user.focus_app` は**アプリが自分で名乗った文字列**である。**`WorldFacet` が `trust_level` を持ち、projection まで運ぶ**（§2） |
+| **trust** | **`sensor.*` は `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`。** 送出元が Shell でも変わらない（[../contracts/provenance.md](../contracts/provenance.md)）——`user.focus_app` は**アプリが自分で名乗った文字列**である。**`WorldFacet` が `trust_level` を持ち、projection まで運ぶ**（§2） |
 | TTL / confidence | **権威は Core が持つ**（§3 の表）。manifest の `ttl_ms` は**上限のヒント**で、**Core は自分の値と短い方を採る**——Extension が観測を Core の意図より長生きさせられない |
 | 分類 | **Sensor は送らない。** `user.activity_class` は Core が導出する（§3） |
 
@@ -318,7 +339,8 @@ Shell に移したことで、その門が黙って消えてはならない。
 | # | テスト |
 |---|---|
 | 1 | TTL を過ぎた facet が `Unknown` を返す |
-| 2 | Sensor が宣言外の key（Shell なら固定集合の外）を送ると拒否される |
+| 2 | Sensor が**その送出元に許可されていない key** を送ると拒否される（**判定は Core 側の集合。送出元の申告を見ない**） |
+| 2b | Shell が `user.activity_class` や他 Sensor の key を名乗っても拒否される（**schema 上は妥当でも通さない**） |
 | 3 | Sensor Signal が WorldFacet を直接書かない（Core 経由） |
 | 4 | WorldSnapshot が一貫している（取得中に facet が変わっても） |
 | 5 | projection が期限切れ facet を「分からない」と表現する |
@@ -327,3 +349,9 @@ Shell に移したことで、その門が黙って消えてはならない。
 | 8 | Internal State が Extension / Stage から書けない |
 | 9 | 表情が Mood + ACT の合成になる |
 | 10 | projection のスナップショットテスト（入力 facet 集合 → 出力文字列） |
+| 11 | `sensor.*` の Signal が `TrustLevel.TAINTED` になる（**送出元が Shell でも**） |
+| 12 | facet の `trust_level` が projection まで運ばれ、**tainted な facet が隔離ブロックに入る** |
+| 13 | **導出 facet の TTL が入力の残りの最小を超えない**（`focus_app` を 30 s 止めたら `activity_class` も `Unknown` になる） |
+| 14 | `time.*` が facet として存在しない（**Core が直接書く経路が無い**。静的検査 #10） |
+| 15 | **許可されるまで Desktop Sensor が起動しない**。許可は永続化され、次回は聞かれない |
+| 16 | 許可を断った状態で `AutonomyGate` が通らない（`Unknown` は fail-closed） |
