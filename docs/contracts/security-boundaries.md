@@ -18,6 +18,7 @@
 | **B5** | Core ↔ 外部エンジン | エンジン | 侵害された Ollama / TTS | localhost bind | — | **出力を必ず untrusted 扱い** |
 | **B6** | Widget ↔ Broker | Widget | AI 生成コード / 第三者 Widget | opaque origin | Widget manifest capability | schema |
 | **B7** | Core ↔ OS | — | — | — | Permission Kernel | Scope 正規化 |
+| **B8** | **Shell → Core**〔Phase 3〕 | **Shell**（と Shell が読んだ OS の値） | **壊れた / 版ずれ / 侵害された Shell、および観測対象のアプリ自身** | WS token | **Core 側の「送出元ごとの許可 key 集合」** | schema + **payload を tainted 扱い** |
 
 ---
 
@@ -205,6 +206,48 @@ Permission Kernel が守る境界。詳細 → [tool-execution.md](tool-executio
 
 ---
 
+## B8 — Shell → Core〔Phase 3。[ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)〕
+
+**B3 の逆向きである。** B3 は「Core を信用しない Shell」、B8 は「**Shell を信用しない Core**」。
+Desktop Sensor が Shell に入り、**Shell 発の `sensor.*` Signal が Core に届くようになる**ことで生まれた。
+
+**この向きが無かったので、B3 の表だけを見た安全性レビューは Core 側の検証を確認しない。**
+それが B8 を足した理由である。
+
+### 信頼の低い側が2つある
+
+| 誰 | 何を疑うか |
+|---|---|
+| **Shell そのもの** | 壊れている / **版がずれている**（Core より古い Shell が知らない key を送る、あるいは知っている key の意味が違う）/ 侵害されている |
+| **Shell が読んだ OS の値** | **これは Shell の落ち度ではない。** `user.focus_app` は**観測対象のアプリが自分で名乗った文字列**であり、攻撃者が選べる |
+
+**この2つを混ぜない。** 前者は「送ってよい key か」の問題で、後者は「値を信用してよいか」の問題である。
+**Shell を完全に信頼しても、後者は残る。**
+
+### Core 側の検証（Shell が何を送ってきたかにかかわらず適用）
+
+| 層 | 内容 |
+|---|---|
+| 認証 | WS token（B3 と同じ接続） |
+| **許可 key** | **Core が持つ「送出元ごとの許可 key 集合」と照合する。** 送出元の申告・送出元のコードにあるリストを見ない（Invariant 5） |
+| schema | 型・範囲・列挙値 |
+| **provenance** | **`sensor.*` の payload は `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED` に固定**（[provenance.md](provenance.md)）。**送出元が Shell でも上げない**（Invariant 7） |
+| **facet 化** | WorldFacet を書くのは Core（Invariant 6）。**TTL も confidence も Core が決める**（[../architecture/world-state.md](../architecture/world-state.md) §3） |
+
+**schema 検証だけでは足りない。** `sensor.*` として妥当な key であることと、
+**その送出元が送ってよい key であること**は別である。前者だけだと Shell が
+`user.activity_class` を名乗れてしまい、**それは `AutonomyGate` の判断に直接効く**。
+
+### 保証しないこと
+
+- **侵害された Shell が「もっともらしい嘘」を送ることは防げない。** 許可された key に、
+  許可された型で、偽の値を入れられる（在席していないのに `user.present: true` 等）。
+  B8 が固定するのは**送れる key の集合と、その値が tainted であること**だけである
+- Shell は OS 特権を持つので、**Shell 自体の侵害は B3 の「保証しないこと」と同じく脅威モデル外**である。
+  B8 は**それでも Core の内部状態が壊れる範囲を狭める**ためにある
+
+---
+
 ## 攻撃シナリオと防御の対応
 
 | シナリオ | 防御 |
@@ -217,6 +260,8 @@ Permission Kernel が守る境界。詳細 → [tool-execution.md](tool-executio
 | Core を侵害して権限プロンプトの Allow を自動クリック | **Invariant 8**。Shell が無条件拒否（B3）+ Core 側 BindVerifier で二重化 |
 | Widget から sandbox を脱出して Core にアクセス | B6。Broker が capability を検証。Broker は Core をバイパスしない |
 | 悪意ある Extension が宣言外の capability を使う | Invariant 5 の交差。B4 のプロセス隔離 |
+| **アプリが自分の表示名にプロンプトを仕込み、`user.focus_app` 経由で読ませる** | **B8**。`sensor.*` は tainted 固定で、facet と projection まで運ばれ**隔離ブロックに入る**（Invariant 3 / 7） |
+| **版ずれした Shell が、別 Sensor の key や `user.activity_class` を名乗る** | **B8**。判定は **Core 側の「送出元ごとの許可 key 集合」**。送出元のコードにあるリストを宣言として扱わない |
 | 監査ログを消して痕跡を隠す | `audit_log` を filesystem tool の deny パスに。Phase 4a で hash chain（検出） |
 | LLM が「これは安全な操作だから許可して」と主張する | **Policy が LLM の理由文に依存しない**（Invariant 1, 3） |
 

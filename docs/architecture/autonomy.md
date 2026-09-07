@@ -120,14 +120,40 @@ async def tick(self):    # 30秒ごと
 
 | ゲート | 条件 | 理由 |
 |---|---|---|
-| 在席 | `world["user.present"] == True` | 不在時の発話は無意味 |
-| 集中中でない | `user.activity_class` が `meeting` / `focused_work` でない | 邪魔をしない |
-| 全画面でない | `desktop.fullscreen == False` | ゲーム中・動画視聴中に割り込まない |
+| 在席 | `world["user.present"] is True` | 不在時の発話は無意味。**`Unknown` は通さない**（下記） |
+| 集中中でない | `user.activity_class` が**既知**で、かつ `meeting` / `focused_work` でない | 邪魔をしない。**`Unknown` は通さない**（下記） |
+| 全画面でない | `desktop.fullscreen is False` | ゲーム中・動画視聴中に割り込まない。**`Unknown` は通さない** |
 | DND でない | 設定 | ユーザーの明示的意思 |
 | Quiet Hours 外 | 設定 | 深夜に話しかけない |
 | クールダウン | 同一 Drive 種別の最小間隔を超えている | 連発しない |
 | **AutonomyBudget 内** | 後述 | 「鬱陶しさ」と「暴走コスト」の統一的な抑制 |
 | Permission | 自律 actor で許される行為か | Phase 6 以降。Phase 3 は発話のみ |
+
+### ★ `Unknown` は「条件を満たしている」ではない〔2026-09-06〕
+
+**「`meeting` でない」は `Unknown` でも真になる。** 否定形で書いた条件は、
+**知らないときに通ってしまう**——fail-open である。
+
+```python
+# 通ってしまう
+if world.get("user.activity_class") not in (MEETING, FOCUSED_WORK): ...
+
+# 既知であることを先に要求する
+cls = world.get("user.activity_class")          # 期限切れなら Unknown
+if cls is Unknown or cls in (MEETING, FOCUSED_WORK): return blocked
+```
+
+**TTL がこれを日常的に起こす。** `user.activity_class` は導出 facet で、
+**入力のどれか1つが切れた瞬間に `Unknown` になる**
+（[world-state.md](world-state.md) §3）。在席と全画面の観測が続いていても、
+前面アプリの観測だけが止まれば分類は落ちる。**そこで割り込みを許すなら、TTL を短くした意味が無い。**
+
+**規則: すべての facet ゲートは「既知であること」を条件に含む。**
+World は**期限切れを `None` ではなく `Unknown` として返す**ので（world-state.md §2）、
+`is True` / `is False` で書けば偶然通ることはない。**`==` や `not in` で書かない。**
+
+> **Gate が「知らないから話しかけない」に倒れるのは正しい。** Phase 3 の完了条件は
+> 「1日つけっぱなしにして不快でない」であり、**黙るのは失敗ではない。**
 
 ### Gate が通らなかったとき
 
@@ -265,6 +291,8 @@ Evaluation → Memory / Internal State に反映
 | 2 | `effective_drive` の乗数が正しく効く（fatigue / quiet / budget） |
 | 3 | 閾値未満なら LLM を呼ばずに tick が終わる |
 | 4 | Gate の各条件が単独で通過を阻止する |
+| 4b | **facet が `Unknown` のとき、その条件は通らない**（`user.present` / `user.activity_class` / `desktop.fullscreen` を個別に期限切れにする） |
+| 4c | **`user.activity_class` の入力を1つだけ期限切れにすると Gate が閉じる**（在席と全画面は生きたまま。導出 facet の TTL → [world-state.md](world-state.md) §3） |
 | 5 | Gate 不通過時に Drive が penalize される |
 | 6 | AutonomyBudget が正しく消費・リセットされる |
 | 7 | 「うるさい」で予算がゼロになり Drive が減衰する |

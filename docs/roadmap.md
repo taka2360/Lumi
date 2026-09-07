@@ -426,7 +426,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 | | 何を | なぜこの順か |
 |---|---|---|
 | **3a** | Signal の**受信経路**（Shell → Core の inbound）+ Desktop Sensor（Shell） | **観測が入らないと World も Drive も空回りする。** `Signal` の**型は既にある**（`kernel/event.py`）。無いのは**届ける経路とハンドラ** |
-| **3b** | WorldState（facet / TTL / `Unknown` / snapshot / projection） | 観測を**Lumi の世界**に変える。3a の Signal は「素材」でしかない |
+| **3b** | WorldState（facet / `trust_level` / TTL / `Unknown` / snapshot / projection） | 観測を**Lumi の世界**に変える。3a の Signal は「素材」でしかない |
 | **3c** | InternalState + Drive System（慣性・減衰） | **まだ喋らせない。** 内部状態が動くことと、それが発話になることを分けて確かめる |
 | **3d** | AutonomyGate + AutonomyBudget（**dry-run**） | **判定だけ作り、発話はしない。** Inspector に「今喋ろうとした / なぜ止めた」を出して**数日眺める** |
 | **3e** | 自律発話 + 「うるさい」フィードバック + Inspector 完成 | **3d のログが妥当に見えてから初めて口を開かせる** |
@@ -439,6 +439,11 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 ### やること
 
 #### 3a — Signal 経路と Desktop Sensor
+
+> **3a の時点で `WorldFacet` はまだ無い。** Signal は受理・拒否され、provenance が付き、ログに出るところまで。
+> **facet に書くのは 3b である**（Phase を飛ばさない）。
+> **3a 単独で検証できること**: 許可外の key が拒否される / `sensor.*` が tainted になる /
+> 許可していなければ Sensor が起動しない。**どれも facet を必要としない。**
 
 - [x] ~~`Signal` 型~~ 〔**実装済み**。`core/lumi/kernel/event.py`。`stream_key` / `sequence_id` を
   持たないことの静的検査も `core/tests/test_kernel_event.py` にある。`world_stream()` も既にある〕
@@ -453,8 +458,6 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] **Desktop Sensor（Shell / Rust）** — foreground app 名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。
   `hover.rs` と同じポーリング監視スレッドの形。**ウィンドウタイトルは読まない**。
   **送るのは生の観測だけ**（`user.activity_class` は送らない）
-- [ ] **`WorldFacet` が `trust_level` を持ち、projection まで運ぶ**
-  （§2。**facet に置き場所が無いと汚染は保存の時点で消える**）
 - [ ] **明示的な許可を得るまで Sensor を起動しない**（opt-in。許可は永続化し、観測 key が増えたら再同意）。
   **開示だけして既定オンにしない**——Extension の `consent` に相当する門を、Shell に移した分だけ落とさない
 - [ ] `time.*` は **facet にしない**（導出値。時計は陳腐化せず、Signal も TTL も持てない）
@@ -463,6 +466,8 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 - [ ] WorldFacet の型と TTL 管理（**期限切れは `None` ではなく `Unknown`**）
 - [ ] WorldSnapshot（ある時点の一貫したスナップショット）
+- [ ] **`WorldFacet` が `trust_level` を持ち、projection まで運ぶ**
+  （**facet に置き場所が無いと、汚染は保存の時点で消える**。3a の tainted な Signal の行き先がこれ）
 - [ ] **`user.activity_class` を Core が導出する**（`sensor.*` ハンドラの中で。決定論的コードで）。
   **TTL は入力の残りの最小**——固定値にすると根拠が切れた後も分類が生き残り、Gate が割り込む
 - [ ] プロンプトへの projection（**「分からない」も投影する**。**tainted な観測は隔離ブロックへ**）
@@ -480,6 +485,8 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 #### 3d — Gate と Budget（**dry-run。まだ喋らない**）
 
 - [ ] AutonomyGate（在席 / DND / cooldown / quiet hours / budget / permission）。**決定論的コードで判断する**
+- [ ] **facet ゲートは「既知であること」を条件に含む**（`is True` / `is False` で書く）。
+  **「`meeting` でない」は `Unknown` でも真になる** → [architecture/autonomy.md](architecture/autonomy.md) §4
 - [ ] AutonomyBudget（時間あたり割り込み回数 / トークン / wall-clock）
 - [ ] **「なぜ発火した / しなかったか」を Inspector に出す**（発話はしない）
 - [ ] **数日 dry-run で眺め、Gate のパラメータを決める**

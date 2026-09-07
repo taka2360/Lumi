@@ -4,7 +4,7 @@
 |---|---|
 | Status | Accepted |
 | Date | 2026-09-06 |
-| 関連 | [../roadmap.md](../roadmap.md) 未確定事項 14 / Phase 3, [../architecture/world-state.md](../architecture/world-state.md) §5, [../architecture/extension.md](../architecture/extension.md), [../interfaces/extension.md](../interfaces/extension.md), [../contracts/authority-matrix.md](../contracts/authority-matrix.md), [../contracts/event-model.md](../contracts/event-model.md), [../contracts/provenance.md](../contracts/provenance.md), [../contracts/privacy.md](../contracts/privacy.md), [../contracts/wire.json](../contracts/wire.json), [ADR-017](ADR-017-out-of-process-tool-contract.md) |
+| 関連 | [../roadmap.md](../roadmap.md) 未確定事項 14 / Phase 3, [../architecture/world-state.md](../architecture/world-state.md) §5, [../architecture/extension.md](../architecture/extension.md), [../interfaces/extension.md](../interfaces/extension.md), [../contracts/authority-matrix.md](../contracts/authority-matrix.md), [../contracts/event-model.md](../contracts/event-model.md), [../contracts/provenance.md](../contracts/provenance.md), [../contracts/privacy.md](../contracts/privacy.md), [../contracts/wire.json](../contracts/wire.json), [../contracts/security-boundaries.md](../contracts/security-boundaries.md), [ADR-017](ADR-017-out-of-process-tool-contract.md) |
 | 実装 | 〔Phase 3〕`shell/src-tauri/src/sensor.rs`, `core/lumi/world/` |
 
 ## Decision
@@ -22,6 +22,18 @@
 | ★ **送るのは生の観測だけ** | 前面アプリ名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。**`user.activity_class` は Shell が決めない**（下記） |
 | ★ **`sensor.*` の trust** | **`ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`。** 送出元が Shell（信頼されたコンポーネント）でも、**運んでいるのは外界の観測**である（下記） |
 | ★ **同意** | **明示的な許可を得るまで起動しない**（opt-in。同意は永続化する。下記） |
+| ★ **新しい境界** | **Shell → Core は B8 として security-boundaries に足す。** B3（Core → Shell）の逆向きで、**信頼の低い側は Shell** である（下記） |
+
+### ★ Shell → Core は新しい信頼の向きである
+
+**B3 は「Core を信用しない Shell」しか定義していない。** Sensor を Shell に置くと
+**Shell 発の Signal が Core に届く**ようになり、**Core が Shell を信用しない**向きが生まれる。
+**その向きが表に無いと、B3 の表から出発した安全性レビューは Core 側の検証を確認しない。**
+
+→ **[security-boundaries.md](../contracts/security-boundaries.md) に B8 を足す**
+（信頼の低い側 = Shell と、Shell が読んだ OS の値。認可 = **Core 側の許可 key 集合**。
+検証 = schema + payload を tainted 扱い）。
+**保証しないことも書く**——侵害された Shell が「許可された key に偽の値を入れる」ことは防げない。
 
 ### ★ `user.activity_class` は Shell が決めない
 
@@ -189,6 +201,7 @@ A のコストに Shell 実装が足されるだけで、Sensor の中身は「C
 | [event-model.md](../contracts/event-model.md) 例1 | 送出元が Sensor Ext → **Shell**。Signal 以降の経路は変わらない |
 | [roadmap.md](../roadmap.md) Phase 3 | 「Sensor Extension — out-of-process」→「**Desktop Sensor（Shell）**」。未確定事項 14 を解消にする |
 | [authority-matrix.md](../contracts/authority-matrix.md) | **✓ は1つも変えない。** 「Sensor Extension も例外ではない」という言い回しだけを「Sensor（Shell / Extension）」に直す。**表の意味は変わらず、item 14 を生んだ読み違いだけが消える** |
+| [security-boundaries.md](../contracts/security-boundaries.md) | **B8（Shell → Core）を追加する。** B3 の逆向きで、これまで表に無かった信頼の向きである |
 | [interfaces/shell.md](../interfaces/shell.md) | Shell → Core の Signal に `sensor.*` が加わる。**`stage.*` には出さない**（Stage は Core が配信した投影だけを見る） |
 | [provenance.md](../contracts/provenance.md) | 「Sensor Extension の Signal」→「**Sensor（Shell / Extension）の Signal**」。`ProvenanceClass.UNTRUSTED`（→ `TrustLevel.TAINTED`）であることは変えない。**送出元の信頼度が payload の信頼度にならないことを明記する** |
 | [world-state.md](../architecture/world-state.md) §3 | `user.activity_class` の source が Desktop Sensor → **Core（`sensor.*` ハンドラで導出）**。`time.*` は**facet をやめて導出値にする**（時計は陳腐化せず、静的検査 #10 の例外を作る必要も無くなる） |

@@ -113,6 +113,8 @@ ttl(derived) = min(残り TTL of その値の導出に実際に使った facet)
 | 実装 | 読み出し時に導出してもよい（そのほうが安全側）。**保存するなら上式の TTL を必ず付ける** |
 
 **`Unknown` は Gate を通さない。** 分からないときに割り込まないのが、この Phase の設計方針である。
+**ただしそれは Gate 側が「既知であること」を条件に書いて初めて成立する**——
+「`meeting` でない」は `Unknown` でも真になる。→ [autonomy.md](autonomy.md) §4
 
 ### ★ `time.*` は facet ではなく導出値である〔2026-09-06〕
 
@@ -264,6 +266,7 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 ### ★ 許可 key の集合は Core が持つ〔2026-09-06〕
 
 **送出元が自分で持っているリストは、capability 境界ではない。**
+この向き（Shell → Core）は **[../contracts/security-boundaries.md](../contracts/security-boundaries.md) の B8** である。
 Shell が壊れていても、バージョンがずれていても、乗っ取られていても、
 **Core は「この送出元はこの key を送ってよいか」を自分の側の表だけで答えられなければならない**（Invariant 5）。
 

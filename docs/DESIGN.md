@@ -29,6 +29,8 @@
 >    （`ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`）で `WorldFacet` がそれを projection まで運び、
 >    `user.activity_class` は Core が**入力の残り TTL の最小**で導出し、
 >    **明示的な許可を得るまで Sensor を起動しない**（opt-in）。
+>    **Shell → Core は新しい信頼の向きなので、[contracts/security-boundaries.md](contracts/security-boundaries.md)
+>    に B8 を足した**——B3（Core → Shell）の逆で、**信頼の低い側は Shell** である
 >    **[contracts/authority-matrix.md](contracts/authority-matrix.md) は変更していない**
 > 3. **Phase 3 を 3a〜3e に分けた** → [roadmap.md](roadmap.md)。
 >    **Gate / Budget を dry-run で作ってから発話させる**（3d → 3e）。
@@ -811,7 +813,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 |---|---|
 | [invariants.md](contracts/invariants.md) | 8つの不変条件と、それぞれの根拠・検証方法 |
 | [authority-matrix.md](contracts/authority-matrix.md) | 誰が何をできるか。実装レビューのチェックリスト |
-| [security-boundaries.md](contracts/security-boundaries.md) | B1〜B7 の境界。攻撃者・認証・認可・検証 |
+| [security-boundaries.md](contracts/security-boundaries.md) | B1〜B8 の境界。攻撃者・認証・認可・検証 |
 | [provenance.md](contracts/provenance.md) | ProvenanceClass / TrustLevel の束と伝播規則 |
 | [state-machines.md](contracts/state-machines.md) | Activity と Tool の独立した状態機械 |
 | [event-model.md](contracts/event-model.md) | Signal と DomainEvent の分離、採番責任、順序保証 |
@@ -911,7 +913,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | **PromptAssembly の構成・トークン予算・切り落とし順序** | [architecture/agent.md](architecture/agent.md) §3 |
 | Kernel 実行契約・Class A / Class B | [contracts/tool-execution.md](contracts/tool-execution.md) |
 | Signal / DomainEvent / Command・**Hook 一覧** | [contracts/event-model.md](contracts/event-model.md) |
-| 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |
+| 境界 B1〜B8・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |
 | 権限マトリクス・オブジェクト責務行列 | [contracts/authority-matrix.md](contracts/authority-matrix.md) |
 | **線上に出る名前と定数**（`PROTOCOL_VERSION` / method 名 / Tauri のイベント・コマンド名 / 線に乗る enum の値） | [contracts/wire.json](contracts/wire.json)（値）+ [contracts/wire.md](contracts/wire.md)（規則） |
 | Shell / Stage の責務・ウィンドウ一覧・**トレイメニュー**・**起動フェーズ**・**ウィンドウ操作**・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
