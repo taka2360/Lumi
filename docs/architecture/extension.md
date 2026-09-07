@@ -131,10 +131,13 @@ in-core Provider は Core のプロセス権限をそのまま持つ。この組
 
   // 天井（ceiling）。実効権限はこれと policy と user grant の交差
   "capabilities": {
+    // out-of-process が宣言できるのは **Class B の lane だけ**（browser / game / widget）。
+    // fs / process / input / desktop / system / memory / character は Class A で、
+    // 宣言した時点で manifest が拒否される（§検証の 6 / ADR-017）
     "tools": [
-      { "name": "fs.read", "risk": "L2", "lane": "fs",
-        "scope_hint": "user_home",
-        "reason": "会話中に言及されたファイルを読むため" }
+      { "name": "browser.read", "risk": "L1", "lane": "browser",
+        "scope_hint": "https://calendar.example.com/*",
+        "reason": "Web カレンダーの予定を読むため" }
     ],
     "sensors": [
       // ttl_ms は**上限のヒント**。Core は自分の値と短い方を採る（ADR-050）

@@ -4,7 +4,7 @@
 |---|---|
 | Status | Accepted |
 | Date | 2026-09-06 |
-| 関連 | [../roadmap.md](../roadmap.md) 未確定事項 14 / Phase 3, [../architecture/world-state.md](../architecture/world-state.md) §5, [../architecture/extension.md](../architecture/extension.md), [../interfaces/extension.md](../interfaces/extension.md), [../contracts/authority-matrix.md](../contracts/authority-matrix.md), [../contracts/event-model.md](../contracts/event-model.md), [../contracts/provenance.md](../contracts/provenance.md), [../contracts/privacy.md](../contracts/privacy.md), [../contracts/wire.json](../contracts/wire.json), [../contracts/security-boundaries.md](../contracts/security-boundaries.md), [ADR-017](ADR-017-out-of-process-tool-contract.md) |
+| 関連 | [ADR-014](ADR-014-world-vs-internal-state.md)（**一部を本 ADR が修正**）, [../roadmap.md](../roadmap.md) 未確定事項 14 / Phase 3, [../architecture/world-state.md](../architecture/world-state.md) §5, [../architecture/extension.md](../architecture/extension.md), [../interfaces/extension.md](../interfaces/extension.md), [../contracts/authority-matrix.md](../contracts/authority-matrix.md), [../contracts/event-model.md](../contracts/event-model.md), [../contracts/provenance.md](../contracts/provenance.md), [../contracts/privacy.md](../contracts/privacy.md), [../contracts/wire.json](../contracts/wire.json), [../contracts/security-boundaries.md](../contracts/security-boundaries.md), [ADR-017](ADR-017-out-of-process-tool-contract.md) |
 | 実装 | 〔Phase 3〕`shell/src-tauri/src/sensor.rs`, `core/lumi/world/` |
 
 ## Decision
@@ -205,6 +205,7 @@ A のコストに Shell 実装が足されるだけで、Sensor の中身は「C
 | [security-boundaries.md](../contracts/security-boundaries.md) | **B8（Shell → Core）を追加する。** B3 の逆向きで、これまで表に無かった信頼の向きである |
 | [interfaces/shell.md](../interfaces/shell.md) | Shell → Core の Signal に `sensor.*` が加わる。**`stage.*` には出さない**（Stage は Core が配信した投影だけを見る） |
 | [provenance.md](../contracts/provenance.md) | 「Sensor Extension の Signal」→「**Sensor（Shell / Extension）の Signal**」。`ProvenanceClass.UNTRUSTED`（→ `TrustLevel.TAINTED`）であることは変えない。**送出元の信頼度が payload の信頼度にならないことを明記する** |
+| **[ADR-014](ADR-014-world-vs-internal-state.md)** | **一部を修正する。** 冒頭に修正ブロックを追記した（**ADR は書き換えず追記する**）——「時刻 → World」の行、`Sensor Ext` の経路図、`user.activity_class` の出どころの3点。**骨子（World と Internal の分離）は変わらない** |
 | [world-state.md](../architecture/world-state.md) §3 | `user.activity_class` の source が Desktop Sensor → **Core（`sensor.*` ハンドラで導出）**。`time.*` は**facet をやめて導出値にする**（時計は陳腐化せず、静的検査 #10 の例外を作る必要も無くなる） |
 | [autonomy.md](../architecture/autonomy.md) | `world.get("time.quiet_hours")` → 時計から直接引く。**facet ゲートは許可リストで書く**——`Unknown`（facet 無し）と `unknown`（分類失敗）は**どちらも「`meeting` でない」を満たす**ので、禁止リストでは両方漏れる |
 | **Sensor の送出周期** | **TTL の半分以下でハートビートを送る**。**変化時だけ送る実装にすると、変わらない限り facet が期限切れ、`activity_class` も `Unknown` になり、自律発話が静かに止まる** |
