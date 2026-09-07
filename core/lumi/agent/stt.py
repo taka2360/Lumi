@@ -197,6 +197,7 @@ class SpeculativeStt:
             self._start(generation, audio, requested_at)
         else:
             # latest-wins: the older snapshot is dropped, not queued behind this one
+            self._drop_pending("superseded")
             self._pending = (generation, audio, requested_at)
 
     # ── Adoption ─────────────────────────────────────────────────
@@ -242,6 +243,14 @@ class SpeculativeStt:
     # ── Internals ────────────────────────────────────────────────
 
     def _start(self, generation: int, audio: Samples, requested_at: float) -> None:
+        """Actually begin a speculative execution.
+
+        **This is the one that counts.** `stt.speculation_started` is logged before we know
+        whether the worker is free, so a request can end up in `_pending` and be superseded
+        or released without ever running. Dividing discards by *requests* would understate
+        the discard rate exactly in the contended turns the metric exists to expose.
+        """
+        log.info("stt.speculation_execution_started", generation=generation)
         task = asyncio.create_task(self._run(generation, audio, requested_at), name="stt")
         self._task = task
         task.add_done_callback(self._finished)
@@ -305,7 +314,23 @@ class SpeculativeStt:
 
     def _release_pending(self) -> None:
         """Drop the waiting snapshot. **Releases the audio** rather than holding a reference."""
+        self._drop_pending("released")
+
+    def _drop_pending(self, reason: str) -> None:
+        """Account for a request that will never run.
+
+        Such a request never reaches `_done`, so it can never be reported as
+        `stt.speculation_discarded` either. **Without this it would simply vanish** —
+        counted in the denominator, absent from the numerator.
+        """
+        if self._pending is None:
+            return
+        generation = self._pending[0]
         self._pending = None
+        # **Logged, not counted into the outcome.** `turn_latency` treats unknown numeric
+        # keys as intervals (docs/measurements/phase2.md), so a new field there would show
+        # up in the Inspector as a phantom span. This belongs to the speculation log series
+        log.info("stt.speculation_dropped", generation=generation, reason=reason)
 
     def _outcome(self, execution: _Execution, *, speculative: bool) -> SttOutcome:
         """Build the outcome and **hand the discard counters over with it.**

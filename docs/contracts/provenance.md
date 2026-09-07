@@ -264,7 +264,8 @@ if effective_trust is TrustLevel.TAINTED and effective_risk >= Risk.L3:
 > World projection を通ってプロンプトに入る。攻撃者が表示名を選べる以上、外部由来のテキストである（Invariant 3）。
 > **実装形態を変えても汚染は落ちない**（Invariant 7）。
 >
-> **運ぶ先まで型がある。** `WorldFacet` は `trust_level` を持ち
+> **運ぶ先まで型がある。** `WorldFacet` は **`provenance_class` と `trust_level` の両方**を持ち
+> （**片方だけだと `propagate()` に渡せない**——`Provenanced` は両方を要求する）
 > （[../architecture/world-state.md](../architecture/world-state.md) §2）、
 > そこから導出される facet（`user.activity_class`）は `propagate()` し、
 > **tainted な facet は projection で隔離ブロックに入る。**

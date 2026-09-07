@@ -452,9 +452,16 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   **送出元のコードにあるリストを宣言として扱わない**（[architecture/world-state.md](architecture/world-state.md) §5）
 - [ ] **provenance を (送出元, type) で決める。`sensor.*` は送出元によらず `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`**（**`trust_level` に `UNTRUSTED` は存在しない**）
   （[contracts/event-model.md](contracts/event-model.md) / [contracts/provenance.md](contracts/provenance.md)）
-- [ ] **wire 契約を先に埋める** — `sensor.*` の封筒・名前空間・schema を
-  [contracts/wire.json](contracts/wire.json) と [interfaces/shell.md](interfaces/shell.md) に定義する。
+- [ ] **契約を先に埋める。ただし2箇所に分ける**——
+  **名前と定数**（`sensor.*` の method 名・名前空間・許可 key の一覧）は
+  [contracts/wire.json](contracts/wire.json)。**payload の形**（フィールド名・型・必須性）は
+  [interfaces/shell.md](interfaces/shell.md)。
+  **`wire.json` は「名前と値が一致すること」しか保証しない**——payload の形は
+  明示的に対象外である（[contracts/wire.md](contracts/wire.md) §4）。
   **現在 `os.*` は Core → Shell の一方向しか無く、Shell 発の inbound が存在しない**
+- [ ] **payload の形の検査を、Rust と Python の両方に置く**（`wire.json` のテストは拾わない）。
+  拾わないまま置くと、**Shell と Core が静かにずれる**——`wire.md` §4 が挙げている
+  `progress` / `percent` の食い違いと同じ形の事故が、**観測データで起きる**
 - [ ] **Desktop Sensor（Shell / Rust）** — foreground app 名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。
   `hover.rs` と同じポーリング監視スレッドの形。**ウィンドウタイトルは読まない**。
   **送るのは生の観測だけ**（`user.activity_class` は送らない）
@@ -469,8 +476,9 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 - [ ] WorldFacet の型と TTL 管理（**期限切れは `None` ではなく `Unknown`**）
 - [ ] WorldSnapshot（ある時点の一貫したスナップショット）
-- [ ] **`WorldFacet` が `trust_level` を持ち、projection まで運ぶ**
-  （**facet に置き場所が無いと、汚染は保存の時点で消える**。3a の tainted な Signal の行き先がこれ）
+- [ ] **`WorldFacet` が `provenance_class` と `trust_level` を持ち、projection まで運ぶ**
+  （**facet に置き場所が無いと、汚染は保存の時点で消える**。3a の tainted な Signal の行き先がこれ）。
+  **両方持つ**——`propagate()` は `Provenanced` を要求し、**`trust_level` だけの facet は導出の入力にできない**
 - [ ] **`user.activity_class` を Core が導出する**（`sensor.*` ハンドラの中で。決定論的コードで）。
   **TTL は入力の残りの最小**——固定値にすると根拠が切れた後も分類が生き残り、Gate が割り込む
 - [ ] プロンプトへの projection（**「分からない」も投影する**。**tainted な観測は隔離ブロックへ**）
@@ -487,6 +495,14 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 #### 3d — Gate と Budget（**dry-run。まだ喋らない**）
 
+> **★ dry-run は「判定を記録するだけ」ではない。**
+> **通ったときの状態遷移は本番と同じに進める**——予算消費・cooldown・Drive 減衰。
+> **止めるのは LLM 生成と発話だけ**（[architecture/autonomy.md](architecture/autonomy.md) §3）。
+>
+> **判定だけ記録すると、通った後に何も減らない。** Drive が閾値を超えたら
+> **毎 tick「割り込もうとした」が出続け**、3e の実際の頻度とは似ても似つかないログになる。
+> **3d はそのログを見て Gate のパラメータを決めるためにある**ので、それでは目的を果たさない。
+
 - [ ] AutonomyGate（在席 / DND / cooldown / quiet hours / budget / permission）。**決定論的コードで判断する**
 - [ ] **facet ゲートは許可リストで書く**（真偽値は `is True` / `is False`、列挙は「通してよい値」の集合）。
   **禁止リストは値が増えるたびに穴が開く**——`Unknown`（facet 無し）と `unknown`（分類失敗）は
@@ -496,6 +512,8 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   **`Unknown`（Sensor が黙った）と `unknown`（アプリを分類できない）を区別して出す**——
   前者は Sensor の不具合、後者は分類器の課題であり、**打つ手が違う**
 - [ ] **`gaming` / `media` を割り込み許可に入れるかを、dry-run のログを見て決める**〔Provisional〕
+- [ ] **shadow 実行**——`Accepted` のとき、**予算を消費し、cooldown を張り、Drive を減衰させる**。
+  **LLM 生成と発話だけを抑止する**。**これをしないと頻度のログが 3e と一致しない**
 - [ ] **数日 dry-run で眺め、Gate のパラメータを決める**
 
 #### 3e — 自律発話

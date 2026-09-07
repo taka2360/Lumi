@@ -47,7 +47,9 @@ class WorldFacet:
     observed_at: datetime
     ttl: timedelta
     source: SensorId
-    trust_level: TrustLevel     # 元の Signal から運ぶ。**再計算しない**（Invariant 7）
+    # provenance は2つで1組。**片方だけ持つと propagate() に渡せない**（下記）
+    provenance_class: ProvenanceClass   # 監査とユーザーへの説明のラベル
+    trust_level: TrustLevel             # Policy が読む値。**再計算しない**（Invariant 7）
 
     def is_valid(self, now: datetime) -> bool:
         return now - self.observed_at < self.ttl
@@ -64,8 +66,14 @@ facet がそれを落とすと、**projection がどれを隔離ブロックに�
 | | |
 |---|---|
 | 誰が決めるか | **Core**（Signal ハンドラ）。**`sensor.*` は送出元によらず `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`**（下記） |
-| 導出した facet | `user.activity_class` は元にした観測から `propagate()` する。**導出で汚染は落ちない**（Invariant 7） |
+| **なぜ2つ持つか** | `propagate()` は `Provenanced`（**両方を持つもの**）を受け取る。**`trust_level` だけの facet は導出の入力にできない** |
+| 導出した facet | `user.activity_class` は元にした観測から `propagate()` する → **`DERIVED`**（生の観測の `UNTRUSTED` とは区別される）。`trust_level` は `taint()` で決まり、**どちらも `TAINTED`**（Invariant 7） |
 | projection | **tainted な facet は隔離ブロックに入れる**（[../contracts/provenance.md](../contracts/provenance.md)） |
+
+**`UNTRUSTED` と `DERIVED` の区別を facet で潰さない。** Policy はどちらも `TAINTED` として
+同じに扱うが、**監査とユーザーへの説明では別物である**——
+「アプリがそう名乗った」と「Lumi がそこから分類した」を、Inspector で同じ顔にしない。
+`ProvenanceClass` を落とすと、**この区別は facet になった瞬間に永久に失われる。**
 
 ### Facet 一覧〔Provisional〕
 
@@ -295,7 +303,7 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 | 送るもの | **`Signal` だけ。** WorldFacet を更新するのは Core（Invariant 6） |
 | 検査 | Core が**自分の側にある「送出元ごとの許可 key 集合」**と照合して拒否する（Invariant 5。下記） |
 | 権限判断 | Sensor は持たない（Invariant 1） |
-| **trust** | **`sensor.*` は `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`。** 送出元が Shell でも変わらない（[../contracts/provenance.md](../contracts/provenance.md)）——`user.focus_app` は**アプリが自分で名乗った文字列**である。**`WorldFacet` が `trust_level` を持ち、projection まで運ぶ**（§2） |
+| **trust** | **`sensor.*` は `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`。** 送出元が Shell でも変わらない（[../contracts/provenance.md](../contracts/provenance.md)）——`user.focus_app` は**アプリが自分で名乗った文字列**である。**`WorldFacet` が `provenance_class` と `trust_level` を持ち、projection まで運ぶ**（§2） |
 | TTL / confidence | **権威は Core が持つ**（§3 の表）。manifest の `ttl_ms` は**上限のヒント**で、**Core は自分の値と短い方を採る**——Extension が観測を Core の意図より長生きさせられない |
 | 分類 | **Sensor は送らない。** `user.activity_class` は Core が導出する（§3） |
 
@@ -388,8 +396,9 @@ Shell に移したことで、その門が黙って消えてはならない。
 | 8 | Internal State が Extension / Stage から書けない |
 | 9 | 表情が Mood + ACT の合成になる |
 | 10 | projection のスナップショットテスト（入力 facet 集合 → 出力文字列） |
-| 11 | `sensor.*` の Signal が `TrustLevel.TAINTED` になる（**送出元が Shell でも**） |
-| 12 | facet の `trust_level` が projection まで運ばれ、**tainted な facet が隔離ブロックに入る** |
+| 11 | `sensor.*` の Signal が `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED` になる（**送出元が Shell でも**） |
+| 12 | facet の provenance が projection まで運ばれ、**tainted な facet が隔離ブロックに入る** |
+| 12b | **導出 facet が `DERIVED` になる**（生の観測の `UNTRUSTED` と区別され、`trust_level` はどちらも `TAINTED`） |
 | 13 | **導出 facet の TTL が入力の残りの最小を超えない**（`focus_app` を 30 s 止めたら `activity_class` も `Unknown` になる） |
 | 14 | `time.*` が facet として存在しない（**Core が直接書く経路が無い**。静的検査 #10） |
 | 15 | **許可されるまで Desktop Sensor が起動しない**。許可は永続化され、次回は聞かれない |
@@ -397,3 +406,4 @@ Shell に移したことで、その門が黙って消えてはならない。
 | 16b | **`Unknown`（facet 無し）と `unknown`（分類失敗）が区別して Inspector に出る**（Gate はどちらも閉じるが、**理由は違う**） |
 | 17 | **値が変わらなくても facet が期限切れない**（Sensor を回したまま TTL の 3 倍待ち、`is_valid()` が真であり続ける） |
 | 18 | **Sensor が黙ったら facet が `Unknown` になる**（17 の裏。**止まったことに気づけること**） |
+| 19 | **`sensor.*` の payload の形が Shell と Core で一致する**（`wire.json` は形を検査しないので、**両言語に別途置く** → [../contracts/wire.md](../contracts/wire.md) §4） |
