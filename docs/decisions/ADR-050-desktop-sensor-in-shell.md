@@ -20,6 +20,7 @@
 | ウィンドウタイトル | **読まない。** [world-state.md](../architecture/world-state.md) §5 のプライバシー規則をそのまま Shell 側の制約として持つ |
 | 権限判断 | **Shell は持たない**（Invariant 1）。送る facet の集合は Shell のコードに固定で、実行時に増えない |
 | ★ **送るのは生の観測だけ** | 前面アプリ名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。**`user.activity_class` は Shell が決めない**（下記） |
+| ★ **送る周期** | **TTL の半分以下**。変化が無くても送る（**変化時だけ送ると facet が期限切れ、Gate が閉じる**。→ [world-state.md](../architecture/world-state.md) §3） |
 | ★ **`sensor.*` の trust** | **`ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`。** 送出元が Shell（信頼されたコンポーネント）でも、**運んでいるのは外界の観測**である（下記） |
 | ★ **同意** | **明示的な許可を得るまで起動しない**（opt-in。同意は永続化する。下記） |
 | ★ **新しい境界** | **Shell → Core は B8 として security-boundaries に足す。** B3（Core → Shell）の逆向きで、**信頼の低い側は Shell** である（下記） |
@@ -118,7 +119,7 @@ foreground app 名と idle 時間はそこに入っていない。矛盾して�
 
 `sensor-desktop` を out-of-process にすると、Phase 3 は
 **「プロセス生成・IPC・manifest 解析・capability 検査」を新規に作り、その上で最初の利用者が
-foreground app 名を 30 秒ごとに送るだけのプロセス**になる。
+foreground app 名を数秒ごとに送るだけのプロセス**になる。
 **Shell に置けば、要るのは Win32 呼び出しと Signal の inbound 経路だけ**であり、
 **その inbound 経路はどちらを選んでも要る**（Extension も同じ経路で Signal を送る）。
 
@@ -205,7 +206,8 @@ A のコストに Shell 実装が足されるだけで、Sensor の中身は「C
 | [interfaces/shell.md](../interfaces/shell.md) | Shell → Core の Signal に `sensor.*` が加わる。**`stage.*` には出さない**（Stage は Core が配信した投影だけを見る） |
 | [provenance.md](../contracts/provenance.md) | 「Sensor Extension の Signal」→「**Sensor（Shell / Extension）の Signal**」。`ProvenanceClass.UNTRUSTED`（→ `TrustLevel.TAINTED`）であることは変えない。**送出元の信頼度が payload の信頼度にならないことを明記する** |
 | [world-state.md](../architecture/world-state.md) §3 | `user.activity_class` の source が Desktop Sensor → **Core（`sensor.*` ハンドラで導出）**。`time.*` は**facet をやめて導出値にする**（時計は陳腐化せず、静的検査 #10 の例外を作る必要も無くなる） |
-| [autonomy.md](../architecture/autonomy.md) | `world.get("time.quiet_hours")` → 時計から直接引く |
+| [autonomy.md](../architecture/autonomy.md) | `world.get("time.quiet_hours")` → 時計から直接引く。facet ゲートは「既知であること」を条件に含む（`Unknown` を通さない） |
+| **Sensor の送出周期** | **TTL の半分以下でハートビートを送る**。**変化時だけ送る実装にすると、変わらない限り facet が期限切れ、`activity_class` も `Unknown` になり、自律発話が静かに止まる** |
 | manifest の `ttl_ms` | **権威ではなく上限のヒント。** Core は自分の値と短い方を採る（**Extension が観測を Core の意図より長生きさせられない**） |
 | Phase 3a | **Shell → Core の `sensor.*` の封筒・名前空間・schema を [wire.json](../contracts/wire.json) と [interfaces/shell.md](../interfaces/shell.md) に定義する。** 現在 `os.*` は Core → Shell の一方向しか無く、**Shell 発の inbound が存在しない**。実装前にここを埋める |
 | Phase 9 | **「読み取り専用の OS 内観を第三者 Extension に許すか」がここで再び問題になる。** 本 ADR は先送りしただけで、答えていない |

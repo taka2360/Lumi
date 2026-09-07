@@ -131,12 +131,15 @@ ttl(derived) = min(残り TTL of その値の導出に実際に使った facet)
 
 ### 書き込み経路
 
-**Core は OS をポーリングしない。Sensor Extension が Signal を push する。**
+**Core は OS をポーリングしない。Sensor が Signal を push する。**
+Phase 3 の Sensor は **Shell**（[ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)）、
+将来の外部 Sensor は Extension である。**経路は同じで、送出元だけが違う**（§5）。
 
 ```
-Sensor Ext
+Shell（Desktop Sensor）〔Phase 3〕 / Capability Extension〔Phase 9〜〕
   → Signal(type="sensor.foreground_app", payload={"app": "factorio.exe"})
-  → Core: 認証 / schema 検証 / capability 検査
+  → Core: 認証 / schema 検証 / **送出元ごとの許可 key 集合**と照合（B8）
+  → Core: trust を決める（`sensor.*` は tainted 固定）
   → Core: WorldFacet("user.focus_app") を更新
   → Core: DomainEvent(stream_key="world:user.focus_app", type="WorldFacetChanged")
 ```
@@ -144,6 +147,26 @@ Sensor Ext
 **Sensor は facet を直接書かない。** Core が書く（[../contracts/authority-matrix.md](../contracts/authority-matrix.md)）。
 
 理由: Sensor が任意の key に任意の値を書けると、Core が認識していない状態が生まれる（Invariant 6 違反）。Core が key の妥当性・型・TTL を決める。
+
+#### ★ 送るのは変化だけではない — TTL より短い周期で送り続ける
+
+**facet は届かなければ期限切れる。** `is_valid()` は `now - observed_at < ttl` なので、
+**「変わったときだけ送る」実装は、変わらない限り必ず `Unknown` に落ちる。**
+`user.focus_app` の TTL は 30 s であり、**30 s ごとに送ると間に合わない**——
+スケジューリングの揺らぎで `observed_at + 30s` を跨いだ瞬間に切れる。
+
+そして `user.activity_class` はその導出なので**一緒に `Unknown` になり、`AutonomyGate` が閉じる**。
+**Sensor の周期の選び方ひとつで、自律発話が静かに止まる。**
+
+| | |
+|---|---|
+| 規則 | **送出周期 ≤ TTL / 2。** 変化が無くても送る（ハートビート） |
+| いま | `user.focus_app` / `desktop.fullscreen` / `audio.playing` / `system.*` は TTL 30 s → **周期 10 s**。`user.present` は 60 s → **周期 20 s** |
+| **変化時** | 周期を待たずに**即座に送る**（前面アプリが変わったことは早く知りたい） |
+| 逆向きの制約 | **TTL は「観測が止まったことに気づくまでの時間」でもある。** 伸ばせば解決するが、**止まった Sensor を長く信じることになる**——だから周期を短くする側で解く |
+
+> **これは Core 側の設定ではなく Sensor 側の責務である。** Core は TTL しか知らず、
+> **Sensor が黙ったのか、値が変わらないのかを区別できない**（区別する必要も無い）。
 
 ### プロンプトへの投影
 
@@ -358,3 +381,5 @@ Shell に移したことで、その門が黙って消えてはならない。
 | 14 | `time.*` が facet として存在しない（**Core が直接書く経路が無い**。静的検査 #10） |
 | 15 | **許可されるまで Desktop Sensor が起動しない**。許可は永続化され、次回は聞かれない |
 | 16 | 許可を断った状態で `AutonomyGate` が通らない（`Unknown` は fail-closed） |
+| 17 | **値が変わらなくても facet が期限切れない**（Sensor を回したまま TTL の 3 倍待ち、`is_valid()` が真であり続ける） |
+| 18 | **Sensor が黙ったら facet が `Unknown` になる**（17 の裏。**止まったことに気づけること**） |

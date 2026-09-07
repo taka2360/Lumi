@@ -458,6 +458,9 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] **Desktop Sensor（Shell / Rust）** — foreground app 名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。
   `hover.rs` と同じポーリング監視スレッドの形。**ウィンドウタイトルは読まない**。
   **送るのは生の観測だけ**（`user.activity_class` は送らない）
+- [ ] **送出周期は TTL の半分以下。変化が無くても送る**（変化時は即座に送る）。
+  **変化時だけ送ると facet が期限切れ、`activity_class` も `Unknown` になり、Gate が閉じる**
+  → [architecture/world-state.md](architecture/world-state.md) §3
 - [ ] **明示的な許可を得るまで Sensor を起動しない**（opt-in。許可は永続化し、観測 key が増えたら再同意）。
   **開示だけして既定オンにしない**——Extension の `consent` に相当する門を、Shell に移した分だけ落とさない
 - [ ] `time.*` は **facet にしない**（導出値。時計は陳腐化せず、Signal も TTL も持てない）

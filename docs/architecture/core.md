@@ -59,9 +59,11 @@ Memory       何を覚えているか         Vision model
 │  Tool Registry / Event Bus / Audio I/O / Extension Host / Provider Registry   │
 └────────────┬──────────────────────────────────────────────────────────────────┘
              │ ext.* (WS / stdio)
-   ┌─────────┼─────────┬──────────────┐
-   ▼                   ▼              ▼
- Sensor Ext      Browser Ext     GameAgent Ext ...
+   ┌─────────┼──────────────┐
+   ▼                        ▼
+ Browser Ext 〔4b。最初の1つ〕   GameAgent Ext 〔8〕 ...
+
+ ※ Desktop Sensor は Extension ではなく **Shell** が持つ（ADR-050）。Signal で Core へ
 
  外部エンジン（別プロセス / 所有しない）: Ollama │ AivisSpeech / VOICEVOX
 ```
