@@ -206,7 +206,7 @@ A のコストに Shell 実装が足されるだけで、Sensor の中身は「C
 | [interfaces/shell.md](../interfaces/shell.md) | Shell → Core の Signal に `sensor.*` が加わる。**`stage.*` には出さない**（Stage は Core が配信した投影だけを見る） |
 | [provenance.md](../contracts/provenance.md) | 「Sensor Extension の Signal」→「**Sensor（Shell / Extension）の Signal**」。`ProvenanceClass.UNTRUSTED`（→ `TrustLevel.TAINTED`）であることは変えない。**送出元の信頼度が payload の信頼度にならないことを明記する** |
 | [world-state.md](../architecture/world-state.md) §3 | `user.activity_class` の source が Desktop Sensor → **Core（`sensor.*` ハンドラで導出）**。`time.*` は**facet をやめて導出値にする**（時計は陳腐化せず、静的検査 #10 の例外を作る必要も無くなる） |
-| [autonomy.md](../architecture/autonomy.md) | `world.get("time.quiet_hours")` → 時計から直接引く。facet ゲートは「既知であること」を条件に含む（`Unknown` を通さない） |
+| [autonomy.md](../architecture/autonomy.md) | `world.get("time.quiet_hours")` → 時計から直接引く。**facet ゲートは許可リストで書く**——`Unknown`（facet 無し）と `unknown`（分類失敗）は**どちらも「`meeting` でない」を満たす**ので、禁止リストでは両方漏れる |
 | **Sensor の送出周期** | **TTL の半分以下でハートビートを送る**。**変化時だけ送る実装にすると、変わらない限り facet が期限切れ、`activity_class` も `Unknown` になり、自律発話が静かに止まる** |
 | manifest の `ttl_ms` | **権威ではなく上限のヒント。** Core は自分の値と短い方を採る（**Extension が観測を Core の意図より長生きさせられない**） |
 | Phase 3a | **Shell → Core の `sensor.*` の封筒・名前空間・schema を [wire.json](../contracts/wire.json) と [interfaces/shell.md](../interfaces/shell.md) に定義する。** 現在 `os.*` は Core → Shell の一方向しか無く、**Shell 発の inbound が存在しない**。実装前にここを埋める |

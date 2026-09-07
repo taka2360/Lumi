@@ -488,10 +488,14 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 #### 3d — Gate と Budget（**dry-run。まだ喋らない**）
 
 - [ ] AutonomyGate（在席 / DND / cooldown / quiet hours / budget / permission）。**決定論的コードで判断する**
-- [ ] **facet ゲートは「既知であること」を条件に含む**（`is True` / `is False` で書く）。
-  **「`meeting` でない」は `Unknown` でも真になる** → [architecture/autonomy.md](architecture/autonomy.md) §4
+- [ ] **facet ゲートは許可リストで書く**（真偽値は `is True` / `is False`、列挙は「通してよい値」の集合）。
+  **禁止リストは値が増えるたびに穴が開く**——`Unknown`（facet 無し）と `unknown`（分類失敗）は
+  **どちらも「`meeting` でない」を満たす** → [architecture/autonomy.md](architecture/autonomy.md) §4
 - [ ] AutonomyBudget（時間あたり割り込み回数 / トークン / wall-clock）
-- [ ] **「なぜ発火した / しなかったか」を Inspector に出す**（発話はしない）
+- [ ] **「なぜ発火した / しなかったか」を Inspector に出す**（発話はしない）。
+  **`Unknown`（Sensor が黙った）と `unknown`（アプリを分類できない）を区別して出す**——
+  前者は Sensor の不具合、後者は分類器の課題であり、**打つ手が違う**
+- [ ] **`gaming` / `media` を割り込み許可に入れるかを、dry-run のログを見て決める**〔Provisional〕
 - [ ] **数日 dry-run で眺め、Gate のパラメータを決める**
 
 #### 3e — 自律発話

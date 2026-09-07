@@ -82,6 +82,19 @@ facet がそれを落とすと、**projection がどれを隔離ブロックに�
 
 `user.activity_class` の値〔Provisional〕: `idle` / `browsing` / `focused_work` / `meeting` / `gaming` / `media` / `unknown`
 
+> **★ `unknown`（enum 値）と `Unknown`（sentinel）は別物である。**
+>
+> | | 意味 | どこの層 |
+> |---|---|---|
+> | **`Unknown`** | **facet が無い。** 観測が届いていないか期限切れ（Sensor が黙った） | facet 層（§2。すべての facet に起こる） |
+> | **`unknown`** | **観測はある。** 前面アプリは分かるが、**それが何の活動か分類できない** | `user.activity_class` の値 |
+>
+> **消して1つにしない。** 「Sensor が生きているか」と「このアプリが何か分かるか」は違う質問で、
+> **3d の dry-run で「なぜ発火しなかったか」を読むときに区別が要る。**
+>
+> **ただし `AutonomyGate` は両方とも通さない**——片方だけ弾く実装は必ずもう片方で漏れる。
+> Gate は**割り込んでよい値の許可リスト**で書く（[autonomy.md](autonomy.md) §4）。
+
 ### ★ `user.activity_class` は観測ではなく分類である〔2026-09-06〕
 
 **Sensor はこれを送らない。** `meeting` / `focused_work` は
@@ -381,5 +394,6 @@ Shell に移したことで、その門が黙って消えてはならない。
 | 14 | `time.*` が facet として存在しない（**Core が直接書く経路が無い**。静的検査 #10） |
 | 15 | **許可されるまで Desktop Sensor が起動しない**。許可は永続化され、次回は聞かれない |
 | 16 | 許可を断った状態で `AutonomyGate` が通らない（`Unknown` は fail-closed） |
+| 16b | **`Unknown`（facet 無し）と `unknown`（分類失敗）が区別して Inspector に出る**（Gate はどちらも閉じるが、**理由は違う**） |
 | 17 | **値が変わらなくても facet が期限切れない**（Sensor を回したまま TTL の 3 倍待ち、`is_valid()` が真であり続ける） |
 | 18 | **Sensor が黙ったら facet が `Unknown` になる**（17 の裏。**止まったことに気づけること**） |

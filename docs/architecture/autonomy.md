@@ -121,7 +121,7 @@ async def tick(self):    # 30秒ごと
 | ゲート | 条件 | 理由 |
 |---|---|---|
 | 在席 | `world["user.present"] is True` | 不在時の発話は無意味。**`Unknown` は通さない**（下記） |
-| 集中中でない | `user.activity_class` が**既知**で、かつ `meeting` / `focused_work` でない | 邪魔をしない。**`Unknown` は通さない**（下記） |
+| 集中中でない | `user.activity_class` が**割り込んでよい値の集合に入っている**（**許可リスト**。下記） | 邪魔をしない。**期限切れも分類失敗も通さない** |
 | 全画面でない | `desktop.fullscreen is False` | ゲーム中・動画視聴中に割り込まない。**`Unknown` は通さない** |
 | DND でない | 設定 | ユーザーの明示的意思 |
 | Quiet Hours 外 | 設定 | 深夜に話しかけない |
@@ -129,28 +129,54 @@ async def tick(self):    # 30秒ごと
 | **AutonomyBudget 内** | 後述 | 「鬱陶しさ」と「暴走コスト」の統一的な抑制 |
 | Permission | 自律 actor で許される行為か | Phase 6 以降。Phase 3 は発話のみ |
 
-### ★ `Unknown` は「条件を満たしている」ではない〔2026-09-06〕
+### ★ 「知らない」は「条件を満たしている」ではない〔2026-09-06〕
 
-**「`meeting` でない」は `Unknown` でも真になる。** 否定形で書いた条件は、
-**知らないときに通ってしまう**——fail-open である。
+**「`meeting` でない」は、知らないときにも真になる。** 否定形で書いた条件は fail-open である。
+
+#### 「知らない」は2種類あり、**どちらも通してはいけない**
+
+| | 何が起きたか | 表現 |
+|---|---|---|
+| **facet が無い** | 観測が届いていない / 期限切れ（Sensor が黙った） | **`Unknown`**（facet 層の sentinel。[world-state.md](world-state.md) §2） |
+| **分類できない** | 観測はある（前面アプリは分かる）が、**それが何をしている状態か判らない** | **`unknown`**（`user.activity_class` の enum 値。同 §3） |
+
+**この2つは別物であり、片方だけを弾く実装は必ずもう片方で漏れる。**
+`cls is Unknown` だけ見ると、**`unknown` は「既知の値で、`meeting` でも `focused_work` でもない」ので通る。**
+
+> **enum の `unknown` を消して sentinel に寄せることはしない。** 2つは違う質問に答えている——
+> 「Sensor が生きているか」と「このアプリが何なのか分かるか」である。
+> **3d の dry-run で「なぜ発火しなかったか」を読むとき、この区別が要る**（[../roadmap.md](../roadmap.md)）。
+> **区別を残したまま、Gate では両方を弾く。**
+
+#### 許可リストで書く。**禁止リストで書かない**
 
 ```python
-# 通ってしまう
+# 両方漏れる（`Unknown` も enum の `unknown` も、この条件を満たす）
 if world.get("user.activity_class") not in (MEETING, FOCUSED_WORK): ...
 
-# 既知であることを先に要求する
-cls = world.get("user.activity_class")          # 期限切れなら Unknown
-if cls is Unknown or cls in (MEETING, FOCUSED_WORK): return blocked
+# 割り込んでよい値を列挙する。それ以外はすべて通さない
+INTERRUPTIBLE = frozenset({IDLE, BROWSING})          # 〔Provisional〕3d の dry-run で見直す
+if world.get("user.activity_class") not in INTERRUPTIBLE: return blocked
 ```
 
-**TTL がこれを日常的に起こす。** `user.activity_class` は導出 facet で、
-**入力のどれか1つが切れた瞬間に `Unknown` になる**
+**禁止リストは、値が増えるたびに穴が開く。** `unknown` はその1例にすぎず、
+**後から `presenting` や `on_call` を足した実装者が、Gate を直し忘れれば黙って通る。**
+許可リストなら**新しい値は既定で通らない**——直し忘れは「話しかけなくなる」side に倒れる。
+
+**`gaming` / `media` を許可に入れるかは決めていない**〔Provisional〕。
+全画面はすでに別のゲートが弾いており、ウィンドウモードの扱いは
+**3d の dry-run で「そのとき喋ろうとしたか」を見てから決める**（[../roadmap.md](../roadmap.md)）。
+**決まるまでは通さない側に置く。**
+
+#### TTL がこれを日常的に起こす
+
+`user.activity_class` は導出 facet で、**入力のどれか1つが切れた瞬間に `Unknown` になる**
 （[world-state.md](world-state.md) §3）。在席と全画面の観測が続いていても、
 前面アプリの観測だけが止まれば分類は落ちる。**そこで割り込みを許すなら、TTL を短くした意味が無い。**
 
-**規則: すべての facet ゲートは「既知であること」を条件に含む。**
-World は**期限切れを `None` ではなく `Unknown` として返す**ので（world-state.md §2）、
-`is True` / `is False` で書けば偶然通ることはない。**`==` や `not in` で書かない。**
+**規則: すべての facet ゲートは「取りうる値のうち、通してよいものを列挙する」形で書く。**
+真偽値の facet は `is True` / `is False`（`==` や `not` で書かない）、
+列挙の facet は上記の許可リストである。
 
 > **Gate が「知らないから話しかけない」に倒れるのは正しい。** Phase 3 の完了条件は
 > 「1日つけっぱなしにして不快でない」であり、**黙るのは失敗ではない。**
@@ -293,6 +319,8 @@ Evaluation → Memory / Internal State に反映
 | 4 | Gate の各条件が単独で通過を阻止する |
 | 4b | **facet が `Unknown` のとき、その条件は通らない**（`user.present` / `user.activity_class` / `desktop.fullscreen` を個別に期限切れにする） |
 | 4c | **`user.activity_class` の入力を1つだけ期限切れにすると Gate が閉じる**（在席と全画面は生きたまま。導出 facet の TTL → [world-state.md](world-state.md) §3） |
+| 4d | **分類が enum の `unknown` のとき Gate が閉じる**（**facet は新鮮なまま**。4b とは別の経路——知らないアプリが前面にある場合） |
+| 4e | **`ActivityClass` の全値を流し、許可リストに無いものがすべて閉じる**（**値を足したら自動的に落ちる**。禁止リストに戻さないための検査） |
 | 5 | Gate 不通過時に Drive が penalize される |
 | 6 | AutonomyBudget が正しく消費・リセットされる |
 | 7 | 「うるさい」で予算がゼロになり Drive が減衰する |
