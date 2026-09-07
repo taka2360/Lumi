@@ -103,7 +103,7 @@ context.effective_trust: TrustLevel
 | `ToolResult` | `provenance_class`, `trust_level` |
 | `MemoryRecord` | `provenance_class`, `trust_level` |
 | `ContextBlock` | `provenance_class`, `trust_level` |
-| `Signal` | `trust_level`（送出元の信頼度から決まる） |
+| `Signal` | `trust_level`（**(送出元, `type`) の組**で決まる。`sensor.*` は送出元を上書きして `TAINTED` → [event-model.md](event-model.md)） |
 | `Turn` | `trust_level`（後述） |
 | `PromptContext` | `effective_trust`（後述の3つの join） |
 

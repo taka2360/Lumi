@@ -46,7 +46,7 @@ class WorldFacet:
     confidence: float           # 0.0-1.0
     observed_at: datetime
     ttl: timedelta
-    source: SensorId
+    source: FacetSource         # SensorId | "core.derived"（下記）
     # provenance は2つで1組。**片方だけ持つと propagate() に渡せない**（下記）
     provenance_class: ProvenanceClass   # 監査とユーザーへの説明のラベル
     trust_level: TrustLevel             # Policy が読む値。**再計算しない**（Invariant 7）
@@ -56,6 +56,26 @@ class WorldFacet:
 ```
 
 **期限切れた facet は「知らない」を意味する。** `None` を返すのではなく、`Unknown` として扱い、プロンプトにも「分からない」と投影する。
+
+### ★ `source` は Sensor とは限らない〔2026-09-06〕
+
+**`user.activity_class` は Core が導出する**（§3）ので、**どの Sensor も出どころではない。**
+`source: SensorId` のままだと、**Core の判断を Desktop Sensor のせいにするしかない**——
+Inspector で「Sensor がそう言った」と表示され、**分類器のバグを Sensor の不具合として追うことになる。**
+
+```python
+FacetSource = SensorId | Literal["core.derived"]
+```
+
+| 値 | 意味 |
+|---|---|
+| `SensorId` | **観測。** その Sensor が送った Signal がそのまま facet になった |
+| `"core.derived"` | **導出。** Core が他の facet から計算した（`user.activity_class`） |
+
+**`provenance_class` とは別の軸である。** `provenance_class` は「**信用してよいか**」、
+`source` は「**誰が言ったか**」を答える。
+導出 facet は `source = "core.derived"` かつ `provenance_class = DERIVED` になるが、
+**Extension が送った生の観測**も `DERIVED` にはならない（`UNTRUSTED`）ので、一対一ではない。
 
 ### ★ `trust_level` を facet が持つ理由〔2026-09-06 / [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)〕
 
@@ -399,6 +419,7 @@ Shell に移したことで、その門が黙って消えてはならない。
 | 11 | `sensor.*` の Signal が `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED` になる（**送出元が Shell でも**） |
 | 12 | facet の provenance が projection まで運ばれ、**tainted な facet が隔離ブロックに入る** |
 | 12b | **導出 facet が `DERIVED` になる**（生の観測の `UNTRUSTED` と区別され、`trust_level` はどちらも `TAINTED`） |
+| 12c | **導出 facet の `source` が `core.derived` になる**（**どの `SensorId` でもない**。Core の判断を Sensor に帰属させない） |
 | 13 | **導出 facet の TTL が入力の残りの最小を超えない**（`focus_app` を 30 s 止めたら `activity_class` も `Unknown` になる） |
 | 14 | `time.*` が facet として存在しない（**Core が直接書く経路が無い**。静的検査 #10） |
 | 15 | **許可されるまで Desktop Sensor が起動しない**。許可は永続化され、次回は聞かれない |

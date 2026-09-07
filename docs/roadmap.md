@@ -479,6 +479,8 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] **`WorldFacet` が `provenance_class` と `trust_level` を持ち、projection まで運ぶ**
   （**facet に置き場所が無いと、汚染は保存の時点で消える**。3a の tainted な Signal の行き先がこれ）。
   **両方持つ**——`propagate()` は `Provenanced` を要求し、**`trust_level` だけの facet は導出の入力にできない**
+- [ ] **`WorldFacet.source` を `FacetSource`（`SensorId | "core.derived"`）にする**——
+  導出 facet を Sensor に帰属させない（Inspector で分類器のバグを Sensor の不具合として追うことになる）
 - [ ] **`user.activity_class` を Core が導出する**（`sensor.*` ハンドラの中で。決定論的コードで）。
   **TTL は入力の残りの最小**——固定値にすると根拠が切れた後も分類が生き残り、Gate が割り込む
 - [ ] プロンプトへの projection（**「分からない」も投影する**。**tainted な観測は隔離ブロックへ**）
@@ -514,6 +516,9 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] **`gaming` / `media` を割り込み許可に入れるかを、dry-run のログを見て決める**〔Provisional〕
 - [ ] **shadow 実行**——`Accepted` のとき、**予算を消費し、cooldown を張り、Drive を減衰させる**。
   **LLM 生成と発話だけを抑止する**。**これをしないと頻度のログが 3e と一致しない**
+- [ ] **予算は3次元とも進める**（`interrupts_used` / `tokens_used` / `wallclock_used`）。
+  生成しない以上、後の2つは**決定論的な見積もりを計上し、推定値と記録する**〔Provisional〕。
+  **`interrupts_used` だけ進めると、トークンや時間で先に尽きる場合に本番より Gate が開き続ける**
 - [ ] **数日 dry-run で眺め、Gate のパラメータを決める**
 
 #### 3e — 自律発話
