@@ -514,8 +514,12 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   **`Unknown`（Sensor が黙った）と `unknown`（アプリを分類できない）を区別して出す**——
   前者は Sensor の不具合、後者は分類器の課題であり、**打つ手が違う**
 - [ ] **`gaming` / `media` を割り込み許可に入れるかを、dry-run のログを見て決める**〔Provisional〕
-- [ ] **shadow 実行**——`Accepted` のとき、**予算を消費し、cooldown を張り、Drive を減衰させる**。
+- [ ] **shadow 実行**——`propose()` は本番と同じに呼び、`Accepted` のとき
+  **予算を消費し、cooldown を張り、Drive を減衰させ、`complete()` する**。
   **LLM 生成と発話だけを抑止する**。**これをしないと頻度のログが 3e と一致しない**
+- [ ] **`complete()` を忘れない**——`propose()` が `Accepted` を返した時点で自律 Activity は
+  **もう `running` の foreground** であり、**idle に戻すのは `complete()` だけ**。
+  忘れると**最初の1回で foreground が固まり、以降の提案が全部 `Deferred`**（Invariant 4 は破れないので**静かに壊れる**）
 - [ ] **予算は3次元とも進める**（`interrupts_used` / `tokens_used` / `wallclock_used`）。
   生成しない以上、後の2つは**決定論的な見積もりを計上し、推定値と記録する**〔Provisional〕。
   **`interrupts_used` だけ進めると、トークンや時間で先に尽きる場合に本番より Gate が開き続ける**

@@ -121,6 +121,8 @@ async def tick(self):    # 30秒ごと
 | | dry-run で | なぜ |
 |---|---|---|
 | Gate 判定 | **本番と同じ** | 測りたいものそのもの |
+| `propose()` | **本番と同じ**（呼ぶ） | 呼ばないと Arbiter の `Deferred` / `Rejected` が観測できない——**それも測りたい判定である** |
+| **`complete()`** | **必ず呼ぶ**（下記） | **呼ばないと foreground が自律 Activity のまま張り付き、以降の提案が全部 `Deferred` になる** |
 | `interrupts_used` | **消費する** | 消費しないと、予算が効いている様子が観測できない |
 | **`tokens_used`** | **見積もりを計上する**（下記） | **生成しないと 0 のまま**。本番はここで先に予算が尽きることがある |
 | **`wallclock_used`** | **見積もりを計上する**（下記） | 同上 |
@@ -128,6 +130,33 @@ async def tick(self):    # 30秒ごと
 | Drive の減衰 | **減衰させる** | 減らないと、閾値超えが張り付く |
 | **LLM 生成** | **しない** | 抑止したいのはここ |
 | **発話** | **しない** | 同上 |
+
+#### ★ shadow Activity を完了させる。**さもないと2回目以降が起きない**
+
+`propose()` が `Accepted` を返した時点で、**その Activity はもう `running` の foreground であり、
+idle は `suspended` になっている**（[../contracts/state-machines.md](../contracts/state-machines.md)）。
+**idle に戻すのは `complete()` だけ**である。
+
+本番ではその `complete()` が `_generate_and_execute()` の中にある。
+**dry-run が生成を飛ばすついでに完了も飛ばすと、最初に通った1回で foreground が固まる。**
+
+| そのあと何が起きるか | |
+|---|---|
+| 次の tick 以降 | `deferrable=True` の提案は**全部 `Deferred`**。自律発話が**二度と起きない** |
+| ログ | 「1日に1回しか話しかけようとしなかった」と出る。**実際には Gate を評価する前に詰まっている** |
+| Invariant 4 | **破れない。** foreground はちょうど1つのまま——**だから静かに壊れる** |
+
+**これは前項（状態を進めない）と正反対の壊れ方であり、両方同時に成立する。**
+判定だけ記録すれば頻度が多すぎ、完了を忘れれば頻度が 1 回で止まる。
+**どちらも「3d のログを見て Gate を決める」を無効にする。**
+
+> **`complete()` は記録の後に呼ぶ。** 予算・cooldown・Drive を更新してから完了させる。
+> 順序を逆にすると、完了で idle に戻った直後に次の tick が走り、**まだ減っていない Drive を見る。**
+
+**受け入れる差**: shadow Activity は**発話の長さのあいだ foreground を占有しない**（即座に完了する）。
+本番では数秒間ほかの提案を締め出す。**cooldown が分単位であるのに対し秒単位なので、
+頻度のログは歪まないと判断した**〔Provisional〕。
+**3d で「shadow 完了の直後に別の Drive の提案が固まって通る」現象が見えたら、この判断を見直す。**
 
 #### ★ 予算は3次元ある。1つだけ消費しても本番にならない
 
@@ -369,5 +398,7 @@ Evaluation → Memory / Internal State に反映
 | 12 | **シミュレーション: 24時間分の World State 系列を流し、割り込み回数が予算内に収まる** |
 | 13 | **dry-run と本番で、Gate の判定列と予算・cooldown・Drive の推移が一致する**（違うのは LLM 生成と発話の有無だけ。**12 の系列を両モードで流して比べる**） |
 | 13b | **dry-run で `tokens_used` / `wallclock_used` も増える**（**`interrupts_used` だけ増える実装で落ちること**。トークン上限に先に当たる系列を流し、dry-run でも Gate が閉じる） |
+| 13c | **dry-run で 2 回目以降の自律提案が通る**（**`complete()` を呼ばない実装で落ちること**。1回通した後、cooldown と予算を満たす系列を流し、`Deferred` ではなく `Accepted` になる） |
+| 13d | **dry-run の tick 後、foreground が idle に戻っている**（13c の直接の検査） |
 
 12 が「鬱陶しくないこと」の唯一の自動テスト。実際の体感は Phase 3 の完了条件で人間が判断する。
