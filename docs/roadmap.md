@@ -465,6 +465,14 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] **Desktop Sensor（Shell / Rust）** — foreground app 名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。
   `hover.rs` と同じポーリング監視スレッドの形。**ウィンドウタイトルは読まない**。
   **送るのは生の観測だけ**（`user.activity_class` は送らない）
+- [ ] **1回の観測 = 1つの Signal**（facet ごとに分けない）。`observed_at` と単調増加の `seq` を1つ持つ
+- [ ] **`observed_at` を `Signal.received_at` で境界づける**（未来は丸める / 許容ずれ超の過去は拒否してログ）。
+  **payload は tainted であり、その中の時刻も例外ではない**——未来日付は TTL を無効化する
+- [ ] **`seq` が現在値以下の観測は install 前に捨てる**（順序保証は無い。
+  古い観測が新しい facet を上書きすると `observed_at` ごと巻き戻り、**TTL では検出できない**）
+- [ ] **1観測ぶんの facet を facet ストア側の1つの排他区間で入れ替える**。
+  **`EventBus` のロックは `stream_key` ごと**で、`world:*` は facet ごとに分かれているため、
+  **EventBus では作れない**。DomainEvent は facet ごとに出し、**同一観測は `causation_id` で辿る**
 - [ ] **送出周期は TTL の半分以下。変化が無くても送る**（変化時は即座に送る）。
   **変化時だけ送ると facet が期限切れ、`activity_class` も `Unknown` になり、Gate が閉じる**
   → [architecture/world-state.md](architecture/world-state.md) §3

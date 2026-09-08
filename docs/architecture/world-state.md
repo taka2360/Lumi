@@ -219,12 +219,66 @@ Shell（Desktop Sensor）〔Phase 3〕 / Capability Extension〔Phase 9〜〕
 | | |
 |---|---|
 | 規則 | **1回の観測は1つの Signal。** その中に、そのポーリングで読んだ facet を全部入れる |
-| Core 側 | **全部を1つのトランザクションで install してから**、導出（`user.activity_class`）を計算する |
+| Core 側 | **全部を1つのトランザクションで install してから**、導出（`user.activity_class`）を計算する（下記） |
 | 部分更新 | **しない。** 「変わったものだけ入れる」も**しない**——ハートビートとしても全部送る（下記） |
 | 複数 Sensor 間 | **保証しない。** Desktop Sensor と将来の Calendar Sensor のあいだに原子性は無い。**1つの Sensor の1回の観測**だけが単位である |
 
 > **`observed_at` を Signal 単位で1つ持つ。** facet ごとに別々の時刻を持つと、
 > **同じ観測から来た facet が別々に期限切れる**——導出 TTL（§3）の計算がそこで崩れる。
+
+##### 原子性は facet ストア側で作る。EventBus には無い
+
+**`EventBus` のロックは `stream_key` ごとである**（`core/lumi/kernel/event.py`）。
+そして `world:*` の stream は **facet ごとに分かれている**（`world_stream(facet_key)`）。
+**つまり EventBus は「1観測ぶんの複数 facet」をまとめて見せる仕組みを持っていない。**
+
+| 何を | どこで作るか |
+|---|---|
+| **書き込みの原子性** | **facet ストアの側**。1観測ぶんの facet を**1つの排他区間で入れ替える** |
+| **読み取りの一貫性** | `WorldSnapshot`。**その区間の途中を読ませない** |
+| **DomainEvent** | **facet ごとに出る。まとめない。** 同じ観測から来たことは **`causation_id`（元の Signal の id）で辿る** |
+
+**購読者から見ると、イベントは依然として1つずつ届く。** 保証するのは
+**`WorldSnapshot` を読んだときに中間状態が見えないこと**であって、
+**イベント列が原子的に見えることではない**——後者は per-stream 順序保証の設計
+（[../contracts/event-model.md](../contracts/event-model.md)）と両立しない。
+**Gate と projection は必ず `WorldSnapshot` 経由で読む**（イベントを直接数えて状態を作らない）。
+
+#### ★ `observed_at` と `seq` は低信頼の入力である
+
+**Signal の payload は tainted である**（§5）。**その中の時刻と順番も例外ではない。**
+`is_valid()` は `observed_at` を読むので、**送出元が決めた値をそのまま入れると、
+送出元が facet の寿命を決められる。**
+
+| 攻撃・事故 | そのまま入れるとどうなるか | Core 側の規則 |
+|---|---|---|
+| **未来の `observed_at`** | 年齢が負になり、**その未来時刻 + TTL まで有効。** Sensor が止まっても `Unknown` にならず、**ハートビート契約が無効になる** | **`observed_at > received_at` なら `received_at` に丸める**（未来は許さない） |
+| **大きく過去の `observed_at`** | 届いた瞬間に期限切れ。事故としては安全側だが、**原因が分からない** | **許容ずれを超えたら拒否してログに出す**（黙って捨てない） |
+| **順序の入れ替わり** | 古い観測が新しい facet を上書きし、**`observed_at` まで巻き戻る** | 下記 |
+
+**基準にするのは `Signal.received_at`**（Core が付ける。[../contracts/event-model.md](../contracts/event-model.md)）。
+`observed_at` は**「received_at からどれだけ前か」を表す補正としてだけ**使い、
+**`[received_at - 許容ずれ, received_at]` の外に出さない。**
+
+> **`received_at` だけを使えばよい、とはしない。** 送出から到着までの遅れは実在し、
+> **それを無視すると facet が実際より新しく見える。** 低信頼の値は**捨てるのではなく、境界を課す。**
+
+#### ★ 古い観測で新しい facet を上書きしない
+
+**`Signal` に順序保証は無い**（[../contracts/event-model.md](../contracts/event-model.md)）。
+再送・スケジューリング・再接続で、**1つの Sensor の観測が入れ替わって届きうる。**
+そのまま install すると、**古い世界が新しい世界を上書きし、`observed_at` も巻き戻る**——
+**期限切れの判定ごと過去に戻る**ので、TTL では検出できない。
+
+| | |
+|---|---|
+| 規則 | **Sensor ごとに単調増加の観測番号（`seq`）を持ち、`seq` が現在値以下の観測は install 前に捨てる** |
+| 何と比べるか | **その送出元について Core が最後に受理した `seq`**。facet ごとではない（1観測は不可分） |
+| 再接続 | **`seq` はリセットされうる。** Sensor の接続世代と組で見る（**世代が上がったら受理し直す**） |
+| 捨てたとき | **ログに出す。** 恒常的に出るなら、周期か経路がおかしい |
+
+**これは `WorldSnapshot` では直せない。** スナップショットが与えるのは
+**読み取り時の一貫性**であって、**書き込みの時間的一貫性ではない。**
 
 #### ★ 送るのは変化だけではない — TTL より短い周期で送り続ける
 
@@ -371,7 +425,7 @@ Signal（「うるさい」など）は受け取るが、それを Mood にど�
 | Sensor | 取得する facet | 実装形態 |
 |---|---|---|
 | **Desktop Sensor** | `user.*`（`activity_class` を除く）, `desktop.*`, `audio.playing`, `system.*` | **Shell（Rust）**〔Phase 3〕 |
-| （将来）`sensor-calendar` | 予定、会議中か | out-of-process Capability Extension〔Phase 9〕 |
+| （将来）`sensor-calendar` | 予定、会議中か | out-of-process Capability Extension〔**ホストは Phase 4b**（browser が最初の利用者）／**第三者製の Sensor を許すかは Phase 9**〕 |
 | （将来）`sensor-music` | 再生中の曲 | 同上 |
 
 **Phase 3 の Desktop Sensor を out-of-process Extension にしない理由**は
@@ -491,6 +545,10 @@ Shell に移したことで、その門が黙って消えてはならない。
 | 17 | **値が変わらなくても facet が期限切れない**（Sensor を回したまま TTL の 3 倍待ち、`is_valid()` が真であり続ける） |
 | 18 | **Sensor が黙ったら facet が `Unknown` になる**（17 の裏。**止まったことに気づけること**） |
 | 18b | **1回の観測に含まれる facet が、まとめて install される**（全画面遷移の系列を流し、**`focus_app` だけ新しい中間状態が観測できないこと**） |
+| 18c | **install の最中に `WorldSnapshot` を読んでも中間状態が見えない**（並行読み取りのテスト） |
+| 18d | **未来の `observed_at` が `received_at` に丸められる**（Sensor が止まったあと TTL どおりに `Unknown` になる） |
+| 18e | **許容ずれより古い `observed_at` は拒否され、ログに出る**（黙って捨てない） |
+| 18f | **順序が入れ替わった Signal で、古い観測が新しい facet を上書きしない**（`seq` が現在値以下なら install 前に捨てる。**`observed_at` も巻き戻らない**） |
 | 19 | **`sensor.*` の payload の形が Shell と Core で一致する**——**同じ fixture 群（妥当・不当の両方）を Rust と Python の両方の検証器に通す**。許可 key を全部覆い、**未知の key を拒否する**。`wire.json` は形を検査せず（[../contracts/wire.md](../contracts/wire.md) §4）、**検証器を生成もしない**（[../decisions/ADR-022-wire-contract.md](../decisions/ADR-022-wire-contract.md)） |
 | 20 | **Shell に許可された key が Shell の接続から通る** |
 | 20b | **同じ key を Shell 以外の接続（Stage / Extension）から送ると拒否される**（`source_id` は接続から決まり、payload の名乗りを見ない） |

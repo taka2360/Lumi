@@ -103,15 +103,21 @@ Core が意味を解釈する
 
 ```
 Sensor（Phase 3 は Shell → [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)）
-  → Signal(type="sensor.foreground_app", payload={"app": "factorio.exe"})
-  → Core が認証・schema検証・capability検査
-  → Core が WorldFacet("user.focus_app") を更新
-  → Core が DomainEvent(
-        stream_key="world:user.focus_app",
+  → Signal(type="sensor.desktop", payload={        # **1回の観測 = 1つの Signal**
+        "observed_at": ..., "seq": 41,
+        "focus_app": "factorio.exe", "fullscreen": true, ...})
+  → Core が認証・schema検証・capability検査（B8）
+  → Core が **含まれる facet をまとめて**更新（**1観測ぶんが原子的に見える**）
+  → Core が facet ごとに DomainEvent(
+        stream_key="world:user.focus_app",   # ← stream は facet ごと。**まとめて1つにはならない**
         type="WorldFacetChanged",
-        causation_id=<signal id>
+        causation_id=<signal id>             # ← **同じ観測から来たことは causation_id で辿る**
     ) を発行
 ```
+
+> **facet ごとに Signal を分けない。** 分けると `Signal` に順序保証が無いため、
+> **新しい `focus_app` と古い `fullscreen` が組み合わさった、実在しない世界**を
+> 読み手が見る。詳細と規則 → [../architecture/world-state.md](../architecture/world-state.md) §2。
 
 Sensor は World facet を直接書かない（[authority-matrix.md](authority-matrix.md) の責務行列）。
 
