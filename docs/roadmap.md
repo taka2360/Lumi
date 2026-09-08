@@ -489,6 +489,13 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   → [architecture/world-state.md](architecture/world-state.md) §3
 - [ ] **明示的な許可を得るまで Sensor を起動しない**（opt-in。許可は永続化し、観測 key が増えたら再同意）。
   **開示だけして既定オンにしない**——Extension の `consent` に相当する門を、Shell に移した分だけ落とさない
+- [ ] **設定パネルから取り消せる。取り消したらその場でポーリングスレッドを止める**（次回起動時ではない）。
+  **取り消せない同意は同意ではない**——設定ファイルを手で編集しないと止まらない状態にしない。
+  残った facet は TTL で `Unknown` になる（即座に消さない）
+- [ ] **接続 identity（role / peer / Core が採番する epoch）を inbound ハンドラに渡す**——
+  現在 `InboundHandler` は **payload しか受け取らない**（`core/lumi/transport/router.py`）。
+  **`Signal.source_id` を接続から決める要件（B8）と同じ変更**であり、
+  **再接続時の `seq` リセットを `(epoch, seq)` で解くのにも要る**
 - [ ] `time.*` は **facet にしない**（導出値。時計は陳腐化せず、Signal も TTL も持てない）
 
 #### 3b — WorldState
@@ -498,7 +505,10 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] **1観測ぶんの facet を facet ストア側の1つの排他区間で入れ替える**。
   **`EventBus` のロックは `stream_key` ごと**で、`world:*` は facet ごとに分かれているため、
   **EventBus では作れない**。DomainEvent は facet ごとに出し、**同一観測は `causation_id` で辿る**
-- [ ] **`seq` の比較・受理済み値の更新・facet の入れ替えを、同じ排他区間で行う**。
+- [ ] **`(epoch, seq)` の比較・受理済み値の更新・facet の入れ替えを、同じ排他区間で行う**。
+  **`seq` だけで比べない**——再接続で `seq` は 1 に戻り、**接続の差し替えでは実行中のハンドラは止まらない**
+  （止めるのは停止時だけ。`core/lumi/transport/server.py`）ので、
+  **リセットすれば古いハンドラが勝ち、リセットしなければ新しい接続が高水位まで拒否される**。
   inbound は request ごとに別タスクなので、**比較だけ先に済ませると seq 41 と 42 が
   どちらも「新しい」と判定され、古い 41 が勝つ**（TOCTOU）
   → [architecture/world-state.md](architecture/world-state.md) §2

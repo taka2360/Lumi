@@ -82,6 +82,7 @@ Extension だったときは、[extension.md](../architecture/extension.md) §6 
 | capability を提示して**同意を得る** | **何を観測するかを提示して、明示的な許可を得る** |
 | **同意前は `load` しない** | **許可前は Sensor のスレッドを起動しない**（「送らない」ではなく「観測しない」） |
 | 同意結果を `extensions.granted_permissions_json` に永続化 | **設定に永続化する。毎回聞かない** |
+| Extension を無効化・アンインストールできる | **設定から取り消せる。取り消したらその場でスレッドを止める**（**取り消せない同意は同意ではない**） |
 | manifest が変われば再同意 | **観測する key が増えたら再同意** |
 
 **開示だけでは足りない。** 「知らせたうえで既定オン」は、
@@ -215,7 +216,7 @@ A のコストに Shell 実装が足されるだけで、Sensor の中身は「C
 | [world-state.md](../architecture/world-state.md) §2 | **`WorldFacet.source` を `SensorId` から `FacetSource`（`SensorId | "core.derived"`）に広げる。** 導出 facet はどの Sensor のものでもなく、**そのままだと Core の判断を Desktop Sensor に帰属させることになる** |
 | [world-state.md](../architecture/world-state.md) §3 | `user.activity_class` の source が Desktop Sensor → **Core（`sensor.*` ハンドラで導出。`source = "core.derived"`）**。`time.*` は**facet をやめて導出値にする**（時計は陳腐化せず、静的検査 #10 の例外を作る必要も無くなる） |
 | [autonomy.md](../architecture/autonomy.md) | `world.get("time.quiet_hours")` → 時計から直接引く。**facet ゲートは許可リストで書く**——`Unknown`（facet 無し）と `unknown`（分類失敗）は**どちらも「`meeting` でない」を満たす**ので、禁止リストでは両方漏れる |
-| **観測の原子性と順序** | **1回の観測 = 1つの Signal**（facet ごとに分けない）。`observed_at` は **`Signal.received_at` で境界づける**（未来は丸める）、`seq` が現在値以下の観測は捨てる。**原子性は facet ストア側で作る**——`EventBus` のロックは `stream_key` ごとで、`world:*` は facet ごとに分かれている → [world-state.md](../architecture/world-state.md) §2 |
+| **観測の原子性と順序** | **1回の観測 = 1つの Signal**（facet ごとに分けない）。**接続世代（epoch）は Core が採番し、`(epoch, seq)` で比べる**（再接続で `seq` は 1 に戻り、実行中の古いハンドラは止まらないため）。`observed_at` は **`Signal.received_at` で境界づける**（未来は丸める）、`seq` が現在値以下の観測は捨てる。**原子性は facet ストア側で作る**——`EventBus` のロックは `stream_key` ごとで、`world:*` は facet ごとに分かれている → [world-state.md](../architecture/world-state.md) §2 |
 | **Sensor の送出周期** | **TTL の半分以下でハートビートを送る**。**変化時だけ送る実装にすると、変わらない限り facet が期限切れ、`activity_class` も `Unknown` になり、自律発話が静かに止まる** |
 | manifest の `ttl_ms` | **権威ではなく上限のヒント。** Core は自分の値と短い方を採る（**Extension が観測を Core の意図より長生きさせられない**） |
 | Phase 3a | **Shell → Core の `sensor.*` を契約に定義する。** 現在 `os.*` は Core → Shell の一方向しか無く、**Shell 発の inbound が存在しない**。**`NAMESPACE_BY_ROLE` は role ごとに接頭辞が1つで、送信と受信に同じ表を使っている**——`os.` のままでは `sensor.*` が拒否され、`sensor.` に替えると `os.*` が壊れる。**inbound / outbound を別の集合に分ける**のが先。**名前と定数**（method 名・名前空間・許可 key）は [wire.json](../contracts/wire.json)、**payload の形**（フィールド名・型・必須性）は [interfaces/shell.md](../interfaces/shell.md) —— **`wire.json` は payload の形を対象外と明言している**（[wire.md](../contracts/wire.md) §4）ので、そこに置いても検査されない。**形の検査は Rust と Python の両方に置く** |
