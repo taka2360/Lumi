@@ -172,7 +172,7 @@ EpisodeRecord 書き込み（記憶化はまだしない → memory.md）
 ```
                                                          trust への寄与
 1. persona            （Content Pack から）              trusted
-2. world 投影         （World State の圧縮）             trusted
+2. world 投影         （World State の圧縮）             trusted + block_trust ※
 3. internal state     （mood / current_goal）            trusted
 4. retrieved memory   （予算内。assertion_mode 付き）     block_trust
 5. recent turns       （Working Memory）                 history_trust
@@ -180,6 +180,11 @@ EpisodeRecord 書き込み（記憶化はまだしない → memory.md）
 7. 現在の発話                                            trusted（ユーザー入力）
 
 effective_trust = join(block_trust, history_trust, session_trust)
+
+※ world 投影は2つに割れる〔2026-09-06 / ADR-050〕。**trusted な facet だけが地の文**で、
+   **tainted な facet（`sensor.*` 由来）は 6 と同じ ContextBlock として隔離ブロックに入り、
+   block_trust に join される。** `project()` が `str` を返すと、ここで汚染が消える
+   → world-state.md「投影は provenance を落とさない」
 ```
 
 **トークン予算を固定し、超過時に何を落とすかを決定論的に決める。** LLM に「適当に切る」をさせない。

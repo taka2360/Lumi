@@ -416,7 +416,8 @@ Scheduler を `audio/` に置くと `audio → providers → audio` のパッケ
 
 ```text
 stt の寄与    = stt_ms - stt_overlap_ms
-stt_overlap_ms = min(available_at, vad_ended_at) - max(requested_at, vad_started_at)   ただし 0 未満は 0
+stt_overlap_ms = 1000 × max(0, min(available_at, vad_ended_at) - max(requested_at, vad_started_at))
+                 └─ 時刻は perf_counter() の**秒**。ms への変換を式に含める ─┘
 ```
 
 `stt_overlap_ms` は **`vad_ms` と `stt_ms` が実際に重なっていた長さ**であり、

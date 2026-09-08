@@ -229,7 +229,8 @@ Desktop Sensor が Shell に入り、**Shell 発の `sensor.*` Signal が Core �
 | 層 | 内容 |
 |---|---|
 | 認証 | WS token（B3 と同じ接続） |
-| **許可 key** | **Core が持つ「送出元ごとの許可 key 集合」と照合する。** 送出元の申告・送出元のコードにあるリストを見ない（Invariant 5） |
+| **送出元の決定** | **`Signal.source_id` は、認証済みの WS 接続から Core が決める。** payload の中の名乗りを見ない——**見たら allowlist は誰でも名乗れる飾りになる** |
+| **許可 key** | **その `source_id` に対応する、Core が持つ許可 key 集合**と照合する。送出元のコードにあるリストを見ない（Invariant 5） |
 | schema | 型・範囲・列挙値 |
 | **provenance** | **`sensor.*` の payload は `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED` に固定**（[provenance.md](provenance.md)）。**送出元が Shell でも上げない**（Invariant 7） |
 | **facet 化** | WorldFacet を書くのは Core（Invariant 6）。**TTL も confidence も Core が決める**（[../architecture/world-state.md](../architecture/world-state.md) §3） |
@@ -237,6 +238,10 @@ Desktop Sensor が Shell に入り、**Shell 発の `sensor.*` Signal が Core �
 **schema 検証だけでは足りない。** `sensor.*` として妥当な key であることと、
 **その送出元が送ってよい key であること**は別である。前者だけだと Shell が
 `user.activity_class` を名乗れてしまい、**それは `AutonomyGate` の判断に直接効く**。
+
+**この2行は順番に意味がある。** 先に**接続から**送出元を決め、**その後で**その送出元の集合を引く。
+逆順——payload の名乗りで集合を選ぶ——にすると、**Stage の接続から `sensor.*` を送って
+Shell を名乗れる。** 接続の role は既に B2 で分けられているので、**そこから引くだけでよい。**
 
 ### 保証しないこと
 
@@ -262,6 +267,7 @@ Desktop Sensor が Shell に入り、**Shell 発の `sensor.*` Signal が Core �
 | 悪意ある Extension が宣言外の capability を使う | Invariant 5 の交差。B4 のプロセス隔離 |
 | **アプリが自分の表示名にプロンプトを仕込み、`user.focus_app` 経由で読ませる** | **B8**。`sensor.*` は tainted 固定で、facet と projection まで運ばれ**隔離ブロックに入る**（Invariant 3 / 7） |
 | **版ずれした Shell が、別 Sensor の key や `user.activity_class` を名乗る** | **B8**。判定は **Core 側の「送出元ごとの許可 key 集合」**。送出元のコードにあるリストを宣言として扱わない |
+| **Shell 以外の接続（Stage / Extension）が `sensor.*` で Shell を名乗る** | **B8**。`source_id` は**認証済み接続から決まる**ので、payload の名乗りは判定に使われない |
 | 監査ログを消して痕跡を隠す | `audit_log` を filesystem tool の deny パスに。Phase 4a で hash chain（検出） |
 | LLM が「これは安全な操作だから許可して」と主張する | **Policy が LLM の理由文に依存しない**（Invariant 1, 3） |
 

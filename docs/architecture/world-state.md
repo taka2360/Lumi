@@ -72,8 +72,18 @@ FacetSource = SensorId | Literal["core.derived"]
 | `SensorId` | **観測。** その Sensor が送った Signal がそのまま facet になった |
 | `"core.derived"` | **導出。** Core が他の facet から計算した（`user.activity_class`） |
 
-**`provenance_class` とは別の軸である。** `provenance_class` は「**信用してよいか**」、
-`source` は「**誰が言ったか**」を答える。
+**3つは別の軸である。**
+
+| | 何を答えるか |
+|---|---|
+| `provenance_class` | **どの種別の出所か**（`TRUSTED` / `UNTRUSTED` / `DERIVED`）。**監査とユーザーへの説明のラベル** |
+| `trust_level` | **Policy が読む値**（`TRUSTED` / `TAINTED`）。判断に使うのはこちら |
+| `source` | **誰が言ったか**（`SensorId` / `"core.derived"`） |
+
+**`provenance_class` を「信用してよいか」と読まない。** そう読むと
+**`UNTRUSTED` と `DERIVED` を同じもの（= 信用しない）に潰してよい**ことになり、
+「アプリがそう名乗った」と「Lumi がそこから分類した」の区別が消える。
+**Policy にとっては同じ（どちらも `TAINTED`）だが、監査と Inspector にとっては別物である。**
 導出 facet は `source = "core.derived"` かつ `provenance_class = DERIVED` になるが、
 **Extension が送った生の観測**も `DERIVED` にはならない（`UNTRUSTED`）ので、一対一ではない。
 
@@ -178,16 +188,43 @@ Phase 3 の Sensor は **Shell**（[ADR-050](../decisions/ADR-050-desktop-sensor
 
 ```
 Shell（Desktop Sensor）〔Phase 3〕 / Capability Extension〔Phase 9〜〕
-  → Signal(type="sensor.foreground_app", payload={"app": "factorio.exe"})
+  → Signal(type="sensor.desktop", payload={          # **1回の観測 = 1つの Signal**
+        "observed_at": ..., "focus_app": "factorio.exe",
+        "fullscreen": true, "present": true, ...})
   → Core: 認証 / schema 検証 / **送出元ごとの許可 key 集合**と照合（B8）
   → Core: trust を決める（`sensor.*` は tainted 固定）
-  → Core: WorldFacet("user.focus_app") を更新
+  → Core: **含まれる facet を1トランザクションで install** → 導出（activity_class）を計算
   → Core: DomainEvent(stream_key="world:user.focus_app", type="WorldFacetChanged")
 ```
 
 **Sensor は facet を直接書かない。** Core が書く（[../contracts/authority-matrix.md](../contracts/authority-matrix.md)）。
 
 理由: Sensor が任意の key に任意の値を書けると、Core が認識していない状態が生まれる（Invariant 6 違反）。Core が key の妥当性・型・TTL を決める。
+
+#### ★ 1回の観測は1つの Signal で送る — facet ごとにばらさない
+
+**Sensor の1回のポーリングは、世界の1つのスナップショットである。**
+それを facet ごとに別々の Signal に割ると、**Core は届いた順に1つずつ facet を更新する。**
+`Signal` には**順序保証が無い**（[../contracts/event-model.md](../contracts/event-model.md)）。
+
+**そして `WorldSnapshot` はこれを直せない。** スナップショットが保証するのは
+「読んでいる最中に変わらないこと」であって、**別々に書かれた値が同じ観測に由来すること**ではない。
+
+**壊れ方**: ブラウザが全画面に入る瞬間、1回のポーリングは
+`focus_app=browser` と `fullscreen=true` を**同時に**観測する。
+別々の Signal にすると、あいだで走った Gate tick が
+**「`focus_app` は新しく、`fullscreen` は古い（false）」という、実際には存在しなかった組み合わせ**を見る。
+**どの facet も期限切れではないので `Unknown` にもならず、Gate は通る。**
+
+| | |
+|---|---|
+| 規則 | **1回の観測は1つの Signal。** その中に、そのポーリングで読んだ facet を全部入れる |
+| Core 側 | **全部を1つのトランザクションで install してから**、導出（`user.activity_class`）を計算する |
+| 部分更新 | **しない。** 「変わったものだけ入れる」も**しない**——ハートビートとしても全部送る（下記） |
+| 複数 Sensor 間 | **保証しない。** Desktop Sensor と将来の Calendar Sensor のあいだに原子性は無い。**1つの Sensor の1回の観測**だけが単位である |
+
+> **`observed_at` を Signal 単位で1つ持つ。** facet ごとに別々の時刻を持つと、
+> **同じ観測から来た facet が別々に期限切れる**——導出 TTL（§3）の計算がそこで崩れる。
 
 #### ★ 送るのは変化だけではない — TTL より短い周期で送り続ける
 
@@ -214,14 +251,40 @@ Shell（Desktop Sensor）〔Phase 3〕 / Capability Extension〔Phase 9〜〕
 **全状態ではなく、圧縮した projection のみ入れる。**
 
 ```python
-def project(snapshot: WorldSnapshot) -> str:
-    """人間が読める短い記述に落とす。生の facet 列を並べない。"""
-    # 例: 「センパイは在席中。30分ほど Factorio を触っている。今は21時。」
+def project(snapshot: WorldSnapshot) -> WorldProjection:
+    """人間が読める短い記述に落とす。生の facet 列を並べない。
+
+    **`str` を返さない。** 返すと、この関数の出口で provenance が消える。
+    """
+
+
+@dataclass(frozen=True)
+class WorldProjection:
+    trusted: str                  # tainted な facet を含まない部分
+    tainted: tuple[ContextBlock, ...]   # 隔離ブロックとして渡す。空のことが多い
 ```
 
 理由:
 - 生の facet 列（`user.idle_seconds=42`）は LLM が使いにくく、トークンも食う
 - **投影のロジックが Core にあることで、何を LLM に見せるかを制御できる**
+
+### ★ 投影は provenance を落とさない〔2026-09-06 / [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)〕
+
+**facet に `provenance_class` / `trust_level` を持たせても、`project()` が `str` を返した瞬間に消える。**
+そして [agent.md](agent.md) の PromptAssembly は **world 投影を `trusted` として数える**——
+つまり **`user.focus_app`（アプリが自分で名乗った文字列）が信頼された system テキストに入り、
+`block_trust` も `session_trust` も動かない。** Invariant 3 の隔離も、
+tainted 時の L3+ 昇格も、まとめて素通りする。
+
+| | |
+|---|---|
+| **分ける** | `trusted` な facet だけを地の文にする。**tainted な facet は `ContextBlock` にして隔離ブロックへ** |
+| **数える** | tainted なブロックは `block_trust` に join される（[agent.md](agent.md) の 6 と同じ扱い） |
+| **落ちても消えない** | 予算超過でブロックが落ちても `block_trust` は下がらない（agent.md の既存規則がそのまま効く） |
+| **混ぜない** | **1つの文に trusted な facet と tainted な facet を同居させない。** 混ぜたらその文は tainted である |
+
+> **「アプリ名くらい地の文でいい」としない。** それが Invariant 3 の想定する攻撃そのものである——
+> 実行ファイルの表示名は攻撃者が選べる。
 
 ---
 
@@ -427,4 +490,8 @@ Shell に移したことで、その門が黙って消えてはならない。
 | 16b | **`Unknown`（facet 無し）と `unknown`（分類失敗）が区別して Inspector に出る**（Gate はどちらも閉じるが、**理由は違う**） |
 | 17 | **値が変わらなくても facet が期限切れない**（Sensor を回したまま TTL の 3 倍待ち、`is_valid()` が真であり続ける） |
 | 18 | **Sensor が黙ったら facet が `Unknown` になる**（17 の裏。**止まったことに気づけること**） |
-| 19 | **`sensor.*` の payload の形が Shell と Core で一致する**（`wire.json` は形を検査しないので、**両言語に別途置く** → [../contracts/wire.md](../contracts/wire.md) §4） |
+| 18b | **1回の観測に含まれる facet が、まとめて install される**（全画面遷移の系列を流し、**`focus_app` だけ新しい中間状態が観測できないこと**） |
+| 19 | **`sensor.*` の payload の形が Shell と Core で一致する**——**同じ fixture 群（妥当・不当の両方）を Rust と Python の両方の検証器に通す**。許可 key を全部覆い、**未知の key を拒否する**。`wire.json` は形を検査せず（[../contracts/wire.md](../contracts/wire.md) §4）、**検証器を生成もしない**（[../decisions/ADR-022-wire-contract.md](../decisions/ADR-022-wire-contract.md)） |
+| 20 | **Shell に許可された key が Shell の接続から通る** |
+| 20b | **同じ key を Shell 以外の接続（Stage / Extension）から送ると拒否される**（`source_id` は接続から決まり、payload の名乗りを見ない） |
+| 20c | **版ずれした Shell が、まだ許可されていない新しい key を送ると拒否される**（**Core 側の集合が権威**） |

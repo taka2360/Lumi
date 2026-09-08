@@ -517,11 +517,16 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [ ] **shadow 実行**——`propose()` は本番と同じに呼び、`Accepted` のとき
   **予算を消費し、cooldown を張り、Drive を減衰させ、`complete()` する**。
   **LLM 生成と発話だけを抑止する**。**これをしないと頻度のログが 3e と一致しない**
+- [ ] **shadow の DomainEvent を本物と区別する**（`Activity` に印を持たせ payload に載せる）。
+  **出さないのではなく区別する**——出さないと Arbiter の判定履歴も消え、dry-run の目的が失われる。
+  そのままだと**喋っていない発話が「起きた事実」として 30 日残る**
 - [ ] **`complete()` を忘れない**——`propose()` が `Accepted` を返した時点で自律 Activity は
   **もう `running` の foreground** であり、**idle に戻すのは `complete()` だけ**。
   忘れると**最初の1回で foreground が固まり、以降の提案が全部 `Deferred`**（Invariant 4 は破れないので**静かに壊れる**）
 - [ ] **予算は3次元とも進める**（`interrupts_used` / `tokens_used` / `wallclock_used`）。
   生成しない以上、後の2つは**決定論的な見積もりを計上し、推定値と記録する**〔Provisional〕。
+  **`tokens_used` は prompt + completion**（completion だけだと予算が実コストの数 % しか見ない）。
+  **dry-run でも prompt は実際に組み立てて数える**（組み立ては LLM を呼ばない）。
   **`interrupts_used` だけ進めると、トークンや時間で先に尽きる場合に本番より Gate が開き続ける**
 - [ ] **数日 dry-run で眺め、Gate のパラメータを決める**
 

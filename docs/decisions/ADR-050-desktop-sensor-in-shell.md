@@ -9,7 +9,10 @@
 
 ## Decision
 
-**Phase 3 の `user.*` / `desktop.*` / `audio.playing` / `system.*` は、Shell が読んで Signal として Core に送る。**
+**Phase 3 の `user.present` / `user.idle_seconds` / `user.focus_app` / `desktop.*` /
+`audio.playing` / `system.*` は、Shell が読んで Signal として Core に送る。**
+**`user.*` とは書かない**——それだと `user.activity_class` を含んでしまい、
+**「Sensor は分類を送らない」という本 ADR 自身の決定と衝突する**（下記）。
 `sensor-desktop` を out-of-process Capability Extension として作らない。
 
 | | |

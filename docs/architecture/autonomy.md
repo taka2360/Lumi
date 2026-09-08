@@ -123,6 +123,7 @@ async def tick(self):    # 30秒ごと
 | Gate 判定 | **本番と同じ** | 測りたいものそのもの |
 | `propose()` | **本番と同じ**（呼ぶ） | 呼ばないと Arbiter の `Deferred` / `Rejected` が観測できない——**それも測りたい判定である** |
 | **`complete()`** | **必ず呼ぶ**（下記） | **呼ばないと foreground が自律 Activity のまま張り付き、以降の提案が全部 `Deferred` になる** |
+| **DomainEvent** | **shadow と分かる形で出す**（下記） | そのまま出すと、**喋っていない発話が「起きた事実」として 30 日残る** |
 | `interrupts_used` | **消費する** | 消費しないと、予算が効いている様子が観測できない |
 | **`tokens_used`** | **見積もりを計上する**（下記） | **生成しないと 0 のまま**。本番はここで先に予算が尽きることがある |
 | **`wallclock_used`** | **見積もりを計上する**（下記） | 同上 |
@@ -158,6 +159,25 @@ idle は `suspended` になっている**（[../contracts/state-machines.md](../
 頻度のログは歪まないと判断した**〔Provisional〕。
 **3d で「shadow 完了の直後に別の Drive の提案が固まって通る」現象が見えたら、この判断を見直す。**
 
+#### ★ shadow の DomainEvent を本物と区別する
+
+`propose()` / `complete()` は `ActivityStarted` / `ActivityEnded` を**発行する**
+（`_publish_started` / `_publish_ended`）。dry-run で本番と同じ経路を通す以上、
+**抑止した試行のぶんだけ「実際に起きた活動」が記録される。**
+
+| どこに出るか | 何が困るか |
+|---|---|
+| イベント DB（既定 30 日 → [../contracts/privacy.md](../contracts/privacy.md) §2 の行 5） | **喋っていない発話が「起きた事実」として残る** |
+| Inspector | 数日ぶんの偽の活動履歴。**3d のログを読む作業そのものを汚す** |
+| 将来の購読者 | Phase 6 以降、`ActivityEnded` を見て動くものが出たときに**誤作動する** |
+
+**`Activity` に shadow の印を持たせ、DomainEvent の payload に載せる。**
+**イベントを出さない選択はしない**——出さないと「Arbiter がどう判定したか」の履歴も消え、
+**dry-run の目的そのものが失われる。** 区別できる形で残す。
+
+> **Invariant 6 は破らない。** DomainEvent を発行するのは Core のままで、
+> **増やすのは payload の1フィールドだけ**である。
+
 #### ★ 予算は3次元ある。1つだけ消費しても本番にならない
 
 `AutonomyBudget` は `max_interrupts` / `max_tokens` / `max_wallclock` の3つを持つ（§5）。
@@ -169,7 +189,7 @@ idle は `suspended` になっている**（[../contracts/state-machines.md](../
 
 | | |
 |---|---|
-| `tokens_used` | **1回の自律発話あたりの定数**〔Provisional〕。[measurements/phase2.md](../measurements/phase2.md) の実測（生成 18〜24 トークン / プロンプト 529〜620）を出発点にする |
+| `tokens_used` | **prompt は実際に組み立てて数え、completion だけ定数で見積もる**〔Provisional〕。[measurements/phase2.md](../measurements/phase2.md) の実測（生成 18〜24 トークン）を出発点にする。数え方の定義は §5 |
 | `wallclock_used` | 同じく定数。**`critical_path_ms` の実測**（p50 1.17 s）＋発話時間の見積もり |
 | **見積もりであることを記録する** | dry-run のログに「推定値」と印を付ける。**3e で実測に置き換わったとき、両者を比べられるようにする** |
 
@@ -265,13 +285,29 @@ class AutonomyBudget:
     window_duration: timedelta      # 例: 1時間
 
     max_interrupts: int             # 時間あたり最大割り込み回数
-    max_tokens: int                 # 時間あたり LLM トークン
+    max_tokens: int                 # 時間あたり LLM トークン（**prompt + completion**。下記）
     max_wallclock: timedelta        # 時間あたり自律活動の総時間
 
     interrupts_used: int
     tokens_used: int
     wallclock_used: timedelta
 ```
+
+### ★ `tokens_used` は prompt + completion で数える〔2026-09-06〕
+
+**数え方を決めておかないと、dry-run と本番で違う式を使ってしまう**——
+そうなると 13b の上限は再現しない。
+
+| | |
+|---|---|
+| **数える対象** | **prompt + completion の合計。** Ollama の `prompt_eval_count` + `eval_count` |
+| なぜ completion だけにしないか | **自律のコストの大半は prompt 側にある。** [../measurements/phase2.md](../measurements/phase2.md) の実測で **prompt 529〜620 に対し生成 18〜24**——completion だけ数えると、**予算が実際の 4% しか見ていない**ことになる |
+| 本番 | 応答のメタデータから実測を足す |
+| dry-run | **同じ式に、決定論的な見積もりを入れる**（prompt はその時点で組み立てた実物を数えられる。completion だけが見積もり） |
+| 推定であること | プロンプトのトークン数は**推定である**（[agent.md](agent.md) の「保証しないこと」）。**予算は上限であって課金ではない**ので、推定で足りる |
+
+> **dry-run の prompt は実際に組み立てる。** 組み立ては LLM を呼ばないので抑止の対象ではなく、
+> **組み立てないと予算の大半を占める側が見積もりになってしまう。**
 
 ### なぜ「割り込み回数」を予算にするのか
 
@@ -400,5 +436,6 @@ Evaluation → Memory / Internal State に反映
 | 13b | **dry-run で `tokens_used` / `wallclock_used` も増える**（**`interrupts_used` だけ増える実装で落ちること**。トークン上限に先に当たる系列を流し、dry-run でも Gate が閉じる） |
 | 13c | **dry-run で 2 回目以降の自律提案が通る**（**`complete()` を呼ばない実装で落ちること**。1回通した後、cooldown と予算を満たす系列を流し、`Deferred` ではなく `Accepted` になる） |
 | 13d | **dry-run の tick 後、foreground が idle に戻っている**（13c の直接の検査） |
+| 13e | **dry-run が発行した `ActivityStarted` / `ActivityEnded` に shadow の印が付く**（**印の無いイベントと区別して数えられること**） |
 
 12 が「鬱陶しくないこと」の唯一の自動テスト。実際の体感は Phase 3 の完了条件で人間が判断する。
