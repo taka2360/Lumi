@@ -59,9 +59,11 @@ Memory       何を覚えているか         Vision model
 │  Tool Registry / Event Bus / Audio I/O / Extension Host / Provider Registry   │
 └────────────┬──────────────────────────────────────────────────────────────────┘
              │ ext.* (WS / stdio)
-   ┌─────────┼─────────┬──────────────┐
-   ▼                   ▼              ▼
- Sensor Ext      Browser Ext     GameAgent Ext ...
+   ┌─────────┼──────────────┐
+   ▼                        ▼
+ Browser Ext 〔4b。最初の1つ〕   GameAgent Ext 〔8〕 ...
+
+ ※ Desktop Sensor は Extension ではなく **Shell** が持つ（ADR-050）。Signal で Core へ
 
  外部エンジン（別プロセス / 所有しない）: Ollama │ AivisSpeech / VOICEVOX
 ```
@@ -194,7 +196,7 @@ core/lumi/
 │                    llm_model（モデル選択と pull）, progress（進捗の間引き）
 │                    → [setup.md](setup.md)
 ├── panel/           service — 設定 / Inspector / 記憶ウィンドウへの配信（ADR-042）
-├── extensions/      〔Phase 5 / 9〕host, manifest, protocol
+├── extensions/      〔Phase 4b / 9〕host, manifest, protocol（→ [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)）
 ├── storage/         sqlite（APSW・暗号化・マイグレーション）, memory, events, audit,
 │                    retention（**ユーザ発話を削除できる唯一のコード**）, secret
 ├── content/         Content Pack の**読み取り専用ローダ**（extension.md §9）

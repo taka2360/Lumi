@@ -109,31 +109,40 @@ in-core Provider は Core のプロセス権限をそのまま持つ。この組
 
 ## 5. Manifest
 
+> **この例はまだ存在しない Extension である**〔2026-09-06〕。
+> Phase 3 の Desktop Sensor は **Shell に置く**ことにしたので、out-of-process Extension の
+> 実装例は現時点で1つも無い（**最初の1つは Phase 4b の `browser`**）
+> → [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)。
+> **動いていない機構を、動いている例で説明しない。**
+
 ```jsonc
 {
   "manifest_version": 1,
-  "id": "lumi.sensor-desktop",
+  "id": "example.sensor-calendar",
   "version": "0.1.0",
-  "name": "Desktop Sensor",
+  "name": "Calendar Sensor",
 
   "runtime": "out-of-process",     // "in-core" | "out-of-process"
   "trust_level": "untrusted",      // "official" | "verified" | "untrusted"
 
   "entrypoint": {
-    "out_of_process": { "command": "python", "args": ["-m", "lumi_sensor_desktop"] }
+    "out_of_process": { "command": "python", "args": ["-m", "sensor_calendar"] }
   },
 
   // 天井（ceiling）。実効権限はこれと policy と user grant の交差
   "capabilities": {
+    // out-of-process が宣言できるのは **Class B の lane だけ**（browser / game / widget）。
+    // fs / process / input / desktop / system / memory / character は Class A で、
+    // 宣言した時点で manifest が拒否される（§検証の 6 / ADR-017）
     "tools": [
-      { "name": "fs.read", "risk": "L2", "lane": "fs",
-        "scope_hint": "user_home",
-        "reason": "会話中に言及されたファイルを読むため" }
+      { "name": "browser.read", "risk": "L1", "lane": "browser",
+        "scope_hint": "https://calendar.example.com/*",
+        "reason": "Web カレンダーの予定を読むため" }
     ],
     "sensors": [
-      { "key": "user.present",       "ttl_ms": 60000 },
-      { "key": "user.focus_app",     "ttl_ms": 30000 },
-      { "key": "desktop.fullscreen", "ttl_ms": 30000 }
+      // ttl_ms は**上限のヒント**。Core は自分の値と短い方を採る（ADR-050）
+      { "key": "calendar.in_meeting",    "ttl_ms": 60000 },
+      { "key": "calendar.next_event_in", "ttl_ms": 60000 }
     ],
     "signals": ["sensor.*"]
   }

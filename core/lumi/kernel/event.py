@@ -77,12 +77,21 @@ class Signal:
     The Stage never says "reduce the budget." It only reports "the user said it's noisy."
     """
 
+    # 〔Phase 3a〕**`id: SignalId` is not here yet.** Core assigns it at the receive boundary,
+    # never the sender, and it is what a DomainEvent's `causation_id` points at. One desktop
+    # observation emits one event per facet on separate streams, so that id is the only thing
+    # tying them back together (docs/contracts/event-model.md, ADR-050). `SignalId` and its
+    # generator belong in `kernel/ids.py` alongside the others.
+
     #: Who sent it. An authenticated peer identity
     source_id: str
     type: str
     payload: Mapping[str, Any]
     received_at: datetime
-    #: Determined by the sender's trust level. Propagates to anything derived from this
+    #: Determined by the (sender, type) pair, not the sender alone: a trusted sender can
+    #: carry an untrusted value. `sensor.*` is TAINTED whoever sends it, because
+    #: `user.focus_app` is a name an application chose for itself (ADR-050).
+    #: Propagates to anything derived from this
     trust_level: TrustLevel
 
     # **Has neither** `stream_key` nor `sequence_id`. This is the type-level guarantee (Invariant

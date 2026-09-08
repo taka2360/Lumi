@@ -262,7 +262,7 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 - [x] **STT のデバッグ書き出しを撤去**（[contracts/privacy.md](contracts/privacy.md) §6 が録音経路を禁じている。
   Phase 1 の `lumi/audio/dump.py` は**ソースから実行すると既定で有効**だった → [architecture/audio.md](architecture/audio.md)）
 
-#### 2b — 投機 STT〔2026-08-22 実装完了。**実測が残っているので 2b は閉じていない**〕
+#### 2b — 投機 STT〔2026-08-22 実装 / 2026-09-03 実測。**完了**〕
 
 - [x] **投機 STT**（VAD の無音待ちと STT を重ねる → [ADR-039](decisions/ADR-039-speculative-stt.md)）。
   不変スナップショット + 世代 ID + 原子的な照合。**曖昧なら採用しない**（fail-closed）。
@@ -275,8 +275,12 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   （[architecture/audio.md](architecture/audio.md) §7）。**寄与は `stt_ms - stt_overlap_ms`。定数 0 で埋めない**
   〔`unaccounted_ms` の基準を `critical_path_ms` に変更。**Inspector 側も更新した**——
   Stage は「summary に無い数値キーは区間」として扱うので、放置すると新しいキーが**偽の区間**として並ぶ〕
-- [ ] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f）
-  **実際に喋らないと出ない数値であり、実装では埋まらない。** → [measurements/phase2.md](measurements/phase2.md)
+- [x] 投機 STT の破棄率・`stt_overlap_ms`・`stt.speculation_capped` の発生率を実測して記録する（未確定事項 8f。**CPU 構成は 8g に分けた**）
+  〔2026-09-03。**マイクで実際に喋った 7 ターン**。破棄率 **12.5%** / `stt_overlap_ms` は**全ターン `stt_ms` と一致**
+  （STT の寄与 0）/ `capped` **0 回**。`critical_path_ms` p50 **1170 ms**（予算 1100 に対し +70。**超過は TTS だけ**）、
+  `total_ms` p50 **1171 ms** で p50 目標 1.50 s は満たす。
+  **隠れた余裕は 134 ms しかない**——CPU 構成では隠れきらないという audio.md §7 の予測は変わっていない
+  → [measurements/phase2.md](measurements/phase2.md)〕
 
 #### 2c — Episode と保持期間〔2026-08-22 完了〕
 
@@ -400,15 +404,173 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 **目的: 「自分から話しかけてくるが、鬱陶しくない」を成立させる。**
 
-- [ ] Sensor Extension（foreground app / idle / presence / time）— out-of-process
-- [ ] WorldState facet（TTL / confidence）+ プロンプトへの投影
+### ✅ 着手前に決めること — Sensor の実装形態〔2026-09-06 決着〕
+
+**Desktop Sensor は Shell に置く**（未確定事項 14 → [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)）。
+`sensor-desktop` を out-of-process Capability Extension として作らない。
+
+理由は2つ。**Extension ホストは Phase 4b（Browser / Playwright / Class B）でどのみち作る**ので、
+**その1つ前で、Shell が数行で出せる観測のために先に作る理由が無い**こと。
+そして **out-of-process にしても OS に対する境界にはならない**こと——実効的な防御は
+「Core が宣言外の facet を拒否する」（Invariant 5）であって、誰が OS を叩いたかではない。
+**[authority-matrix.md](contracts/authority-matrix.md) は変更していない**（表は Shell を Sensor として既に認めている）。
+
+**同意・trust・分類の3つは Shell に移しても落とさない。**
+`sensor.*` は tainted（アプリ名は攻撃者が選べる）、`user.activity_class` は Core が導出、
+初回開示と無効化設定が Sensor の起動を gate する。→ [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)
+
+### 実装順 — 3a〜3e に分けた〔2026-09-06〕
+
+分割の軸は Phase 2 と同じ「**単体で検証でき、次に進む前提を1つだけ確定させる単位**」。
+
+| | 何を | なぜこの順か |
+|---|---|---|
+| **3a** | Signal の**受信経路**（Shell → Core の inbound）+ Desktop Sensor（Shell） | **観測が入らないと World も Drive も空回りする。** `Signal` の**型は既にある**（`kernel/event.py`）。無いのは**届ける経路とハンドラ** |
+| **3b** | WorldState（facet / `trust_level` / TTL / `Unknown` / snapshot / projection） | 観測を**Lumi の世界**に変える。3a の Signal は「素材」でしかない |
+| **3c** | InternalState + Drive System（慣性・減衰） | **まだ喋らせない。** 内部状態が動くことと、それが発話になることを分けて確かめる |
+| **3d** | AutonomyGate + AutonomyBudget（**dry-run**） | **判定だけ作り、発話はしない。** Inspector に「今喋ろうとした / なぜ止めた」を出して**数日眺める** |
+| **3e** | 自律発話 + 「うるさい」フィードバック + Inspector 完成 | **3d のログが妥当に見えてから初めて口を開かせる** |
+
+> **3d と 3e を分けるのが要点である。** Phase 3 の完了条件は体験（1日つけっぱなしで不快でない）であり、
+> 最大のリスクは R5（鬱陶しさ）である。**先に喋らせてから調整すると、
+> 「頻度の問題」なのか「タイミングの問題」なのか「話題の問題」なのかが分離できない。**
+> dry-run 期間は判定だけを記録するので、**一度も鬱陶しくならずに Gate を調整できる。**
+
+### やること
+
+#### 3a — Signal 経路と Desktop Sensor
+
+> **3a の時点で `WorldFacet` はまだ無い。** Signal は受理・拒否され、provenance が付き、ログに出るところまで。
+> **facet に書くのは 3b である**（Phase を飛ばさない）。
+> **3a 単独で検証できること**: 許可外の key が拒否される / `sensor.*` が tainted になる /
+> `observed_at` が `received_at` で境界づけられる / 許可していなければ Sensor が起動しない。
+> **どれも facet を必要としない。**
+>
+> **`seq` による棄却と facet の原子的な install は 3b にある**——**facet ストアが無いと書けない。**
+> 3a の Signal は**受理されてログに出るところまで**である。
+
+- [x] ~~`Signal` 型の骨格~~ 〔**実装済み**。`core/lumi/kernel/event.py`。`stream_key` / `sequence_id` を
+  持たないことの静的検査も `core/tests/test_kernel_event.py` にある。`world_stream()` も既にある〕
+- [ ] **`Signal.id`（`SignalId`）を足す。** `kernel/ids.py` に `NewType` と採番関数を置き、
+  **Core が受信境界で採番する**（送出元は付けない）。
+  **これが無いと DomainEvent の `causation_id` を埋められず**、
+  1観測から出た facet ごとのイベントを**束ね直せない**
+  → [contracts/event-model.md](contracts/event-model.md)
+- [ ] **Signal の受信経路**（Shell → Core の inbound）。認証 → schema 検証 →
+  **Core が持つ「送出元ごとの許可 key 集合」と照合** → 拒否 or Core が解釈。
+  **送出元のコードにあるリストを宣言として扱わない**（[architecture/world-state.md](architecture/world-state.md) §5）
+- [ ] **provenance を (送出元, type) で決める。`sensor.*` は送出元によらず `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`**（**`trust_level` に `UNTRUSTED` は存在しない**）
+  （[contracts/event-model.md](contracts/event-model.md) / [contracts/provenance.md](contracts/provenance.md)）
+- [ ] **role の名前空間を「送る側」と「受ける側」で分ける**——
+  現在 `NAMESPACE_BY_ROLE` は role ごとに**1つの接頭辞**しか持たず、
+  `method_matches_role()` が**送信と受信の両方に同じ表を使う**
+  （`core/lumi/transport/protocol.py` / `router.py`）。
+  **Shell は `os.` のままなので `sensor.*` は必ず拒否され、`sensor.` に替えると `os.*` が壊れる。**
+  **inbound / outbound を別の集合にするのが 3a の最初の作業**（名前を足すだけでは routable にならない）
+- [ ] **契約を先に埋める。ただし2箇所に分ける**——
+  **名前と定数**（`sensor.*` の method 名・名前空間・許可 key の一覧）は
+  [contracts/wire.json](contracts/wire.json)。**payload の形**（フィールド名・型・必須性）は
+  [interfaces/shell.md](interfaces/shell.md)。
+  **`wire.json` は「名前と値が一致すること」しか保証しない**——payload の形は
+  明示的に対象外である（[contracts/wire.md](contracts/wire.md) §4）。
+  **現在 `os.*` は Core → Shell の一方向しか無く、Shell 発の inbound が存在しない**
+- [ ] **payload の形の検査を、Rust と Python の両方に置く**（`wire.json` のテストは拾わない）。
+  拾わないまま置くと、**Shell と Core が静かにずれる**——`wire.md` §4 が挙げている
+  `progress` / `percent` の食い違いと同じ形の事故が、**観測データで起きる**
+- [ ] **Desktop Sensor（Shell / Rust）** — foreground app 名 / idle 秒 / 在席 / 全画面 / 音声再生 / CPU / VRAM。
+  `hover.rs` と同じポーリング監視スレッドの形。**ウィンドウタイトルは読まない**。
+  **送るのは生の観測だけ**（`user.activity_class` は送らない）
+- [ ] **1回の観測 = 1つの Signal**（facet ごとに分けない）。`observed_at` と単調増加の `seq` を1つ持つ
+- [ ] **`observed_at` を `Signal.received_at` で境界づける**（未来は丸める / 許容ずれ超の過去は拒否してログ）。
+  **payload は tainted であり、その中の時刻も例外ではない**——未来日付は TTL を無効化する。
+  **境界づけは受信境界の仕事なので 3a**。**`seq` による棄却と install は 3b**（facet ストアが要る）
+- [ ] **送出周期は TTL の半分以下。変化が無くても送る**（変化時は即座に送る）。
+  **変化時だけ送ると facet が期限切れ、`activity_class` も `Unknown` になり、Gate が閉じる**
+  → [architecture/world-state.md](architecture/world-state.md) §3
+- [ ] **明示的な許可を得るまで Sensor を起動しない**（opt-in。許可は永続化し、観測 key が増えたら再同意）。
+  **開示だけして既定オンにしない**——Extension の `consent` に相当する門を、Shell に移した分だけ落とさない
+- [ ] **設定パネルから取り消せる。取り消したらその場でポーリングスレッドを止める**（次回起動時ではない）。
+  **取り消せない同意は同意ではない**——設定ファイルを手で編集しないと止まらない状態にしない。
+  残った facet は TTL で `Unknown` になる（即座に消さない）
+- [ ] **接続 identity（role / peer / Core が採番する epoch）を inbound ハンドラに渡す**——
+  現在 `InboundHandler` は **payload しか受け取らない**（`core/lumi/transport/router.py`）。
+  **`Signal.source_id` を接続から決める要件（B8）と同じ変更**であり、
+  **再接続時の `seq` リセットを `(epoch, seq)` で解くのにも要る**
+- [ ] `time.*` は **facet にしない**（導出値。時計は陳腐化せず、Signal も TTL も持てない）
+
+#### 3b — WorldState
+
+- [ ] WorldFacet の型と TTL 管理（**期限切れは `None` ではなく `Unknown`**）
+- [ ] WorldSnapshot（ある時点の一貫したスナップショット）
+- [ ] **1観測ぶんの facet を facet ストア側の1つの排他区間で入れ替える**。
+  **`EventBus` のロックは `stream_key` ごと**で、`world:*` は facet ごとに分かれているため、
+  **EventBus では作れない**。DomainEvent は facet ごとに出し、**同一観測は `causation_id` で辿る**
+- [ ] **`(epoch, seq)` の比較・受理済み値の更新・facet の入れ替えを、同じ排他区間で行う**。
+  **`seq` だけで比べない**——再接続で `seq` は 1 に戻り、**接続の差し替えでは実行中のハンドラは止まらない**
+  （止めるのは停止時だけ。`core/lumi/transport/server.py`）ので、
+  **リセットすれば古いハンドラが勝ち、リセットしなければ新しい接続が高水位まで拒否される**。
+  inbound は request ごとに別タスクなので、**比較だけ先に済ませると seq 41 と 42 が
+  どちらも「新しい」と判定され、古い 41 が勝つ**（TOCTOU）
+  → [architecture/world-state.md](architecture/world-state.md) §2
+- [ ] **`WorldFacet` が `provenance_class` と `trust_level` を持ち、projection まで運ぶ**
+  （**facet に置き場所が無いと、汚染は保存の時点で消える**。3a の tainted な Signal の行き先がこれ）。
+  **両方持つ**——`propagate()` は `Provenanced` を要求し、**`trust_level` だけの facet は導出の入力にできない**
+- [ ] **`WorldFacet.source` を `FacetSource`（`SensorId | "core.derived"`）にする**——
+  導出 facet を Sensor に帰属させない（Inspector で分類器のバグを Sensor の不具合として追うことになる）
+- [ ] **`user.activity_class` を Core が導出する**（`sensor.*` ハンドラの中で。決定論的コードで）。
+  **TTL は入力の残りの最小**——固定値にすると根拠が切れた後も分類が生き残り、Gate が割り込む
+- [ ] プロンプトへの projection（**「分からない」も投影する**。**tainted な観測は隔離ブロックへ**）
+- [ ] Inspector に facet 一覧（期限切れは灰色）
+- [ ] **静的検査 #10**（`WorldFacet` の書き込みが Signal ハンドラ以外に存在しない）
+  → [contracts/authority-matrix.md](contracts/authority-matrix.md)
+
+#### 3c — Internal State と Drive
+
 - [ ] **Internal State**（mood / fatigue / arousal / attention_focus / drives）
+- [ ] Mood の慣性と減衰
 - [ ] Drive System（social / curiosity / duty / play）
-- [ ] AutonomyGate（在席 / DND / cooldown / quiet hours / budget / permission）
+- [ ] Inspector に Drive 内訳
+
+#### 3d — Gate と Budget（**dry-run。まだ喋らない**）
+
+> **★ dry-run は「判定を記録するだけ」ではない。**
+> **通ったときの状態遷移は本番と同じに進める**——予算消費・cooldown・Drive 減衰。
+> **止めるのは LLM 生成と発話だけ**（[architecture/autonomy.md](architecture/autonomy.md) §3）。
+>
+> **判定だけ記録すると、通った後に何も減らない。** Drive が閾値を超えたら
+> **毎 tick「割り込もうとした」が出続け**、3e の実際の頻度とは似ても似つかないログになる。
+> **3d はそのログを見て Gate のパラメータを決めるためにある**ので、それでは目的を果たさない。
+
+- [ ] AutonomyGate（在席 / DND / cooldown / quiet hours / budget / permission）。**決定論的コードで判断する**
+- [ ] **facet ゲートは許可リストで書く**（真偽値は `is True` / `is False`、列挙は「通してよい値」の集合）。
+  **禁止リストは値が増えるたびに穴が開く**——`Unknown`（facet 無し）と `unknown`（分類失敗）は
+  **どちらも「`meeting` でない」を満たす** → [architecture/autonomy.md](architecture/autonomy.md) §4
 - [ ] AutonomyBudget（時間あたり割り込み回数 / トークン / wall-clock）
+- [ ] **「なぜ発火した / しなかったか」を Inspector に出す**（発話はしない）。
+  **`Unknown`（Sensor が黙った）と `unknown`（アプリを分類できない）を区別して出す**——
+  前者は Sensor の不具合、後者は分類器の課題であり、**打つ手が違う**
+- [ ] **`gaming` / `media` を割り込み許可に入れるかを、dry-run のログを見て決める**〔Provisional〕
+- [ ] **shadow 実行**——`propose()` は本番と同じに呼び、`Accepted` のとき
+  **予算を消費し、cooldown を張り、Drive を減衰させ、`complete()` する**。
+  **LLM 生成と発話だけを抑止する**。**これをしないと頻度のログが 3e と一致しない**
+- [ ] **shadow の DomainEvent を本物と区別する**（`Activity` に印を持たせ payload に載せる）。
+  **出さないのではなく区別する**——出さないと Arbiter の判定履歴も消え、dry-run の目的が失われる。
+  そのままだと**喋っていない発話が「起きた事実」として 30 日残る**
+- [ ] **`complete()` を忘れない**——`propose()` が `Accepted` を返した時点で自律 Activity は
+  **もう `running` の foreground** であり、**idle に戻すのは `complete()` だけ**。
+  忘れると**最初の1回で foreground が固まり、以降の提案が全部 `Deferred`**（Invariant 4 は破れないので**静かに壊れる**）
+- [ ] **予算は3次元とも進める**（`interrupts_used` / `tokens_used` / `wallclock_used`）。
+  生成しない以上、後の2つは**決定論的な見積もりを計上し、推定値と記録する**〔Provisional〕。
+  **`tokens_used` は prompt + completion**（completion だけだと予算が実コストの数 % しか見ない）。
+  **dry-run でも prompt は実際に組み立てて数える**（組み立ては LLM を呼ばない）。
+  **`interrupts_used` だけ進めると、トークンや時間で先に尽きる場合に本番より Gate が開き続ける**
+- [ ] **数日 dry-run で眺め、Gate のパラメータを決める**
+
+#### 3e — 自律発話
+
 - [ ] **自律的な発話のみ。OS 操作はまだしない**
 - [ ] 「うるさい」フィードバックループ（予算即時消費 + Drive 強制減衰 + Memory 書き込み）
-- [ ] Inspector に Drive 内訳と「なぜ発火した/しなかったか」を表示
+- [ ] Inspector に発話の履歴と、そのときの Drive / Gate の状態
 
 ### 完了条件
 **1日つけっぱなしにして不快でない。**
@@ -564,7 +726,9 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | ~~8~~ | ~~**DomainEvent の保持ポリシー**（`world:*` の高頻度ストリームが無限に貯まる）~~ | **✓ 解消**〔2026-08-22〕→ [contracts/privacy.md](contracts/privacy.md) §2。**既定 30 日 / 「全部消して」の対象**。Phase 3 まで持ち越さない |
 | ~~8b~~ | ~~区間合計が p50 目標を超えている~~ | **✓ 解消**〔2026-08-18〕。`llm_first_token` を 537→**421 ms** に縮めたうえで、**p50 目標を 1.2s → 1.5s に置き直した**（1.27/1.50 = 85%）。`vad_ms` 0.43s はターンテイキングの方針で動かせず、旧目標と両立しなかったため。**p95 2.0s（完了条件）と区間別予算は据え置き** → [architecture/audio.md](architecture/audio.md) §7 |
 | ~~8e~~ | ~~🔴 **記憶検索 0.05s を足すと 85% 規則を破る**~~ | **✓ 設計上は解消**〔2026-08-22〕→ [ADR-039](decisions/ADR-039-speculative-stt.md)。**目標を動かさず、STT を VAD の無音待ちに重ねる**（投機 STT）。予算上のクリティカルパス 1.27 → **1.10s / 73%**、予備枠 15% → 27%。**実装と実測は Phase 2**（8f） |
-| 8f | **投機 STT の実測**（破棄率 / `stt_overlap_ms` / CPU 構成で隠れきらない分） | Phase 2（実装後） |
+| ~~8f~~ | ~~**投機 STT の実測**（GPU 構成）~~ | **✓ 解消**〔2026-09-03〕→ [measurements/phase2.md](measurements/phase2.md)。**破棄率 12.5% / `stt_overlap_ms` は全ターン `stt_ms` と一致（寄与 0）/ `capped` 0 回。`critical_path_ms` p50 1170 ms**（予算 1100 の超過分は `tts_first_audio_ms` のみで、投機 STT 由来ではない） |
+| **8h** | **現構成での p95 が未検証**〔2026-09-06〕。[measurements/phase1.md](measurements/phase1.md) の p95 1.63 s は **STT `small` / 非投機 / 記憶検索なし / 録音注入**で測った値であり、**現構成**（`large-v3-turbo` / 投機 / 毎ターン検索）**の判定にはならない**。投機 STT の `stt_wait_ms > 0` の裾は**実測で一度も踏んでいない** → [measurements/phase2.md](measurements/phase2.md) | Phase 3（1日つけっぱなしの体験評価で、どのみち長時間回す。**そこで n を稼ぐ**） |
+| **8g** | **CPU 構成で隠れきらない分の実測**（8f から分けた〔2026-09-06〕）。**0.49 s は非投機の `stt_ms` からの計算値であって、投機 STT を CPU で回した実測ではない** → [architecture/audio.md](architecture/audio.md) §7 | Phase 5（`ModelResourceManager` で CPU 退避が現実になるとき）。**SLO は GPU 構成での約束なので**（[ADR-025](decisions/ADR-025-tts-on-gpu.md)）**Phase 2 の完了条件ではない** |
 | ~~8c~~ | ~~**CPU TTS の固定費により p95 2.0 秒が達成できない**~~ | **✓ 解消**〔2026-08-16〕→ [ADR-025](decisions/ADR-025-tts-on-gpu.md)。**TTS と STT を GPU に載せた**。p50 1.50 秒 |
 | ~~8d~~ | ~~🔴 **`vad_ms` の予算 0.18 秒が `min_silence_duration_ms`（400 ms）と矛盾する**~~ | **✓ 解消**〔2026-08-17〕→ [architecture/audio.md](architecture/audio.md) §7。**予算の側が誤り**。パラメータは 400 ms のまま（下げると文中の間で区間が切れる。実測済み）。**表には数値を書かず §5 を参照する**（同じ値を2箇所に書いたのが原因） |
 | ~~9~~ | ~~設定の保存形式とスキーマ~~ | **✓ 解消**〔2026-08-17 / Step G〕→ [architecture/core.md](architecture/core.md) §6b。**JSON / `<data_dir>/settings.json`**。壊れたファイルは上書きしない・知らないキーは保持・環境変数の上書きは表示する。変更経路（Stage → Core の `request`）→ [ADR-028](decisions/ADR-028-stage-initiated-request.md) |
@@ -572,7 +736,7 @@ Phase 3 の完了条件（1日つけっぱなしで不快でない）を満た�
 | 11 | キャラクター人格の記述形式（独自 vs 既存カード互換） | Phase 1 後半 |
 | 12 | Canonicalizer / BindVerifier の具体的アルゴリズム | Phase 4a |
 | 13 | 🔴 **Invariant 8 の実装方式**（全画面キャプチャ / 座標指定の入力注入） | **Phase 4c 着手前** |
-| 14 | **`sensor-desktop` が out-of-process のまま OS を直接読むこと**の是非（[contracts/authority-matrix.md](contracts/authority-matrix.md) は「OS 特権は Shell のみ」と書いている）。Shell に取り込む / `os.*` 経由にする / 表を直す のいずれか | Phase 3 着手前 |
+| ~~14~~ | ~~**`sensor-desktop` が out-of-process のまま OS を直接読むこと**の是非~~ | **✓ 解消**〔2026-09-06〕→ [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)。**Desktop Sensor は Shell に置く。** authority-matrix は変更しない（表は Shell を Sensor として既に認めており、`OS特権` 列の定義に foreground app 名と idle 時間は入っていない）。**out-of-process Sensor Extension は作らない**——Extension ホストは **Phase 4b（Browser / Playwright / Class B）でどのみち作る**ので、その1つ前で先に作る理由が無い。**out-of-process にしても OS に対する境界にはならない**（実効的な防御は Core が宣言外の facet を拒否することであって、誰が OS を叩いたかではない）。**同意・trust・分類は Shell に移しても落とさない** |
 | 15 | 多モニタ・混在 DPI での座標系（ヒットテストと入力注入） | Phase 4c |
 | 16 | 第三者製 Provider を許すか | Phase 9 |
 | 17 | Live2D 導入時のライセンス区分 | Phase 9 |

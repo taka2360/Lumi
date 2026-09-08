@@ -6,10 +6,11 @@
 
 ## 現在の状態
 
-**Phase 2（Memory）は 2a〜2g すべて実装済み。ただし 2b（投機 STT）の実測が未取得で、[roadmap.md](docs/roadmap.md) の完了条件はまだ満たしていない。** 設計は rev.26 まで完了し承認済み。
+**Phase 2（Memory）完了**〔2026-09-03〕**。次は Phase 3（3a から）。着手前に決めるべき 🔴 は無い。** 設計は rev.28 まで完了し承認済み。
 コードは、すべて `docs/` の設計に従う。**設計に無いことを実装する前に、設計を先に更新する。**
 
-**Phase 3 に進む前に 2b の実測を取る。** 破棄率・`stt_overlap_ms` は**実際に喋らないと出ない**——それが残っている唯一の理由であり、コードの不足ではない。
+2b（投機 STT）の実測を取り、Phase 2 の最後の穴が埋まった——破棄率 12.5% / `stt_overlap_ms` は全ターン `stt_ms` と一致（**STT のクリティカルパス寄与 0**）/ `critical_path_ms` p50 1170 ms。
+**Desktop Sensor は Shell に置く**（[ADR-050](docs/decisions/ADR-050-desktop-sensor-in-shell.md)）。Phase 3 は **3a〜3e** に分かれ、**Gate / Budget を dry-run で作ってから発話させる**（[roadmap.md](docs/roadmap.md)）。
 実測値 → [docs/measurements/phase2.md](docs/measurements/phase2.md) / [docs/measurements/phase1.md](docs/measurements/phase1.md)
 
 ## リポジトリ構成
@@ -20,7 +21,7 @@ Lumi/
 ├── core/          Lumi Core — Python / asyncio。権威（判断・状態・ポリシー・記憶）
 ├── shell/         Lumi Shell — Tauri 2 / Rust。OS 特権プリミティブのみ
 ├── stage/         Stage WebView — React + TS + Zustand。表現のみ
-├── extensions/    〔Phase 5 で作る〕out-of-process Capability Extension（別プロセス・任意言語）
+├── extensions/    〔Phase 4b で作る〕out-of-process Capability Extension（別プロセス・任意言語）
 └── content/       Content Pack（キャラ・モデル・音声・人格。**コードを含まない**）
 ```
 

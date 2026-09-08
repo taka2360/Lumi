@@ -396,7 +396,7 @@ Scheduler を `audio/` に置くと `audio → providers → audio` のパッケ
 | 区間 | ログのキー | 目標 | クリティカルパス寄与 | 備考 |
 |---|---|---|---|---|
 | VAD 発話終端の確定 | `vad_ms` | **§5 の `min_silence_duration_ms` + フレーム境界**（現在 0.43 s） | 0.43 s | **ここに独立した数値を書かない**（下記） |
-| STT | `stt_ms` | 0.22 s | **0**（`max(0, stt_ms - vad_ms)`。予算では 0.22 ≤ 0.43） | faster-whisper int8。**GPU 0.06 s / CPU 0.92 s**（実測）。投機実行（下記） |
+| STT | `stt_ms` | 0.22 s | **0**（**予算上**。実測の寄与は `stt_ms - stt_overlap_ms` で測る。下記） | faster-whisper int8。**GPU 0.06 s / CPU 0.92 s**（実測）。投機実行（下記） |
 | 記憶検索 | `retrieve_ms` | 0.05 s | 0.05 s | Phase 2e で配線。**実測 0.021〜0.023 s**（うち埋め込み 0.022 s。CPU / q4）→ [../measurements/phase2.md](../measurements/phase2.md) |
 | プロンプト組み立て | `assemble_ms` | 0.03 s | 0.03 s | 予算計算・切り落とし・provenance 付与 |
 | LLM 初トークン | `llm_first_token_ms` | 0.28 s | 0.28 s | |
@@ -415,11 +415,19 @@ Scheduler を `audio/` に置くと `audio → providers → audio` のパッケ
 **表の 0 は予算の値であって、実測の値ではない。**
 
 ```text
-stt の寄与 = stt_ms - stt_overlap_ms
+stt の寄与    = stt_ms - stt_overlap_ms
+stt_overlap_ms = 1000 × max(0, min(available_at, vad_ended_at) - max(requested_at, vad_started_at))
+                 └─ 時刻は perf_counter() の**秒**。ms への変換を式に含める ─┘
 ```
 
 `stt_overlap_ms` は **`vad_ms` と `stt_ms` が実際に重なっていた長さ**であり、
-**推定ではなく計測して記録する**（両区間の開始・終了時刻から求める）。**寄与を定数 0 として
+**推定ではなく計測して記録する**（両区間の開始・終了時刻から求める）。
+
+> **★ 「`stt_ms < vad_ms` なら隠れる」と書かない。** 隠れる条件は**終端どうしの比較**
+> （`available_at ≤ vad_ended_at`）であり、`requested_at` は VAD 区間の始まりではない——
+> **`SILENCE_STARTED` が消費者に届くまでの遅れが乗る。**
+> 遅れが大きければ、**`vad_ms` より短い推論でも区間の外へはみ出す。**
+> 下の表の 0 は**遅れ 0 を仮定した予算の値**である。**寄与を定数 0 として
 書き込まない。** 書き込むと、隠れていない時間が `critical_path_ms` から消えて `unaccounted_ms` が負に振れる。
 
 | 構成 | `stt_ms`（実測） | `vad_ms` | 寄与 |

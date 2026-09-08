@@ -9,9 +9,33 @@
 | | |
 |---|---|
 | Status | **承認済み（2026-08-15）** |
-| Revision | rev.27 |
-| 実装フェーズ | **Phase 2（Memory）完了。2b（投機 STT）の実測だけ未取得。次は Phase 3。** → [roadmap.md](roadmap.md) |
+| Revision | rev.28 |
+| 実装フェーズ | **Phase 2（Memory）完了**〔2026-09-03。2b の実測を取得して閉じた → [measurements/phase2.md](measurements/phase2.md)〕**。次は Phase 3（3a から）。着手前の 🔴 は無い** → [roadmap.md](roadmap.md) |
 
+> **rev.28 の変更点**（Phase 2 を閉じ、Phase 3 の 🔴 を決着させた）
+> 1. **投機 STT を実測し、Phase 2 を閉じた** → [measurements/phase2.md](measurements/phase2.md)。
+>    破棄率 **12.5%** / `stt_overlap_ms` は**全ターン `stt_ms` と一致**（STT のクリティカルパス寄与は
+>    実測でも 0）/ `stt.speculation_capped` **0 回**。`critical_path_ms` p50 **1170 ms** で
+>    予算 1.10 s を 70 ms 超えるが、**超過は `tts_first_audio_ms` だけ**であり投機 STT 由来ではない。
+>    **隠れた余裕は 134 ms しかない**——CPU 構成では隠れきらないという
+>    [architecture/audio.md](architecture/audio.md) §7 の予測は変わっていない
+> 2. **Desktop Sensor を Shell に置くことにした** → [ADR-050](decisions/ADR-050-desktop-sensor-in-shell.md)。
+>    未確定事項 14 の決着である。**`sensor-desktop` を out-of-process Extension として作らない**——
+>    Extension ホストは **Phase 4b（Browser / Playwright / Class B）でどのみち作る**ので、
+>    その1つ前で、Shell が数行で出せる観測のために先に作る理由が無い。
+>    そして **out-of-process にしても OS に対する境界にはならない**（実効的な防御は
+>    Core が宣言外の facet を拒否することであって、誰が OS を叩いたかではない）。
+>    **同意・trust・分類は Shell に移しても落とさない**——`sensor.*` は tainted
+>    （`ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`）で `WorldFacet` がそれを projection まで運び、
+>    `user.activity_class` は Core が**入力の残り TTL の最小**で導出し、
+>    **明示的な許可を得るまで Sensor を起動しない**（opt-in）。
+>    **Shell → Core は新しい信頼の向きなので、[contracts/security-boundaries.md](contracts/security-boundaries.md)
+>    に B8 を足した**——B3（Core → Shell）の逆で、**信頼の低い側は Shell** である
+>    **[contracts/authority-matrix.md](contracts/authority-matrix.md) は変更していない**
+> 3. **Phase 3 を 3a〜3e に分けた** → [roadmap.md](roadmap.md)。
+>    **Gate / Budget を dry-run で作ってから発話させる**（3d → 3e）。
+>    先に喋らせると、鬱陶しさが頻度・タイミング・話題のどれの問題か分離できない
+>
 > **rev.27 の変更点**（抽出に保険を掛け、打ち切られたときの行き先を決めた）
 > 1. **抽出に出力トークン上限（1536）を入れた** → [ADR-049](decisions/ADR-049-truncated-extraction-and-watermark.md)。
 >    会話の 512 は「停止しなくなったモデル」への保険だが、**抽出だけがそれを持っていなかった**。
@@ -415,6 +439,7 @@ Memory       何を覚えているか         Vision model
 ┌──────────────────────── Lumi Shell (Tauri 2 / Rust) ─────────────────────────┐
 │  責務: OS特権プリミティブのみ。判断を持たない（Invariant 8 の拒否を除く）        │
 │  透過/最前面/クリックスルー/ヒットテスト・トレイ・ホットキー                     │
+│  Desktop Sensor（前面アプリ/idle/在席/全画面）→ Signal で Core へ〔Phase 3〕     │
 │  スクリーンキャプチャ・入力インジェクション・Coreサイドカーの起動と生存監視       │
 │  Core からの os.* 要求を認証・schema検証・allowlist検査してから実行 (B3)        │
 │                                                                              │
@@ -449,9 +474,11 @@ Memory       何を覚えているか         Vision model
 │  └─────────┬──────────┘  └──────────────────────────────────────────────────┘│
 └────────────┼──────────────────────────────────────────────────────────────────┘
              │ ext.* (WS / stdio, capability-gated)
-   ┌─────────┼─────────┬──────────────┐
-   ▼                   ▼              ▼
- Sensor Ext      Browser Ext     GameAgent Ext ...
+   ┌─────────┼──────────────┐
+   ▼                        ▼
+ Browser Ext 〔4b。最初の1つ〕   GameAgent Ext 〔8〕 ...
+
+ ※ Desktop Sensor は Extension ではなく **Shell** が持つ（ADR-050）。Signal で Core へ
 
  外部エンジン（別プロセス / 所有しない）: Ollama │ AivisSpeech / VOICEVOX
 ```
@@ -786,7 +813,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 |---|---|
 | [invariants.md](contracts/invariants.md) | 8つの不変条件と、それぞれの根拠・検証方法 |
 | [authority-matrix.md](contracts/authority-matrix.md) | 誰が何をできるか。実装レビューのチェックリスト |
-| [security-boundaries.md](contracts/security-boundaries.md) | B1〜B7 の境界。攻撃者・認証・認可・検証 |
+| [security-boundaries.md](contracts/security-boundaries.md) | B1〜B8 の境界。攻撃者・認証・認可・検証 |
 | [provenance.md](contracts/provenance.md) | ProvenanceClass / TrustLevel の束と伝播規則 |
 | [state-machines.md](contracts/state-machines.md) | Activity と Tool の独立した状態機械 |
 | [event-model.md](contracts/event-model.md) | Signal と DomainEvent の分離、採番責任、順序保証 |
@@ -886,7 +913,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | **PromptAssembly の構成・トークン予算・切り落とし順序** | [architecture/agent.md](architecture/agent.md) §3 |
 | Kernel 実行契約・Class A / Class B | [contracts/tool-execution.md](contracts/tool-execution.md) |
 | Signal / DomainEvent / Command・**Hook 一覧** | [contracts/event-model.md](contracts/event-model.md) |
-| 境界 B1〜B7・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |
+| 境界 B1〜B8・Widget Broker と iframe sandbox・監査ログの append-only の意味 | [contracts/security-boundaries.md](contracts/security-boundaries.md) |
 | 権限マトリクス・オブジェクト責務行列 | [contracts/authority-matrix.md](contracts/authority-matrix.md) |
 | **線上に出る名前と定数**（`PROTOCOL_VERSION` / method 名 / Tauri のイベント・コマンド名 / 線に乗る enum の値） | [contracts/wire.json](contracts/wire.json)（値）+ [contracts/wire.md](contracts/wire.md)（規則） |
 | Shell / Stage の責務・ウィンドウ一覧・**トレイメニュー**・**起動フェーズ**・**ウィンドウ操作**・Tauri 2 の課題・AIRI 運用知見・表情の合成 | [architecture/ui.md](architecture/ui.md) |
@@ -895,7 +922,7 @@ AIRI は「マルチモーダル入出力パイプライン」としては完成
 | **永続化されるものの一覧・保存先・暗号化・保持期間・消去対象** | [contracts/privacy.md](contracts/privacy.md) |
 | Extension の2機構・信頼レベル・ライフサイクル・Content Pack | [architecture/extension.md](architecture/extension.md) |
 | Drive / AutonomyGate / AutonomyBudget | [architecture/autonomy.md](architecture/autonomy.md) |
-| World / Internal State の分離と facet 定義 | [architecture/world-state.md](architecture/world-state.md) |
+| World / Internal State の分離と facet 定義・**Sensor の実装形態** | [architecture/world-state.md](architecture/world-state.md) |
 | `Tool` / `SecurityScope` / `Handle` / 検証器の**型定義** | [interfaces/tool.md](interfaces/tool.md) |
 | **`LLMOptions` の型定義と sampling プロファイル**（用途 × モデル系列） | [interfaces/provider.md](interfaces/provider.md) |
 | `MemoryRecord` / `AssertionMode` の**型定義** | [interfaces/memory.md](interfaces/memory.md) |

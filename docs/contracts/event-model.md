@@ -39,11 +39,12 @@ AIRI は約60種の WS イベントでモジュールのライフサイクルを
 @dataclass(frozen=True)
 class Signal:
     """外部から Core に届く通知。"""
+    id: SignalId                 # **Core が受信境界で採番する。** 送出元は付けない（下記）〔Phase 3a〕
     source_id: PeerIdentity      # 誰が送ったか
     type: str
     payload: dict
     received_at: datetime
-    trust_level: TrustLevel      # 送出元の信頼度から決まる
+    trust_level: TrustLevel      # 送出元と type の組で決まる（下記）。TRUSTED | TAINTED
 
     # stream_key も sequence_id も持たない（型で保証）
 
@@ -61,7 +62,37 @@ class DomainEvent:
     occurred_at: datetime
 ```
 
+> **★ `trust_level` は送出元だけでは決まらない**〔2026-09-06 / [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)〕。
+> **信頼された送出元が、信頼できない値を運ぶことがある。**
+> `sensor.*` の payload は**外界の観測**であり、`user.focus_app` は
+> **その辺のアプリが自分で名乗った文字列**である。送出元が Shell でも tainted になる。
+>
+> したがって Core は **(送出元, `type`) の組**で provenance を決める。既定は送出元の信頼度で、
+> **`sensor.*` のように「外界を運ぶ」type は、送出元によらず
+> `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED` に固定する。**
+>
+> **2つの enum を混ぜない。** `UNTRUSTED` は `ProvenanceClass`（監査とユーザーへの説明のラベル）の値、
+> `TAINTED` は `TrustLevel`（Policy が読む値）の値であり、
+> **`trust_level` に `UNTRUSTED` は存在しない。** 対応は `taint()` が持つ
+> （[provenance.md](provenance.md)）。一覧も同じファイルにある。
+> **上げる方向の例外は作らない**（Invariant 7）。
+
 **`Signal` が `stream_key` / `sequence_id` を持たないことを型で保証する。** これにより「外部が DomainEvent を直接書く」経路がコンパイル時に塞がる。
+
+> **★ `id` は Core が受信境界で採番する**〔2026-09-06 / [../decisions/ADR-050-desktop-sensor-in-shell.md](../decisions/ADR-050-desktop-sensor-in-shell.md)〕。
+> **送出元が付けた値を使わない**——`causation_id` は「Lumi の世界で何が何を引き起こしたか」の
+> 履歴であり、**外から書けると履歴が偽造できる**（Invariant 6）。
+>
+> **これが無いと、1観測から出た複数の DomainEvent を後から束ね直せない。**
+> Desktop Sensor の1回の観測は facet ごとに別の `stream_key` へイベントを出すので
+> （[../architecture/world-state.md](../architecture/world-state.md) §2）、
+> **同じ観測から来たことを示せるのは `causation_id` だけ**である。
+>
+> **`sequence_id` とは別物である。** `sequence_id` は stream 内の順序、`id` は**そのフレームの同一性**。
+> 前者は EventBus だけが代入する（下記）ので、`id` を足しても上の型保証は変わらない。
+>
+> **未実装である**〔2026-09-06〕。`core/lumi/kernel/event.py` の `Signal` にこのフィールドはまだ無く、
+> `SignalId` も `kernel/ids.py` に無い。**Phase 3a の項目**（[../roadmap.md](../roadmap.md)）。
 
 ---
 
@@ -84,19 +115,25 @@ Core が意味を解釈する
 > **重要: 外部は DomainEvent の内容を直接決められない。**
 > Signal は「素材」であり、DomainEvent にするかどうか・どう表現するかは Core が決める。
 
-### 例1: Sensor Extension
+### 例1: Sensor
 
 ```
-Sensor Ext
-  → Signal(type="sensor.foreground_app", payload={"app": "factorio.exe"})
-  → Core が認証・schema検証・capability検査
-  → Core が WorldFacet("user.focus_app") を更新
-  → Core が DomainEvent(
-        stream_key="world:user.focus_app",
+Sensor（Phase 3 は Shell → [ADR-050](../decisions/ADR-050-desktop-sensor-in-shell.md)）
+  → Signal(type="sensor.desktop", payload={        # **1回の観測 = 1つの Signal**
+        "observed_at": ..., "seq": 41,
+        "focus_app": "factorio.exe", "fullscreen": true, ...})
+  → Core が認証・schema検証・capability検査（B8）
+  → Core が **含まれる facet をまとめて**更新（**1観測ぶんが原子的に見える**）
+  → Core が facet ごとに DomainEvent(
+        stream_key="world:user.focus_app",   # ← stream は facet ごと。**まとめて1つにはならない**
         type="WorldFacetChanged",
-        causation_id=<signal id>
+        causation_id=<signal id>             # ← **同じ観測から来たことは causation_id で辿る**
     ) を発行
 ```
+
+> **facet ごとに Signal を分けない。** 分けると `Signal` に順序保証が無いため、
+> **新しい `focus_app` と古い `fullscreen` が組み合わさった、実在しない世界**を
+> 読み手が見る。詳細と規則 → [../architecture/world-state.md](../architecture/world-state.md) §2。
 
 Sensor は World facet を直接書かない（[authority-matrix.md](authority-matrix.md) の責務行列）。
 

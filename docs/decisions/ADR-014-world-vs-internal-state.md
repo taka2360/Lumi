@@ -2,9 +2,21 @@
 
 | | |
 |---|---|
-| Status | Accepted |
+| Status | Accepted（**一部を [ADR-050](ADR-050-desktop-sensor-in-shell.md) が修正**） |
 | Date | 2026-08-14 |
 | 関連 | [../architecture/world-state.md](../architecture/world-state.md), [../architecture/autonomy.md](../architecture/autonomy.md) |
+
+> **[ADR-050](ADR-050-desktop-sensor-in-shell.md) による修正（2026-09-06）**
+> 1. **時刻は World facet ではない。** 本 ADR は §分類基準の表で「時刻 → World」としているが、
+>    `time.local` / `time.quiet_hours` は**導出値**になった——**時計は陳腐化しないので TTL に意味が無く、
+>    外部から届く通知でもないので `Signal` にできない。** Core が直接 facet を書くと
+>    静的検査 #10（`WorldFacet` の書き込みは Signal ハンドラ以外に存在しない）を落とす
+> 2. **Sensor は Extension とは限らない。** Consequences の経路図は `Sensor Ext` と書いているが、
+>    **Phase 3 の Desktop Sensor は Shell である。経路（Signal → Core が facet を書く）は変わらない**
+> 3. **`user.activity_class` は Sensor が送らない。** 観測ではなく**分類**であり、
+>    `AutonomyGate` の判断に直接効くため、**Core が導出する**（TTL は入力の残りの最小）
+>
+> **決定の骨子（World と Internal を別のストアにする / 由来・失効・confidence・書き手で分ける）は変わらない。**
 
 ---
 
