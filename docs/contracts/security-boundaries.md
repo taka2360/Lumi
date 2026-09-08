@@ -229,6 +229,7 @@ Desktop Sensor が Shell に入り、**Shell 発の `sensor.*` Signal が Core �
 | 層 | 内容 |
 |---|---|
 | 認証 | WS token（B3 と同じ接続） |
+| **名前空間** | **role の inbound 集合と outbound 集合を分ける。** Shell は outbound が `os.`、inbound が `sensor.`。**1つの表を両方向に使い回さない**（使い回すとどちらかが必ず壊れる） |
 | **送出元の決定** | **`Signal.source_id` は、認証済みの WS 接続から Core が決める。** payload の中の名乗りを見ない——**見たら allowlist は誰でも名乗れる飾りになる** |
 | **許可 key** | **その `source_id` に対応する、Core が持つ許可 key 集合**と照合する。送出元のコードにあるリストを見ない（Invariant 5） |
 | schema | 型・範囲・列挙値 |

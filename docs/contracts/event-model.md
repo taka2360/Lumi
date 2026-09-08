@@ -39,6 +39,7 @@ AIRI は約60種の WS イベントでモジュールのライフサイクルを
 @dataclass(frozen=True)
 class Signal:
     """外部から Core に届く通知。"""
+    id: SignalId                 # **Core が受信境界で採番する。** 送出元は付けない（下記）
     source_id: PeerIdentity      # 誰が送ったか
     type: str
     payload: dict
@@ -77,6 +78,18 @@ class DomainEvent:
 > **上げる方向の例外は作らない**（Invariant 7）。
 
 **`Signal` が `stream_key` / `sequence_id` を持たないことを型で保証する。** これにより「外部が DomainEvent を直接書く」経路がコンパイル時に塞がる。
+
+> **★ `id` は Core が受信境界で採番する**〔2026-09-06 / [../decisions/ADR-050-desktop-sensor-in-shell.md](../decisions/ADR-050-desktop-sensor-in-shell.md)〕。
+> **送出元が付けた値を使わない**——`causation_id` は「Lumi の世界で何が何を引き起こしたか」の
+> 履歴であり、**外から書けると履歴が偽造できる**（Invariant 6）。
+>
+> **これが無いと、1観測から出た複数の DomainEvent を後から束ね直せない。**
+> Desktop Sensor の1回の観測は facet ごとに別の `stream_key` へイベントを出すので
+> （[../architecture/world-state.md](../architecture/world-state.md) §2）、
+> **同じ観測から来たことを示せるのは `causation_id` だけ**である。
+>
+> **`sequence_id` とは別物である。** `sequence_id` は stream 内の順序、`id` は**そのフレームの同一性**。
+> 前者は EventBus だけが代入する（下記）ので、`id` を足しても上の型保証は変わらない。
 
 ---
 

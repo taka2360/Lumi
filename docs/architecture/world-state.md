@@ -277,6 +277,24 @@ Shell（Desktop Sensor）〔Phase 3〕 / Capability Extension〔Phase 9〜〕
 | 再接続 | **`seq` はリセットされうる。** Sensor の接続世代と組で見る（**世代が上がったら受理し直す**） |
 | 捨てたとき | **ログに出す。** 恒常的に出るなら、周期か経路がおかしい |
 
+##### ★ `seq` の比較・更新・install は**同じ排他区間**で行う
+
+**「捨てるかどうかを決めてから install する」では足りない。**
+inbound の request は**1つずつ別のタスクで処理される**（`core/lumi/transport/server.py`——
+遅いハンドラが次のフレームの読み取りを止めないため）。したがって
+**seq 41 と 42 が同時に走りうる。**
+
+```text
+悪い順序:  41: 40 と比較 → 通す ┐
+           42: 40 と比較 → 通す ┤ どちらも「新しい」と判定される
+           42: install          │
+           41: install          ┘ ← **古い 41 が 42 を上書きする**
+```
+
+**比較・受理済み `seq` の更新・facet の一括入れ替えを、facet ストア側の1つの排他区間に入れる。**
+チェックと書き込みのあいだに他の観測が割り込めないこと自体が要件である
+（**TOCTOU** であり、規則の書き方の問題ではない）。
+
 **これは `WorldSnapshot` では直せない。** スナップショットが与えるのは
 **読み取り時の一貫性**であって、**書き込みの時間的一貫性ではない。**
 
@@ -549,6 +567,7 @@ Shell に移したことで、その門が黙って消えてはならない。
 | 18d | **未来の `observed_at` が `received_at` に丸められる**（Sensor が止まったあと TTL どおりに `Unknown` になる） |
 | 18e | **許容ずれより古い `observed_at` は拒否され、ログに出る**（黙って捨てない） |
 | 18f | **順序が入れ替わった Signal で、古い観測が新しい facet を上書きしない**（`seq` が現在値以下なら install 前に捨てる。**`observed_at` も巻き戻らない**） |
+| 18g | **`seq` 41 と 42 を並行に処理しても 41 が勝たない**（比較と install が同じ排他区間にある。**比較だけ先に済ませる実装で落ちること**） |
 | 19 | **`sensor.*` の payload の形が Shell と Core で一致する**——**同じ fixture 群（妥当・不当の両方）を Rust と Python の両方の検証器に通す**。許可 key を全部覆い、**未知の key を拒否する**。`wire.json` は形を検査せず（[../contracts/wire.md](../contracts/wire.md) §4）、**検証器を生成もしない**（[../decisions/ADR-022-wire-contract.md](../decisions/ADR-022-wire-contract.md)） |
 | 20 | **Shell に許可された key が Shell の接続から通る** |
 | 20b | **同じ key を Shell 以外の接続（Stage / Extension）から送ると拒否される**（`source_id` は接続から決まり、payload の名乗りを見ない） |

@@ -452,6 +452,12 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   **送出元のコードにあるリストを宣言として扱わない**（[architecture/world-state.md](architecture/world-state.md) §5）
 - [ ] **provenance を (送出元, type) で決める。`sensor.*` は送出元によらず `ProvenanceClass.UNTRUSTED` / `TrustLevel.TAINTED`**（**`trust_level` に `UNTRUSTED` は存在しない**）
   （[contracts/event-model.md](contracts/event-model.md) / [contracts/provenance.md](contracts/provenance.md)）
+- [ ] **role の名前空間を「送る側」と「受ける側」で分ける**——
+  現在 `NAMESPACE_BY_ROLE` は role ごとに**1つの接頭辞**しか持たず、
+  `method_matches_role()` が**送信と受信の両方に同じ表を使う**
+  （`core/lumi/transport/protocol.py` / `router.py`）。
+  **Shell は `os.` のままなので `sensor.*` は必ず拒否され、`sensor.` に替えると `os.*` が壊れる。**
+  **inbound / outbound を別の集合にするのが 3a の最初の作業**（名前を足すだけでは routable にならない）
 - [ ] **契約を先に埋める。ただし2箇所に分ける**——
   **名前と定数**（`sensor.*` の method 名・名前空間・許可 key の一覧）は
   [contracts/wire.json](contracts/wire.json)。**payload の形**（フィールド名・型・必須性）は
