@@ -39,7 +39,7 @@ AIRI は約60種の WS イベントでモジュールのライフサイクルを
 @dataclass(frozen=True)
 class Signal:
     """外部から Core に届く通知。"""
-    id: SignalId                 # **Core が受信境界で採番する。** 送出元は付けない（下記）
+    id: SignalId                 # **Core が受信境界で採番する。** 送出元は付けない（下記）〔Phase 3a〕
     source_id: PeerIdentity      # 誰が送ったか
     type: str
     payload: dict
@@ -90,6 +90,9 @@ class DomainEvent:
 >
 > **`sequence_id` とは別物である。** `sequence_id` は stream 内の順序、`id` は**そのフレームの同一性**。
 > 前者は EventBus だけが代入する（下記）ので、`id` を足しても上の型保証は変わらない。
+>
+> **未実装である**〔2026-09-06〕。`core/lumi/kernel/event.py` の `Signal` にこのフィールドはまだ無く、
+> `SignalId` も `kernel/ids.py` に無い。**Phase 3a の項目**（[../roadmap.md](../roadmap.md)）。
 
 ---
 

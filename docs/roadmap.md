@@ -443,10 +443,19 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 > **3a の時点で `WorldFacet` はまだ無い。** Signal は受理・拒否され、provenance が付き、ログに出るところまで。
 > **facet に書くのは 3b である**（Phase を飛ばさない）。
 > **3a 単独で検証できること**: 許可外の key が拒否される / `sensor.*` が tainted になる /
-> 許可していなければ Sensor が起動しない。**どれも facet を必要としない。**
+> `observed_at` が `received_at` で境界づけられる / 許可していなければ Sensor が起動しない。
+> **どれも facet を必要としない。**
+>
+> **`seq` による棄却と facet の原子的な install は 3b にある**——**facet ストアが無いと書けない。**
+> 3a の Signal は**受理されてログに出るところまで**である。
 
-- [x] ~~`Signal` 型~~ 〔**実装済み**。`core/lumi/kernel/event.py`。`stream_key` / `sequence_id` を
+- [x] ~~`Signal` 型の骨格~~ 〔**実装済み**。`core/lumi/kernel/event.py`。`stream_key` / `sequence_id` を
   持たないことの静的検査も `core/tests/test_kernel_event.py` にある。`world_stream()` も既にある〕
+- [ ] **`Signal.id`（`SignalId`）を足す。** `kernel/ids.py` に `NewType` と採番関数を置き、
+  **Core が受信境界で採番する**（送出元は付けない）。
+  **これが無いと DomainEvent の `causation_id` を埋められず**、
+  1観測から出た facet ごとのイベントを**束ね直せない**
+  → [contracts/event-model.md](contracts/event-model.md)
 - [ ] **Signal の受信経路**（Shell → Core の inbound）。認証 → schema 検証 →
   **Core が持つ「送出元ごとの許可 key 集合」と照合** → 拒否 or Core が解釈。
   **送出元のコードにあるリストを宣言として扱わない**（[architecture/world-state.md](architecture/world-state.md) §5）
@@ -473,12 +482,8 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
   **送るのは生の観測だけ**（`user.activity_class` は送らない）
 - [ ] **1回の観測 = 1つの Signal**（facet ごとに分けない）。`observed_at` と単調増加の `seq` を1つ持つ
 - [ ] **`observed_at` を `Signal.received_at` で境界づける**（未来は丸める / 許容ずれ超の過去は拒否してログ）。
-  **payload は tainted であり、その中の時刻も例外ではない**——未来日付は TTL を無効化する
-- [ ] **`seq` が現在値以下の観測は install 前に捨てる**（順序保証は無い。
-  古い観測が新しい facet を上書きすると `observed_at` ごと巻き戻り、**TTL では検出できない**）
-- [ ] **1観測ぶんの facet を facet ストア側の1つの排他区間で入れ替える**。
-  **`EventBus` のロックは `stream_key` ごと**で、`world:*` は facet ごとに分かれているため、
-  **EventBus では作れない**。DomainEvent は facet ごとに出し、**同一観測は `causation_id` で辿る**
+  **payload は tainted であり、その中の時刻も例外ではない**——未来日付は TTL を無効化する。
+  **境界づけは受信境界の仕事なので 3a**。**`seq` による棄却と install は 3b**（facet ストアが要る）
 - [ ] **送出周期は TTL の半分以下。変化が無くても送る**（変化時は即座に送る）。
   **変化時だけ送ると facet が期限切れ、`activity_class` も `Unknown` になり、Gate が閉じる**
   → [architecture/world-state.md](architecture/world-state.md) §3
@@ -490,6 +495,13 @@ Phase 2 は Phase 4 の次に大きい。分割の軸は「**単体で検証で�
 
 - [ ] WorldFacet の型と TTL 管理（**期限切れは `None` ではなく `Unknown`**）
 - [ ] WorldSnapshot（ある時点の一貫したスナップショット）
+- [ ] **1観測ぶんの facet を facet ストア側の1つの排他区間で入れ替える**。
+  **`EventBus` のロックは `stream_key` ごと**で、`world:*` は facet ごとに分かれているため、
+  **EventBus では作れない**。DomainEvent は facet ごとに出し、**同一観測は `causation_id` で辿る**
+- [ ] **`seq` の比較・受理済み値の更新・facet の入れ替えを、同じ排他区間で行う**。
+  inbound は request ごとに別タスクなので、**比較だけ先に済ませると seq 41 と 42 が
+  どちらも「新しい」と判定され、古い 41 が勝つ**（TOCTOU）
+  → [architecture/world-state.md](architecture/world-state.md) §2
 - [ ] **`WorldFacet` が `provenance_class` と `trust_level` を持ち、projection まで運ぶ**
   （**facet に置き場所が無いと、汚染は保存の時点で消える**。3a の tainted な Signal の行き先がこれ）。
   **両方持つ**——`propagate()` は `Provenanced` を要求し、**`trust_level` だけの facet は導出の入力にできない**

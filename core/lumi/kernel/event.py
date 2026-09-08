@@ -77,6 +77,12 @@ class Signal:
     The Stage never says "reduce the budget." It only reports "the user said it's noisy."
     """
 
+    # 〔Phase 3a〕**`id: SignalId` is not here yet.** Core assigns it at the receive boundary,
+    # never the sender, and it is what a DomainEvent's `causation_id` points at. One desktop
+    # observation emits one event per facet on separate streams, so that id is the only thing
+    # tying them back together (docs/contracts/event-model.md, ADR-050). `SignalId` and its
+    # generator belong in `kernel/ids.py` alongside the others.
+
     #: Who sent it. An authenticated peer identity
     source_id: str
     type: str
